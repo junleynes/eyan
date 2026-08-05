@@ -67,4 +67,37 @@ if __name__ == '__main__':
     print(' * HTTP:  http://0.0.0.0:5000/')
     print(' * Access from local machine: http://localhost:5000/')
     print(' * Access from other devices: http://YOUR_IP:5000/')
-    app.run(debug=False, host='0.0.0.0', port=5000, threaded=True, use_reloader=False)
+
+    # Werkzeug's dev server (what app.run() below starts) prints its own
+    # warning not to use it in production, and it's right -- it isn't
+    # hardened for that. waitress is a real production WSGI server, pure
+    # Python (no C build step, so it installs the same way on Windows as
+    # Linux) and, importantly for this app specifically: single *process*,
+    # multiple *threads*. That distinction matters here because job/preview
+    # state (JOBS, PREVIEWS in pipeline.py) lives in plain in-memory dicts,
+    # not a shared store like Redis -- a multi-process server (e.g. gunicorn
+    # with -w 4) would give each worker its own separate copy, so a job
+    # started on one worker could silently vanish from progress-polling
+    # requests that happen to land on a different one. waitress's threading
+    # model doesn't have that failure mode, so it's the default here rather
+    # than something to opt into.
+    #
+    # DEV_SERVER=1 falls back to Werkzeug's dev server -- e.g. if you want
+    # its interactive debugger for troubleshooting (which needs debug=True
+    # to actually engage; this app runs with debug=False either way).
+    if os.environ.get('DEV_SERVER', '').strip().lower() in ('1', 'true', 'yes'):
+        print(' * DEV_SERVER=1 -- using Werkzeug\'s development server, not waitress.')
+        print(' * Do not use this for anything but local troubleshooting.')
+        app.run(debug=False, host='0.0.0.0', port=5000, threaded=True, use_reloader=False)
+    else:
+        try:
+            from waitress import serve
+        except ImportError:
+            print(' * waitress is not installed (pip install waitress) -- falling back to')
+            print(' * the development server. Fine for local use; install waitress before')
+            print(' * running this anywhere production traffic can reach it.')
+            app.run(debug=False, host='0.0.0.0', port=5000, threaded=True, use_reloader=False)
+        else:
+            threads = int(os.environ.get('WAITRESS_THREADS', 8))
+            print(f' * Serving with waitress ({threads} threads, single process)')
+            serve(app, host='0.0.0.0', port=5000, threads=threads)

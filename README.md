@@ -159,6 +159,17 @@ password once to the console — watch for it, or set
 `ADMIN_USERNAME`/`ADMIN_PASSWORD` in `.env` beforehand to choose your own
 (see "Lost the admin password?" below for recovery if you ever need it).
 
+**This serves production traffic by default now** — `python3 main.py`
+runs under [waitress](https://github.com/Pylons/waitress), not Flask's
+built-in dev server. Specifically single-process, multi-threaded
+(`WAITRESS_THREADS`, default 8) rather than multi-process: job/preview
+state lives in plain in-memory dicts, not a shared store, so a
+multi-process server would give each worker its own separate copy and a
+job could silently vanish from progress polling if it landed on a
+different worker than the one that started it. Set `DEV_SERVER=1` to
+fall back to the Flask dev server for local troubleshooting — don't use
+that for anything real traffic can reach.
+
 ### Lost the admin password?
 
 Set `RESET_ADMIN=1` in `.env` (optionally alongside `ADMIN_USERNAME`/
