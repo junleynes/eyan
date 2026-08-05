@@ -2148,9 +2148,13 @@ async function generateMusicTool(){
   var fd = new FormData()
   fd.append('prompt', prompt)
   fd.append('lyrics', document.getElementById('music-lyrics').value.trim())
+  fd.append('negative_prompt', document.getElementById('music-negative').value.trim())
   fd.append('duration', dur)
   fd.append('samples', n)
   fd.append('bpm', document.getElementById('music-bpm').value)
+  fd.append('keyscale', document.getElementById('music-key').value.trim())
+  fd.append('timesignature', document.getElementById('music-timesig').value)
+  fd.append('thinking', document.getElementById('music-thinking').checked ? '1' : '0')
   fd.append('steps', document.getElementById('music-steps').value)
   fd.append('seed', document.getElementById('music-seed').value)
   var ref = document.getElementById('music-ref')
@@ -2170,6 +2174,9 @@ async function generateMusicTool(){
     var meta = [
       (d.instrumental ? 'instrumental' : 'with vocals'),
       d.bpm ? d.bpm + ' bpm' : 'tempo auto',
+      d.keyscale ? d.keyscale : 'key auto',
+      d.timesignature ? (d.timesignature === '6' ? '6/8' : d.timesignature + '/4') : 'meter auto',
+      d.thinking ? 'thinking on' : 'thinking off',
       d.steps + ' steps'
     ]
     if(d.reference) meta.push('audio2audio @ ' + Number(d.ref_strength).toFixed(2))
@@ -3202,6 +3209,10 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <p style="font-size:12px;opacity:.7;margin-top:-4px">Leave empty and ACE-Step is told <code>[inst]</code> plus a vocal-suppressing negative prompt, which is the reliable way to guarantee no singing. Type lyrics here and both are dropped so the vocal actually comes through — use structure tags like <code>[verse]</code> and <code>[chorus]</code> on their own lines.</p>
 <div id=music-lyrics-hint style="display:none;font-size:12px;margin:-2px 0 10px;padding:8px 10px;border-radius:6px;border:1px solid var(--line)"></div>
 
+<label>Negative styles (optional):</label>
+<textarea id=music-negative class=input-box rows=2 placeholder="e.g. distorted, lo-fi, out of tune, clipping"></textarea>
+<p style="font-size:12px;opacity:.7;margin-top:-4px">What to steer away from. Leaving this empty on an instrumental take still applies a built-in vocal-suppressing default — type anything here (even just re-typing that same idea in your own words) to replace it entirely with your own.</p>
+
 <label>Reference audio (optional &mdash; audio2audio):</label>
 <input type=file id=music-ref accept="audio/*">
 <div id=music-ref-row style="display:none;align-items:center;gap:12px;flex-wrap:wrap;margin:10px 0">
@@ -3217,6 +3228,21 @@ document.getElementById('vf').addEventListener('submit', async function(e){
   <input type=number id=music-duration value=30 min=5 max=300 step=5 style="width:85px"></span>
   <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">BPM:</span>
   <input type=number id=music-bpm placeholder="auto" min=40 max=220 step=1 style="width:85px"></span>
+  <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Key:</span>
+  <input type=text id=music-key list=music-key-options placeholder="auto" style="width:100px"></span>
+  <datalist id=music-key-options>
+    <option value="C major"><option value="G major"><option value="D major"><option value="A major">
+    <option value="F major"><option value="A minor"><option value="E minor"><option value="D minor">
+    <option value="C minor"><option value="G minor">
+  </datalist>
+  <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Time signature:</span>
+  <select id=music-timesig style="width:90px">
+    <option value="">auto</option>
+    <option value="4">4/4</option>
+    <option value="3">3/4</option>
+    <option value="2">2/4</option>
+    <option value="6">6/8</option>
+  </select></span>
   <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Samples:</span>
   <input type=number id=music-samples value=1 min=1 max=4 step=1 style="width:70px"></span>
   <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Steps:</span>
@@ -3224,7 +3250,13 @@ document.getElementById('vf').addEventListener('submit', async function(e){
   <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Seed:</span>
   <input type=number id=music-seed placeholder="random" style="width:105px"></span>
 </div>
-<p style="font-size:12px;opacity:.7;margin-top:-6px">BPM is passed as a prompt tag (ACE-Step has no separate tempo field), so leaving it on <em>auto</em> lets the model pick a tempo that suits the style. More samples generate alternatives in one pass — slower, but you audition them side by side. Higher steps means better quality and proportionally more GPU time. Reuse a seed to reproduce a take.</p>
+<p style="font-size:12px;opacity:.7;margin-top:-6px">BPM, key, and time signature are all passed as prompt tags (ACE-Step conditions tempo/key/meter on the prompt text for this server rather than taking separate fields for them) — leaving any on <em>auto</em> lets the model pick what suits the style. More samples generate alternatives in one pass — slower, but you audition them side by side. Higher steps means better quality and proportionally more GPU time. Reuse a seed to reproduce a take.</p>
+
+<label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:10px">
+  <input type=checkbox id=music-thinking>
+  <span>Let ACE-Step's LM plan the take (thinking mode)</span>
+</label>
+<p style="font-size:12px;opacity:.7;margin-top:-4px">Runs an extra planning pass over your prompt and lyrics before generating, auto-filling in whatever you left on auto (tempo, key, structure). Slower — often better when you don't have strong opinions on the specifics above; leave it off for a fast, literal take on exactly what you typed.</p>
 
 <div style="margin-top:14px">
   <button class=btn type=button id=music-gen-btn onclick="generateMusicTool()">Generate music</button>

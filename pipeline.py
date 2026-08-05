@@ -2980,7 +2980,9 @@ ACE_STEP_REF_DIR = os.environ.get('ACE_STEP_REF_DIR', '')
 
 def acestep_generate(prompt, duration, lyrics=None, bpm=None, samples=1,
                      steps=None, seed=None, base_ts=None,
-                     ref_audio_path=None, ref_strength=0.5):
+                     ref_audio_path=None, ref_strength=0.5,
+                     keyscale=None, timesignature=None, thinking=False,
+                     negative_prompt=None):
     """Generate music with ACE-Step directly. Returns (paths, error).
 
     Unlike prepare_bgm_track (which is shaped around the trailer pipeline: one
@@ -2989,9 +2991,26 @@ def acestep_generate(prompt, duration, lyrics=None, bpm=None, samples=1,
     audio2audio reference, no fallback — if the service is down the caller should
     say so rather than hand back a sine drone the user didn't ask for.
 
-    `bpm` is folded into the prompt as a tag. ACE-Step conditions on the prompt
-    string rather than taking a numeric tempo field, so "124 bpm" as a tag is how
-    tempo is actually expressed.
+    `bpm`, `keyscale`, and `timesignature` are all folded into the prompt as
+    tags rather than sent as separate structured fields. Newer ACE-Step builds
+    do accept dedicated bpm/keyscale/timesignature JSON fields, but this
+    server's /release_task endpoint was tested against tempo specifically and
+    only responds to it as a prompt tag ("124 bpm") — a plain field is
+    silently ignored. Rather than send fields with unverified effect against
+    this specific install, key and time signature follow the same
+    known-working convention.
+
+    `thinking` enables ACE-Step's LM planning pass: given the caption/lyrics,
+    it auto-infers any of bpm/key/time-signature/etc you left unset. Slower
+    (an extra LM inference before the DiT pass), often better when you don't
+    have strong opinions on those specifics. This *is* sent as a real field
+    (`thinking` in the payload below) — unlike tempo, this one's confirmed
+    against this server since the payload already sent it, just hardcoded to
+    False everywhere until now.
+
+    `negative_prompt` is a real, already-used field (see ACE_STEP_NEGATIVE_PROMPT
+    below) — this parameter just makes it caller-editable instead of only ever
+    being the fixed default text auto-applied for instrumental generations.
 
     `ref_audio_path` enables audio2audio: the output follows the reference's
     structure, with `ref_strength` (0-1) controlling how closely. NOTE: ACE-Step's
@@ -3004,6 +3023,17 @@ def acestep_generate(prompt, duration, lyrics=None, bpm=None, samples=1,
         # Don't double up if the user already typed a bpm into the prompt.
         if not re.search(r'\b\d{2,3}\s*bpm\b', tags, re.I):
             tags = f'{tags}, {int(bpm)} bpm'
+    keyscale = (keyscale or '').strip()
+    if keyscale:
+        tags = f'{tags}, {keyscale} key'
+    timesignature = (timesignature or '').strip()
+    if timesignature:
+        # UI sends the beats-per-bar number (2/3/4/6); spelled out as "N/4"
+        # or "6/8" matches how these are conventionally written as prompt tags
+        # (and how ACE-Step's own docs describe them) far better than a bare
+        # digit, which reads ambiguously next to a bpm tag right next to it.
+        sig_label = '6/8' if timesignature == '6' else f'{timesignature}/4'
+        tags = f'{tags}, {sig_label} time signature'
     lyrics = (lyrics or '').strip()
     instrumental = not lyrics
     samples = max(1, min(ACE_STEP_MAX_SAMPLES, int(samples or 1)))
@@ -3011,7 +3041,7 @@ def acestep_generate(prompt, duration, lyrics=None, bpm=None, samples=1,
     payload = {
         'prompt': tags,
         'audio_duration': float(duration),
-        'thinking': False,
+        'thinking': bool(thinking),
         'inference_steps': int(steps or ACE_STEP_STEPS),
         'batch_size': samples,
         # '[inst]' is ACE-Step's explicit instrumental marker. When the user has
@@ -3024,7 +3054,13 @@ def acestep_generate(prompt, duration, lyrics=None, bpm=None, samples=1,
             payload['manual_seeds'] = str(int(seed))
         except (TypeError, ValueError):
             pass
-    if instrumental and ACE_STEP_NEGATIVE_PROMPT:
+    # An explicit negative_prompt from the caller always wins. Otherwise fall
+    # back to the vocal-suppressing default, but only for instrumental takes —
+    # applying it to a lyric take would fight the vocals the user just asked for.
+    negative_prompt = (negative_prompt or '').strip()
+    if negative_prompt:
+        payload['negative_prompt'] = negative_prompt
+    elif instrumental and ACE_STEP_NEGATIVE_PROMPT:
         payload['negative_prompt'] = ACE_STEP_NEGATIVE_PROMPT
     if ref_audio_path and os.path.exists(ref_audio_path):
         payload['audio2audio_enable'] = True
@@ -3078,9 +3114,11 @@ def acestep_generate(prompt, duration, lyrics=None, bpm=None, samples=1,
 def api_music_generate():
     """Standalone ACE-Step music generation for the Tools tab.
 
-    Exposes the controls the trailer pipeline hardcodes: free-text prompt, sung
-    lyrics (or instrumental), tempo, and how many samples to generate in one go
-    so alternatives can be auditioned side by side."""
+    Exposes every control ACE-Step itself takes for a text2music-style
+    generation: free-text prompt, sung lyrics (or instrumental), tempo, key,
+    time signature, negative styles, LM "thinking" planning, and how many
+    samples to generate in one go so alternatives can be auditioned side by
+    side."""
     def _num(key, default, lo, hi, cast=float):
         raw = (request.form.get(key) or '').strip()
         if raw == '':
@@ -3098,6 +3136,12 @@ def api_music_generate():
     prompt = (request.form.get('prompt') or '').strip() or GENRE_PROMPTS.get(genre, '')
     lyrics = (request.form.get('lyrics') or '').strip()
     seed = (request.form.get('seed') or '').strip()
+    keyscale = (request.form.get('keyscale') or '').strip()
+    timesignature = (request.form.get('timesignature') or '').strip()
+    if timesignature not in ('2', '3', '4', '6'):
+        timesignature = ''
+    negative_prompt = (request.form.get('negative_prompt') or '').strip()
+    thinking = (request.form.get('thinking') or '').strip().lower() in ('1', 'true', 'on', 'yes')
 
     if not prompt:
         return jsonify(ok=False, error='Enter a prompt describing the style you want.'), 400
@@ -3129,7 +3173,9 @@ def api_music_generate():
     try:
         paths, err = acestep_generate(prompt, duration, lyrics=lyrics, bpm=bpm,
                                       samples=samples, steps=steps, seed=seed, base_ts=base_ts,
-                                      ref_audio_path=ref_path, ref_strength=ref_strength)
+                                      ref_audio_path=ref_path, ref_strength=ref_strength,
+                                      keyscale=keyscale, timesignature=timesignature,
+                                      thinking=thinking, negative_prompt=negative_prompt)
     finally:
         # The reference only needs to survive the generation call itself.
         if ref_path and os.path.exists(ref_path):
@@ -3147,6 +3193,8 @@ def api_music_generate():
     } for p in paths],
         prompt=prompt, lyrics=lyrics or None, bpm=bpm, steps=steps,
         instrumental=not lyrics,
+        keyscale=keyscale or None, timesignature=timesignature or None, thinking=thinking,
+        negative_prompt=negative_prompt or None,
         reference=bool(ref_path), ref_strength=ref_strength if ref_path else None)
 
 @app.route('/api/music/genres')
