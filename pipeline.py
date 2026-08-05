@@ -25,6 +25,7 @@ import smbclient  # pip install smbprotocol -- lets the upload panels browse a W
 
 from core import app, ALLOWED_EXTENSIONS
 from library_db import LIBRARY_DIR, _sqlite_connect, library_add, library_list, library_get_row, library_delete
+from auth import require_permission
 
 # ---- Per-show asset templates (SQLite) ----
 # A "template" is a named bundle of the reusable assets a specific show always
@@ -2264,6 +2265,7 @@ def api_analyze():
     return jsonify(frames=frames)
 
 @app.route('/api/scenedetect/detect', methods=['POST'])
+@require_permission('scene_detection')
 def api_sd():
     path, err = load_video(request)
     if not path:
@@ -2334,6 +2336,7 @@ def api_media_playable():
 OLLAMA_URL = os.environ.get('OLLAMA_URL', 'http://localhost:11434')
 
 @app.route('/api/vision/analyze', methods=['POST'])
+@require_permission('scene_detection')
 def api_vision():
     path, err = load_video(request)
     if not path:
@@ -2444,6 +2447,7 @@ def _model_supports_vision(name):
         return 'vision' in name.lower() or 'vl' in name.lower()
 
 @app.route('/api/vision/models')
+@require_permission('scene_detection')
 def api_vision_models():
     try:
         r = requests.get(f'{OLLAMA_URL}/api/tags', timeout=10)
@@ -2482,6 +2486,7 @@ CHAT_TEXT_EXTS = {'.txt', '.md', '.markdown', '.csv', '.tsv', '.json', '.log', '
                   '.sh', '.sql', '.srt', '.vtt'}
 
 @app.route('/api/chat/extract_file', methods=['POST'])
+@require_permission('ai_chat')
 def api_chat_extract_file():
     """Extracts plain text from an uploaded document for a chat attachment.
 
@@ -2539,6 +2544,7 @@ def api_chat_extract_file():
     return jsonify(ok=True, filename=name, text=text, truncated=truncated, chars=len(text))
 
 @app.route('/api/chat/models')
+@require_permission('ai_chat')
 def api_chat_models():
     """Every model Ollama has installed, unfiltered -- unlike /api/vision/models
     this doesn't restrict to vision-capable ones, since chat has no use for that
@@ -2551,6 +2557,7 @@ def api_chat_models():
         return jsonify(ok=False, models=[], error=f'Could not reach Ollama at {OLLAMA_URL}: {e}')
 
 @app.route('/api/chat', methods=['POST'])
+@require_permission('ai_chat')
 def api_chat():
     data = request.get_json(silent=True) or {}
     model = (data.get('model') or '').strip()
@@ -2629,6 +2636,7 @@ def api_chat():
 # ---- Trailer Generator (ffmpeg) ----
 
 @app.route('/api/trailer/generate', methods=['POST'])
+@require_permission('promo_generation')
 def api_trailer():
     path, orig_name = load_video(request)
     if not path:
@@ -3031,6 +3039,7 @@ def api_trailer():
     return jsonify(job_id=jid)
 
 @app.route('/api/trailer/progress/<job_id>')
+@require_permission('promo_generation')
 def api_trailer_progress(job_id):
     j = job_get(job_id)
     if not j:
@@ -3046,6 +3055,7 @@ def api_trailer_progress(job_id):
     return jsonify(**j)
 
 @app.route('/api/trailer/preview/<preview_id>')
+@require_permission('promo_generation')
 def api_trailer_preview_get(preview_id):
     """Re-read a stored preview (thumbnails + chosen cut) without re-analysing."""
     p = preview_get(preview_id)
@@ -3067,6 +3077,7 @@ def api_trailer_preview_get(preview_id):
                                for i, s in enumerate(p.get('alternates') or [])])
 
 @app.route('/api/trailer/render', methods=['POST'])
+@require_permission('promo_generation')
 def api_trailer_render():
     """Render an approved preview cut. Reuses the preview's stored selection, so
     detection / quality scoring / AI vision scoring are not repeated.
@@ -3270,6 +3281,7 @@ def acestep_generate(prompt, duration, lyrics=None, bpm=None, samples=1,
         return [], f'Could not reach ACE-Step at {ACE_STEP_URL}: {e}'
 
 @app.route('/api/music/generate', methods=['POST'])
+@require_permission('music_generation')
 def api_music_generate():
     """Standalone ACE-Step music generation for the Tools tab.
 
@@ -3357,12 +3369,14 @@ def api_music_generate():
         reference=bool(ref_path), ref_strength=ref_strength if ref_path else None)
 
 @app.route('/api/music/genres')
+@require_permission('music_generation')
 def api_music_genres():
     """Genre -> music prompt map, so the Tools tab can show and pre-fill prompts."""
     return jsonify(ok=True, genres=[{'key': g, 'prompt': GENRE_PROMPTS.get(g, '')}
                                     for g in GENRE_NAMES])
 
 @app.route('/api/sfx/generate', methods=['POST'])
+@require_permission('text_to_sfx')
 def api_sfx_generate():
     """Standalone Woosh SFX generation for the Tools tab: any text description,
     not just the fixed genre-derived prompts the trailer pipeline uses."""
@@ -3397,6 +3411,7 @@ def api_sfx_generate():
     } for p in paths])
 
 @app.route('/api/trailer/cancel/<job_id>', methods=['POST'])
+@require_permission('promo_generation')
 def api_trailer_cancel(job_id):
     """Cancel a queued or in-flight trailer job. Queued jobs stop immediately;
     running jobs unwind at their next progress checkpoint (best-effort)."""
@@ -3414,6 +3429,7 @@ def api_trailer_cancel(job_id):
     return jsonify(cancelled=True, job_id=job_id)
 
 @app.route('/api/trailer/library')
+@require_permission('promo_generation')
 def api_trailer_library():
     """Lists saved trailers (most recent first) for the History panel. A
     regular account sees only trailers it saved; an admin sees everyone's."""
@@ -3421,6 +3437,7 @@ def api_trailer_library():
     return jsonify(ok=True, items=library_list(user_id=session.get('user_id'), is_admin=is_admin))
 
 @app.route('/api/trailer/library/<int:tid>')
+@require_permission('promo_generation')
 def api_trailer_library_get(tid):
     """Returns one saved trailer's full result payload, ready to hand straight
     to the same renderer used for a just-completed job."""
@@ -3432,6 +3449,7 @@ def api_trailer_library_get(tid):
     return jsonify(ok=True, result=json.loads(row['result_json']), created_at=row['created_at'])
 
 @app.route('/api/trailer/library/<int:tid>/delete', methods=['POST'])
+@require_permission('promo_generation')
 def api_trailer_library_delete(tid):
     row = library_get_row(tid)
     if not row:
@@ -3444,6 +3462,7 @@ def api_trailer_library_delete(tid):
     return jsonify(ok=True)
 
 @app.route('/library/<int:tid>/file')
+@require_permission('promo_generation')
 def library_file(tid):
     row = library_get_row(tid)
     if not row:
@@ -3453,6 +3472,7 @@ def library_file(tid):
     return send_from_directory(LIBRARY_DIR, row['filename'])
 
 @app.route('/library/<int:tid>/download')
+@require_permission('promo_generation')
 def library_download(tid):
     row = library_get_row(tid)
     if not row:
@@ -3480,6 +3500,7 @@ def library_download(tid):
 
 
 @app.route('/api/monitor')
+@require_permission('promo_generation')
 def api_monitor():
     """Live snapshot of trailer jobs the server currently knows about: running
     right now, waiting for a free concurrency slot, or finished
@@ -3622,11 +3643,13 @@ def _tpl_num(key, default=None, lo=None, hi=None):
     return v
 
 @app.route('/api/templates', methods=['GET'])
+@require_permission('promo_generation')
 def api_templates_list():
     return jsonify(ok=True, templates=template_list(),
                    slots=[{'key': k, 'label': v['label'], 'kind': v['kind']} for k, v in TEMPLATE_SLOTS.items()])
 
 @app.route('/api/templates/<int:tid>', methods=['GET'])
+@require_permission('promo_generation')
 def api_template_get(tid):
     row = template_get(tid)
     if not row:
@@ -3634,6 +3657,7 @@ def api_template_get(tid):
     return jsonify(ok=True, template=_template_public(row))
 
 @app.route('/api/templates', methods=['POST'])
+@require_permission('promo_generation')
 def api_template_save():
     """Creates or updates a show template from whatever the trailer form currently
     has selected. Accepts the same multipart field names the generate form uses
@@ -3738,12 +3762,14 @@ def api_template_save():
                    saved_slots=sorted(incoming.keys()), updated=bool(existing))
 
 @app.route('/api/templates/<int:tid>', methods=['DELETE'])
+@require_permission('promo_generation')
 def api_template_delete(tid):
     if not template_delete(tid):
         return jsonify(ok=False, error='Template not found'), 404
     return jsonify(ok=True)
 
 @app.route('/api/templates/<int:tid>/asset/<slot>')
+@require_permission('promo_generation')
 def api_template_asset(tid, slot):
     """Serves a template's stored asset so the UI can preview it (audio player /
     card-VO in-out scrubbing) without re-uploading anything."""
@@ -3835,6 +3861,7 @@ def api_health():
     return jsonify(ok=overall_ok, checked_at=time.time(), services=ordered)
 
 @app.route('/api/stt/transcribe', methods=['POST'])
+@require_permission('speech_to_text')
 def api_stt_transcribe():
     """Standalone speech-to-text for the Speech to Text panel.
 
@@ -3940,6 +3967,7 @@ def api_voices_delete():
     return jsonify(ok=True, id=voice_id)
 
 @app.route('/api/vo/preview', methods=['POST'])
+@require_permission('text_to_speech', 'promo_generation')
 def api_vo_preview():
     """Generates a short narration clip so the script/voice/rate/language can be
     checked by ear before it's used in an actual trailer job. Runs synchronously

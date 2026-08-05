@@ -10,6 +10,7 @@ from flask import request, jsonify, session, send_from_directory, render_templat
 from core import app
 import library_db      # noqa: F401 -- imported for its module-level init side effect
 import auth             # noqa: F401 -- registers /login, /logout, /admin/users
+from auth import require_permission, user_permissions
 from pipeline import (   # noqa: F401 -- registers every /api/, trailer-generation,
     GENRE_DOCS_ROWS, EXPORT_FORMATS, build_export_cmd,
     _sweeper_loop, sweep_upload_folder, free_disk_mb, load_config_overrides,
@@ -20,15 +21,38 @@ import pipeline          # noqa: F401 -- import the module itself too, for its
 
 @app.route('/')
 def index():
+    perms = user_permissions(session.get('user_id'), session.get('role'))
+    role = session.get('role')
+    # Whichever nav tab is marked active server-side determines which panel
+    # shows on load. If that were hardcoded to Generate Promo Plug (as it was
+    # before groups existed) and a restricted account can't reach it, they'd
+    # land on a hidden tab's panel -- visible content with no way to submit
+    # it, since the routes underneath are gated too. Picks the first tab (in
+    # the same order they appear in the sidebar) this session can actually
+    # use; Docs is the final fallback since it's never gated.
+    tab_order = [
+        ('p-trailer', 'promo_generation'), ('p-music', 'music_generation'),
+        ('p-sfx', 'text_to_sfx'), ('p-fish', 'text_to_speech'),
+        ('p-stt', 'speech_to_text'), ('p-vision', 'scene_detection'),
+        ('p-chat', 'ai_chat'), ('p-tools', 'player'), ('p-docs', None),
+    ]
+    default_tab = 'p-docs'
+    for tab_id, perm in tab_order:
+        if perm is None or role == 'admin' or perm in perms:
+            default_tab = tab_id
+            break
     return render_template('index.html', genre_rows=GENRE_DOCS_ROWS,
                                    current_username=session.get('username'),
-                                   current_role=session.get('role'))
+                                   current_role=role,
+                                   current_permissions=perms,
+                                   default_tab=default_tab)
 
 @app.route('/uploads/<filename>')
 def uploaded(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 @app.route('/download/<filename>')
+@require_permission('promo_generation')
 def download_file(filename):
     orig = request.args.get('name', filename)
     fmt_key = request.args.get('format', 'mp4_high')

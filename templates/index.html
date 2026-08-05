@@ -482,21 +482,37 @@ var IS_ADMIN = {{ 'true' if current_role == 'admin' else 'false' }}
     </div>
   </div>
   <div class="tabs">
-    <div class="tab active" onclick="switchTab('p-trailer',this)" role="button" tabindex="0"><span class=tab-icon>&#9636;</span><span class=tab-text>Generate Promo Plug<div class=tab-sub>ai+ffmpeg</div></span></div>
-    <div class="tab" onclick="switchTab('p-music',this)" role="button" tabindex="0"><span class=tab-icon>&#9835;</span><span class=tab-text>Music Generation<div class=tab-sub>ace-step</div></span></div>
-    <div class="tab" onclick="switchTab('p-sfx',this)" role="button" tabindex="0"><span class=tab-icon>&#9889;</span><span class=tab-text>Text to SFX<div class=tab-sub>woosh</div></span></div>
-    <div class="tab" onclick="switchTab('p-fish',this)" role="button" tabindex="0"><span class=tab-icon>&#9679;</span><span class=tab-text>Text to Speech<div class=tab-sub>fish audio</div></span></div>
-    <div class="tab" onclick="switchTab('p-stt',this)" role="button" tabindex="0"><span class=tab-icon>&#9834;</span><span class=tab-text>Speech to Text<div class=tab-sub>whisper</div></span></div>
-    <div class="tab" onclick="switchTab('p-vision',this)" role="button" tabindex="0"><span class=tab-icon>&#9673;</span><span class=tab-text>Scene Detection<div class=tab-sub>vision + pyscenedetect</div></span></div>
-    <div class="tab" onclick="switchTab('p-chat',this)" role="button" tabindex="0"><span class=tab-icon>&#128172;</span><span class=tab-text>AI Chat<div class=tab-sub>llm assistant</div></span></div>
-    <div class="rail-sep"></div>
-    <div class="tab" onclick="switchTab('p-tools',this)" role="button" tabindex="0"><span class=tab-icon>&#9881;</span><span class=tab-text>Player<div class=tab-sub>shared library</div></span></div>
-    {% if current_role == 'admin' %}
-    <div class="tab" onclick="switchTab('p-api',this)" role="button" tabindex="0"><span class=tab-icon>{ }</span><span class=tab-text>API<div class=tab-sub>reference</div></span></div>
+    {% if current_role == 'admin' or 'promo_generation' in current_permissions %}
+    <div class="tab{{ ' active' if default_tab == 'p-trailer' else '' }}" onclick="switchTab('p-trailer',this)" role="button" tabindex="0"><span class=tab-icon>&#9636;</span><span class=tab-text>Generate Promo Plug<div class=tab-sub>ai+ffmpeg</div></span></div>
     {% endif %}
-    <div class="tab" onclick="switchTab('p-docs',this)" role="button" tabindex="0"><span class=tab-icon>&#9776;</span><span class=tab-text>Docs<div class=tab-sub>workflow+genres</div></span></div>
+    {% if current_role == 'admin' or 'music_generation' in current_permissions %}
+    <div class="tab{{ ' active' if default_tab == 'p-music' else '' }}" onclick="switchTab('p-music',this)" role="button" tabindex="0"><span class=tab-icon>&#9835;</span><span class=tab-text>Music Generation<div class=tab-sub>ace-step</div></span></div>
+    {% endif %}
+    {% if current_role == 'admin' or 'text_to_sfx' in current_permissions %}
+    <div class="tab{{ ' active' if default_tab == 'p-sfx' else '' }}" onclick="switchTab('p-sfx',this)" role="button" tabindex="0"><span class=tab-icon>&#9889;</span><span class=tab-text>Text to SFX<div class=tab-sub>woosh</div></span></div>
+    {% endif %}
+    {% if current_role == 'admin' or 'text_to_speech' in current_permissions %}
+    <div class="tab{{ ' active' if default_tab == 'p-fish' else '' }}" onclick="switchTab('p-fish',this)" role="button" tabindex="0"><span class=tab-icon>&#9679;</span><span class=tab-text>Text to Speech<div class=tab-sub>fish audio</div></span></div>
+    {% endif %}
+    {% if current_role == 'admin' or 'speech_to_text' in current_permissions %}
+    <div class="tab{{ ' active' if default_tab == 'p-stt' else '' }}" onclick="switchTab('p-stt',this)" role="button" tabindex="0"><span class=tab-icon>&#9834;</span><span class=tab-text>Speech to Text<div class=tab-sub>whisper</div></span></div>
+    {% endif %}
+    {% if current_role == 'admin' or 'scene_detection' in current_permissions %}
+    <div class="tab{{ ' active' if default_tab == 'p-vision' else '' }}" onclick="switchTab('p-vision',this)" role="button" tabindex="0"><span class=tab-icon>&#9673;</span><span class=tab-text>Scene Detection<div class=tab-sub>vision + pyscenedetect</div></span></div>
+    {% endif %}
+    {% if current_role == 'admin' or 'ai_chat' in current_permissions %}
+    <div class="tab{{ ' active' if default_tab == 'p-chat' else '' }}" onclick="switchTab('p-chat',this)" role="button" tabindex="0"><span class=tab-icon>&#128172;</span><span class=tab-text>AI Chat<div class=tab-sub>llm assistant</div></span></div>
+    {% endif %}
+    <div class="rail-sep"></div>
+    {% if current_role == 'admin' or 'player' in current_permissions %}
+    <div class="tab{{ ' active' if default_tab == 'p-tools' else '' }}" onclick="switchTab('p-tools',this)" role="button" tabindex="0"><span class=tab-icon>&#9881;</span><span class=tab-text>Player<div class=tab-sub>shared library</div></span></div>
+    {% endif %}
     {% if current_role == 'admin' %}
-    <div class="tab" onclick="switchTab('p-config',this)" role="button" tabindex="0"><span class=tab-icon>&#128295;</span><span class=tab-text>Config<div class=tab-sub>api urls</div></span></div>
+    <div class="tab{{ ' active' if default_tab == 'p-api' else '' }}" onclick="switchTab('p-api',this)" role="button" tabindex="0"><span class=tab-icon>{ }</span><span class=tab-text>API<div class=tab-sub>reference</div></span></div>
+    {% endif %}
+    <div class="tab{{ ' active' if default_tab == 'p-docs' else '' }}" onclick="switchTab('p-docs',this)" role="button" tabindex="0"><span class=tab-icon>&#9776;</span><span class=tab-text>Docs<div class=tab-sub>workflow+genres</div></span></div>
+    {% if current_role == 'admin' %}
+    <div class="tab{{ ' active' if default_tab == 'p-config' else '' }}" onclick="switchTab('p-config',this)" role="button" tabindex="0"><span class=tab-icon>&#128295;</span><span class=tab-text>Config<div class=tab-sub>api urls</div></span></div>
     {% endif %}
   </div>
   <div class="hdr-engines">scene detection &middot; ai vision &middot; ffmpeg &middot; ai music &middot; tts &middot; stt</div>
@@ -622,7 +638,7 @@ document.addEventListener("DOMContentLoaded", function(){
 </script>
 
 <!-- Tools -->
-<div id="p-tools" class="panel">
+<div id="p-tools" class="panel{{ ' active' if default_tab == 'p-tools' else '' }}">
 <h2>Video Player</h2>
 <p style="font-size:12px;opacity:.75;margin-top:-6px">Plays media straight from the shared library folders, so you can check a mat, bed or VO before building a promo from it. The browser streams the file — nothing is re-encoded on the server unless it turns out to be in a format the browser itself can't play.</p>
 <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0">
@@ -649,7 +665,7 @@ document.addEventListener("DOMContentLoaded", function(){
 </div>
 
 <!-- Episodic Promo Plug -->
-<div id="p-trailer" class="panel active">
+<div id="p-trailer" class="panel{{ ' active' if default_tab == 'p-trailer' else '' }}">
 <h2>Episodic Promo Plug Generator</h2>
 <div class="work">
 <div class="work-in">
@@ -3416,7 +3432,7 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 </script>
 
 <!-- API -->
-<div id="p-music" class="panel">
+<div id="p-music" class="panel{{ ' active' if default_tab == 'p-music' else '' }}">
 <h2>Music Generation &mdash; ACE-Step</h2>
 <p style="font-size:12px;opacity:.75;margin-top:-6px">Generate music on its own — for building a library of beds, restyling an existing track, or producing a sung stinger. Generated files can be saved into a show template from the Promo tab.</p>
 
@@ -3485,7 +3501,7 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <div id=music-prompt-note class=no-data style="margin-top:14px">Set a prompt and duration, then hit Generate. Longer or multi-sample runs take proportionally longer — ACE-Step is polled for up to three minutes.</div>
 </div>
 
-<div id="p-sfx" class="panel">
+<div id="p-sfx" class="panel{{ ' active' if default_tab == 'p-sfx' else '' }}">
 <h2>Text to SFX &mdash; Woosh</h2>
 <p style="font-size:12px;opacity:.75;margin-top:-6px">Generate a one-shot sound effect from a plain description — for building a library of stingers and hits, or auditioning options before picking one for a show template. This is separate from the genre-based SFX the promo generator uses automatically at scene cuts.</p>
 
@@ -3506,7 +3522,7 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <div id=sfx-prompt-note class=no-data style="margin-top:14px">Describe a sound and hit Generate.</div>
 </div>
 
-<div id="p-fish" class="panel">
+<div id="p-fish" class="panel{{ ' active' if default_tab == 'p-fish' else '' }}">
 <h2>Text to Speech &mdash; Fish Audio S2</h2>
 <div class="sub-tabs">
   <div class="sub-tab active" onclick="switchSubTab('p-fish-render',this)" role="button" tabindex="0">Render</div>
@@ -3559,7 +3575,7 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 </div>
 {% endif %}
 </div>
-<div id="p-stt" class="panel">
+<div id="p-stt" class="panel{{ ' active' if default_tab == 'p-stt' else '' }}">
 <h2>Speech to Text &mdash; Whisper</h2>
 <p style="font-size:12px;opacity:.75;margin-top:-6px">Transcribes dialogue with word-level timing, using the same service the promo pipeline uses for dialogue-aware cuts — so this shows you exactly what the rating stage sees. Audio is extracted to 16&nbsp;kHz mono before upload, so a multi-GB episode only sends a few MB.</p>
 <label>Video or audio file:</label>
@@ -3576,7 +3592,7 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <div id=stt-prompt class=no-data style="margin-top:14px">Upload a file to transcribe. A full episode takes a few minutes; the upload itself is quick because only the audio is sent.</div>
 </div>
 
-<div id="p-vision" class="panel">
+<div id="p-vision" class="panel{{ ' active' if default_tab == 'p-vision' else '' }}">
 <h2>Scene Detection &amp; Analysis</h2>
 <p style="font-size:12px;opacity:.75;margin-top:-6px">Runs PySceneDetect over the source to find the cuts, then samples frames and describes them with the AI Vision model — the same two stages that feed scene rating in the promo generator.</p>
 <form id=vf method=POST action=/api/vision/analyze enctype=multipart/form-data>
@@ -3614,7 +3630,7 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <div id=vr-prompt class=no-data>Upload a video to analyze frames with the AI Vision model.</div>
 </div>
 
-<div id="p-chat" class="panel">
+<div id="p-chat" class="panel{{ ' active' if default_tab == 'p-chat' else '' }}">
 <h2>AI Chat</h2>
 <p style="font-size:12px;opacity:.75;margin-top:-6px">Chat directly with any model your Ollama server has installed — for testing how a model behaves, drafting text, or just asking it something. Separate from the vision/rating pipeline the promo generator uses; nothing here feeds into a job.</p>
 <details style="margin-bottom:10px">
@@ -3656,7 +3672,7 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <p style="font-size:11px;opacity:.6;margin:6px 2px 0">Images work with vision-capable models only. Documents (PDF, text, code) are read and added as context regardless of model — up to 8MB per file, and long documents are truncated.</p>
 </div>
 
-<div id="p-api" class="panel">
+<div id="p-api" class="panel{{ ' active' if default_tab == 'p-api' else '' }}">
 <h2>API</h2>
 <p><strong>Health check</strong>:</p>
 <div class=card>
@@ -3709,7 +3725,7 @@ job. Configured via env vars:
 </div>
 </div>
 
-<div id="p-docs" class="panel">
+<div id="p-docs" class="panel{{ ' active' if default_tab == 'p-docs' else '' }}">
 <h2>Docs</h2>
 
 <h3 style="margin-top:0">Workflow</h3>
@@ -3905,7 +3921,7 @@ This is [emphasis] the one you cannot miss.
 </table>
 </div>
 
-<div id="p-config" class="panel">
+<div id="p-config" class="panel{{ ' active' if default_tab == 'p-config' else '' }}">
 <h2>AI Service Configuration</h2>
 <p style="margin-top:-4px;color:var(--ink-dim)">These control where the app looks for each local/self-hosted AI service. Changes save immediately (no restart needed) and are written to <code>ai_services_config.json</code> next to the script, so they persist across restarts too. Environment variables set the initial defaults; anything saved here overrides them from then on.</p>
 <div id="config-rows" style="display:flex;flex-direction:column;gap:14px;margin-top:16px">
