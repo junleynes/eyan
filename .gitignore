@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.secret_key
+*.db
+trailer_library/
+show_templates/
+.env

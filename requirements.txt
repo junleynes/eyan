@@ -1,0 +1,31 @@
+# Generated from the actual imports across core.py, auth.py, library_db.py,
+# pipeline.py, main.py. Versions below are what this codebase was tested
+# against in the sandbox that built this modularized split -- verify against
+# whatever's actually running on the production server before trusting these
+# blindly, since that's the environment that matters.
+#
+# librosa/soundfile are lazy-imported inside one function each (beat
+# detection for music sync) rather than at module load, so the app runs
+# without them -- just that one feature degrades if they're missing. Exact
+# versions weren't verified here since neither was installed in the sandbox
+# used to build/test this split.
+
+Flask==3.1.3
+Werkzeug==3.1.7
+opencv-python==4.13.0.92
+numpy==2.4.4
+requests==2.33.1
+scenedetect==0.7.1
+smbprotocol==1.17.0
+pypdf==5.9.0
+librosa>=0.10
+soundfile>=0.12
+
+# Not imported directly, but required at runtime as external programs, not
+# Python packages -- pip can't install these:
+#   ffmpeg / ffprobe   -- the render pipeline shells out to both
+# Also expected reachable at runtime (configurable via env vars, see
+# README.md / .env.example) but not Python dependencies either:
+#   Ollama (vision scoring), Fish Audio TTS, Whisper STT, ACE-Step (music),
+#   Woosh (SFX) -- the app degrades gracefully if any of these are
+#   unreachable, per the fixes made in this session.
