@@ -50,13 +50,46 @@ Same behavior as the original as of this split, same env vars
 
 ## Install
 
+### Quick install (one line)
+
+Fetches the repo and installs everything in one shot — nothing else to
+download first:
+
+```bash
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/junleynes/eyan/main/install.sh | bash
+
+# with the ffmpeg auto-install flag:
+curl -fsSL https://raw.githubusercontent.com/junleynes/eyan/main/install.sh | bash -s -- --with-ffmpeg
+```
+
+```powershell
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/junleynes/eyan/main/install.ps1 | iex
+
+# with the ffmpeg auto-install flag (switches can't be passed through
+# a piped iex, so this uses an env var instead):
+$env:EYAN_WITH_FFMPEG = '1'; irm https://raw.githubusercontent.com/junleynes/eyan/main/install.ps1 | iex
+```
+
+This clones the repo into a new `eyan/` folder in whatever directory
+you run it from, then runs the full install described below from
+inside it. `cd eyan` afterward to run the app (see "3. Run it").
+
+If you'd rather review a script before running it (reasonable instinct
+for anything piped into a shell), skip to "Manual install, step by step"
+below and run `./install.sh` / `.\install.ps1` locally instead — same
+script, same result, just no piping.
+
 ### Prerequisites
 
 - **Python 3.10 or newer** — `numpy` 2.x (pinned in `requirements.txt`) requires it.
   - Windows: [python.org/downloads](https://www.python.org/downloads/) or `winget install Python.Python.3.12`. During setup, tick **"Add python.exe to PATH."**
   - Linux: usually already installed (`python3 --version` to check); if not, your distro's package manager (`sudo apt install python3`, etc.)
 - **ffmpeg and ffprobe** — the render pipeline shells out to both directly; they're not something `pip` can install. The install scripts below check for these and can install them for you (`--with-ffmpeg` / `-WithFFmpeg`), or tell you how if you'd rather do it yourself.
-- **Git**, or just a downloaded copy of this repo — either works, you only need the files on disk.
+- **Git**, or just a downloaded copy of this repo — either works, you only need the files on disk. (The quick install above clones for you if `git` is available, or falls back to downloading a ZIP/tarball if it isn't.)
+
+### Manual install, step by step
 
 ### 1. Get the code
 

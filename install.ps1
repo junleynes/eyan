@@ -71,7 +71,7 @@ if (-not (Test-Path "core.py") -or -not (Test-Path "requirements.txt")) {
         Write-Ok "cloned into $RepoDir\"
     } else {
         Write-Warn2 "git not found -- downloading a ZIP instead"
-        $zipPath = Join-Path $env:TEMP "eyan-main.zip"
+        $zipPath = Join-Path ([System.IO.Path]::GetTempPath()) "eyan-main.zip"
         Invoke-WebRequest -Uri "https://github.com/junleynes/eyan/archive/refs/heads/main.zip" -OutFile $zipPath
         Expand-Archive -Path $zipPath -DestinationPath "." -Force
         Rename-Item -Path "eyan-main" -NewName $RepoDir
