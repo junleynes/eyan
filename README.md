@@ -2,11 +2,51 @@
 
 # EYAN — Engine For Your AI Needs
 
-Formerly AIMP. Split out of the original single `main_app_57_1_.py`
-(~9,500 lines). Same behavior, same env vars (`LIBRARY_DIR`, `SECRET_KEY_FILE`,
-`ADMIN_USERNAME`, `ADMIN_PASSWORD`, `RESET_ADMIN`, `TEMPLATES_DIR`,
-`FISH_AUDIO_URL`, etc. — see `.env.example` for the full list), same port
-(5000).
+A self-hosted toolkit for producing broadcast episodic promos ("plugs")
+end to end — from raw footage to a finished, mixed trailer — plus the
+individual AI tools behind it, usable on their own. Formerly AIMP.
+
+## What it does
+
+- **Promo plug generator** — the core workflow. Drop in an episode (or
+  pick one off a network SMB share), and it detects every scene cut
+  (PySceneDetect, with a choice of Content or motion-resistant Adaptive
+  detection), scores each scene for quality (sharpness/brightness/faces)
+  and AI vision content, then assembles a trailer at your target length
+  with music, SFX, narration, and title/end cards mixed in via ffmpeg.
+  **Preview the cut first** before committing to a full render — see
+  and play back the exact scenes it picked, swap in alternates, then
+  reuse that same analysis for the final render instead of repeating it.
+- **Music generation** (ACE-Step) — prompt-driven original music, sung
+  or instrumental, with control over duration, tempo, key, time
+  signature, negative styles, an LM "thinking" planning pass, and
+  audio2audio restyling from a reference track.
+- **Text to SFX** (Woosh) and **Text to speech** (Fish Audio, voice
+  cloning from a reference sample) — generate one-off sound effects and
+  narration outside the main generator, for building a reusable library.
+- **Speech to text** (Whisper) — transcribe audio/video, used internally
+  for beat-syncing narration and available as a standalone tool.
+- **Scene detection & analysis** — the same detector the generator uses,
+  as a standalone preview/diagnostic tool with AI vision commentary per
+  scene and playback of any detected cut.
+- **AI chat** — an LLM assistant tab with file attachment support, for
+  drafting promo copy or asking questions about a script/document.
+- **Shared player** — plays anything on the configured network share or
+  already in the trailer library, with automatic format conversion for
+  browser playback (ProRes/DNxHD masters and the like).
+- **Per-show templates** — save a full generator configuration (genre,
+  transition, lengths, audio targets, voice, plus the music/SFX/VO/cards
+  themselves) under a show name; each new episode is one dropdown away.
+- **Saved trailer library** — every render is kept, browsable and
+  re-downloadable, independent of the source footage's lifecycle.
+- **Per-user accounts** — real login (not a shared passphrase), with an
+  admin role for account management (`/admin/users`) and audit-lite
+  tracking (last login per account).
+
+Same behavior as the original as of this split, same env vars
+(`LIBRARY_DIR`, `SECRET_KEY_FILE`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`,
+`RESET_ADMIN`, `TEMPLATES_DIR`, `FISH_AUDIO_URL`, etc. — see
+`.env.example` for the full list), same port (5000).
 
 ## Install
 
@@ -116,6 +156,10 @@ giving it a real value.
 - **Windows: `venv\Scripts\Activate.ps1` still blocked after `Set-ExecutionPolicy`** — you can skip activation entirely and run `venv\Scripts\python.exe main.py` directly; same effect, no execution policy involved.
 
 ## Layout
+
+Split out of the original single `main_app_57_1_.py` (~9,500 lines) into
+the modules below — see "Why `pipeline.py` is still one big file" further
+down for why that split stopped where it did.
 
 | File | What's in it |
 |---|---|
