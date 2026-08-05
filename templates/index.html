@@ -267,15 +267,17 @@ p{color:var(--ink-dim);font-size:13px;line-height:1.65;margin:8px 0}
 .browse-btn{
   font-family:'JetBrains Mono',monospace;
   display:inline-flex;align-items:center;gap:7px;
-  background:var(--panel-2,#1a2233);color:var(--ink);
-  border:1px solid var(--line);border-radius:8px;
-  padding:8px 14px;font-size:12px;letter-spacing:.02em;
-  cursor:pointer;transition:border-color .15s ease,background .15s ease,transform .1s ease;
+  background:transparent;color:var(--phosphor);
+  border:1px solid var(--phosphor-dim);border-radius:7px;
+  padding:8px 14px;font-size:12px;letter-spacing:.04em;text-transform:uppercase;
+  cursor:pointer;transition:all .15s ease;
 }
 .browse-btn svg{width:14px;height:14px;flex-shrink:0;opacity:.85}
-.browse-btn:hover{border-color:var(--phosphor);background:rgba(52,230,197,.08)}
+.browse-btn:hover{border-color:var(--phosphor);background:rgba(52,230,197,.1)}
 .browse-btn:active{transform:translateY(1px)}
-.browse-btn.local:hover{border-color:var(--accent,#4f8cff);background:rgba(79,140,255,.08)}
+.browse-btn:focus-visible{outline:2px solid var(--phosphor);outline-offset:2px}
+.browse-btn.local{color:var(--accent,#4f8cff);border-color:rgba(79,140,255,.5)}
+.browse-btn.local:hover{border-color:var(--accent,#4f8cff);background:rgba(79,140,255,.1)}
 .net-file-chip{
   display:none;align-items:center;gap:6px;font-size:12px;
   background:rgba(52,230,197,.1);border:1px solid rgba(52,230,197,.35);
