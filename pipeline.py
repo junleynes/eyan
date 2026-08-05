@@ -1675,7 +1675,7 @@ def woosh_sfx(genre, output_path, duration=0.8):
 
 WOOSH_MAX_SAMPLES = int(os.environ.get('WOOSH_MAX_SAMPLES', 4))
 
-def woosh_sfx_generate(prompt, duration=1.0, samples=1, base_ts=None):
+def woosh_sfx_generate(prompt, duration=None, samples=1, base_ts=None):
     """Generate SFX from free-text prompts, for the Tools tab. Returns (paths, error).
 
     Unlike woosh_sfx() above (which the trailer pipeline calls with a fixed
@@ -1685,13 +1685,19 @@ def woosh_sfx_generate(prompt, duration=1.0, samples=1, base_ts=None):
     fallback -- if Woosh is down the tool should say so rather than hand back
     a synth click the user didn't ask for.
 
+    duration=None (the default, and the only option the Tools tab UI offers)
+    returns Woosh's own natural-length output untouched. A caller can still
+    pass a number to get it trimmed to that length client-side, since Woosh's
+    real API has no duration parameter of its own -- see _woosh_generate.
+
     Multiple samples are produced by calling _woosh_generate repeatedly rather
     than a batch parameter, since the real request schema has no such field
     either (see _woosh_generate_raw)."""
     prompt = (prompt or '').strip()
     if not prompt:
         return [], 'Enter a description of the sound you want.'
-    duration = max(0.2, min(10.0, float(duration or 1.0)))
+    if duration is not None:
+        duration = max(0.2, min(10.0, float(duration)))
     samples = max(1, min(WOOSH_MAX_SAMPLES, int(samples or 1)))
     base_ts = base_ts or f'tool{int(time.time()*1000)}'
 
@@ -3248,10 +3254,15 @@ def api_sfx_generate():
     prompt = (request.form.get('prompt') or '').strip()
     if not prompt:
         return jsonify(ok=False, error='Enter a description of the sound you want.'), 400
-    duration = _num('duration', 1.0, 0.2, 10.0)
+    # No UI control for this anymore -- Woosh's own API has no duration
+    # parameter at all (see _woosh_generate's docstring); the only way
+    # "duration" ever meant anything here was trimming the output afterward
+    # with ffmpeg, which just chopped whatever natural length Woosh produced.
+    # Removed rather than kept as a hidden default trim, so the tool always
+    # returns Woosh's own take on how long the sound should be.
     samples = _num('samples', 1, 1, WOOSH_MAX_SAMPLES, int)
 
-    paths, err = woosh_sfx_generate(prompt, duration=duration, samples=samples)
+    paths, err = woosh_sfx_generate(prompt, duration=None, samples=samples)
     if err:
         return jsonify(ok=False, error=err), 502
 

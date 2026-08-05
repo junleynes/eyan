@@ -1,6 +1,6 @@
-<p align="center"><img src="static/logo.svg" alt="EYAN — Engine For Your AI Needs" width="480"></p>
+<p align="center"><img src="static/logo.svg" alt="EYAN — Engine for Your AI Needs" width="480"></p>
 
-# EYAN — Engine For Your AI Needs
+# EYAN — Engine for Your AI Needs
 
 A self-hosted toolkit for producing broadcast episodic promos ("plugs")
 end to end — from raw footage to a finished, mixed trailer — plus the
