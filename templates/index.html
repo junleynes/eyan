@@ -414,6 +414,21 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
 .sub-tab.active{color:var(--phosphor);background:rgba(52,230,197,.1)}
 .sub-panel{display:none}
 .sub-panel.active{display:block}
+
+/* ---- Collapsible asset sections (Title/End card, Music, SFX, Narration) ----
+   Collapsed by default with a one-line summary of the current setting;
+   click the header to expand and edit. Purely a display:none toggle on the
+   body -- fields stay in the DOM and submit normally either way, same
+   principle .adv-only already relies on. */
+.asset-section{border:1px solid var(--line);border-radius:8px;margin:14px 0;overflow:hidden}
+.asset-section-header{display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;user-select:none;background:var(--elevated,rgba(255,255,255,.03))}
+.asset-section-header:hover{background:rgba(52,230,197,.06)}
+.asset-section-title{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap}
+.asset-section-summary{flex:1;font-size:12px;opacity:.75;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.asset-section-chevron{font-size:10px;opacity:.6;transition:transform .15s;flex-shrink:0}
+.asset-section.open .asset-section-chevron{transform:rotate(90deg)}
+.asset-section-body{display:none;padding:4px 14px 14px}
+.asset-section.open .asset-section-body{display:block}
 </style>
 </head>
 <body>
@@ -812,7 +827,13 @@ document.addEventListener("DOMContentLoaded", function(){
   <label>AI Vision model:</label>
   <select name=model id=trailer-model><option value="">Loading...</option></select>
   </div>
-  <label>Title card video (optional):</label>
+  <div class="asset-section" id=asset-title-card>
+    <div class="asset-section-header" onclick="toggleAssetSection(this)">
+      <span class="asset-section-title">Title card (optional)</span>
+      <span class="asset-section-summary" id=summary-title-card>Not set</span>
+      <span class="asset-section-chevron">&#9656;</span>
+    </div>
+    <div class="asset-section-body">
   <div class="browse-row">
     <input type=file name=end_card_video accept=video/* data-net-field="end_card_video">
     <button type=button class="browse-btn" onclick="openNetworkBrowser('end_card_video','tcard','Title card (TCARD)')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
@@ -840,7 +861,16 @@ document.addEventListener("DOMContentLoaded", function(){
     <span id="title_card_vo_preview_note" style="font-size:11px;opacity:.7"></span>
   </div>
   </div>
-  <label>End card video (optional):</label>
+    </div>
+  </div>
+
+  <div class="asset-section" id=asset-end-card>
+    <div class="asset-section-header" onclick="toggleAssetSection(this)">
+      <span class="asset-section-title">End card (optional)</span>
+      <span class="asset-section-summary" id=summary-end-card>Not set</span>
+      <span class="asset-section-chevron">&#9656;</span>
+    </div>
+    <div class="asset-section-body">
   <div class="browse-row">
     <input type=file name=schedule_video accept=video/* data-net-field="schedule_video">
     <button type=button class="browse-btn" onclick="openNetworkBrowser('schedule_video','endcard','End card (ENDCARD)')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
@@ -868,8 +898,17 @@ document.addEventListener("DOMContentLoaded", function(){
     <span id="end_card_vo_preview_note" style="font-size:11px;opacity:.7"></span>
   </div>
   </div>
-  <label>Background music:</label>
+    </div>
+  </div>
 
+
+  <div class="asset-section" id=asset-bgm>
+    <div class="asset-section-header" onclick="toggleAssetSection(this)">
+      <span class="asset-section-title">Background music</span>
+      <span class="asset-section-summary" id=summary-bgm>Generate music</span>
+      <span class="asset-section-chevron">&#9656;</span>
+    </div>
+    <div class="asset-section-body">
   <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:8px 0">
     <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
       <input type=radio name=scoring_mode value=generate data-requires="ace_step" checked> Generate music
@@ -891,9 +930,17 @@ document.addEventListener("DOMContentLoaded", function(){
   <input type=hidden id=scoring_audio_skip_template name=scoring_audio_skip_template value="">
     <span class="net-file-chip" id=scoring_audio_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('scoring_audio')">&#10005;</span></span>
   </div>
+    </div>
+  </div>
 
-  <div class="quick-visible">
-  <label>Sound effects (stamped at every scene cut):</label>
+  <div class="asset-section" id=asset-sfx>
+    <div class="asset-section-header" onclick="toggleAssetSection(this)">
+      <span class="asset-section-title">Sound effects</span>
+      <span class="asset-section-summary" id=summary-sfx>None</span>
+      <span class="asset-section-chevron">&#9656;</span>
+    </div>
+    <div class="asset-section-body">
+  <p style="margin-top:-4px;margin-bottom:8px;font-size:12px;opacity:.7">Stamped at every scene cut.</p>
   <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:8px 0">
     <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
       <input type=radio name=sfx_mode value=genre data-requires="woosh"> From genre
@@ -916,10 +963,16 @@ document.addEventListener("DOMContentLoaded", function(){
     <span class="net-file-chip" id=sfx_upload_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('sfx_upload')">&#10005;</span></span>
     <p style="margin-top:4px">A single hit/whoosh/impact sound — it gets stamped at every cut, not looped as music.</p>
   </div>
+    </div>
   </div>
 
-  <div class="quick-visible">
-  <label>Narration:</label>
+  <div class="asset-section" id=asset-narration>
+    <div class="asset-section-header" onclick="toggleAssetSection(this)">
+      <span class="asset-section-title">Narration</span>
+      <span class="asset-section-summary" id=summary-narration>None</span>
+      <span class="asset-section-chevron">&#9656;</span>
+    </div>
+    <div class="asset-section-body">
   <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:8px 0">
     <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
       <input type=radio name=vo_mode value=none checked> None
@@ -989,6 +1042,7 @@ document.addEventListener("DOMContentLoaded", function(){
     <input type=number name=vo_volume value=1.15 min=0.3 max=3.0 step=0.05 style="width:80px"></span>
     <p style="margin-top:4px;font-size:12px;opacity:.75">Music, SFX, and original dialogue automatically duck under the voiceover wherever it plays. Audio level is a gain multiplier applied to the voiceover track before mixing (1.0 = unchanged, higher = louder).</p>
   </div>
+    </div>
   </div>
 
   <div class=card style="padding:12px 14px;margin:18px 0 0;border:1px dashed var(--line)">
@@ -1002,16 +1056,79 @@ document.addEventListener("DOMContentLoaded", function(){
   </div>
 
   <script>
+  // ---- Collapsible asset sections (Title/End card, Music, SFX, Narration) ----
+  function toggleAssetSection(headerEl){
+    headerEl.closest('.asset-section').classList.toggle('open')
+  }
+  window.toggleAssetSection = toggleAssetSection
+
+  // Reads a file field's current state (local upload, network chip, or
+  // neither) the same way every other part of the app already tracks it --
+  // no new state, just re-reading what setChip()/clearChip() maintain.
+  function _fileFieldSummary(fieldName){
+    var chip = document.getElementById(fieldName + '_chip')
+    if(chip && chip.style.display !== 'none'){
+      var nameEl = chip.querySelector('.chip-name')
+      if(nameEl && nameEl.textContent) return nameEl.textContent
+    }
+    var input = document.querySelector('input[name="' + fieldName + '"]')
+    if(input && input.files && input.files[0]) return input.files[0].name
+    return null
+  }
+
+  function refreshAllAssetSummaries(){
+    var s
+
+    s = document.getElementById('summary-title-card')
+    if(s){ var v = _fileFieldSummary('end_card_video'); s.textContent = v || 'Not set' }
+
+    s = document.getElementById('summary-end-card')
+    if(s){ var v2 = _fileFieldSummary('schedule_video'); s.textContent = v2 || 'Not set' }
+
+    s = document.getElementById('summary-bgm')
+    if(s){
+      var bgmMode = document.querySelector('input[name=scoring_mode]:checked')
+      bgmMode = bgmMode ? bgmMode.value : 'generate'
+      if(bgmMode === 'none') s.textContent = 'None'
+      else if(bgmMode === 'generate') s.textContent = 'Generate music'
+      else { var f = _fileFieldSummary('scoring_audio'); s.textContent = f ? 'Upload: ' + f : 'Upload (no file yet)' }
+    }
+
+    s = document.getElementById('summary-sfx')
+    if(s){
+      var sfxMode = document.querySelector('input[name=sfx_mode]:checked')
+      sfxMode = sfxMode ? sfxMode.value : 'none'
+      if(sfxMode === 'none') s.textContent = 'None'
+      else if(sfxMode === 'genre') s.textContent = 'From genre'
+      else { var f2 = _fileFieldSummary('sfx_upload'); s.textContent = f2 ? 'Upload: ' + f2 : 'Upload (no file yet)' }
+    }
+
+    s = document.getElementById('summary-narration')
+    if(s){
+      var voMode = document.querySelector('input[name=vo_mode]:checked')
+      voMode = voMode ? voMode.value : 'none'
+      if(voMode === 'none') s.textContent = 'None'
+      else if(voMode === 'tts'){
+        var vsel = document.getElementById('vo-voice-select')
+        var voiceLabel = (vsel && vsel.selectedIndex >= 0 && vsel.value) ? vsel.options[vsel.selectedIndex].textContent : null
+        s.textContent = 'AI voice' + (voiceLabel ? ' \u2014 ' + voiceLabel : '')
+      }else{ var f3 = _fileFieldSummary('vo_upload'); s.textContent = f3 ? 'Upload: ' + f3 : 'Upload (no file yet)' }
+    }
+  }
+  window.refreshAllAssetSummaries = refreshAllAssetSummaries
+
   document.querySelectorAll('input[name=scoring_mode]').forEach(r=>{
     r.addEventListener('change',()=>{
       document.getElementById('scoring-upload-area').style.display=
         document.querySelector('input[name=scoring_mode]:checked').value==='upload'?'':'none'
+      refreshAllAssetSummaries()
     })
   })
   document.querySelectorAll('input[name=sfx_mode]').forEach(r=>{
     r.addEventListener('change',()=>{
       document.getElementById('sfx-upload-area').style.display=
         document.querySelector('input[name=sfx_mode]:checked').value==='upload'?'':'none'
+      refreshAllAssetSummaries()
     })
   })
   document.querySelectorAll('input[name=vo_mode]').forEach(r=>{
@@ -1021,6 +1138,7 @@ document.addEventListener("DOMContentLoaded", function(){
       document.getElementById('vo-tts-area').style.display = v==='tts'?'':'none'
       document.getElementById('vo-common-area').style.display = v==='none'?'none':''
       if(v==='tts') loadVoices()
+      refreshAllAssetSummaries()
     })
   })
   document.querySelectorAll('input[name=vo_engine]').forEach(r=>{
@@ -1063,6 +1181,7 @@ document.addEventListener("DOMContentLoaded", function(){
         opt.value = l.code; opt.textContent = l.label
         langSel.appendChild(opt)
       })
+      if(typeof refreshAllAssetSummaries === 'function') refreshAllAssetSummaries()
     }).catch(function(e){
       var note = document.getElementById('vo-voice-note')
       if(note) note.textContent = 'Could not reach Fish Audio to list voices: ' + e
@@ -1330,6 +1449,7 @@ document.addEventListener("DOMContentLoaded", function(){
       setField('end_card_vo_start', tpl.end_card_vo_start)
       setField('end_card_vo_end', tpl.end_card_vo_end)
     }
+    refreshAllAssetSummaries()
   }
 
   function saveTemplate(){
@@ -1435,6 +1555,9 @@ document.addEventListener("DOMContentLoaded", function(){
   }
   setViewMode('easy')
   loadTemplates()  // shows are the first thing you pick, so load them up front
+  refreshAllAssetSummaries()  // sets each collapsed section's initial summary text
+  var voVoiceSel = document.getElementById('vo-voice-select')
+  if(voVoiceSel) voVoiceSel.addEventListener('change', refreshAllAssetSummaries)
   // Grays out and disables generate-music / from-genre-sfx / tts-narration options
   // when the AI service(s) they need aren't reachable, falling back the selection
   // to "None" if it was the one currently chosen. Wired into runHealthCheck() below.
@@ -4091,6 +4214,7 @@ document.addEventListener('DOMContentLoaded', function(){
     if(!chip) return
     chip.style.display = 'inline-flex'
     chip.querySelector('.chip-name').textContent = name + (size != null ? ' (' + humanSize(size) + ')' : '')
+    refreshAllAssetSummaries()
   }
   window.setChip = setChip
 
@@ -4129,6 +4253,7 @@ document.addEventListener('DOMContentLoaded', function(){
       player.removeAttribute('src'); player.style.display = 'none'
       if(note) note.textContent = ''
     }
+    refreshAllAssetSummaries()
   }
   window.clearNetworkField = clearChip
 
@@ -4203,6 +4328,7 @@ document.addEventListener('DOMContentLoaded', function(){
   document.querySelectorAll('input[type=file][data-net-field]').forEach(function(input){
     input.addEventListener('change', function(){
       if(input.files && input.files[0]) clearChip(input.getAttribute('data-net-field'))
+      refreshAllAssetSummaries()
     })
   })
 })()
