@@ -3,11 +3,47 @@
 # EYAN — Engine For Your AI Needs
 
 Formerly AIMP. Split out of the original single `main_app_57_1_.py`
-(~9,500 lines). Run `python3 main.py` instead of the old file — same
-behavior, same env vars (`LIBRARY_DIR`, `SECRET_KEY_FILE`,
+(~9,500 lines). Same behavior, same env vars (`LIBRARY_DIR`, `SECRET_KEY_FILE`,
 `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `RESET_ADMIN`, `TEMPLATES_DIR`,
 `FISH_AUDIO_URL`, etc. — see `.env.example` for the full list), same port
 (5000).
+
+## Install
+
+```
+# Linux
+./install.sh              # add --with-ffmpeg to also install ffmpeg via apt/dnf/yum/pacman/zypper
+
+# Windows (PowerShell)
+.\install.ps1              # add -WithFFmpeg to also install ffmpeg via winget
+```
+
+Either script: checks for Python 3.10+ (numpy 2.x, pinned in
+`requirements.txt`, requires it), checks for `ffmpeg`/`ffprobe` on PATH,
+creates a `venv/` and installs `requirements.txt` into it, and copies
+`.env.example` to `.env` if you don't already have one. Safe to re-run —
+it reuses an existing `venv/` and never touches an existing `.env`.
+
+Then:
+
+```
+# Linux
+source venv/bin/activate
+python3 main.py
+
+# Windows
+venv\Scripts\Activate.ps1
+python main.py
+```
+
+**`.env` is real now** — as of this pass, `core.py` loads it via
+`python-dotenv` before anything else runs, so variables in `.env` actually
+take effect (this used to be silently decorative). One thing worth knowing
+if you hand-edit it: every line in `.env.example` is commented out on
+purpose — uncommenting a line with nothing after the `=` sets an actual
+empty string, which is *not* the same as leaving the variable unset, and
+some of the app's own defaults only apply when a variable is completely
+absent. Uncomment a line only when you're also giving it a real value.
 
 ## Layout
 
@@ -20,6 +56,8 @@ behavior, same env vars (`LIBRARY_DIR`, `SECRET_KEY_FILE`,
 | `templates/index.html` | The UI shell (was a 3,900-line Python string assigned to `UI` and passed through `render_template_string`; now a real template file loaded via `render_template`). |
 | `main.py` | Entrypoint — imports the other modules (registering their routes), defines the last few top-level routes (`/`, `/uploads/<filename>`, `/download/<filename>`), and starts the server. |
 | `static/logo.svg`, `static/logo-mark.svg` | The EYAN logo (full lockup and icon-only mark). Served automatically by Flask's default `/static/` handling since this folder sits next to `core.py`. |
+| `install.sh`, `install.ps1` | One-time setup: Python/ffmpeg checks, venv + `requirements.txt`, `.env` from `.env.example`. See Install above. |
+| `requirements.txt`, `.env.example` | Every third-party dependency, and every environment variable the app reads with sensible defaults documented (all commented out — see the note above about why). |
 
 ## Scene detection fix (this pass)
 

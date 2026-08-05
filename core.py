@@ -14,6 +14,20 @@ from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 import smbclient  # pip install smbprotocol -- lets the upload panels browse a Windows/SMB network share directly
 
+# Loads .env (if present) into the real process environment, BEFORE any of
+# this file's own os.environ.get() calls below and before any other module
+# gets imported -- so LIBRARY_DIR, ADMIN_PASSWORD, FISH_AUDIO_URL, etc. in a
+# .env file next to this script take effect the same as if they'd been
+# exported in the shell. Silently does nothing if python-dotenv isn't
+# installed or there's no .env file, so this is optional, not required --
+# every var can still be set the old way (real env vars / your process
+# manager) with no .env file at all.
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = tempfile.mkdtemp()
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024 * 1024  # 5GB
