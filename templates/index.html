@@ -2097,14 +2097,14 @@ function updateLyricsHint(){
 
   // Strip structure/marker tags like [verse], [chorus], [inst] before counting
   // -- they're not sung.
-  var sungWords = text.replace(/\\[[^\\]]*\\]/g, ' ').trim().split(/\\s+/).filter(Boolean)
+  var sungWords = text.replace(/\[[^\]]*\]/g, ' ').trim().split(/\s+/).filter(Boolean)
   if(!sungWords.length || !duration){ hint.style.display = 'none'; return }
 
   var lo = duration * 2, hi = duration * 3   // ~2-3 words/sec
   var n = sungWords.length
   var msgs = []
   if(n > hi * 1.3){
-    msgs.push('About ' + n + ' words for ' + duration + 's is well above ACE-Step\\'s ~2-3 words/sec '
+    msgs.push('About ' + n + ' words for ' + duration + 's is well above ACE-Step\'s ~2-3 words/sec '
       + 'pace (~' + Math.round(lo) + '-' + Math.round(hi) + ' words fits best here) — the most common '
       + 'cause of skipped or crammed words. Trim the lyrics, or raise the duration.')
   }else if(n < lo * 0.4){
@@ -2112,15 +2112,15 @@ function updateLyricsHint(){
       + 'a long instrumental intro/outro filling the rest. Add more lyrics, or lower the duration.')
   }
 
-  var lines = text.split('\\n').map(function(l){ return l.replace(/\\[[^\\]]*\\]/g, '').trim() })
+  var lines = text.split('\n').map(function(l){ return l.replace(/\[[^\]]*\]/g, '').trim() })
                   .filter(Boolean)
-  var longLines = lines.filter(function(l){ return l.split(/\\s+/).filter(Boolean).length > 8 }).length
+  var longLines = lines.filter(function(l){ return l.split(/\s+/).filter(Boolean).length > 8 }).length
   if(longLines){
     msgs.push(longLines + ' line(s) run past ~8 words — long lines tend to fracture vocal timing; '
       + 'short lines (4-8 words) lock in more reliably.')
   }
 
-  if(lines.length > 1 && !/\\[(verse|chorus|bridge|intro|outro)/i.test(text)){
+  if(lines.length > 1 && !/\[(verse|chorus|bridge|intro|outro)/i.test(text)){
     msgs.push('No [verse]/[chorus] structure tags — without them ACE-Step decides the song structure '
       + 'itself, which is the other common source of an unexpectedly long intro before vocals start.')
   }
@@ -2131,7 +2131,7 @@ function updateLyricsHint(){
     hint.style.color = 'var(--amber)'
     hint.style.display = 'block'
   }else{
-    hint.innerHTML = '<div>&#10003; ' + n + ' words for ' + duration + 's is in ACE-Step\\'s usual singing pace.</div>'
+    hint.innerHTML = '<div>&#10003; ' + n + ' words for ' + duration + 's is in ACE-Step\'s usual singing pace.</div>'
     hint.style.borderColor = 'var(--line)'
     hint.style.color = ''
     hint.style.opacity = '.75'
@@ -2403,14 +2403,14 @@ function escapeHtmlLite(s){
 function _mdInline(s){
   // Order matters: bold before italic, so **x** isn't first read as *?x*? by
   // the italic pass and left with a stray asterisk. The italic pattern
-  // requires a non-space character immediately inside each marker (\\S at
+  // requires a non-space character immediately inside each marker (\S at
   // both edges) -- without that, ordinary text using a bare asterisk for
   // multiplication ("2 * 3 = 6") gets misread as an open/close emphasis pair
-  // spanning everything in between, since a naive /\\*([^*]+)\\*/ has no way to
+  // spanning everything in between, since a naive /\*([^*]+)\*/ has no way to
   // tell "* " (math, space after) from "*word" (real italic, no space).
   s = s.replace(/`([^`]+)`/g, '<code>$1</code>')
-  s = s.replace(/\\*\\*([^*]+)\\*\\*|__([^_]+)__/g, function(m, a, b){ return '<strong>' + (a || b) + '</strong>' })
-  s = s.replace(/\\*(\\S(?:[^*]*\\S)?)\\*|_(\\S(?:[^_]*\\S)?)_/g, function(m, a, b){ return '<em>' + (a || b) + '</em>' })
+  s = s.replace(/\*\*([^*]+)\*\*|__([^_]+)__/g, function(m, a, b){ return '<strong>' + (a || b) + '</strong>' })
+  s = s.replace(/\*(\S(?:[^*]*\S)?)\*|_(\S(?:[^_]*\S)?)_/g, function(m, a, b){ return '<em>' + (a || b) + '</em>' })
   return s
 }
 
@@ -2419,12 +2419,12 @@ function renderMarkdownSafe(raw){
   // Pull fenced code blocks out first so their content isn't touched by any
   // later inline/list/heading pass, then splice the rendered <pre> back in.
   var blocks = []
-  escaped = escaped.replace(/```([\\s\\S]*?)```/g, function(m, code){
-    blocks.push('<pre><code>' + code.replace(/^\\n/, '') + '</code></pre>')
-    return '\\u0000BLOCK' + (blocks.length - 1) + '\\u0000'
+  escaped = escaped.replace(/```([\s\S]*?)```/g, function(m, code){
+    blocks.push('<pre><code>' + code.replace(/^\n/, '') + '</code></pre>')
+    return '\u0000BLOCK' + (blocks.length - 1) + '\u0000'
   })
 
-  var lines = escaped.split('\\n')
+  var lines = escaped.split('\n')
   var html = [], para = [], list = null   // list: {type:'ul'|'ol', items:[]}
 
   function flushPara(){
@@ -2439,17 +2439,17 @@ function renderMarkdownSafe(raw){
 
   lines.forEach(function(line){
     var m
-    if(/^\\u0000BLOCK\\d+\\u0000$/.test(line.trim())){
+    if(/^\u0000BLOCK\d+\u0000$/.test(line.trim())){
       flushPara(); flushList(); html.push(line.trim())
-    }else if((m = line.match(/^(#{1,4})\\s+(.*)$/))){
+    }else if((m = line.match(/^(#{1,4})\s+(.*)$/))){
       flushPara(); flushList()
       var lvl = m[1].length
       html.push('<h' + lvl + '>' + _mdInline(m[2]) + '</h' + lvl + '>')
-    }else if((m = line.match(/^\\s*[-*]\\s+(.*)$/))){
+    }else if((m = line.match(/^\s*[-*]\s+(.*)$/))){
       flushPara()
       if(!list || list.type !== 'ul'){ flushList(); list = {type:'ul', items:[]} }
       list.items.push(m[1])
-    }else if((m = line.match(/^\\s*\\d+\\.\\s+(.*)$/))){
+    }else if((m = line.match(/^\s*\d+\.\s+(.*)$/))){
       flushPara()
       if(!list || list.type !== 'ol'){ flushList(); list = {type:'ol', items:[]} }
       list.items.push(m[1])
@@ -2462,7 +2462,7 @@ function renderMarkdownSafe(raw){
   flushPara(); flushList()
 
   var out = html.join('')
-  blocks.forEach(function(b, i){ out = out.replace('\\u0000BLOCK' + i + '\\u0000', b) })
+  blocks.forEach(function(b, i){ out = out.replace('\u0000BLOCK' + i + '\u0000', b) })
   return out || _mdInline(escaped)   // no block structure at all -> still apply inline formatting
 }
 
@@ -2484,7 +2484,7 @@ function renderChatMessage(role, content, thinking, attachments){
       }else{
         var chip = document.createElement('span')
         chip.style.cssText = 'font-size:11px;padding:3px 8px;border-radius:10px;border:1px solid var(--line);opacity:.8'
-        chip.textContent = '\\ud83d\\udcc4 ' + a.filename
+        chip.textContent = '\ud83d\udcc4 ' + a.filename
         chips.appendChild(chip)
       }
     })
@@ -2650,10 +2650,10 @@ async function sendChatMessage(){
   var attachments = pendingAttachments.slice()
   var images = attachments.filter(function(a){ return a.kind === 'image' }).map(function(a){ return a.base64 })
   var docParts = attachments.filter(function(a){ return a.kind === 'document' }).map(function(a){
-    return '--- attached: ' + a.filename + (a.truncated ? ' (truncated)' : '') + ' ---\\n' + a.text +
-      '\\n--- end of ' + a.filename + ' ---'
+    return '--- attached: ' + a.filename + (a.truncated ? ' (truncated)' : '') + ' ---\n' + a.text +
+      '\n--- end of ' + a.filename + ' ---'
   })
-  var fullContent = text + (docParts.length ? (text ? '\\n\\n' : '') + docParts.join('\\n\\n') : '')
+  var fullContent = text + (docParts.length ? (text ? '\n\n' : '') + docParts.join('\n\n') : '')
 
   var displayList = attachments.map(function(a){ return {kind: a.kind, filename: a.filename, previewUrl: a.previewUrl} })
   renderChatMessage('user', text, null, displayList)
@@ -2813,8 +2813,8 @@ function insertTagAtCursor(el, tag){
   if(start === undefined || start === null){ el.value += tag; el.focus(); return }
   var before = el.value.slice(0, start), after = el.value.slice(end)
   // Keep a space between a tag and adjacent words so it never fuses onto one.
-  var pad = (before && !/\\s$/.test(before)) ? ' ' : ''
-  var trail = (after && !/^\\s/.test(after)) ? ' ' : ''
+  var pad = (before && !/\s$/.test(before)) ? ' ' : ''
+  var trail = (after && !/^\s/.test(after)) ? ' ' : ''
   el.value = before + pad + tag + trail + after
   var caret = (before + pad + tag + trail).length
   el.focus()
@@ -3555,7 +3555,7 @@ job. Configured via env vars:
 <tr><td>VO / narration, title &amp; end card VO</td><td><code>VO</code></td><td>Audio</td></tr>
 <tr><td>SFX</td><td><code>SFX</code></td><td>Audio</td></tr>
 </table>
-<p>These sit under one shared root (<code>\\\\host\\share\\subdir\\HIRES</code>, <code>...\\MUSIC</code>, etc.) set via the <code>NETWORK_SHARE_*</code> environment variables — see the README for the full list. A picked network file is copied into the app's working folder the same way an upload would be, so the rest of the pipeline treats both identically.</p>
+<p>These sit under one shared root (<code>\\host\share\subdir\HIRES</code>, <code>...\MUSIC</code>, etc.) set via the <code>NETWORK_SHARE_*</code> environment variables — see the README for the full list. A picked network file is copied into the app's working folder the same way an upload would be, so the rest of the pipeline treats both identically.</p>
 
 <h3>Job monitor &amp; saved trailers</h3>
 <p>Two collapsible panels sit above the generator form:</p>
