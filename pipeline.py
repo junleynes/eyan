@@ -272,7 +272,7 @@ WHISPER_MODEL = os.environ.get('WHISPER_MODEL', 'large-v2')
 # Self-hosted Fish Audio S2 (SGLang-based server you run yourself) — no API key needed.
 # To use Fish Audio's hosted cloud API instead, set FISH_AUDIO_URL=https://api.fish.audio/v1/tts
 # and FISH_AUDIO_API_KEY to your key.
-FISH_AUDIO_URL = os.environ.get('FISH_AUDIO_URL', 'http://10.0.1.213:8080/v1/tts')
+FISH_AUDIO_URL = os.environ.get('FISH_AUDIO_URL', 'http://localhost:8080/v1/tts')
 FISH_AUDIO_API_KEY = os.environ.get('FISH_AUDIO_API_KEY', '')  # leave blank for a self-hosted server
 FISH_AUDIO_MODEL = os.environ.get('FISH_AUDIO_MODEL', 's2.1-pro-free')  # ignored by most self-hosted servers, which just run whichever checkpoint they were started with
 
@@ -343,12 +343,12 @@ AUDIO_EXTENSIONS = {'mp3', 'wav', 'm4a', 'flac', 'ogg', 'aac', 'wma'}
 
 # Each browsable panel gets its own subfolder under the share root, and its own
 # allowed extension set.
-#   \\\\10.0.1.130\\pmc_mams_ing\\PLUG TEST\\HIRES    -> raw video mats
-#   \\\\10.0.1.130\\pmc_mams_ing\\PLUG TEST\\TCARD    -> title cards
-#   \\\\10.0.1.130\\pmc_mams_ing\\PLUG TEST\\ENDCARD  -> end cards
-#   \\\\10.0.1.130\\pmc_mams_ing\\PLUG TEST\\MUSIC  -> background music
-#   \\\\10.0.1.130\\pmc_mams_ing\\PLUG TEST\\VO     -> narration / voiceover
-#   \\\\10.0.1.130\\pmc_mams_ing\\PLUG TEST\\SFX    -> sound effects
+#   \\<share-host>\<share-name>\<subdir>\HIRES    -> raw video mats
+#   \\<share-host>\<share-name>\<subdir>\TCARD    -> title cards
+#   \\<share-host>\<share-name>\<subdir>\ENDCARD  -> end cards
+#   \\<share-host>\<share-name>\<subdir>\MUSIC  -> background music
+#   \\<share-host>\<share-name>\<subdir>\VO     -> narration / voiceover
+#   \\<share-host>\<share-name>\<subdir>\SFX    -> sound effects
 NETWORK_CATEGORIES = {
     'hires': {'folder': 'HIRES', 'exts': ALLOWED_EXTENSIONS, 'label': 'Video (HIRES)'},
     # Cards live in their own delivery folders, not with the raw video mats.
@@ -368,7 +368,7 @@ def _network_category(category):
 
 def _network_share_root(category=DEFAULT_NETWORK_CATEGORY):
     """UNC path of the folder we browse for `category`, e.g.
-    \\\\10.0.1.130\\pmc_mams_ing\\PLUG TEST\\MUSIC"""
+    \\\\<share-host>\\<share-name>\\MUSIC"""
     cat = _network_category(category)
     root = f'\\\\{NETWORK_SHARE_HOST}\\{NETWORK_SHARE_NAME}'
     if NETWORK_SHARE_SUBDIR:
