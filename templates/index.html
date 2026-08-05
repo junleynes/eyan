@@ -2877,6 +2877,83 @@ function loadToolVoices(pid, engine, force){
     })
 }
 
+// ---- Manage voices (admin) ----
+function loadVoiceManageList(){
+  var list = document.getElementById('voice-manage-list')
+  if(!list) return   // not rendered for non-admins
+  list.innerHTML = '<div style="font-size:12px;opacity:.6">Loading\u2026</div>'
+  fetch('/api/voices?refresh=1').then(function(r){ return r.json() }).then(function(d){
+    if(!d.voices || !d.voices.length){
+      list.innerHTML = '<div style="font-size:12px;opacity:.6">No registered voices on this server yet.</div>'
+      return
+    }
+    list.innerHTML = '<div style="font-size:12px;opacity:.6;margin-bottom:6px">Registered voices:</div>' +
+      d.voices.map(function(v){
+        return '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--line)">' +
+          '<span style="flex:1;font-size:12px">' + escapeHtmlLite(v.title || v.id) + '</span>' +
+          '<button type=button class=btn style="padding:3px 9px;font-size:11px;border-color:var(--tally,#e08a8a);color:var(--tally,#e08a8a)" ' +
+          'onclick="deleteVoice(\'' + escapeHtmlLite(v.id).replace(/'/g, "\\'") + '\')">Delete</button>' +
+        '</div>'
+      }).join('')
+  }).catch(function(e){
+    list.innerHTML = '<div style="font-size:12px;color:var(--amber)">Could not load voices: ' + escapeHtmlLite(String(e)) + '</div>'
+  })
+}
+
+async function cloneVoice(){
+  var btn = document.getElementById('voice-clone-btn')
+  var note = document.getElementById('voice-clone-note')
+  var idEl = document.getElementById('voice-clone-id')
+  var audioEl = document.getElementById('voice-clone-audio')
+  var textEl = document.getElementById('voice-clone-text')
+  var id = idEl.value.trim()
+  var text = textEl.value.trim()
+  if(!id){ note.innerHTML = '<span style="color:var(--amber)">Enter a name for this voice.</span>'; return }
+  if(!audioEl.files || !audioEl.files[0]){ note.innerHTML = '<span style="color:var(--amber)">Choose a reference audio file.</span>'; return }
+  if(!text){ note.innerHTML = '<span style="color:var(--amber)">Enter the exact transcript of the audio.</span>'; return }
+
+  btn.disabled = true
+  note.textContent = 'Registering voice\u2026'
+  var fd = new FormData()
+  fd.append('id', id)
+  fd.append('text', text)
+  fd.append('audio', audioEl.files[0])
+  try{
+    var r = await fetch('/api/voices/clone', {method:'POST', body: fd})
+    var d = await r.json()
+    if(!d.ok){
+      note.innerHTML = '<span style="color:var(--amber)">' + escapeHtmlLite(d.error || 'Could not register voice.') + '</span>'
+      return
+    }
+    note.innerHTML = '<span style="color:var(--phosphor)">Voice "' + escapeHtmlLite(id) + '" added.</span>'
+    idEl.value = ''; audioEl.value = ''; textEl.value = ''
+    loadVoiceManageList()
+    loadToolVoices('p-fish', 'fish_audio', true)   // refresh the picker dropdown too
+  }catch(e){
+    note.innerHTML = '<span style="color:var(--amber)">Request failed: ' + escapeHtmlLite(String(e)) + '</span>'
+  }finally{
+    btn.disabled = false
+  }
+}
+
+async function deleteVoice(id){
+  if(!confirm('Delete voice "' + id + '"? This removes it from the server -- anyone using it for narration will need to pick another voice.')) return
+  var fd = new FormData()
+  fd.append('id', id)
+  try{
+    var r = await fetch('/api/voices/delete', {method:'POST', body: fd})
+    var d = await r.json()
+    if(!d.ok){
+      alert(d.error || 'Could not delete voice.')
+      return
+    }
+    loadVoiceManageList()
+    loadToolVoices('p-fish', 'fish_audio', true)
+  }catch(e){
+    alert('Request failed: ' + e)
+  }
+}
+
 async function generateVoiceTool(pid, engine){
   var btn = document.getElementById(pid + '-btn')
   var out = document.getElementById(pid + '-result')
@@ -2968,6 +3045,7 @@ document.addEventListener('DOMContentLoaded', function(){
     r.addEventListener('change', updateVoTagBarVisibility)
   })
   if(document.getElementById('p-fish-voice')) loadToolVoices('p-fish', 'fish_audio')
+  loadVoiceManageList()   // no-op for non-admins -- #voice-manage-list isn't rendered for them
 })
 
 function renderTrailerResult(d){
@@ -3330,6 +3408,23 @@ document.getElementById('vf').addEventListener('submit', async function(e){
   <button class=btn type=button id=p-fish-btn onclick="generateVoiceTool('p-fish','fish_audio')">Render narration</button>
 </div>
 <div id=p-fish-result style="display:none;margin-top:16px"></div>
+{% if current_role == 'admin' %}
+<div class=card style="margin-top:20px;padding:14px">
+  <h3 style="margin:0 0 8px;font-size:13px">Manage voices (admin)</h3>
+  <p style="font-size:12px;opacity:.7;margin-top:-4px">Registers a reusable named voice on the Fish Audio server — unlike the reference-audio upload above (a one-time zero-shot clone), a registered voice appears in the Voice dropdown above for everyone, every time, without re-uploading. Requires the audio's exact transcript so the model can align pronunciation correctly. Self-hosted servers only.</p>
+  <label>Voice name:</label>
+  <input type=text id=voice-clone-id class=input-box placeholder="e.g. narrator-male-en">
+  <label>Reference audio:</label>
+  <input type=file id=voice-clone-audio accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg">
+  <label>Exact transcript of the audio:</label>
+  <textarea id=voice-clone-text class=input-box rows=2 placeholder="Type exactly what's spoken in the reference audio -- used to align pronunciation, not shown to listeners."></textarea>
+  <div style="margin-top:10px">
+    <button type=button class=btn onclick="cloneVoice()" id=voice-clone-btn>Add voice</button>
+  </div>
+  <div id=voice-clone-note style="margin-top:8px;font-size:12px"></div>
+  <div id=voice-manage-list style="margin-top:16px"></div>
+</div>
+{% endif %}
 <div id=p-fish-prompt class=no-data style="margin-top:14px">Type a script and pick a voice to render narration.</div>
 </div>
 <div id="p-stt" class="panel">

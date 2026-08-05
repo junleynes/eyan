@@ -19,6 +19,7 @@ requests==2.33.1
 scenedetect==0.7.1
 smbprotocol==1.17.0
 pypdf==5.9.0
+msgpack>=1.0
 librosa>=0.10
 soundfile>=0.12
 

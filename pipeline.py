@@ -14,7 +14,7 @@ safer done incrementally against a real render on the actual server, where
 the AI services, ffmpeg, and real footage can actually be exercised --
 not blind in a sandbox that has none of those available.
 """
-import os, cv2, numpy as np, tempfile, threading, time, pathlib, base64, json, requests, subprocess, shutil, re, sqlite3, uuid, secrets, io
+import os, cv2, numpy as np, tempfile, threading, time, pathlib, base64, json, requests, subprocess, shutil, re, sqlite3, uuid, secrets, io, mimetypes
 from concurrent.futures import ThreadPoolExecutor
 from collections import deque
 from scenedetect import open_video, SceneManager
@@ -764,6 +764,101 @@ def list_voices_for_engine(engine, force=False):
     engine now; the parameter is kept so existing API callers and saved templates
     that still pass vo_engine keep working."""
     return fish_audio_list_voices(force=force)
+
+def _fish_audio_self_hosted_base():
+    """Server root derived from FISH_AUDIO_URL (which points at .../v1/tts),
+    e.g. http://localhost:8080 -- shared by list/clone/delete so they always
+    agree on which server they're talking to."""
+    base = FISH_AUDIO_URL.rsplit('/v1/', 1)[0] if '/v1/' in FISH_AUDIO_URL else FISH_AUDIO_URL
+    return base.rstrip('/')
+
+def fish_audio_add_reference(voice_id, audio_path, text, timeout=60):
+    """Registers a new named, reusable voice on a self-hosted Fish Speech
+    server via POST /v1/references/add -- confirmed against this server's own
+    /docs (multipart/form-data: id, audio, text), not assumed.
+
+    Unlike the zero-shot reference-audio upload elsewhere in this app (attach
+    a sample to a single TTS request, nothing saved), this one-time
+    registration makes the voice show up in the Voice dropdown for everyone
+    from then on, with no need to re-upload a sample per generation. `text`
+    must be the reference audio's exact transcript -- the model uses it to
+    align pronunciation to the audio, the same purpose as fish-speech's own
+    .lab sidecar files.
+
+    Only supports self-hosted servers (no FISH_AUDIO_API_KEY set). The hosted
+    cloud API's voice-management endpoints are a different, separate surface
+    this hasn't been verified against -- see fish_audio_list_voices' cloud
+    branch for the one hosted endpoint that has been."""
+    if FISH_AUDIO_API_KEY:
+        return False, ('Voice registration isn\u2019t implemented for the hosted Fish Audio cloud API '
+                       '(FISH_AUDIO_API_KEY is set) -- only for a self-hosted server. '
+                       'Manage cloud voices at fish.audio directly.')
+    voice_id = (voice_id or '').strip()
+    text = (text or '').strip()
+    if not voice_id:
+        return False, 'Enter a name for this voice.'
+    if not text:
+        return False, 'Enter the exact transcript of the reference audio.'
+    if not (audio_path and os.path.exists(audio_path)):
+        return False, 'No reference audio file.'
+    base = _fish_audio_self_hosted_base()
+    try:
+        with open(audio_path, 'rb') as f:
+            r = requests.post(f'{base}/v1/references/add',
+                              data={'id': voice_id, 'text': text},
+                              files={'audio': (os.path.basename(audio_path), f,
+                                               mimetypes.guess_type(audio_path)[0] or 'audio/wav')},
+                              timeout=timeout)
+    except Exception as e:
+        return False, f'Could not reach Fish Audio at {base}: {e}'
+    if not r.ok:
+        detail = (r.text or '')[:300]
+        try:
+            j = r.json()
+            detail = j.get('error') or j.get('detail') or j.get('message') or detail
+        except Exception:
+            pass
+        return False, f'Fish Audio API error {r.status_code}: {detail}'
+    return True, None
+
+def fish_audio_delete_reference(voice_id, timeout=15):
+    """Deletes a registered voice from a self-hosted Fish Speech server via
+    DELETE /v1/references/delete. Confirmed against this server's own /docs:
+    the request body is msgpack-encoded (Content-Type: application/msgpack),
+    not JSON -- {'reference_id': voice_id} -- matching the same
+    defaults-to-msgpack behavior fish_audio_list_voices already had to work
+    around for /v1/references/list's response. Sent as real encoded msgpack
+    bytes here, not JSON with a relabeled header, since there's no
+    confirmation this endpoint accepts JSON at all.
+
+    Only supports self-hosted servers, same reasoning as
+    fish_audio_add_reference above."""
+    if FISH_AUDIO_API_KEY:
+        return False, ('Voice deletion isn\u2019t implemented for the hosted Fish Audio cloud API '
+                       '(FISH_AUDIO_API_KEY is set) -- only for a self-hosted server. '
+                       'Manage cloud voices at fish.audio directly.')
+    voice_id = (voice_id or '').strip()
+    if not voice_id:
+        return False, 'No voice id given.'
+    base = _fish_audio_self_hosted_base()
+    try:
+        import msgpack
+        body = msgpack.packb({'reference_id': voice_id})
+        r = requests.delete(f'{base}/v1/references/delete', data=body,
+                            headers={'Content-Type': 'application/msgpack'}, timeout=timeout)
+    except ImportError:
+        return False, 'The msgpack package is required for voice deletion but is not installed (pip install msgpack).'
+    except Exception as e:
+        return False, f'Could not reach Fish Audio at {base}: {e}'
+    if not r.ok:
+        detail = (r.text or '')[:300]
+        try:
+            j = r.json()
+            detail = j.get('error') or j.get('detail') or j.get('message') or detail
+        except Exception:
+            pass
+        return False, f'Fish Audio API error {r.status_code}: {detail}'
+    return True, None
 
 # ---- Background job tracking (progress reporting for long-running trailer jobs) ----
 JOBS = {}
@@ -3797,6 +3892,52 @@ def api_voices():
     voices, source, error = list_voices_for_engine(engine, force=force)
     return jsonify(ok=error is None, voices=voices, languages=FISH_AUDIO_LANGUAGES,
                     source=source, error=error, engine=engine)
+
+@app.route('/api/voices/clone', methods=['POST'])
+def api_voices_clone():
+    """Registers a new named voice on the self-hosted Fish Audio server (see
+    fish_audio_add_reference). Admin-only: this is a shared, global resource
+    -- every account picks from the same Voice dropdown -- same reasoning as
+    /api/config being admin-only."""
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='Admin access required.'), 403
+    voice_id = (request.form.get('id') or '').strip()
+    text = (request.form.get('text') or '').strip()
+    audio = request.files.get('audio')
+    if not audio or not audio.filename:
+        return jsonify(ok=False, error='Choose a reference audio file.'), 400
+    fn = secure_filename(audio.filename)
+    if not fn:
+        return jsonify(ok=False, error='Invalid audio filename.'), 400
+    tmp_path = os.path.join(app.config['UPLOAD_FOLDER'], f'voiceclone_{int(time.time()*1000)}{os.path.splitext(fn)[1]}')
+    audio.save(tmp_path)
+    try:
+        ok, err = fish_audio_add_reference(voice_id, tmp_path, text)
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+    if not ok:
+        return jsonify(ok=False, error=err), 502
+    # The voice list is cached (_VOICES_CACHE_TTL) -- force a refresh so the
+    # new voice shows up immediately rather than after the cache expires.
+    list_voices_for_engine('fish_audio', force=True)
+    return jsonify(ok=True, id=voice_id)
+
+@app.route('/api/voices/delete', methods=['POST'])
+def api_voices_delete():
+    """Deletes a registered voice from the self-hosted Fish Audio server (see
+    fish_audio_delete_reference). Admin-only, same reasoning as clone above."""
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='Admin access required.'), 403
+    voice_id = (request.form.get('id') or '').strip()
+    ok, err = fish_audio_delete_reference(voice_id)
+    if not ok:
+        return jsonify(ok=False, error=err), 502
+    list_voices_for_engine('fish_audio', force=True)
+    return jsonify(ok=True, id=voice_id)
 
 @app.route('/api/vo/preview', methods=['POST'])
 def api_vo_preview():
