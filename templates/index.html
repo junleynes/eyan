@@ -2265,9 +2265,11 @@ async function runTranscribe(){
   var out = document.getElementById('stt-result')
   var note = document.getElementById('stt-prompt')
   var f = document.getElementById('stt-file')
-  if(!f || !f.files || !f.files[0]){
+  var networkVal = document.getElementById('stt_file_network').value
+  var hasLocal = f && f.files && f.files[0]
+  if(!hasLocal && !networkVal){
     note.style.display = 'block'
-    note.innerHTML = '<span style="color:var(--amber)">Pick a video or audio file first.</span>'
+    note.innerHTML = '<span style="color:var(--amber)">Pick a video or audio file first, or use Browse library.</span>'
     return
   }
   btn.disabled = true
@@ -2276,7 +2278,11 @@ async function runTranscribe(){
   note.textContent = 'Extracting audio and transcribing… this can take a few minutes for a full episode.'
 
   var fd = new FormData()
-  fd.append('file', f.files[0])
+  if(hasLocal){
+    fd.append('stt_file', f.files[0])
+  }else{
+    fd.append('stt_file_network', networkVal)
+  }
   try{
     var r = await fetch('/api/stt/transcribe', {method:'POST', body: fd})
     var d = await r.json()
@@ -3330,7 +3336,12 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <h2>Speech to Text &mdash; Whisper</h2>
 <p style="font-size:12px;opacity:.75;margin-top:-6px">Transcribes dialogue with word-level timing, using the same service the promo pipeline uses for dialogue-aware cuts — so this shows you exactly what the rating stage sees. Audio is extracted to 16&nbsp;kHz mono before upload, so a multi-GB episode only sends a few MB.</p>
 <label>Video or audio file:</label>
-<input type=file id=stt-file accept="video/*,audio/*">
+<input type=file id=stt-file name=stt_file accept="video/*,audio/*" data-net-field="stt_file">
+<input type=hidden id=stt_file_network name=stt_file_network value="">
+<div class="browse-row" style="margin-top:8px">
+  <span class="net-file-chip" id=stt_file_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('stt_file')">&#10005;</span></span>
+  <button type=button class="browse-btn" onclick="openNetworkBrowser('stt_file','hires','Video (HIRES)')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
+</div>
 <div style="margin-top:14px">
   <button class=btn type=button id=stt-btn onclick="runTranscribe()">Transcribe</button>
 </div>

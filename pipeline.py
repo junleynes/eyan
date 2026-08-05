@@ -3747,7 +3747,7 @@ def api_stt_transcribe():
     cuts, so what you see here is exactly what the rating stage sees. Accepts any
     media the server can decode (video or audio) -- the audio is extracted to
     16 kHz mono before upload either way."""
-    src = _resolve_upload('file', ALLOWED_EXTENSIONS | AUDIO_EXTENSIONS)
+    src = _resolve_upload('stt_file', ALLOWED_EXTENSIONS | AUDIO_EXTENSIONS)
     if not src:
         return jsonify(ok=False, error='Upload a video or audio file to transcribe.'), 400
     try:
