@@ -1,15 +1,25 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  EYAN install script (Windows). Run from the repo root:
-    .\install.ps1
+  EYAN install script (Windows). Two ways to run it:
+
+    Already have the repo:
+      .\install.ps1
+
+    Don't have it yet -- fetches the repo itself, then installs:
+      irm https://raw.githubusercontent.com/junleynes/eyan/main/install.ps1 | iex
 
 .DESCRIPTION
+  0. If core.py isn't found in the current directory, clones the repo
+     into .\eyan first (via git if available, else a downloaded ZIP) and
+     continues from inside it. Skipped entirely if you already have the
+     repo and ran this from inside it.
   1. Checks for Python 3.10+ (numpy 2.x, pinned in requirements.txt, needs it).
   2. Checks for ffmpeg/ffprobe on PATH -- external programs the render
      pipeline shells out to, not something pip can install. Pass
-     -WithFFmpeg to have this script install them via winget; otherwise
-     it just tells you how.
+     -WithFFmpeg (or, when piping to iex where switches can't be passed
+     through, set $env:EYAN_WITH_FFMPEG = '1' first) to have this script
+     install them via winget; otherwise it just tells you how.
   3. Creates a venv\ virtual environment and installs requirements.txt
      into it.
   4. Copies .env.example to .env if .env doesn't already exist (never
@@ -27,24 +37,51 @@
       password?" section for recovery if you ever need it)
 
 .PARAMETER WithFFmpeg
-  Also install ffmpeg via winget if it isn't already on PATH.
+  Also install ffmpeg via winget if it isn't already on PATH. Only usable
+  when running this as a real .ps1 file, not through `irm | iex` (iex
+  can't receive parameters) -- use $env:EYAN_WITH_FFMPEG = '1' for that.
 #>
 param(
     [switch]$WithFFmpeg
 )
 
 $ErrorActionPreference = 'Stop'
+if ($env:EYAN_WITH_FFMPEG -eq '1') { $WithFFmpeg = $true }
 
 function Write-Info  { param($msg) Write-Host "==> $msg" -ForegroundColor Cyan }
 function Write-Ok    { param($msg) Write-Host "  ok $msg" -ForegroundColor Green }
 function Write-Warn2 { param($msg) Write-Host "  warning $msg" -ForegroundColor Yellow }
 function Write-Fail  { param($msg) Write-Host "  error $msg" -ForegroundColor Red; exit 1 }
 
-# ---- Must be run from the repo root ----
-$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-Set-Location $ScriptDir
+# ---- 0. Locate the repo, or fetch it ----
+# Deliberately NOT using $MyInvocation.MyCommand.Path to find "where this
+# script lives" -- that's only a real file path when run as .\install.ps1.
+# Piped in via `irm | iex`, there is no script file on disk at all, so
+# everything below works off the current directory instead, and
+# self-bootstraps by cloning the repo into .\eyan when core.py isn't
+# already here.
 if (-not (Test-Path "core.py") -or -not (Test-Path "requirements.txt")) {
-    Write-Fail "core.py / requirements.txt not found here ($ScriptDir). Run this from the repo root."
+    Write-Info "core.py not found here -- fetching the EYAN repo first"
+    $RepoUrl = "https://github.com/junleynes/eyan.git"
+    $RepoDir = "eyan"
+    if (Test-Path $RepoDir) {
+        Write-Ok "$RepoDir\ already exists, using it"
+    } elseif (Get-Command git -ErrorAction SilentlyContinue) {
+        git clone --depth 1 $RepoUrl $RepoDir
+        Write-Ok "cloned into $RepoDir\"
+    } else {
+        Write-Warn2 "git not found -- downloading a ZIP instead"
+        $zipPath = Join-Path $env:TEMP "eyan-main.zip"
+        Invoke-WebRequest -Uri "https://github.com/junleynes/eyan/archive/refs/heads/main.zip" -OutFile $zipPath
+        Expand-Archive -Path $zipPath -DestinationPath "." -Force
+        Rename-Item -Path "eyan-main" -NewName $RepoDir
+        Remove-Item $zipPath
+        Write-Ok "downloaded into $RepoDir\"
+    }
+    Set-Location $RepoDir
+}
+if (-not (Test-Path "core.py") -or -not (Test-Path "requirements.txt")) {
+    Write-Fail "core.py / requirements.txt still not found in $(Get-Location) after fetching -- something's wrong with the repo layout."
 }
 
 # ---- 1. Python version ----
@@ -115,7 +152,7 @@ if (-not (Test-Path "venv")) {
 } else {
     Write-Ok "venv\ already exists, reusing it"
 }
-$venvPython = Join-Path $ScriptDir "venv\Scripts\python.exe"
+$venvPython = Join-Path (Get-Location) "venv\Scripts\python.exe"
 if (-not (Test-Path $venvPython)) {
     Write-Fail "venv\Scripts\python.exe not found after venv creation -- something went wrong above."
 }

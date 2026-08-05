@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
-# EYAN install script (Linux). Run from the repo root:
-#   ./install.sh
+# EYAN install script (Linux). Two ways to run it:
+#
+#   Already have the repo:
+#     ./install.sh
+#
+#   Don't have it yet -- fetches the repo itself, then installs:
+#     curl -fsSL https://raw.githubusercontent.com/junleynes/eyan/main/install.sh | bash
+#     curl -fsSL https://raw.githubusercontent.com/junleynes/eyan/main/install.sh | bash -s -- --with-ffmpeg
 #
 # What this does:
+#   0. If core.py isn't found in the current directory, clones the repo
+#      into ./eyan first (via git if available, else a downloaded tarball)
+#      and continues from inside it. Skipped entirely if you already have
+#      the repo and ran this from inside it.
 #   1. Checks for Python 3.10+ (numpy 2.x, which requirements.txt pins,
 #      requires it).
 #   2. Checks for ffmpeg/ffprobe on PATH -- these are external programs the
@@ -49,11 +59,31 @@ ok()    { echo "${GREEN}  ok${RESET} $1"; }
 warn()  { echo "${YELLOW}  warning${RESET} $1"; }
 fail()  { echo "${RED}  error${RESET} $1"; exit 1; }
 
-# ---- Must be run from the repo root ----
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+# ---- 0. Locate the repo, or fetch it ----
+# Deliberately NOT using $0/BASH_SOURCE to find "where this script lives" --
+# that only points to a real file when run as ./install.sh. Piped in via
+# `curl | bash`, there is no script file on disk at all, so everything below
+# works off the current directory instead, and self-bootstraps by cloning
+# the repo into ./eyan when core.py isn't already here.
 if [ ! -f "core.py" ] || [ ! -f "requirements.txt" ]; then
-  fail "core.py / requirements.txt not found here ($SCRIPT_DIR). Run this from the repo root."
+  info "core.py not found here -- fetching the EYAN repo first"
+  REPO_URL="https://github.com/junleynes/eyan.git"
+  REPO_DIR="eyan"
+  if [ -d "$REPO_DIR" ]; then
+    ok "$REPO_DIR/ already exists, using it"
+  elif command -v git >/dev/null 2>&1; then
+    git clone --depth 1 "$REPO_URL" "$REPO_DIR"
+    ok "cloned into $REPO_DIR/"
+  else
+    warn "git not found -- downloading a tarball instead"
+    curl -fsSL "https://github.com/junleynes/eyan/archive/refs/heads/main.tar.gz" | tar -xz
+    mv "eyan-main" "$REPO_DIR"
+    ok "downloaded into $REPO_DIR/"
+  fi
+  cd "$REPO_DIR"
+fi
+if [ ! -f "core.py" ] || [ ! -f "requirements.txt" ]; then
+  fail "core.py / requirements.txt still not found in $(pwd) after fetching -- something's wrong with the repo layout."
 fi
 
 # ---- 1. Python version ----
