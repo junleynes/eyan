@@ -773,12 +773,12 @@ JOB_TTL = 60 * 60  # drop finished jobs after an hour so JOBS doesn't grow forev
 class JobCancelled(Exception):
     pass
 
-def job_new():
+def job_new(user_id=None, username=None):
     jid = f'{int(time.time()*1000)}_{threading.get_ident()}'
     with JOBS_LOCK:
         JOBS[jid] = {'percent': 0, 'step': 'Queued', 'done': False, 'error': None,
                      'result': None, 'created': time.time(), 'cancel_requested': False,
-                     'status': 'queued'}
+                     'status': 'queued', 'user_id': user_id, 'username': username}
         stale = [k for k, v in JOBS.items() if v.get('done') and time.time() - v.get('created', 0) > JOB_TTL]
         for k in stale:
             JOBS.pop(k, None)
@@ -831,6 +831,18 @@ def job_get(jid):
     with JOBS_LOCK:
         j = JOBS.get(jid)
         return dict(j) if j else None
+
+def _owns_or_admin(owner_user_id):
+    """True if the current session is the owner of a job/trailer, or an
+    admin. Admins see and manage everything; everyone else sees only their
+    own. A record with no owner (user_id=None -- either created before this
+    app had accounts, or something went wrong capturing it) is treated as
+    admin-only rather than shown to whoever happens to ask, since there's no
+    one it can honestly be attributed to."""
+    if session.get('role') == 'admin':
+        return True
+    uid = session.get('user_id')
+    return uid is not None and owner_user_id == uid
 
 class JobGate:
     """Caps how many trailer jobs run at once. Limit is adjustable at runtime
@@ -2834,11 +2846,16 @@ def api_trailer():
         'Answer with a single JSON object and nothing else: '
         '{"score": <1-5>, "desc": "<sentence>"}')
 
-    jid = job_new()
+    jid = job_new(user_id=session.get('user_id'), username=session.get('username'))
     with JOBS_LOCK:
         if jid in JOBS:
             JOBS[jid]['orig_name'] = orig_name
     params = dict(path=path, orig_name=orig_name, mode=mode, genre=genre, scoring_mode=scoring_mode,
+                  # Captured here (inside the request, where `session` exists) rather
+                  # than inside the background thread that actually renders --
+                  # threads don't have a Flask session/request context at all, so
+                  # this is the only place ownership can be read from the login.
+                  user_id=session.get('user_id'), username=session.get('username'),
                   trailer_length=trailer_length, max_scene_dur=max_scene_dur,
                   scene_threshold=scene_threshold, min_scene_len_sec=min_scene_len_sec,
                   detector=detector, adaptive_threshold=adaptive_threshold,
@@ -2888,6 +2905,8 @@ def api_trailer_progress(job_id):
     j = job_get(job_id)
     if not j:
         return jsonify(error='Unknown job id'), 404
+    if not _owns_or_admin(j.get('user_id')):
+        return jsonify(error='That job belongs to a different account.'), 403
     created = j.pop('created', None)
     # Elapsed lets the UI show a running clock; the old response had no notion of
     # time at all, so a slow stage was indistinguishable from a hung one.
@@ -2902,6 +2921,8 @@ def api_trailer_preview_get(preview_id):
     p = preview_get(preview_id)
     if not p:
         return jsonify(ok=False, error='That preview has expired. Run the analysis again.'), 404
+    if not _owns_or_admin(p.get('params', {}).get('user_id')):
+        return jsonify(ok=False, error='That preview belongs to a different account.'), 403
     return jsonify(ok=True, preview_id=preview_id, total_scenes=p['total_scenes'],
                    video_filename=os.path.basename(p['params']['path']),
                    scenes=[{'scene': i + 1, 'start': round(s['start'], 1),
@@ -2927,6 +2948,8 @@ def api_trailer_render():
     p = preview_get(pid)
     if not p:
         return jsonify(error='That preview has expired or was never created. Run the analysis again.'), 404
+    if not _owns_or_admin(p.get('params', {}).get('user_id')):
+        return jsonify(error='That preview belongs to a different account.'), 403
 
     selected = p['selected']
     raw_drop = (request.form.get('drop') or '').strip()
@@ -2962,11 +2985,17 @@ def api_trailer_render():
     params['preview_only'] = False
     params['preselected'] = selected
     params['preview_total_scenes'] = p['total_scenes']
+    # Re-stamped to the current session rather than left as whoever ran the
+    # original preview -- normally the same person, but this is what actually
+    # governs the resulting library entry's ownership, so it should reflect
+    # who is triggering this render right now.
+    params['user_id'] = session.get('user_id')
+    params['username'] = session.get('username')
     if not (params.get('path') and os.path.exists(params['path'])):
         return jsonify(error='The source video for this preview is no longer on disk '
                              '(it may have been cleaned up). Re-upload and analyse again.'), 410
 
-    jid = job_new()
+    jid = job_new(user_id=session.get('user_id'), username=session.get('username'))
     threading.Thread(target=run_trailer_job_gated, args=(jid, params), daemon=True).start()
     return jsonify(job_id=jid, dropped=sorted(drop), added=sorted(added), scenes=len(selected))
 
@@ -3236,6 +3265,11 @@ def api_sfx_generate():
 def api_trailer_cancel(job_id):
     """Cancel a queued or in-flight trailer job. Queued jobs stop immediately;
     running jobs unwind at their next progress checkpoint (best-effort)."""
+    j = job_get(job_id)
+    if not j:
+        return jsonify(error='Unknown job id'), 404
+    if not _owns_or_admin(j.get('user_id')):
+        return jsonify(error='That job belongs to a different account.'), 403
     ok = job_cancel(job_id)
     if not ok:
         j = job_get(job_id)
@@ -3246,8 +3280,10 @@ def api_trailer_cancel(job_id):
 
 @app.route('/api/trailer/library')
 def api_trailer_library():
-    """Lists saved trailers (most recent first) for the History panel."""
-    return jsonify(ok=True, items=library_list())
+    """Lists saved trailers (most recent first) for the History panel. A
+    regular account sees only trailers it saved; an admin sees everyone's."""
+    is_admin = session.get('role') == 'admin'
+    return jsonify(ok=True, items=library_list(user_id=session.get('user_id'), is_admin=is_admin))
 
 @app.route('/api/trailer/library/<int:tid>')
 def api_trailer_library_get(tid):
@@ -3256,10 +3292,17 @@ def api_trailer_library_get(tid):
     row = library_get_row(tid)
     if not row or not row.get('result_json'):
         return jsonify(ok=False, error='Not found'), 404
+    if not _owns_or_admin(row.get('user_id')):
+        return jsonify(ok=False, error='Not found'), 404
     return jsonify(ok=True, result=json.loads(row['result_json']), created_at=row['created_at'])
 
 @app.route('/api/trailer/library/<int:tid>/delete', methods=['POST'])
 def api_trailer_library_delete(tid):
+    row = library_get_row(tid)
+    if not row:
+        return jsonify(ok=False, error='Not found'), 404
+    if not _owns_or_admin(row.get('user_id')):
+        return jsonify(ok=False, error='Not found'), 404
     ok = library_delete(tid)
     if not ok:
         return jsonify(ok=False, error='Not found'), 404
@@ -3270,12 +3313,16 @@ def library_file(tid):
     row = library_get_row(tid)
     if not row:
         return jsonify(error='Not found'), 404
+    if not _owns_or_admin(row.get('user_id')):
+        return jsonify(error='Not found'), 404
     return send_from_directory(LIBRARY_DIR, row['filename'])
 
 @app.route('/library/<int:tid>/download')
 def library_download(tid):
     row = library_get_row(tid)
     if not row:
+        return jsonify(error='Not found'), 404
+    if not _owns_or_admin(row.get('user_id')):
         return jsonify(error='Not found'), 404
     fmt_key = request.args.get('format', 'mp4_high')
     if fmt_key not in EXPORT_FORMATS:
@@ -3299,20 +3346,22 @@ def library_download(tid):
 
 @app.route('/api/monitor')
 def api_monitor():
-    """Live snapshot of every trailer job the server currently knows about:
-    running right now, waiting for a free concurrency slot, or finished
-    (success/error/cancelled) within the last JOB_TTL. Whole-server view, not
-    per-user (this app has no login system -- see /api/queue/status). This is
+    """Live snapshot of trailer jobs the server currently knows about: running
+    right now, waiting for a free concurrency slot, or finished
+    (success/error/cancelled) within the last JOB_TTL. Per-user for a regular
+    account (only jobs *they* started); whole-server for an admin. This is
     the transient, in-progress counterpart to the permanent Saved Trailers
     library: finished entries here age out after JOB_TTL regardless of
     whether they were also saved to the library."""
+    is_admin = session.get('role') == 'admin'
     with JOB_QUEUE_LOCK:
         queued_ids = list(JOB_QUEUE)
     with JOBS_LOCK:
-        snapshot = {jid: dict(j) for jid, j in JOBS.items()}
+        snapshot = {jid: dict(j) for jid, j in JOBS.items() if _owns_or_admin(j.get('user_id'))}
 
-    queued = [{'job_id': jid, 'position': i, 'orig_name': snapshot.get(jid, {}).get('orig_name')}
-              for i, jid in enumerate(queued_ids)]
+    queued = [{'job_id': jid, 'position': i, 'orig_name': snapshot.get(jid, {}).get('orig_name'),
+               **({'username': snapshot.get(jid, {}).get('username')} if is_admin else {})}
+              for i, jid in enumerate(queued_ids) if jid in snapshot]
 
     active, finished = [], []
     for jid, j in snapshot.items():
@@ -3320,6 +3369,8 @@ def api_monitor():
             continue
         entry = {'job_id': jid, 'orig_name': j.get('orig_name'), 'percent': j.get('percent'),
                   'step': j.get('step'), 'status': j.get('status'), 'created': j.get('created')}
+        if is_admin:
+            entry['username'] = j.get('username')
         if j.get('done'):
             entry['error'] = j.get('error')
             finished.append(entry)
@@ -3571,13 +3622,20 @@ def api_template_asset(tid, slot):
 
 @app.route('/api/config', methods=['GET'])
 def api_config_get():
-    """Current values of every configurable AI service URL, for the Config tab."""
+    """Current values of every configurable AI service URL, for the Config tab.
+    Admin-only: exposes FISH_AUDIO_API_KEY, and lets you point the whole app's
+    AI services somewhere else -- not something a regular account should see
+    or touch."""
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='Admin access required.'), 403
     return jsonify(ok=True, config=current_config_values(),
                    fields={k: {'label': v[0], 'help': v[1]} for k, v in CONFIGURABLE_SERVICES.items()})
 
 @app.route('/api/config', methods=['POST'])
 def api_config_post():
     """Saves Config-tab edits to disk and applies them immediately (no restart needed)."""
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='Admin access required.'), 403
     data = request.get_json(silent=True) or {}
     unknown = [k for k in data if k not in CONFIGURABLE_SERVICES]
     if unknown:
@@ -3592,6 +3650,8 @@ def api_config_post():
 def api_config_test():
     """Pings a single URL from the Config tab's edit fields (before saving), so a
     typo can be caught without committing it first. Body: {"name": "FISH_AUDIO_URL", "url": "..."}."""
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='Admin access required.'), 403
     data = request.get_json(silent=True) or {}
     name = data.get('name', '')
     url = (data.get('url') or '').strip()
@@ -5099,7 +5159,8 @@ def _run_trailer_job(jid, params):
         } for i, s in enumerate(selected)])
     job_set(jid, percent=100, step='Done', done=True, result=result)
     try:
-        result['library_id'] = library_add(filename, result)
+        result['library_id'] = library_add(filename, result,
+                                            user_id=params.get('user_id'), username=params.get('username'))
     except Exception as e:
         print(f'Trailer library save failed (job still succeeded): {e}')
 

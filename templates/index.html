@@ -446,6 +446,13 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
   </div>
 </div>
 <div class="shell">
+<script>
+// Exposed once here rather than re-checked per-panel: several JS panels
+// (saved trailers, job monitor) want to know whether to show "by <user>"
+// at all -- pointless noise on your own items, useful context on an
+// admin's whole-server view.
+var IS_ADMIN = {{ 'true' if current_role == 'admin' else 'false' }}
+</script>
 <nav class="rail">
   <div class="rail-brand">
     <div style="display:flex;align-items:center;gap:10px">
@@ -469,9 +476,13 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
     <div class="tab" onclick="switchTab('p-chat',this)" role="button" tabindex="0"><span class=tab-icon>&#128172;</span><span class=tab-text>AI Chat<div class=tab-sub>llm assistant</div></span></div>
     <div class="rail-sep"></div>
     <div class="tab" onclick="switchTab('p-tools',this)" role="button" tabindex="0"><span class=tab-icon>&#9881;</span><span class=tab-text>Player<div class=tab-sub>shared library</div></span></div>
+    {% if current_role == 'admin' %}
     <div class="tab" onclick="switchTab('p-api',this)" role="button" tabindex="0"><span class=tab-icon>{ }</span><span class=tab-text>API<div class=tab-sub>reference</div></span></div>
+    {% endif %}
     <div class="tab" onclick="switchTab('p-docs',this)" role="button" tabindex="0"><span class=tab-icon>&#9776;</span><span class=tab-text>Docs<div class=tab-sub>workflow+genres</div></span></div>
+    {% if current_role == 'admin' %}
     <div class="tab" onclick="switchTab('p-config',this)" role="button" tabindex="0"><span class=tab-icon>&#128295;</span><span class=tab-text>Config<div class=tab-sub>api urls</div></span></div>
+    {% endif %}
   </div>
   <div class="hdr-engines">scene detection &middot; ai vision &middot; ffmpeg &middot; ai music &middot; tts &middot; stt</div>
   <div style="text-align:center;font-size:11px;padding:8px 8px 2px;color:var(--ink-dim)">
@@ -3019,10 +3030,11 @@ function renderTrailerResult(d){
       d.items.forEach(function(item){
         var row = document.createElement('div')
         row.className = 'history-row'
+        var byLine = (IS_ADMIN && item.username) ? ' &middot; by ' + item.username : ''
         row.innerHTML =
           '<div class="history-main">' +
             '<div class="h-name">' + (item.orig_name || 'Untitled') + '</div>' +
-            '<div class="h-meta">' + item.trailer_duration + 's &middot; ' + fmtWhen(item.created_at) + '</div>' +
+            '<div class="h-meta">' + item.trailer_duration + 's &middot; ' + fmtWhen(item.created_at) + byLine + '</div>' +
           '</div>' +
           '<span class="history-del" title="Delete">&#10005;</span>'
         row.querySelector('.history-main').addEventListener('click', function(){
@@ -3078,8 +3090,9 @@ function renderTrailerResult(d){
     if(!items.length){ activeEl.innerHTML = emptyRow('Nothing running right now.'); return }
     activeEl.innerHTML = items.map(function(j){
       var pct = j.percent || 0
+      var by = (IS_ADMIN && j.username) ? ' \u00b7 ' + j.username : ''
       return '<div class="monitor-row">' +
-        '<span class="m-name" title="' + (j.step||'') + '">' + (j.orig_name || 'Untitled') + ' &mdash; ' + (j.step||'') + '</span>' +
+        '<span class="m-name" title="' + (j.step||'') + '">' + (j.orig_name || 'Untitled') + by + ' &mdash; ' + (j.step||'') + '</span>' +
         '<span class="m-bar"><span class="m-bar-fill" style="width:' + pct + '%"></span></span>' +
         '<span class="m-pct">' + pct + '%</span>' +
       '</div>'
@@ -3088,8 +3101,9 @@ function renderTrailerResult(d){
   function renderQueued(items){
     if(!items.length){ queuedEl.innerHTML = emptyRow('Nothing waiting.'); return }
     queuedEl.innerHTML = items.map(function(j){
+      var by = (IS_ADMIN && j.username) ? ' \u00b7 ' + j.username : ''
       return '<div class="monitor-row">' +
-        '<span class="m-name">' + (j.orig_name || 'Untitled') + '</span>' +
+        '<span class="m-name">' + (j.orig_name || 'Untitled') + by + '</span>' +
         '<span class="m-pos">' + (j.position === 0 ? 'starting shortly' : j.position + ' ahead') + '</span>' +
       '</div>'
     }).join('')
@@ -3100,8 +3114,9 @@ function renderTrailerResult(d){
       var badge = j.status === 'cancelled' ? '<span class="monitor-badge cancel">Cancelled</span>'
                 : j.error ? '<span class="monitor-badge err">Error</span>'
                 : '<span class="monitor-badge ok">Done</span>'
+      var by = (IS_ADMIN && j.username) ? ' \u00b7 ' + j.username : ''
       return '<div class="monitor-row">' +
-        '<span class="m-name" title="' + (j.error||'') + '">' + (j.orig_name || 'Untitled') + '</span>' +
+        '<span class="m-name" title="' + (j.error||'') + '">' + (j.orig_name || 'Untitled') + by + '</span>' +
         '<span class="m-pos">' + fmtWhen(j.created) + '</span>' +
         badge +
       '</div>'

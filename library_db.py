@@ -53,10 +53,20 @@ def library_db_init():
         vo_source TEXT,
         result_json TEXT
     )''')
+    # Added after the table already existed in the wild -- ALTER TABLE guard
+    # rather than baking these into the CREATE above, same pattern used for
+    # show_templates' settings_json column. Existing rows get NULL for both,
+    # which library_list()/ownership checks treat as admin-only (nothing to
+    # honestly attribute them to -- see _owns_or_admin in pipeline.py).
+    have = {r[1] for r in conn.execute('PRAGMA table_info(trailers)')}
+    if 'user_id' not in have:
+        conn.execute('ALTER TABLE trailers ADD COLUMN user_id INTEGER')
+    if 'username' not in have:
+        conn.execute('ALTER TABLE trailers ADD COLUMN username TEXT')
     conn.commit()
     conn.close()
 
-def library_add(upload_filename, result):
+def library_add(upload_filename, result, user_id=None, username=None):
     """Copies the just-finished trailer (currently sitting in the ephemeral
     UPLOAD_FOLDER as `upload_filename`) into LIBRARY_DIR under a permanent
     name, records it in SQLite, and returns the new row id. The saved
@@ -70,10 +80,11 @@ def library_add(upload_filename, result):
     shutil.copy2(src, dst)
     conn = _lib_db()
     cur = conn.execute(
-        'INSERT INTO trailers (orig_name, filename, created_at, trailer_duration, video_duration, trailer_length, bgm_source, sfx_source, vo_source, result_json) '
-        'VALUES (?,?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO trailers (orig_name, filename, created_at, trailer_duration, video_duration, trailer_length, bgm_source, sfx_source, vo_source, result_json, user_id, username) '
+        'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
         (result.get('orig_name'), persist_name, time.time(), result.get('trailer_duration'), result.get('video_duration'),
-         result.get('trailer_length'), result.get('bgm_source'), result.get('sfx_source'), result.get('vo_source'), None))
+         result.get('trailer_length'), result.get('bgm_source'), result.get('sfx_source'), result.get('vo_source'), None,
+         user_id, username))
     tid = cur.lastrowid
     saved_result = dict(result, trailer_url=f'/library/{tid}/file', library_id=tid)
     conn.execute('UPDATE trailers SET result_json=? WHERE id=?', (json.dumps(saved_result), tid))
@@ -81,11 +92,21 @@ def library_add(upload_filename, result):
     conn.close()
     return tid
 
-def library_list(limit=50):
+def library_list(limit=50, user_id=None, is_admin=False):
+    """Most recent saved trailers. An admin sees everything; anyone else sees
+    only what they own (user_id must match) -- rows with no owner at all
+    (user_id IS NULL, from before this app had accounts, or a save that
+    somehow didn't capture one) are admin-only, same reasoning as
+    _owns_or_admin in pipeline.py."""
     conn = _lib_db()
-    rows = conn.execute(
-        'SELECT id, orig_name, filename, created_at, trailer_duration, video_duration, trailer_length, bgm_source, sfx_source, vo_source '
-        'FROM trailers ORDER BY created_at DESC LIMIT ?', (limit,)).fetchall()
+    if is_admin:
+        rows = conn.execute(
+            'SELECT id, orig_name, filename, created_at, trailer_duration, video_duration, trailer_length, bgm_source, sfx_source, vo_source, user_id, username '
+            'FROM trailers ORDER BY created_at DESC LIMIT ?', (limit,)).fetchall()
+    else:
+        rows = conn.execute(
+            'SELECT id, orig_name, filename, created_at, trailer_duration, video_duration, trailer_length, bgm_source, sfx_source, vo_source, user_id, username '
+            'FROM trailers WHERE user_id=? ORDER BY created_at DESC LIMIT ?', (user_id, limit)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
