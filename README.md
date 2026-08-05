@@ -1,9 +1,13 @@
-# AIMP — modularized
+<p align="center"><img src="static/logo.svg" alt="EYAN — Engine For Your AI Needs" width="480"></p>
 
-Split out of the original single `main_app_57_1_.py` (~9,500 lines). Run
-`python3 main.py` instead of the old file — same behavior, same env vars
-(`LIBRARY_DIR`, `SECRET_KEY_FILE`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`,
-`RESET_ADMIN`, `TEMPLATES_DIR`, `FISH_AUDIO_URL`, etc.), same port (5000).
+# EYAN — Engine For Your AI Needs
+
+Formerly AIMP. Split out of the original single `main_app_57_1_.py`
+(~9,500 lines). Run `python3 main.py` instead of the old file — same
+behavior, same env vars (`LIBRARY_DIR`, `SECRET_KEY_FILE`,
+`ADMIN_USERNAME`, `ADMIN_PASSWORD`, `RESET_ADMIN`, `TEMPLATES_DIR`,
+`FISH_AUDIO_URL`, etc. — see `.env.example` for the full list), same port
+(5000).
 
 ## Layout
 
@@ -15,6 +19,7 @@ Split out of the original single `main_app_57_1_.py` (~9,500 lines). Run
 | `pipeline.py` | Everything else: scene detection, AI vision scoring, TTS/STT, music/SFX generation, the ffmpeg render pipeline, per-show asset templates, network (SMB) browsing, the Config tab, and all `/api/*` routes. ~5,000 lines — see below for why this one wasn't split further. |
 | `templates/index.html` | The UI shell (was a 3,900-line Python string assigned to `UI` and passed through `render_template_string`; now a real template file loaded via `render_template`). |
 | `main.py` | Entrypoint — imports the other modules (registering their routes), defines the last few top-level routes (`/`, `/uploads/<filename>`, `/download/<filename>`), and starts the server. |
+| `static/logo.svg`, `static/logo-mark.svg` | The EYAN logo (full lockup and icon-only mark). Served automatically by Flask's default `/static/` handling since this folder sits next to `core.py`. |
 
 ## Scene detection fix (this pass)
 
