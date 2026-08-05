@@ -1596,24 +1596,53 @@ def stamp_hits(hit_wave, timestamps, output_path, sample_rate=22050):
 def _woosh_generate_raw(prompt, timeout=15):
     """One call to Woosh's /generate. Returns (flac_bytes, error).
 
-    Corrected against the actual api_server.py source (not just the public demo):
-      * `token` is required by the request schema but never read or validated
-        server-side -- sending the literal string "string" (Sony's own test
-        script's placeholder) satisfies the schema with nothing to configure.
-      * The response is FLAC (media_type="audio/flac"), not WAV -- this was
-        previously saved with a .wav extension and served as-is, which lies
-        about the container in both the filename and the Content-Type Flask
-        would derive from it, and could fail to play in a browser depending on
-        how strictly it trusts that mismatch.
-      * `duration` is not a real field on GenerateArgs in this API version --
-        confirmed against the schema, not assumed. It was being sent and
-        silently ignored. Removed from the request; callers that need a
-        specific length now enforce it themselves by trimming the response
-        (see _woosh_generate below), since the API has no way to ask for one."""
+    Request shape confirmed directly against this server's own /openapi.json
+    (an earlier version of this comment claimed the same rigor for a flatter
+    {prompt, token} body and was wrong -- that shape 500'd on '/generate' with
+    a Pydantic "extra_forbidden" error on the field it lives on now,
+    'args.prompt'). The real schema wraps every generation parameter inside
+    a nested `args` object, alongside top-level `version`/`token`:
+
+        {"version": "0.1", "token": "string", "args": {"prompt": ..., "cfg": 1,
+         "sampler": "heun", "num_steps": 100, "sigma_min": 0.00001,
+         "sigma_max": 80, "rho": 7, "S_churn": 1, "S_min": 0, "S_noise": 1,
+         "guidance_scale": 7.5, "noise_scheduler": "karras", "model": "Woosh-DFlow"}}
+
+    `token` still isn't read/validated server-side -- "string" (the schema's
+    own example placeholder) satisfies it with nothing to configure. Every
+    `args` field besides `prompt` is left at the schema's own example/default
+    value rather than guessed at, since there's no way to verify what
+    changing e.g. `sampler` or `guidance_scale` would actually do without
+    access to the model itself.
+
+    The response is FLAC (media_type="audio/flac"), not WAV -- this was
+    previously saved with a .wav extension and served as-is, which lies about
+    the container in both the filename and the Content-Type Flask would
+    derive from it, and could fail to play in a browser depending on how
+    strictly it trusts that mismatch.
+
+    `duration` is not a field anywhere in this schema. Callers that need a
+    specific length enforce it themselves by trimming the response (see
+    _woosh_generate below), since the API has no way to ask for one."""
     try:
         r = requests.post(f'{WOOSH_URL}/generate', json={
-            'prompt': prompt,
+            'version': '0.1',
             'token': 'string',
+            'args': {
+                'prompt': prompt,
+                'cfg': 1,
+                'sampler': 'heun',
+                'num_steps': 100,
+                'sigma_min': 0.00001,
+                'sigma_max': 80,
+                'rho': 7,
+                'S_churn': 1,
+                'S_min': 0,
+                'S_noise': 1,
+                'guidance_scale': 7.5,
+                'noise_scheduler': 'karras',
+                'model': 'Woosh-DFlow',
+            },
         }, timeout=timeout)
     except Exception as e:
         return None, f'Could not reach Woosh at {WOOSH_URL}: {e}'
