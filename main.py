@@ -13,7 +13,7 @@ import auth             # noqa: F401 -- registers /login, /logout, /admin/users
 from auth import require_permission, user_permissions
 from pipeline import (   # noqa: F401 -- registers every /api/, trailer-generation,
     GENRE_DOCS_ROWS, EXPORT_FORMATS, build_export_cmd,
-    _sweeper_loop, sweep_upload_folder, free_disk_mb, load_config_overrides,
+    _sweeper_loop, sweep_upload_folder, free_disk_mb, load_config_overrides, load_branding,
 )
 import pipeline          # noqa: F401 -- import the module itself too, for its
                           # own @app.route registrations beyond the names above
@@ -41,11 +41,14 @@ def index():
         if perm is None or role == 'admin' or perm in perms:
             default_tab = tab_id
             break
+    brand = load_branding()
     return render_template('index.html', genre_rows=GENRE_DOCS_ROWS,
                                    current_username=session.get('username'),
                                    current_role=role,
                                    current_permissions=perms,
-                                   default_tab=default_tab)
+                                   default_tab=default_tab,
+                                   brand_name=brand['name'],
+                                   brand_tagline=brand['tagline'])
 
 @app.route('/uploads/<filename>')
 def uploaded(filename):

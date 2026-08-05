@@ -4,4 +4,7 @@ __pycache__/
 *.db
 trailer_library/
 show_templates/
+branding/
+ai_services_config.json
+branding_config.json
 .env

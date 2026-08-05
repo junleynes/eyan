@@ -1,6 +1,6 @@
-<p align="center"><img src="static/logo.svg" alt="EYAN — Engine for Your AI Needs" width="480"></p>
+<p align="center"><img src="static/logo.svg" alt="AIMP — AI Media Provider" width="480"></p>
 
-# EYAN — Engine for Your AI Needs
+# AIMP — AI Media Provider
 
 A self-hosted toolkit for producing broadcast episodic promos ("plugs")
 end to end — from raw footage to a finished, mixed trailer — plus the
@@ -41,7 +41,14 @@ individual AI tools behind it, usable on their own. Formerly AIMP.
   re-downloadable, independent of the source footage's lifecycle.
 - **Per-user accounts** — real login (not a shared passphrase), with an
   admin role for account management (`/admin/users`) and audit-lite
-  tracking (last login per account).
+  tracking (last login per account). Optional groups can restrict a
+  regular account to only specific tabs (e.g. a group that can only
+  reach Music Generation); an account with no group assigned is
+  unrestricted, so this is opt-in per account, not a default lockdown.
+- **Configurable branding** — name, tagline, logo, and favicon are all
+  editable at runtime from Config &gt; Branding (admin-only), not
+  hardcoded — rebranding the whole app (like this project's own
+  EYAN&nbsp;→&nbsp;AIMP rename) doesn't require touching a single file.
 
 Same behavior as the original as of this split, same env vars
 (`LIBRARY_DIR`, `SECRET_KEY_FILE`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`,
@@ -213,7 +220,7 @@ down for why that split stopped where it did.
 | `pipeline.py` | Everything else: scene detection, AI vision scoring, TTS/STT, music/SFX generation, the ffmpeg render pipeline, per-show asset templates, network (SMB) browsing, the Config tab, and all `/api/*` routes. ~5,000 lines — see below for why this one wasn't split further. |
 | `templates/index.html` | The UI shell (was a 3,900-line Python string assigned to `UI` and passed through `render_template_string`; now a real template file loaded via `render_template`). |
 | `main.py` | Entrypoint — imports the other modules (registering their routes), defines the last few top-level routes (`/`, `/uploads/<filename>`, `/download/<filename>`), and starts the server. |
-| `static/logo.svg`, `static/logo-mark.svg` | The EYAN logo (full lockup and icon-only mark). Served automatically by Flask's default `/static/` handling since this folder sits next to `core.py`. |
+| `static/logo.svg`, `static/logo-mark.svg` | The built-in default logo (full lockup and icon-only mark) — the actual displayed name/tagline/logo/favicon are configurable at runtime from Config &gt; Branding (admin-only), stored separately from these files. Served automatically by Flask's default `/static/` handling since this folder sits next to `core.py`. |
 | `install.sh`, `install.ps1` | One-time setup: Python/ffmpeg checks, venv + `requirements.txt`, `.env` from `.env.example`. See Install above. |
 | `requirements.txt`, `.env.example` | Every third-party dependency, and every environment variable the app reads with sensible defaults documented (all commented out — see the note above about why). |
 

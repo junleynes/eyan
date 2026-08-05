@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>EYAN - Engine for Your AI Needs</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b1220'/%3E%3Cpath d='M9 10h9l3 3v9H9z' fill='none' stroke='%2334e6c5' stroke-width='2'/%3E%3Ccircle cx='13' cy='16' r='2.4' fill='%2334e6c5'/%3E%3C/svg%3E">
+<title>{{ brand_name }} - {{ brand_tagline }}</title>
+<link rel="icon" href="/branding/favicon">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script>
@@ -471,10 +471,10 @@ var IS_ADMIN = {{ 'true' if current_role == 'admin' else 'false' }}
 <nav class="rail">
   <div class="rail-brand">
     <div style="display:flex;align-items:center;gap:10px">
-      <img src="/static/logo-mark.svg" alt="" width="28" height="28" style="border-radius:6px;flex-shrink:0" aria-hidden="true">
-      <h1 style="margin:0">EYAN</h1>
+      <img src="/branding/logo" alt="" width="28" height="28" style="border-radius:6px;flex-shrink:0" aria-hidden="true">
+      <h1 style="margin:0">{{ brand_name }}</h1>
     </div>
-    <p class=brand-tagline>Engine for Your AI Needs</p>
+    <p class=brand-tagline>{{ brand_tagline }}</p>
     <div class="theme-toggle" role="group" aria-label="Theme">
       <button type=button class="theme-btn" data-theme-choice="light" onclick="setTheme('light')" title="Light theme">&#9728;</button>
       <button type=button class="theme-btn" data-theme-choice="dark" onclick="setTheme('dark')" title="Dark theme">&#9789;</button>
@@ -523,7 +523,7 @@ var IS_ADMIN = {{ 'true' if current_role == 'admin' else 'false' }}
 </nav>
 <div class="container">
 
-<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active')}
+<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active')}
 
 // ---- Theme (light / dark / auto) ----
 // The <head> script (see near the top of the page) already resolved and
@@ -3922,7 +3922,14 @@ This is [emphasis] the one you cannot miss.
 </div>
 
 <div id="p-config" class="panel{{ ' active' if default_tab == 'p-config' else '' }}">
-<h2>AI Service Configuration</h2>
+<h2>Config</h2>
+<div class="sub-tabs">
+  <div class="sub-tab active" onclick="switchSubTab('p-config-services',this)" role="button" tabindex="0">Services</div>
+  <div class="sub-tab" onclick="switchSubTab('p-config-branding',this)" role="button" tabindex="0">Branding</div>
+</div>
+
+<div id="p-config-services" class="sub-panel active">
+<h3 style="margin-top:0">AI Service Configuration</h3>
 <p style="margin-top:-4px;color:var(--ink-dim)">These control where the app looks for each local/self-hosted AI service. Changes save immediately (no restart needed) and are written to <code>ai_services_config.json</code> next to the script, so they persist across restarts too. Environment variables set the initial defaults; anything saved here overrides them from then on.</p>
 <div id="config-rows" style="display:flex;flex-direction:column;gap:14px;margin-top:16px">
   <!-- rows injected by loadConfigTab() -->
@@ -3931,6 +3938,51 @@ This is [emphasis] the one you cannot miss.
   <button type=button id=config-save-btn onclick="saveConfigTab()">Save all</button>
   <span id="config-save-status" style="font-size:13px"></span>
 </div>
+</div>
+
+<div id="p-config-branding" class="sub-panel">
+<h3 style="margin-top:0">Branding</h3>
+<p style="margin-top:-4px;color:var(--ink-dim)">Changes the name, tagline, logo, and favicon everyone signed in sees — saved to <code>branding_config.json</code> next to the script (text) and a <code>branding/</code> folder in the trailer library (logo/favicon files), so both persist across restarts. Takes effect immediately; existing sessions pick it up on their next page load.</p>
+
+<label>Brand name:</label>
+<input type=text id=brand-name-input class=input-box placeholder="AIMP">
+<label>Tagline:</label>
+<input type=text id=brand-tagline-input class=input-box placeholder="AI Media Provider">
+<div style="margin-top:10px">
+  <button type=button id=brand-text-save-btn onclick="saveBrandText()">Save name &amp; tagline</button>
+  <span id=brand-text-status style="font-size:13px;margin-left:8px"></span>
+</div>
+
+<div style="display:flex;gap:24px;flex-wrap:wrap;margin-top:20px">
+  <div style="min-width:220px">
+    <label>Logo (sidebar icon):</label>
+    <div style="display:flex;align-items:center;gap:10px;margin:6px 0">
+      <img src="/branding/logo" id=brand-logo-preview alt="" width=40 height=40 style="border-radius:8px;border:1px solid var(--line)">
+      <span id=brand-logo-status style="font-size:12px;opacity:.7">Using the built-in default</span>
+    </div>
+    <input type=file id=brand-logo-input accept=".svg,.png,.jpg,.jpeg,.webp,.gif">
+    <div style="margin-top:8px;display:flex;gap:8px">
+      <button type=button class=btn style="padding:5px 11px;font-size:12px" onclick="uploadBrandImage('logo')">Upload</button>
+      <button type=button class=btn style="padding:5px 11px;font-size:12px" onclick="resetBrandImage('logo')">Reset to default</button>
+    </div>
+    <p style="font-size:11px;opacity:.65;margin-top:6px">SVG, PNG, JPG, WEBP, or GIF. Displayed at 28&times;28 in the sidebar, so anything reasonably square works best.</p>
+  </div>
+  <div style="min-width:220px">
+    <label>Favicon (browser tab icon):</label>
+    <div style="display:flex;align-items:center;gap:10px;margin:6px 0">
+      <img src="/branding/favicon" id=brand-favicon-preview alt="" width=24 height=24 style="border-radius:4px;border:1px solid var(--line)">
+      <span id=brand-favicon-status style="font-size:12px;opacity:.7">Using the built-in default</span>
+    </div>
+    <input type=file id=brand-favicon-input accept=".ico,.svg,.png">
+    <div style="margin-top:8px;display:flex;gap:8px">
+      <button type=button class=btn style="padding:5px 11px;font-size:12px" onclick="uploadBrandImage('favicon')">Upload</button>
+      <button type=button class=btn style="padding:5px 11px;font-size:12px" onclick="resetBrandImage('favicon')">Reset to default</button>
+    </div>
+    <p style="font-size:11px;opacity:.65;margin-top:6px">ICO, SVG, or PNG. Browsers cache favicons aggressively — a hard refresh may be needed to see a change.</p>
+  </div>
+</div>
+</div>
+
 </div>
 
 </div><!-- container -->
@@ -4015,6 +4067,91 @@ async function saveConfigTab(){
     else{ status.textContent = 'Save failed: '+(d.error||'unknown error'); status.style.color = 'var(--amber)' }
   }catch(e){ status.textContent = 'Save failed: '+e; status.style.color = 'var(--amber)' }
   btn.disabled = false
+}
+
+// ---- Branding (Config > Branding) ----
+var brandingTabLoaded = false
+async function loadBrandingTab(){
+  if(brandingTabLoaded) return
+  brandingTabLoaded = true
+  try{
+    var r = await fetch('/api/branding')
+    var d = await r.json()
+    if(!d.ok) return
+    document.getElementById('brand-name-input').value = d.name
+    document.getElementById('brand-tagline-input').value = d.tagline
+    document.getElementById('brand-logo-status').textContent = d.has_logo ? 'Custom logo in use' : 'Using the built-in default'
+    document.getElementById('brand-favicon-status').textContent = d.has_favicon ? 'Custom favicon in use' : 'Using the built-in default'
+  }catch(e){}
+}
+
+async function saveBrandText(){
+  var btn = document.getElementById('brand-text-save-btn')
+  var status = document.getElementById('brand-text-status')
+  btn.disabled = true; status.textContent = 'Saving…'; status.style.color = 'var(--ink-dim)'
+  try{
+    var fd = new FormData()
+    fd.append('name', document.getElementById('brand-name-input').value)
+    fd.append('tagline', document.getElementById('brand-tagline-input').value)
+    var r = await fetch('/api/branding', {method:'POST', body: fd})
+    var d = await r.json()
+    if(d.ok){
+      status.textContent = 'Saved. Reload the page to see it applied to the title/sidebar.'
+      status.style.color = 'var(--phosphor)'
+    }else{
+      status.textContent = 'Save failed: ' + (d.error || 'unknown error')
+      status.style.color = 'var(--amber)'
+    }
+  }catch(e){ status.textContent = 'Save failed: ' + e; status.style.color = 'var(--amber)' }
+  btn.disabled = false
+}
+
+async function uploadBrandImage(kind){
+  var input = document.getElementById('brand-' + kind + '-input')
+  var status = document.getElementById('brand-' + kind + '-status')
+  if(!input.files || !input.files[0]){
+    status.textContent = 'Choose a file first.'
+    status.style.color = 'var(--amber)'
+    return
+  }
+  status.textContent = 'Uploading…'; status.style.color = 'var(--ink-dim)'
+  try{
+    var fd = new FormData()
+    fd.append(kind, input.files[0])
+    var r = await fetch('/api/branding', {method:'POST', body: fd})
+    var d = await r.json()
+    if(d.ok){
+      status.textContent = 'Saved — reload the page to see it.'
+      status.style.color = 'var(--phosphor)'
+      // Cache-bust so this tab's own preview updates without a full reload,
+      // even though the sidebar/favicon elsewhere on the page won't until
+      // the next load -- browsers cache image/icon responses aggressively.
+      document.getElementById('brand-' + kind + '-preview').src = '/branding/' + kind + '?t=' + Date.now()
+      input.value = ''
+    }else{
+      status.textContent = 'Upload failed: ' + (d.error || 'unknown error')
+      status.style.color = 'var(--amber)'
+    }
+  }catch(e){ status.textContent = 'Upload failed: ' + e; status.style.color = 'var(--amber)' }
+}
+
+async function resetBrandImage(kind){
+  var status = document.getElementById('brand-' + kind + '-status')
+  status.textContent = 'Resetting…'; status.style.color = 'var(--ink-dim)'
+  try{
+    var fd = new FormData()
+    fd.append('reset_' + kind, '1')
+    var r = await fetch('/api/branding', {method:'POST', body: fd})
+    var d = await r.json()
+    if(d.ok){
+      status.textContent = 'Back to the built-in default.'
+      status.style.color = 'var(--phosphor)'
+      document.getElementById('brand-' + kind + '-preview').src = '/branding/' + kind + '?t=' + Date.now()
+    }else{
+      status.textContent = 'Reset failed: ' + (d.error || 'unknown error')
+      status.style.color = 'var(--amber)'
+    }
+  }catch(e){ status.textContent = 'Reset failed: ' + e; status.style.color = 'var(--amber)' }
 }
 </script>
 

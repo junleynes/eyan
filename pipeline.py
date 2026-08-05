@@ -486,6 +486,106 @@ def current_config_values():
         'OLLAMA_URL': OLLAMA_URL, 'ACE_STEP_URL': ACE_STEP_URL, 'WOOSH_URL': WOOSH_URL,
     }
 
+# ---- Branding: app name, tagline, logo, favicon, editable from Config > Branding ----
+# Same persistence shape as the AI-service config above (a small JSON file next
+# to this script), but split into its own file/functions since this one also
+# manages uploaded image files, not just text -- a different enough shape that
+# folding it into CONFIGURABLE_SERVICES/save_config_overrides would make both
+# messier. Uploaded logo/favicon files live under LIBRARY_DIR (survives
+# restarts the same way the trailer library does) rather than next to the
+# script, so they don't need separate backup/deploy handling from everything
+# else this app persists.
+BRANDING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'branding_config.json')
+BRANDING_DIR = os.path.join(LIBRARY_DIR, 'branding')
+os.makedirs(BRANDING_DIR, exist_ok=True)
+DEFAULT_BRAND_NAME = 'AIMP'
+DEFAULT_BRAND_TAGLINE = 'AI Media Provider'
+_BRANDING_IMAGE_EXTS = {'.svg', '.png', '.jpg', '.jpeg', '.webp', '.gif'}
+_BRANDING_FAVICON_EXTS = {'.ico', '.svg', '.png'}
+
+def load_branding():
+    """Current brand name/tagline/logo/favicon. Falls back to the built-in
+    AIMP defaults for anything never configured -- this always returns a
+    complete dict, never partial, so callers don't each need their own
+    fallback logic."""
+    cfg = {'name': DEFAULT_BRAND_NAME, 'tagline': DEFAULT_BRAND_TAGLINE, 'logo_filename': None, 'favicon_filename': None}
+    if os.path.exists(BRANDING_FILE):
+        try:
+            with open(BRANDING_FILE) as f:
+                saved = json.load(f)
+            for k in cfg:
+                if saved.get(k):
+                    cfg[k] = saved[k]
+        except Exception as e:
+            print(f'Branding config load error ({BRANDING_FILE}): {e}')
+    return cfg
+
+def _write_branding(cfg):
+    with open(BRANDING_FILE, 'w') as f:
+        json.dump(cfg, f, indent=2)
+
+def save_branding_text(name=None, tagline=None):
+    cfg = load_branding()
+    if name is not None:
+        cfg['name'] = name.strip() or DEFAULT_BRAND_NAME
+    if tagline is not None:
+        cfg['tagline'] = tagline.strip() or DEFAULT_BRAND_TAGLINE
+    _write_branding(cfg)
+    return cfg
+
+def _replace_branding_file(cfg, key, file_storage, allowed_exts, prefix):
+    """Shared by save_branding_logo/favicon below: validates the new upload's
+    extension BEFORE touching anything, then removes whatever custom file was
+    previously set for `key` and saves the new one under a fixed name (so
+    there's never more than one live file per slot to track). Validating
+    first matters: an upload with a bad extension must leave the existing
+    custom logo/favicon untouched, not delete it and then fail -- silently
+    reverting to the default because of a rejected upload would be a much
+    more confusing failure mode than the plain error message this returns.
+    Returns (cfg, error)."""
+    ext = os.path.splitext(file_storage.filename or '')[1].lower()
+    if ext not in allowed_exts:
+        return None, f'Unsupported file type "{ext or "(none)"}" -- use one of: {", ".join(sorted(allowed_exts))}'
+    old = cfg.get(key)
+    if old:
+        old_path = os.path.join(BRANDING_DIR, old)
+        if os.path.exists(old_path):
+            try:
+                os.remove(old_path)
+            except OSError:
+                pass
+    fname = f'{prefix}{ext}'
+    file_storage.save(os.path.join(BRANDING_DIR, fname))
+    cfg[key] = fname
+    _write_branding(cfg)
+    return cfg, None
+
+def save_branding_logo(file_storage):
+    return _replace_branding_file(load_branding(), 'logo_filename', file_storage, _BRANDING_IMAGE_EXTS, 'logo')
+
+def save_branding_favicon(file_storage):
+    return _replace_branding_file(load_branding(), 'favicon_filename', file_storage, _BRANDING_FAVICON_EXTS, 'favicon')
+
+def _clear_branding_file(key):
+    cfg = load_branding()
+    old = cfg.get(key)
+    if old:
+        old_path = os.path.join(BRANDING_DIR, old)
+        if os.path.exists(old_path):
+            try:
+                os.remove(old_path)
+            except OSError:
+                pass
+    cfg[key] = None
+    _write_branding(cfg)
+    return cfg
+
+def clear_branding_logo():
+    return _clear_branding_file('logo_filename')
+
+def clear_branding_favicon():
+    return _clear_branding_file('favicon_filename')
+
 # ---- Fish Audio S2 (fish.audio) — primary voiceover engine (self-hosted or cloud REST API) ----
 # How long to wait for a TTS server to synthesize. The old hardcoded 30s was
 # fine for a preview but too tight for a full narration script on a self-hosted
@@ -3826,6 +3926,69 @@ def api_config_test():
     path = '/api/tags' if name == 'OLLAMA_URL' else '/'
     result = _check_service(name, base, path)
     return jsonify(ok=result['status'] == 'up', **result)
+
+# ---- Branding routes ----
+# /branding/logo and /branding/favicon are unauthenticated-reachable-in-effect
+# only in the sense that any logged-in page can load them via a plain <img>/
+# <link> tag -- they still go through the normal session gate like everything
+# else (see core.py's _access_control), same as /uploads/<file>. Neither is
+# in _PUBLIC_PATHS, so the login page itself doesn't show a logo; that's a
+# deliberate, minimal scope for this pass rather than an oversight.
+@app.route('/branding/logo')
+def branding_logo():
+    cfg = load_branding()
+    if cfg['logo_filename'] and os.path.exists(os.path.join(BRANDING_DIR, cfg['logo_filename'])):
+        return send_from_directory(BRANDING_DIR, cfg['logo_filename'])
+    return redirect('/static/logo-mark.svg')
+
+@app.route('/branding/favicon')
+def branding_favicon():
+    cfg = load_branding()
+    if cfg['favicon_filename'] and os.path.exists(os.path.join(BRANDING_DIR, cfg['favicon_filename'])):
+        return send_from_directory(BRANDING_DIR, cfg['favicon_filename'])
+    return redirect('/static/logo-mark.svg')
+
+@app.route('/api/branding', methods=['GET'])
+def api_branding_get():
+    """Current brand name/tagline/logo/favicon state, for the Config >
+    Branding tab to populate its fields and for the login/index pages'
+    <title>/sidebar text. Read-only and not admin-gated -- knowing the
+    current brand name isn't sensitive, only changing it is (see the POST
+    route below)."""
+    cfg = load_branding()
+    return jsonify(ok=True, name=cfg['name'], tagline=cfg['tagline'],
+                   has_logo=bool(cfg['logo_filename']), has_favicon=bool(cfg['favicon_filename']))
+
+@app.route('/api/branding', methods=['POST'])
+def api_branding_post():
+    """Saves Branding-tab edits: name/tagline (form fields) and/or a new
+    logo/favicon (file uploads) in the same request. reset_logo=1/
+    reset_favicon=1 clear a custom image back to the built-in default
+    without needing to upload anything. Admin-only -- this changes what
+    every signed-in account sees, the same reasoning as /api/config."""
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='Admin access required.'), 403
+    name = request.form.get('name')
+    tagline = request.form.get('tagline')
+    if name is not None or tagline is not None:
+        save_branding_text(name, tagline)
+    logo_file = request.files.get('logo')
+    if logo_file and logo_file.filename:
+        _, err = save_branding_logo(logo_file)
+        if err:
+            return jsonify(ok=False, error=err), 400
+    favicon_file = request.files.get('favicon')
+    if favicon_file and favicon_file.filename:
+        _, err = save_branding_favicon(favicon_file)
+        if err:
+            return jsonify(ok=False, error=err), 400
+    if request.form.get('reset_logo') == '1':
+        clear_branding_logo()
+    if request.form.get('reset_favicon') == '1':
+        clear_branding_favicon()
+    cfg = load_branding()
+    return jsonify(ok=True, name=cfg['name'], tagline=cfg['tagline'],
+                   has_logo=bool(cfg['logo_filename']), has_favicon=bool(cfg['favicon_filename']))
 
 @app.route('/api/health')
 def api_health():
