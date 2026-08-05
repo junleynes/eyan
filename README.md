@@ -10,21 +10,65 @@ Formerly AIMP. Split out of the original single `main_app_57_1_.py`
 
 ## Install
 
+### Prerequisites
+
+- **Python 3.10 or newer** — `numpy` 2.x (pinned in `requirements.txt`) requires it.
+  - Windows: [python.org/downloads](https://www.python.org/downloads/) or `winget install Python.Python.3.12`. During setup, tick **"Add python.exe to PATH."**
+  - Linux: usually already installed (`python3 --version` to check); if not, your distro's package manager (`sudo apt install python3`, etc.)
+- **ffmpeg and ffprobe** — the render pipeline shells out to both directly; they're not something `pip` can install. The install scripts below check for these and can install them for you (`--with-ffmpeg` / `-WithFFmpeg`), or tell you how if you'd rather do it yourself.
+- **Git**, or just a downloaded copy of this repo — either works, you only need the files on disk.
+
+### 1. Get the code
+
 ```
-# Linux
-./install.sh              # add --with-ffmpeg to also install ffmpeg via apt/dnf/yum/pacman/zypper
-
-# Windows (PowerShell)
-.\install.ps1              # add -WithFFmpeg to also install ffmpeg via winget
+git clone https://github.com/junleynes/eyan.git
+cd eyan
 ```
 
-Either script: checks for Python 3.10+ (numpy 2.x, pinned in
-`requirements.txt`, requires it), checks for `ffmpeg`/`ffprobe` on PATH,
-creates a `venv/` and installs `requirements.txt` into it, and copies
-`.env.example` to `.env` if you don't already have one. Safe to re-run —
-it reuses an existing `venv/` and never touches an existing `.env`.
+(Or download the repo as a ZIP from GitHub and extract it — the install scripts don't care how the files got there, only that they're run from inside this folder.)
 
-Then:
+### 2. Run the install script
+
+**Linux / macOS:**
+
+```
+chmod +x install.sh        # only needed once, if it isn't already executable
+./install.sh
+# or, to also install ffmpeg automatically via apt/dnf/yum/pacman/zypper:
+./install.sh --with-ffmpeg
+```
+
+**Windows (PowerShell):**
+
+```powershell
+.\install.ps1
+# or, to also install ffmpeg automatically via winget:
+.\install.ps1 -WithFFmpeg
+```
+
+If Windows refuses to run the script with a message about execution
+policy, that's PowerShell's default safety setting blocking unsigned
+scripts — allow it for your own account with:
+
+```powershell
+Set-ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+then run `.\install.ps1` again. This only needs doing once per machine.
+
+Either script does the same four things, and is safe to re-run any time
+(it reuses an existing `venv/` and never touches an existing `.env`):
+
+1. Checks for Python 3.10+ and for `ffmpeg`/`ffprobe` on PATH.
+2. Creates a `venv/` virtual environment.
+3. Installs everything in `requirements.txt` into it.
+4. Copies `.env.example` to `.env`, if you don't already have one.
+
+You'll see `ok` next to each check that passes, and clear instructions
+printed at the end regardless of outcome — including what to do if
+`ffmpeg` wasn't found and you didn't pass the auto-install flag.
+
+### 3. Run it
 
 ```
 # Linux
@@ -36,14 +80,40 @@ venv\Scripts\Activate.ps1
 python main.py
 ```
 
-**`.env` is real now** — as of this pass, `core.py` loads it via
-`python-dotenv` before anything else runs, so variables in `.env` actually
-take effect (this used to be silently decorative). One thing worth knowing
-if you hand-edit it: every line in `.env.example` is commented out on
-purpose — uncommenting a line with nothing after the `=` sets an actual
-empty string, which is *not* the same as leaving the variable unset, and
-some of the app's own defaults only apply when a variable is completely
-absent. Uncomment a line only when you're also giving it a real value.
+Then open **http://localhost:5000**. First run with no existing
+`users.db` creates a default admin account and prints its username and
+password once to the console — watch for it, or set
+`ADMIN_USERNAME`/`ADMIN_PASSWORD` in `.env` beforehand to choose your own
+(see "Lost the admin password?" below for recovery if you ever need it).
+
+### Lost the admin password?
+
+Set `RESET_ADMIN=1` in `.env` (optionally alongside `ADMIN_USERNAME`/
+`ADMIN_PASSWORD` to choose the new credentials) and restart. This resets
+that account to an active admin with a new password on every boot —
+regardless of what's already in `users.db` — and creates it if it
+doesn't exist. **Remove `RESET_ADMIN` again afterward**, or the account
+keeps getting reset back to that password on every future restart.
+
+### `.env` — real now, one gotcha to know about
+
+As of this pass, `core.py` loads `.env` via `python-dotenv` before
+anything else runs, so variables in it actually take effect (this used
+to be silently decorative — nothing read the file at all). One thing
+worth knowing if you hand-edit it: every line in `.env.example` is
+commented out on purpose — uncommenting a line with nothing after the
+`=` sets an actual empty string, which is *not* the same as leaving the
+variable unset, and some of the app's own defaults only apply when a
+variable is completely absent. Uncomment a line only when you're also
+giving it a real value.
+
+### If something goes wrong
+
+- **`./install.sh: Permission denied`** — run `chmod +x install.sh` first, or invoke it as `bash install.sh` instead.
+- **`No Python 3.10+ found on PATH`** — install a newer Python (see Prerequisites above) and make sure it's on PATH; open a new terminal afterward so the updated PATH takes effect.
+- **ffmpeg warnings during install** — the app will still start without it, but any render will fail until `ffmpeg`/`ffprobe` are on PATH. Re-run with `--with-ffmpeg` / `-WithFFmpeg`, or install manually from [ffmpeg.org](https://ffmpeg.org/download.html).
+- **pip install fails partway through** — usually a flaky network blip on a large package (`opencv-python`, `numpy`). Just re-run the install script; it reuses the existing `venv/` and only needs to finish installing what's missing.
+- **Windows: `venv\Scripts\Activate.ps1` still blocked after `Set-ExecutionPolicy`** — you can skip activation entirely and run `venv\Scripts\python.exe main.py` directly; same effect, no execution policy involved.
 
 ## Layout
 
