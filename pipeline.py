@@ -24,7 +24,9 @@ from werkzeug.utils import secure_filename
 import smbclient  # pip install smbprotocol -- lets the upload panels browse a Windows/SMB network share directly
 
 from core import app, ALLOWED_EXTENSIONS
-from library_db import LIBRARY_DIR, _sqlite_connect, library_add, library_list, library_get_row, library_delete
+from library_db import (LIBRARY_DIR, _sqlite_connect, library_add, library_list, library_get_row, library_delete,
+    load_branding, save_branding_text, save_branding_color, save_branding_logo, save_branding_favicon,
+    clear_branding_logo, clear_branding_favicon, clear_branding_color, BRANDING_DIR)
 from auth import require_permission
 
 # ---- Per-show asset templates (SQLite) ----
@@ -486,105 +488,13 @@ def current_config_values():
         'OLLAMA_URL': OLLAMA_URL, 'ACE_STEP_URL': ACE_STEP_URL, 'WOOSH_URL': WOOSH_URL,
     }
 
-# ---- Branding: app name, tagline, logo, favicon, editable from Config > Branding ----
-# Same persistence shape as the AI-service config above (a small JSON file next
-# to this script), but split into its own file/functions since this one also
-# manages uploaded image files, not just text -- a different enough shape that
-# folding it into CONFIGURABLE_SERVICES/save_config_overrides would make both
-# messier. Uploaded logo/favicon files live under LIBRARY_DIR (survives
-# restarts the same way the trailer library does) rather than next to the
-# script, so they don't need separate backup/deploy handling from everything
-# else this app persists.
-BRANDING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'branding_config.json')
-BRANDING_DIR = os.path.join(LIBRARY_DIR, 'branding')
-os.makedirs(BRANDING_DIR, exist_ok=True)
-DEFAULT_BRAND_NAME = 'AIMP'
-DEFAULT_BRAND_TAGLINE = 'AI Media Provider'
-_BRANDING_IMAGE_EXTS = {'.svg', '.png', '.jpg', '.jpeg', '.webp', '.gif'}
-_BRANDING_FAVICON_EXTS = {'.ico', '.svg', '.png'}
-
-def load_branding():
-    """Current brand name/tagline/logo/favicon. Falls back to the built-in
-    AIMP defaults for anything never configured -- this always returns a
-    complete dict, never partial, so callers don't each need their own
-    fallback logic."""
-    cfg = {'name': DEFAULT_BRAND_NAME, 'tagline': DEFAULT_BRAND_TAGLINE, 'logo_filename': None, 'favicon_filename': None}
-    if os.path.exists(BRANDING_FILE):
-        try:
-            with open(BRANDING_FILE) as f:
-                saved = json.load(f)
-            for k in cfg:
-                if saved.get(k):
-                    cfg[k] = saved[k]
-        except Exception as e:
-            print(f'Branding config load error ({BRANDING_FILE}): {e}')
-    return cfg
-
-def _write_branding(cfg):
-    with open(BRANDING_FILE, 'w') as f:
-        json.dump(cfg, f, indent=2)
-
-def save_branding_text(name=None, tagline=None):
-    cfg = load_branding()
-    if name is not None:
-        cfg['name'] = name.strip() or DEFAULT_BRAND_NAME
-    if tagline is not None:
-        cfg['tagline'] = tagline.strip() or DEFAULT_BRAND_TAGLINE
-    _write_branding(cfg)
-    return cfg
-
-def _replace_branding_file(cfg, key, file_storage, allowed_exts, prefix):
-    """Shared by save_branding_logo/favicon below: validates the new upload's
-    extension BEFORE touching anything, then removes whatever custom file was
-    previously set for `key` and saves the new one under a fixed name (so
-    there's never more than one live file per slot to track). Validating
-    first matters: an upload with a bad extension must leave the existing
-    custom logo/favicon untouched, not delete it and then fail -- silently
-    reverting to the default because of a rejected upload would be a much
-    more confusing failure mode than the plain error message this returns.
-    Returns (cfg, error)."""
-    ext = os.path.splitext(file_storage.filename or '')[1].lower()
-    if ext not in allowed_exts:
-        return None, f'Unsupported file type "{ext or "(none)"}" -- use one of: {", ".join(sorted(allowed_exts))}'
-    old = cfg.get(key)
-    if old:
-        old_path = os.path.join(BRANDING_DIR, old)
-        if os.path.exists(old_path):
-            try:
-                os.remove(old_path)
-            except OSError:
-                pass
-    fname = f'{prefix}{ext}'
-    file_storage.save(os.path.join(BRANDING_DIR, fname))
-    cfg[key] = fname
-    _write_branding(cfg)
-    return cfg, None
-
-def save_branding_logo(file_storage):
-    return _replace_branding_file(load_branding(), 'logo_filename', file_storage, _BRANDING_IMAGE_EXTS, 'logo')
-
-def save_branding_favicon(file_storage):
-    return _replace_branding_file(load_branding(), 'favicon_filename', file_storage, _BRANDING_FAVICON_EXTS, 'favicon')
-
-def _clear_branding_file(key):
-    cfg = load_branding()
-    old = cfg.get(key)
-    if old:
-        old_path = os.path.join(BRANDING_DIR, old)
-        if os.path.exists(old_path):
-            try:
-                os.remove(old_path)
-            except OSError:
-                pass
-    cfg[key] = None
-    _write_branding(cfg)
-    return cfg
-
-def clear_branding_logo():
-    return _clear_branding_file('logo_filename')
-
-def clear_branding_favicon():
-    return _clear_branding_file('favicon_filename')
+# ---- Branding ----
+# Moved to library_db.py (see there for load_branding/save_branding_text/etc.)
+# so both this module's Config > Branding routes AND auth.py's login page can
+# import it without a circular import -- auth.py already imports from
+# library_db, and pipeline.py imports from auth, so branding couldn't live
+# here if the login page needed it too. Re-imported below under the same
+# names so nothing else in this file has to change.
 
 # ---- Fish Audio S2 (fish.audio) — primary voiceover engine (self-hosted or cloud REST API) ----
 # How long to wait for a TTS server to synthesize. The old hardcoded 30s was
@@ -3252,7 +3162,7 @@ def acestep_generate(prompt, duration, lyrics=None, bpm=None, samples=1,
                      steps=None, seed=None, base_ts=None,
                      ref_audio_path=None, ref_strength=0.5,
                      keyscale=None, timesignature=None, thinking=False,
-                     negative_prompt=None):
+                     negative_prompt=None, model=None):
     """Generate music with ACE-Step directly. Returns (paths, error).
 
     Unlike prepare_bgm_track (which is shaped around the trailer pipeline: one
@@ -3287,7 +3197,14 @@ def acestep_generate(prompt, duration, lyrics=None, bpm=None, samples=1,
     ref_audio_input takes a FILE PATH that the ACE-Step process must be able to
     read. That works when ACE-Step runs on this machine (the default
     localhost:8001), but on a separate host the path won't resolve there — see
-    ACE_STEP_REF_DIR for pointing both sides at a shared mount."""
+    ACE_STEP_REF_DIR for pointing both sides at a shared mount.
+
+    `model` selects between multiple DiT checkpoints on servers that expose
+    more than one (ACE-Step 1.5's multi-model routing, or a wrapper's own
+    aliases -- see api_music_models() for how the picker discovers what's
+    available). Omitted from the payload entirely when blank, so a
+    single-model server that doesn't recognize the field at all is
+    unaffected either way."""
     tags = (prompt or '').strip() or 'cinematic, instrumental'
     if bpm:
         # Don't double up if the user already typed a bpm into the prompt.
@@ -3336,6 +3253,9 @@ def acestep_generate(prompt, duration, lyrics=None, bpm=None, samples=1,
         payload['audio2audio_enable'] = True
         payload['ref_audio_input'] = os.path.abspath(ref_audio_path)
         payload['ref_audio_strength'] = max(0.0, min(1.0, float(ref_strength)))
+    model = (model or '').strip()
+    if model:
+        payload['model'] = model
 
     base_ts = base_ts or f'tool{int(time.time()*1000)}'
     try:
@@ -3413,6 +3333,7 @@ def api_music_generate():
         timesignature = ''
     negative_prompt = (request.form.get('negative_prompt') or '').strip()
     thinking = (request.form.get('thinking') or '').strip().lower() in ('1', 'true', 'on', 'yes')
+    model = (request.form.get('model') or '').strip()
 
     if not prompt:
         return jsonify(ok=False, error='Enter a prompt describing the style you want.'), 400
@@ -3446,7 +3367,7 @@ def api_music_generate():
                                       samples=samples, steps=steps, seed=seed, base_ts=base_ts,
                                       ref_audio_path=ref_path, ref_strength=ref_strength,
                                       keyscale=keyscale, timesignature=timesignature,
-                                      thinking=thinking, negative_prompt=negative_prompt)
+                                      thinking=thinking, negative_prompt=negative_prompt, model=model)
     finally:
         # The reference only needs to survive the generation call itself.
         if ref_path and os.path.exists(ref_path):
@@ -3465,8 +3386,43 @@ def api_music_generate():
         prompt=prompt, lyrics=lyrics or None, bpm=bpm, steps=steps,
         instrumental=not lyrics,
         keyscale=keyscale or None, timesignature=timesignature or None, thinking=thinking,
-        negative_prompt=negative_prompt or None,
+        negative_prompt=negative_prompt or None, model=model or None,
         reference=bool(ref_path), ref_strength=ref_strength if ref_path else None)
+
+@app.route('/api/music/models')
+@require_permission('music_generation')
+def api_music_models():
+    """Model/checkpoint aliases the ACE-Step server has loaded, for the Music
+    Generation tab's model picker. ACE-Step 1.5's multi-model routing (and at
+    least one hosted wrapper observed in the wild) exposes these at GET
+    /models; older/single-model servers and other wrappers don't have this
+    endpoint at all -- that's not an error, it just means there's nothing to
+    switch between, so this returns an empty list rather than surfacing a
+    failure. /api/music/generate still takes a free-typed model name either
+    way (see acestep_generate's `model` param), this is purely to populate
+    the picker's suggestions when the server can tell us what's available."""
+    try:
+        r = requests.get(f'{ACE_STEP_URL}/models', timeout=5)
+        if not r.ok:
+            return jsonify(ok=True, models=[])
+        data = r.json()
+    except Exception:
+        return jsonify(ok=True, models=[])
+    if isinstance(data, dict):
+        items = data.get('models') or data.get('data') or data.get('aliases') or []
+    elif isinstance(data, list):
+        items = data
+    else:
+        items = []
+    models = []
+    for it in items:
+        if isinstance(it, str):
+            models.append(it)
+        elif isinstance(it, dict):
+            name = it.get('alias') or it.get('name') or it.get('id') or it.get('model')
+            if name:
+                models.append(name)
+    return jsonify(ok=True, models=models)
 
 @app.route('/api/music/genres')
 @require_permission('music_generation')
@@ -3507,7 +3463,7 @@ def api_sfx_generate():
     return jsonify(ok=True, prompt=prompt, samples=[{
         'url': f'/uploads/{os.path.basename(p)}',
         'filename': os.path.basename(p),
-        'duration': round(probe_duration(p) or duration, 1),
+        'duration': round(probe_duration(p) or 0, 1),
     } for p in paths])
 
 @app.route('/api/trailer/cancel/<job_id>', methods=['POST'])
@@ -3928,12 +3884,12 @@ def api_config_test():
     return jsonify(ok=result['status'] == 'up', **result)
 
 # ---- Branding routes ----
-# /branding/logo and /branding/favicon are unauthenticated-reachable-in-effect
-# only in the sense that any logged-in page can load them via a plain <img>/
-# <link> tag -- they still go through the normal session gate like everything
-# else (see core.py's _access_control), same as /uploads/<file>. Neither is
-# in _PUBLIC_PATHS, so the login page itself doesn't show a logo; that's a
-# deliberate, minimal scope for this pass rather than an oversight.
+# /branding/logo and /branding/favicon are in _PUBLIC_PATHS (see core.py) so
+# the login page -- rendered before any session exists -- can show the
+# configured logo/favicon too, not just the signed-in app shell. Serving an
+# image file to a logged-out client isn't a meaningful exposure (same content
+# a favicon <link> would leak anyway), so this is a safe carve-out from the
+# session gate.
 @app.route('/branding/logo')
 def branding_logo():
     cfg = load_branding()
@@ -3950,28 +3906,34 @@ def branding_favicon():
 
 @app.route('/api/branding', methods=['GET'])
 def api_branding_get():
-    """Current brand name/tagline/logo/favicon state, for the Config >
-    Branding tab to populate its fields and for the login/index pages'
-    <title>/sidebar text. Read-only and not admin-gated -- knowing the
-    current brand name isn't sensitive, only changing it is (see the POST
+    """Current brand name/tagline/accent color/logo/favicon state, for the
+    Config > Branding tab to populate its fields and for the login/index
+    pages' <title>/sidebar/theme. Read-only and not admin-gated -- knowing
+    the current branding isn't sensitive, only changing it is (see the POST
     route below)."""
     cfg = load_branding()
-    return jsonify(ok=True, name=cfg['name'], tagline=cfg['tagline'],
+    return jsonify(ok=True, name=cfg['name'], tagline=cfg['tagline'], accent_color=cfg['accent_color'],
                    has_logo=bool(cfg['logo_filename']), has_favicon=bool(cfg['favicon_filename']))
 
 @app.route('/api/branding', methods=['POST'])
 def api_branding_post():
-    """Saves Branding-tab edits: name/tagline (form fields) and/or a new
-    logo/favicon (file uploads) in the same request. reset_logo=1/
-    reset_favicon=1 clear a custom image back to the built-in default
-    without needing to upload anything. Admin-only -- this changes what
-    every signed-in account sees, the same reasoning as /api/config."""
+    """Saves Branding-tab edits: name/tagline/accent_color (form fields)
+    and/or a new logo/favicon (file uploads) in the same request.
+    reset_logo=1/reset_favicon=1/reset_accent_color=1 clear that item back to
+    the built-in default without needing to re-enter anything. Admin-only --
+    this changes what every signed-in account (and the login page) sees, the
+    same reasoning as /api/config."""
     if session.get('role') != 'admin':
         return jsonify(ok=False, error='Admin access required.'), 403
     name = request.form.get('name')
     tagline = request.form.get('tagline')
     if name is not None or tagline is not None:
         save_branding_text(name, tagline)
+    accent_color = request.form.get('accent_color')
+    if accent_color:
+        _, err = save_branding_color(accent_color)
+        if err:
+            return jsonify(ok=False, error=err), 400
     logo_file = request.files.get('logo')
     if logo_file and logo_file.filename:
         _, err = save_branding_logo(logo_file)
@@ -3986,8 +3948,10 @@ def api_branding_post():
         clear_branding_logo()
     if request.form.get('reset_favicon') == '1':
         clear_branding_favicon()
+    if request.form.get('reset_accent_color') == '1':
+        clear_branding_color()
     cfg = load_branding()
-    return jsonify(ok=True, name=cfg['name'], tagline=cfg['tagline'],
+    return jsonify(ok=True, name=cfg['name'], tagline=cfg['tagline'], accent_color=cfg['accent_color'],
                    has_logo=bool(cfg['logo_filename']), has_favicon=bool(cfg['favicon_filename']))
 
 @app.route('/api/health')

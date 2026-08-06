@@ -48,7 +48,8 @@ def index():
                                    current_permissions=perms,
                                    default_tab=default_tab,
                                    brand_name=brand['name'],
-                                   brand_tagline=brand['tagline'])
+                                   brand_tagline=brand['tagline'],
+                                   brand_accent=brand['accent_color'])
 
 @app.route('/uploads/<filename>')
 def uploaded(filename):

@@ -89,6 +89,16 @@
   --wash-4:rgba(0,0,0,.07);
   --wash-5:rgba(0,0,0,.09);
 }
+/* Admin-configured accent color (Config > Branding) overrides the built-in
+   --accent default above in BOTH themes -- placed after both :root and
+   [data-theme="light"] so the cascade picks this last regardless of which
+   theme is active, without needing !important or duplicating every other
+   theme-specific variable. Falls back to the same #4f8cff default as an
+   unconfigured install when nothing's been customized, so this block is a
+   no-op until an admin actually picks a color. */
+:root, [data-theme="light"]{
+  --accent: {{ brand_accent }};
+}
 html{scroll-behavior:smooth}
 [data-theme="light"] body{
   background:
@@ -343,6 +353,25 @@ p{color:var(--ink-dim);font-size:13px;line-height:1.65;margin:8px 0}
 
 label{display:block;margin:16px 0 6px;font-family:'JetBrains Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-dim)}
 input[type=file]{display:block;margin:10px 0;color:var(--ink-dim);font-size:13px;font-family:'IBM Plex Sans',sans-serif}
+/* Native file inputs (e.g. Reference audio in Music Generation) render the
+   browser's own OS-chrome "Browse..." button by default -- this pseudo-
+   element is the only styleable hook into it. Matches .btn's look (same
+   font, colors, radius) so it doesn't stand out as unthemed next to every
+   other button in the app. ::-webkit-file-upload-button is the older Chrome/
+   Safari name for the same thing; ::file-selector-button is the current
+   standard (Firefox, Chrome, Safari, Edge) -- both rules kept so this covers
+   every browser this app is likely to run in. */
+input[type=file]::file-selector-button,
+input[type=file]::-webkit-file-upload-button{
+  font-family:'JetBrains Mono',monospace;background:transparent;color:var(--phosphor);
+  border:1px solid var(--phosphor-dim);padding:7px 14px;border-radius:7px;cursor:pointer;
+  font-size:11px;letter-spacing:.04em;text-transform:uppercase;margin-right:10px;
+  transition:all .15s;
+}
+input[type=file]::file-selector-button:hover,
+input[type=file]::-webkit-file-upload-button:hover{
+  border-color:var(--phosphor);background:rgba(52,230,197,.1);
+}
 .dropzone{
   border:2px dashed var(--line);
   border-radius:var(--radius);
@@ -1045,7 +1074,7 @@ document.addEventListener("DOMContentLoaded", function(){
     <p style="margin-top:4px;font-size:12px;opacity:.75">There's no built-in default voice — the list is fetched live from your Fish Audio server (<code>/api/voices?engine=fish_audio</code>). A self-hosted server's voices come from <code>/v1/references/list</code>; the cloud API is used instead when <code>FISH_AUDIO_API_KEY</code> is set. Fish Audio S2 auto-detects the script's language (including Tagalog) unless you override it above.</p>
 
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:10px 0 4px">
-      <button type=button id=vo-preview-btn onclick="previewVoiceover()">Generate &amp; preview</button>
+      <button type=button class=btn id=vo-preview-btn onclick="previewVoiceover()">Generate &amp; preview</button>
       <span id=vo-preview-status style="font-size:12px;opacity:.75"></span>
     </div>
     <audio id=vo-preview-audio controls style="display:none;width:100%;margin-top:4px"></audio>
@@ -2307,6 +2336,7 @@ async function generateMusicTool(){
   fd.append('thinking', document.getElementById('music-thinking').checked ? '1' : '0')
   fd.append('steps', document.getElementById('music-steps').value)
   fd.append('seed', document.getElementById('music-seed').value)
+  fd.append('model', document.getElementById('music-model').value.trim())
   var ref = document.getElementById('music-ref')
   if(ref && ref.files && ref.files[0]){
     fd.append('ref_audio', ref.files[0])
@@ -2327,7 +2357,8 @@ async function generateMusicTool(){
       d.keyscale ? d.keyscale : 'key auto',
       d.timesignature ? (d.timesignature === '6' ? '6/8' : d.timesignature + '/4') : 'meter auto',
       d.thinking ? 'thinking on' : 'thinking off',
-      d.steps + ' steps'
+      d.steps + ' steps',
+      d.model ? 'model ' + d.model : 'model: server default'
     ]
     if(d.reference) meta.push('audio2audio @ ' + Number(d.ref_strength).toFixed(2))
     var html = '<div style="font-size:12px;opacity:.75;margin-bottom:10px">' +
@@ -3399,11 +3430,31 @@ async function loadModels(){
     document.getElementById('trailer-model').innerHTML=document.getElementById('vision-model').innerHTML
   }
 }
+
+// Suggestions for the Music Generation (ACE-Step) model field -- populated
+// only when the server has more than one checkpoint loaded and exposes them
+// (see api_music_models() in pipeline.py). An empty result is normal, not an
+// error: the field still works as a plain free-text input either way, it
+// just won't have autocomplete suggestions to offer.
+async function loadAceStepModels(){
+  try{
+    var r = await fetch('/api/music/models')
+    var d = await r.json()
+    var models = (d && d.ok && d.models) || []
+    document.getElementById('music-model-options').innerHTML =
+      models.map(function(m){ return '<option value="' + m + '">' }).join('')
+    var note = document.getElementById('music-model-note')
+    if(models.length && note){
+      note.textContent = 'Server reports ' + models.length + ' model' + (models.length === 1 ? '' : 's') + ' available (see suggestions) — leave blank to use its default.'
+    }
+  }catch(e){}
+}
 // The Vision panel is rendered further down the page (it lives in the rail now,
 // not inside Tools), so this script parses before its markup exists. Defer the
 // element lookups until the document is ready.
 document.addEventListener('DOMContentLoaded', function(){
 loadModels()
+loadAceStepModels()
 var _lastVisionVideoFilename = null
 
 document.getElementById('vf').addEventListener('submit', async function(e){
@@ -3458,6 +3509,11 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 </div>
 <p style="font-size:12px;opacity:.7;margin-top:-4px">Generates in the shape of an existing track — useful for matching a show's established sting, or restyling a bed you already have. Higher strength stays closer to the reference; lower gives the prompt more freedom. Around 0.5 is a good starting point for a style transfer.</p>
 <p style="font-size:12px;opacity:.6;margin-top:-4px">ACE-Step reads the reference from a file path rather than an upload, so this needs ACE-Step running on this machine — or <code>ACE_STEP_REF_DIR</code> pointed at a mount both machines resolve identically.</p>
+
+<label>Model (optional):</label>
+<input type=text id=music-model list=music-model-options class=input-box style="max-width:280px" placeholder="Server default">
+<datalist id=music-model-options></datalist>
+<p id=music-model-note style="font-size:12px;opacity:.7;margin-top:-4px">Leave blank to use whatever your ACE-Step server loads by default. Suggestions above are read live from the server if it exposes more than one checkpoint (e.g. a turbo/fast model alongside a higher-quality one) — type a name directly if yours isn't listed.</p>
 
 <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:12px 0">
   <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Duration (s):</span>
@@ -3935,7 +3991,7 @@ This is [emphasis] the one you cannot miss.
   <!-- rows injected by loadConfigTab() -->
 </div>
 <div style="margin-top:18px;display:flex;gap:10px;align-items:center">
-  <button type=button id=config-save-btn onclick="saveConfigTab()">Save all</button>
+  <button type=button class=btn id=config-save-btn onclick="saveConfigTab()">Save all</button>
   <span id="config-save-status" style="font-size:13px"></span>
 </div>
 </div>
@@ -3949,8 +4005,20 @@ This is [emphasis] the one you cannot miss.
 <label>Tagline:</label>
 <input type=text id=brand-tagline-input class=input-box placeholder="AI Media Provider">
 <div style="margin-top:10px">
-  <button type=button id=brand-text-save-btn onclick="saveBrandText()">Save name &amp; tagline</button>
+  <button type=button class=btn id=brand-text-save-btn onclick="saveBrandText()">Save name &amp; tagline</button>
   <span id=brand-text-status style="font-size:13px;margin-left:8px"></span>
+</div>
+
+<div style="margin-top:20px;min-width:220px">
+  <label>Color theme (accent color):</label>
+  <p style="font-size:11px;opacity:.65;margin:2px 0 8px">Used app-wide for buttons, links, and highlights in both light and dark mode &mdash; including the sign-in page.</p>
+  <div style="display:flex;align-items:center;gap:10px">
+    <input type=color id=brand-accent-input value="#4f8cff" style="width:44px;height:32px;padding:2px;border-radius:6px;border:1px solid var(--line);background:var(--panel-2);cursor:pointer">
+    <input type=text id=brand-accent-text class=input-box style="width:110px;margin-bottom:0" placeholder="#4f8cff">
+    <button type=button class=btn style="padding:5px 11px;font-size:12px" onclick="saveBrandAccent()">Save color</button>
+    <button type=button class=btn style="padding:5px 11px;font-size:12px" onclick="resetBrandAccent()">Reset</button>
+  </div>
+  <span id=brand-accent-status style="font-size:12px;margin-top:6px;display:inline-block"></span>
 </div>
 
 <div style="display:flex;gap:24px;flex-wrap:wrap;margin-top:20px">
@@ -4080,9 +4148,59 @@ async function loadBrandingTab(){
     if(!d.ok) return
     document.getElementById('brand-name-input').value = d.name
     document.getElementById('brand-tagline-input').value = d.tagline
+    document.getElementById('brand-accent-input').value = d.accent_color
+    document.getElementById('brand-accent-text').value = d.accent_color
     document.getElementById('brand-logo-status').textContent = d.has_logo ? 'Custom logo in use' : 'Using the built-in default'
     document.getElementById('brand-favicon-status').textContent = d.has_favicon ? 'Custom favicon in use' : 'Using the built-in default'
   }catch(e){}
+}
+// Keep the swatch (<input type=color>, always #rrggbb) and the free-typed
+// hex field in sync with each other without fighting -- each only writes to
+// the other, never to itself, so there's no cursor-jump/loop.
+document.getElementById('brand-accent-input').addEventListener('input', function(){
+  document.getElementById('brand-accent-text').value = this.value
+})
+document.getElementById('brand-accent-text').addEventListener('input', function(){
+  if(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(this.value)) document.getElementById('brand-accent-input').value = this.value
+})
+
+async function saveBrandAccent(){
+  var status = document.getElementById('brand-accent-status')
+  var color = document.getElementById('brand-accent-text').value.trim()
+  status.textContent = 'Saving…'; status.style.color = 'var(--ink-dim)'
+  try{
+    var fd = new FormData()
+    fd.append('accent_color', color)
+    var r = await fetch('/api/branding', {method:'POST', body: fd})
+    var d = await r.json()
+    if(d.ok){
+      status.textContent = 'Saved. Reload the page to see it applied everywhere.'
+      status.style.color = 'var(--phosphor)'
+    }else{
+      status.textContent = 'Save failed: ' + (d.error || 'unknown error')
+      status.style.color = 'var(--amber)'
+    }
+  }catch(e){ status.textContent = 'Save failed: ' + e; status.style.color = 'var(--amber)' }
+}
+
+async function resetBrandAccent(){
+  var status = document.getElementById('brand-accent-status')
+  status.textContent = 'Resetting…'; status.style.color = 'var(--ink-dim)'
+  try{
+    var fd = new FormData()
+    fd.append('reset_accent_color', '1')
+    var r = await fetch('/api/branding', {method:'POST', body: fd})
+    var d = await r.json()
+    if(d.ok){
+      document.getElementById('brand-accent-input').value = d.accent_color
+      document.getElementById('brand-accent-text').value = d.accent_color
+      status.textContent = 'Back to the built-in default. Reload the page to see it applied everywhere.'
+      status.style.color = 'var(--phosphor)'
+    }else{
+      status.textContent = 'Reset failed: ' + (d.error || 'unknown error')
+      status.style.color = 'var(--amber)'
+    }
+  }catch(e){ status.textContent = 'Reset failed: ' + e; status.style.color = 'var(--amber)' }
 }
 
 async function saveBrandText(){

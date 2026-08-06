@@ -69,7 +69,7 @@ app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FORCE_HTTPS', '').lower() 
 # further restricted to the 'admin' role. This closes the standing hole where
 # every trailer, template asset, and upload was servable to anyone who could
 # reach the port, via predictable filenames and sequential library IDs.
-_PUBLIC_PATHS = {'/login', '/logout'}
+_PUBLIC_PATHS = {'/login', '/logout', '/branding/logo', '/branding/favicon'}
 _API_PREFIXES = ('/api/', '/uploads/', '/library/', '/download/')
 _ADMIN_PREFIX = '/admin/'
 

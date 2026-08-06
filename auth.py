@@ -5,9 +5,10 @@ library_db (LIBRARY_DIR, _sqlite_connect) for where users.db lives.
 """
 import os, time, sqlite3, functools
 from flask import request, session, redirect, jsonify
+from markupsafe import escape
 from werkzeug.security import generate_password_hash, check_password_hash
 from core import app, _client_ip, _login_limiter, _DUMMY_PW_HASH, DEFAULT_ADMIN_PASSWORD
-from library_db import LIBRARY_DIR, _sqlite_connect
+from library_db import LIBRARY_DIR, _sqlite_connect, load_branding
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -42,17 +43,44 @@ def login():
             else:
                 error = 'Incorrect username or password.'
     nxt = request.args.get('next', '/')
+    # 'next' and any error text land inside HTML attribute/element content
+    # below -- escape both. 'next' is attacker-controlled (it's a query
+    # param), so leaving it raw would be a reflected-XSS hole via a crafted
+    # login link; error is currently always one of this function's own fixed
+    # strings, but escaping costs nothing and keeps that true by construction
+    # rather than by convention.
+    nxt = escape(nxt)
+    error = escape(error) if error else None
+    brand = load_branding()
+    brand_name = escape(brand['name'])
+    brand_tagline = escape(brand['tagline'])
+    accent = brand['accent_color']
+    # /branding/logo always resolves to something displayable (falls back to
+    # the built-in mark itself when no custom logo is configured -- see
+    # branding_logo() in pipeline.py), so this <img> never needs an
+    # onerror/placeholder fallback of its own.
     return f'''<!doctype html><html><head><meta charset="utf-8">
-<title>Sign in</title>
-<style>body{{font-family:system-ui,sans-serif;background:#0b1220;color:#e6e9ef;
+<title>{brand_name} &mdash; {brand_tagline}</title>
+<link rel="icon" href="/branding/favicon">
+<style>:root{{--accent:{accent}}}
+body{{font-family:system-ui,sans-serif;background:#0b1220;color:#e6e9ef;
 display:flex;align-items:center;justify-content:center;height:100vh;margin:0}}
-form{{background:#141b2d;padding:28px 32px;border-radius:10px;border:1px solid #232b41;width:280px}}
+.login-card{{display:flex;flex-direction:column;align-items:center;width:280px}}
+.login-logo{{width:52px;height:52px;border-radius:12px;margin-bottom:14px;object-fit:contain}}
+.login-name{{font-size:20px;font-weight:600;margin:0 0 2px}}
+.login-tagline{{font-size:13px;color:#8b98ad;margin:0 0 22px;text-align:center}}
+form{{background:#141b2d;padding:28px 32px;border-radius:10px;border:1px solid #232b41;width:100%;
+box-sizing:border-box}}
 h1{{font-size:16px;margin:0 0 16px}}
 input{{width:100%;box-sizing:border-box;padding:9px 10px;border-radius:6px;border:1px solid #232b41;
 background:#0b1220;color:#e6e9ef;font-size:14px;margin-bottom:12px}}
-button{{width:100%;padding:9px;border-radius:6px;border:none;background:#4f8cff;color:#fff;
+button{{width:100%;padding:9px;border-radius:6px;border:none;background:var(--accent);color:#fff;
 font-size:14px;cursor:pointer}}
 .err{{color:#e08a3c;font-size:12px;margin-bottom:12px}}</style></head><body>
+<div class="login-card">
+<img class="login-logo" src="/branding/logo" alt="{brand_name} logo">
+<p class="login-name">{brand_name}</p>
+<p class="login-tagline">{brand_tagline}</p>
 <form method=post>
 <h1>Sign in</h1>
 {f'<div class="err">{error}</div>' if error else ''}
@@ -60,7 +88,8 @@ font-size:14px;cursor:pointer}}
 <input type=text name=username placeholder="Username" autofocus autocomplete="username">
 <input type=password name=password placeholder="Password" autocomplete="current-password">
 <button type=submit>Continue</button>
-</form></body></html>'''
+</form>
+</div></body></html>'''
 
 @app.route('/logout')
 def logout():

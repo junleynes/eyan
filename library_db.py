@@ -3,7 +3,7 @@
 Split out of the original monolith -- self-contained aside from `app`
 (for the upload folder path) and stdlib.
 """
-import os, sqlite3, uuid, time, json, shutil
+import os, sqlite3, uuid, time, json, shutil, re
 from core import app
 
 # ---- Persistent trailer library (SQLite) ----
@@ -136,6 +136,137 @@ def library_delete(tid):
     conn.commit()
     conn.close()
     return True
+
+# ---- Branding: app name, tagline, accent color, logo, favicon, editable from
+# Config > Branding ----
+# Lives here (not in pipeline.py, where it started) rather than off in its own
+# module because it needs to be importable by BOTH pipeline.py (the Config >
+# Branding tab's routes) and auth.py (the login page, which now shows the
+# same name/tagline/logo/accent pre-auth) -- library_db.py is a dependency
+# both of those already sit on top of, so this is the one shared spot that
+# doesn't introduce a circular import. Same persistence shape as the AI-service
+# config in pipeline.py (a small JSON file next to the script), but kept
+# separate since this one also manages uploaded image files, not just text.
+# Uploaded logo/favicon files live under LIBRARY_DIR (survives restarts the
+# same way the trailer library does) rather than next to the script, so they
+# don't need separate backup/deploy handling from everything else this app
+# persists.
+BRANDING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'branding_config.json')
+BRANDING_DIR = os.path.join(LIBRARY_DIR, 'branding')
+os.makedirs(BRANDING_DIR, exist_ok=True)
+DEFAULT_BRAND_NAME = 'AIMP'
+DEFAULT_BRAND_TAGLINE = 'AI Media Provider'
+# Matches the dark-theme --accent default baked into templates/index.html, so
+# an unconfigured install renders identically to before this existed.
+DEFAULT_BRAND_ACCENT = '#4f8cff'
+_BRANDING_IMAGE_EXTS = {'.svg', '.png', '.jpg', '.jpeg', '.webp', '.gif'}
+_BRANDING_FAVICON_EXTS = {'.ico', '.svg', '.png'}
+_HEX_COLOR_RE = re.compile(r'^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$')
+
+def load_branding():
+    """Current brand name/tagline/accent color/logo/favicon. Falls back to the
+    built-in AIMP defaults for anything never configured -- this always
+    returns a complete dict, never partial, so callers don't each need their
+    own fallback logic."""
+    cfg = {'name': DEFAULT_BRAND_NAME, 'tagline': DEFAULT_BRAND_TAGLINE,
+           'accent_color': DEFAULT_BRAND_ACCENT, 'logo_filename': None, 'favicon_filename': None}
+    if os.path.exists(BRANDING_FILE):
+        try:
+            with open(BRANDING_FILE) as f:
+                saved = json.load(f)
+            for k in cfg:
+                if saved.get(k):
+                    cfg[k] = saved[k]
+        except Exception as e:
+            print(f'Branding config load error ({BRANDING_FILE}): {e}')
+    return cfg
+
+def _write_branding(cfg):
+    with open(BRANDING_FILE, 'w') as f:
+        json.dump(cfg, f, indent=2)
+
+def save_branding_text(name=None, tagline=None):
+    cfg = load_branding()
+    if name is not None:
+        cfg['name'] = name.strip() or DEFAULT_BRAND_NAME
+    if tagline is not None:
+        cfg['tagline'] = tagline.strip() or DEFAULT_BRAND_TAGLINE
+    _write_branding(cfg)
+    return cfg
+
+def save_branding_color(accent_color):
+    """Sets the accent color used app-wide (buttons, links, highlights, the
+    login screen) in both the light and dark themes -- overrides
+    templates/index.html's default --accent CSS variable for this
+    install. Rejects anything that isn't a real #rgb/#rrggbb hex value rather
+    than silently falling back, so a typo in the Config tab surfaces as an
+    error there instead of quietly reverting to the default."""
+    color = (accent_color or '').strip()
+    if not _HEX_COLOR_RE.match(color):
+        return None, f'"{color}" isn\'t a valid hex color -- use a format like #4f8cff.'
+    cfg = load_branding()
+    cfg['accent_color'] = color
+    _write_branding(cfg)
+    return cfg, None
+
+def clear_branding_color():
+    cfg = load_branding()
+    cfg['accent_color'] = DEFAULT_BRAND_ACCENT
+    _write_branding(cfg)
+    return cfg
+
+def _replace_branding_file(cfg, key, file_storage, allowed_exts, prefix):
+    """Shared by save_branding_logo/favicon below: validates the new upload's
+    extension BEFORE touching anything, then removes whatever custom file was
+    previously set for `key` and saves the new one under a fixed name (so
+    there's never more than one live file per slot to track). Validating
+    first matters: an upload with a bad extension must leave the existing
+    custom logo/favicon untouched, not delete it and then fail -- silently
+    reverting to the default because of a rejected upload would be a much
+    more confusing failure mode than the plain error message this returns.
+    Returns (cfg, error)."""
+    ext = os.path.splitext(file_storage.filename or '')[1].lower()
+    if ext not in allowed_exts:
+        return None, f'Unsupported file type "{ext or "(none)"}" -- use one of: {", ".join(sorted(allowed_exts))}'
+    old = cfg.get(key)
+    if old:
+        old_path = os.path.join(BRANDING_DIR, old)
+        if os.path.exists(old_path):
+            try:
+                os.remove(old_path)
+            except OSError:
+                pass
+    fname = f'{prefix}{ext}'
+    file_storage.save(os.path.join(BRANDING_DIR, fname))
+    cfg[key] = fname
+    _write_branding(cfg)
+    return cfg, None
+
+def save_branding_logo(file_storage):
+    return _replace_branding_file(load_branding(), 'logo_filename', file_storage, _BRANDING_IMAGE_EXTS, 'logo')
+
+def save_branding_favicon(file_storage):
+    return _replace_branding_file(load_branding(), 'favicon_filename', file_storage, _BRANDING_FAVICON_EXTS, 'favicon')
+
+def _clear_branding_file(key):
+    cfg = load_branding()
+    old = cfg.get(key)
+    if old:
+        old_path = os.path.join(BRANDING_DIR, old)
+        if os.path.exists(old_path):
+            try:
+                os.remove(old_path)
+            except OSError:
+                pass
+    cfg[key] = None
+    _write_branding(cfg)
+    return cfg
+
+def clear_branding_logo():
+    return _clear_branding_file('logo_filename')
+
+def clear_branding_favicon():
+    return _clear_branding_file('favicon_filename')
 
 library_db_init()
 
