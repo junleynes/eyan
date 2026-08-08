@@ -3906,29 +3906,33 @@ def branding_favicon():
 
 @app.route('/api/branding', methods=['GET'])
 def api_branding_get():
-    """Current brand name/tagline/accent color/logo/favicon state, for the
-    Config > Branding tab to populate its fields and for the login/index
-    pages' <title>/sidebar/theme. Read-only and not admin-gated -- knowing
-    the current branding isn't sensitive, only changing it is (see the POST
-    route below)."""
+    """Current brand name/tagline/footer/accent color/logo/favicon state,
+    for the Config > Branding tab to populate its fields and for the
+    login/index pages' <title>/sidebar/footer/theme. Read-only and not
+    admin-gated -- knowing the current branding isn't sensitive, only
+    changing it is (see the POST route below)."""
     cfg = load_branding()
-    return jsonify(ok=True, name=cfg['name'], tagline=cfg['tagline'], accent_color=cfg['accent_color'],
+    return jsonify(ok=True, name=cfg['name'], tagline=cfg['tagline'], footer=cfg['footer'],
+                   accent_color=cfg['accent_color'],
                    has_logo=bool(cfg['logo_filename']), has_favicon=bool(cfg['favicon_filename']))
 
 @app.route('/api/branding', methods=['POST'])
 def api_branding_post():
-    """Saves Branding-tab edits: name/tagline/accent_color (form fields)
-    and/or a new logo/favicon (file uploads) in the same request.
+    """Saves Branding-tab edits: name/tagline/footer/accent_color (form
+    fields) and/or a new logo/favicon (file uploads) in the same request.
     reset_logo=1/reset_favicon=1/reset_accent_color=1 clear that item back to
-    the built-in default without needing to re-enter anything. Admin-only --
-    this changes what every signed-in account (and the login page) sees, the
-    same reasoning as /api/config."""
+    the built-in default without needing to re-enter anything -- footer has
+    no equivalent reset flag since an empty string already means "no
+    footer", the same thing a reset would produce; just save it blank.
+    Admin-only -- this changes what every signed-in account (and the login
+    page) sees, the same reasoning as /api/config."""
     if session.get('role') != 'admin':
         return jsonify(ok=False, error='Admin access required.'), 403
     name = request.form.get('name')
     tagline = request.form.get('tagline')
-    if name is not None or tagline is not None:
-        save_branding_text(name, tagline)
+    footer = request.form.get('footer')
+    if name is not None or tagline is not None or footer is not None:
+        save_branding_text(name, tagline, footer)
     accent_color = request.form.get('accent_color')
     if accent_color:
         _, err = save_branding_color(accent_color)
@@ -3951,7 +3955,8 @@ def api_branding_post():
     if request.form.get('reset_accent_color') == '1':
         clear_branding_color()
     cfg = load_branding()
-    return jsonify(ok=True, name=cfg['name'], tagline=cfg['tagline'], accent_color=cfg['accent_color'],
+    return jsonify(ok=True, name=cfg['name'], tagline=cfg['tagline'], footer=cfg['footer'],
+                   accent_color=cfg['accent_color'],
                    has_logo=bool(cfg['logo_filename']), has_favicon=bool(cfg['favicon_filename']))
 
 @app.route('/api/health')

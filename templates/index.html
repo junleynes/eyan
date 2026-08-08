@@ -549,6 +549,9 @@ var IS_ADMIN = {{ 'true' if current_role == 'admin' else 'false' }}
     Signed in as <strong>{{ current_username }}</strong>{% if current_role == 'admin' %} &middot; <a href="/admin/users" style="color:var(--ink-dim)">Manage users</a>{% endif %}
     &middot; <a href="/logout" style="color:var(--ink-dim)">Sign out</a>
   </div>
+  {% if brand_footer %}
+  <div style="text-align:center;font-size:10px;padding:6px 12px 10px;color:var(--ink-dim);opacity:.7;line-height:1.5">{{ brand_footer }}</div>
+  {% endif %}
 </nav>
 <div class="container">
 
@@ -3998,14 +4001,17 @@ This is [emphasis] the one you cannot miss.
 
 <div id="p-config-branding" class="sub-panel">
 <h3 style="margin-top:0">Branding</h3>
-<p style="margin-top:-4px;color:var(--ink-dim)">Changes the name, tagline, logo, and favicon everyone signed in sees — saved to <code>branding_config.json</code> next to the script (text) and a <code>branding/</code> folder in the trailer library (logo/favicon files), so both persist across restarts. Takes effect immediately; existing sessions pick it up on their next page load.</p>
+<p style="margin-top:-4px;color:var(--ink-dim)">Changes the name, tagline, footer, color theme, logo, and favicon everyone signed in (and the sign-in page itself) sees — saved to <code>branding_config.json</code> next to the script (text) and a <code>branding/</code> folder in the trailer library (logo/favicon files), so both persist across restarts. Takes effect immediately; existing sessions pick it up on their next page load.</p>
 
 <label>Brand name:</label>
 <input type=text id=brand-name-input class=input-box placeholder="AIMP">
 <label>Tagline:</label>
 <input type=text id=brand-tagline-input class=input-box placeholder="AI Media Provider">
+<label>Footer (optional):</label>
+<input type=text id=brand-footer-input class=input-box placeholder="e.g. Internal use only &mdash; contact IT for access">
+<p style="font-size:11px;opacity:.65;margin-top:-4px">Shown at the very bottom of the sidebar, and on the sign-in page. Leave blank for no footer at all — most installs won't want one.</p>
 <div style="margin-top:10px">
-  <button type=button class=btn id=brand-text-save-btn onclick="saveBrandText()">Save name &amp; tagline</button>
+  <button type=button class=btn id=brand-text-save-btn onclick="saveBrandText()">Save name, tagline &amp; footer</button>
   <span id=brand-text-status style="font-size:13px;margin-left:8px"></span>
 </div>
 
@@ -4148,6 +4154,7 @@ async function loadBrandingTab(){
     if(!d.ok) return
     document.getElementById('brand-name-input').value = d.name
     document.getElementById('brand-tagline-input').value = d.tagline
+    document.getElementById('brand-footer-input').value = d.footer || ''
     document.getElementById('brand-accent-input').value = d.accent_color
     document.getElementById('brand-accent-text').value = d.accent_color
     document.getElementById('brand-logo-status').textContent = d.has_logo ? 'Custom logo in use' : 'Using the built-in default'
@@ -4211,10 +4218,11 @@ async function saveBrandText(){
     var fd = new FormData()
     fd.append('name', document.getElementById('brand-name-input').value)
     fd.append('tagline', document.getElementById('brand-tagline-input').value)
+    fd.append('footer', document.getElementById('brand-footer-input').value)
     var r = await fetch('/api/branding', {method:'POST', body: fd})
     var d = await r.json()
     if(d.ok){
-      status.textContent = 'Saved. Reload the page to see it applied to the title/sidebar.'
+      status.textContent = 'Saved. Reload the page to see it applied to the title/sidebar/footer.'
       status.style.color = 'var(--phosphor)'
     }else{
       status.textContent = 'Save failed: ' + (d.error || 'unknown error')

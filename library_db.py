@@ -164,18 +164,27 @@ _BRANDING_FAVICON_EXTS = {'.ico', '.svg', '.png'}
 _HEX_COLOR_RE = re.compile(r'^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$')
 
 def load_branding():
-    """Current brand name/tagline/accent color/logo/favicon. Falls back to the
-    built-in AIMP defaults for anything never configured -- this always
-    returns a complete dict, never partial, so callers don't each need their
-    own fallback logic."""
-    cfg = {'name': DEFAULT_BRAND_NAME, 'tagline': DEFAULT_BRAND_TAGLINE,
+    """Current brand name/tagline/footer/accent color/logo/favicon. Falls
+    back to the built-in AIMP defaults for anything never configured --
+    footer's default is an empty string (no footer shown at all) rather than
+    built-in text, since unlike name/tagline there's no sensible non-empty
+    default to fall back to. This always returns a complete dict, never
+    partial, so callers don't each need their own fallback logic."""
+    cfg = {'name': DEFAULT_BRAND_NAME, 'tagline': DEFAULT_BRAND_TAGLINE, 'footer': '',
            'accent_color': DEFAULT_BRAND_ACCENT, 'logo_filename': None, 'favicon_filename': None}
     if os.path.exists(BRANDING_FILE):
         try:
             with open(BRANDING_FILE) as f:
                 saved = json.load(f)
             for k in cfg:
-                if saved.get(k):
+                # 'footer' deliberately allows an explicit '' to be read back
+                # (clearing it is a real, valid state, not "unset" the way a
+                # blank name/tagline falling back to the default is) -- every
+                # other key here keeps the original any-truthy-value check.
+                if k == 'footer':
+                    if 'footer' in saved:
+                        cfg['footer'] = saved['footer']
+                elif saved.get(k):
                     cfg[k] = saved[k]
         except Exception as e:
             print(f'Branding config load error ({BRANDING_FILE}): {e}')
@@ -185,12 +194,17 @@ def _write_branding(cfg):
     with open(BRANDING_FILE, 'w') as f:
         json.dump(cfg, f, indent=2)
 
-def save_branding_text(name=None, tagline=None):
+def save_branding_text(name=None, tagline=None, footer=None):
     cfg = load_branding()
     if name is not None:
         cfg['name'] = name.strip() or DEFAULT_BRAND_NAME
     if tagline is not None:
         cfg['tagline'] = tagline.strip() or DEFAULT_BRAND_TAGLINE
+    if footer is not None:
+        # No fallback-to-default here on purpose -- an empty footer is a
+        # legitimate, common choice (most installs won't want one at all),
+        # not a mistake to silently correct the way a blank name would be.
+        cfg['footer'] = footer.strip()
     _write_branding(cfg)
     return cfg
 

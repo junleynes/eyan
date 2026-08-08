@@ -55,6 +55,7 @@ def login():
     brand_name = escape(brand['name'])
     brand_tagline = escape(brand['tagline'])
     accent = brand['accent_color']
+    brand_footer = escape(brand['footer']) if brand['footer'] else None
     # /branding/logo always resolves to something displayable (falls back to
     # the built-in mark itself when no custom logo is configured -- see
     # branding_logo() in pipeline.py), so this <img> never needs an
@@ -64,7 +65,7 @@ def login():
 <link rel="icon" href="/branding/favicon">
 <style>:root{{--accent:{accent}}}
 body{{font-family:system-ui,sans-serif;background:#0b1220;color:#e6e9ef;
-display:flex;align-items:center;justify-content:center;height:100vh;margin:0}}
+display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0}}
 .login-card{{display:flex;flex-direction:column;align-items:center;width:280px}}
 .login-logo{{width:52px;height:52px;border-radius:12px;margin-bottom:14px;object-fit:contain}}
 .login-name{{font-size:20px;font-weight:600;margin:0 0 2px}}
@@ -76,7 +77,9 @@ input{{width:100%;box-sizing:border-box;padding:9px 10px;border-radius:6px;borde
 background:#0b1220;color:#e6e9ef;font-size:14px;margin-bottom:12px}}
 button{{width:100%;padding:9px;border-radius:6px;border:none;background:var(--accent);color:#fff;
 font-size:14px;cursor:pointer}}
-.err{{color:#e08a3c;font-size:12px;margin-bottom:12px}}</style></head><body>
+.err{{color:#e08a3c;font-size:12px;margin-bottom:12px}}
+.login-footer{{margin-top:18px;font-size:11px;color:#5c6779;text-align:center;max-width:320px}}
+</style></head><body>
 <div class="login-card">
 <img class="login-logo" src="/branding/logo" alt="{brand_name} logo">
 <p class="login-name">{brand_name}</p>
@@ -89,7 +92,9 @@ font-size:14px;cursor:pointer}}
 <input type=password name=password placeholder="Password" autocomplete="current-password">
 <button type=submit>Continue</button>
 </form>
-</div></body></html>'''
+</div>
+{f'<div class="login-footer">{brand_footer}</div>' if brand_footer else ''}
+</body></html>'''
 
 @app.route('/logout')
 def logout():

@@ -49,7 +49,8 @@ def index():
                                    default_tab=default_tab,
                                    brand_name=brand['name'],
                                    brand_tagline=brand['tagline'],
-                                   brand_accent=brand['accent_color'])
+                                   brand_accent=brand['accent_color'],
+                                   brand_footer=brand['footer'])
 
 @app.route('/uploads/<filename>')
 def uploaded(filename):
