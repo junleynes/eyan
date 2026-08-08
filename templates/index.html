@@ -3440,17 +3440,33 @@ async function loadModels(){
 // error: the field still works as a plain free-text input either way, it
 // just won't have autocomplete suggestions to offer.
 async function loadAceStepModels(){
+  var sel = document.getElementById('music-model')
+  var note = document.getElementById('music-model-note')
+  if(!sel) return
   try{
     var r = await fetch('/api/music/models')
     var d = await r.json()
     var models = (d && d.ok && d.models) || []
-    document.getElementById('music-model-options').innerHTML =
-      models.map(function(m){ return '<option value="' + m + '">' }).join('')
-    var note = document.getElementById('music-model-note')
-    if(models.length && note){
-      note.textContent = 'Server reports ' + models.length + ' model' + (models.length === 1 ? '' : 's') + ' available (see suggestions) — leave blank to use its default.'
+    // Rebuild the whole list rather than appending: this also runs on the
+    // Refresh button, and re-running it must not stack duplicate entries.
+    sel.innerHTML = ''
+    var blank = document.createElement('option')
+    blank.value = ''
+    blank.textContent = models.length ? '\u2014 server default \u2014' : 'Server default (no model list available)'
+    sel.appendChild(blank)
+    models.forEach(function(m){
+      var o = document.createElement('option')
+      o.value = m; o.textContent = m
+      sel.appendChild(o)
+    })
+    if(note){
+      note.textContent = models.length
+        ? 'Server reports ' + models.length + ' model' + (models.length === 1 ? '' : 's') + ' available. Leave on "server default" to use whatever it loads by default.'
+        : "This ACE-Step server doesn't expose a model list (older builds and some wrappers don't), so there's nothing to switch between \u2014 it'll use its own default."
     }
-  }catch(e){}
+  }catch(e){
+    if(note) note.textContent = 'Could not reach the ACE-Step server to list models: ' + e
+  }
 }
 // The Vision panel is rendered further down the page (it lives in the rail now,
 // not inside Tools), so this script parses before its markup exists. Defer the
@@ -3490,6 +3506,13 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <h2>Music Generation &mdash; ACE-Step</h2>
 <p style="font-size:12px;opacity:.75;margin-top:-6px">Generate music on its own — for building a library of beds, restyling an existing track, or producing a sung stinger. Generated files can be saved into a show template from the Promo tab.</p>
 
+<label>Model:</label>
+<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+  <select id=music-model style="max-width:280px"><option value="">Loading models&hellip;</option></select>
+  <button type=button class=btn style="padding:5px 11px;font-size:12px" onclick="loadAceStepModels()">Refresh</button>
+</div>
+<p id=music-model-note style="font-size:12px;opacity:.7;margin-top:-4px">Read live from your ACE-Step server. Pick a specific checkpoint (e.g. a fast/turbo model vs. a higher-quality one), or leave on the server default.</p>
+
 <label>Prompt (style tags):</label>
 <textarea id=music-prompt class=input-box rows=3 placeholder="cinematic, orchestral, tense strings, driving percussion">Modern alternative rock with energetic electric guitars, driving bass, punchy live drums, melodic guitar riffs, clean male lead vocals, expressive vocal harmonies, dynamic transitions, and a memorable sing-along chorus. Confident, uplifting, and motivational with a polished contemporary production.</textarea>
 <p style="font-size:12px;opacity:.7;margin-top:-4px">Comma-separated style tags work best — instrument, mood, era, production style.</p>
@@ -3512,11 +3535,6 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 </div>
 <p style="font-size:12px;opacity:.7;margin-top:-4px">Generates in the shape of an existing track — useful for matching a show's established sting, or restyling a bed you already have. Higher strength stays closer to the reference; lower gives the prompt more freedom. Around 0.5 is a good starting point for a style transfer.</p>
 <p style="font-size:12px;opacity:.6;margin-top:-4px">ACE-Step reads the reference from a file path rather than an upload, so this needs ACE-Step running on this machine — or <code>ACE_STEP_REF_DIR</code> pointed at a mount both machines resolve identically.</p>
-
-<label>Model (optional):</label>
-<input type=text id=music-model list=music-model-options class=input-box style="max-width:280px" placeholder="Server default">
-<datalist id=music-model-options></datalist>
-<p id=music-model-note style="font-size:12px;opacity:.7;margin-top:-4px">Leave blank to use whatever your ACE-Step server loads by default. Suggestions above are read live from the server if it exposes more than one checkpoint (e.g. a turbo/fast model alongside a higher-quality one) — type a name directly if yours isn't listed.</p>
 
 <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:12px 0">
   <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Duration (s):</span>

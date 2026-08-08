@@ -986,7 +986,7 @@ AI_NUM_PREDICT = int(os.environ.get('AI_NUM_PREDICT', 400))
 # Set to False the first time a server rejects the structured-output `format`
 # field, so older Ollama builds pay the cost of that discovery only once.
 AI_STRUCTURED_OK = True
-AI_NEUTRAL_SCORE = 3  # mid-range prior for scenes that weren't or couldn't be scored
+AI_NEUTRAL_SCORE = 3  # mid-range prior (on the 1-5 vision scale) for scenes that weren't or couldn't be scored
 GATE = JobGate(MAX_CONCURRENT_JOBS)
 JOB_QUEUE = []  # job_ids waiting for a free slot, in submission order
 JOB_QUEUE_LOCK = threading.Lock()
@@ -4451,24 +4451,34 @@ def _run_trailer_job(jid, params):
         med_lap = median([s['laplacian'] for s in scenes_data])
         med_bri = median([s['brightness'] for s in scenes_data])
         for s in scenes_data:
+            # Quality (OpenCV heuristics) is scored 1-3, deliberately the
+            # smallest of the three components: it's the crudest signal
+            # (sharpness/brightness/duration/face presence), so it should
+            # break ties and filter out obvious junk rather than dominate.
+            # AI vision contributes 1-5 (the strongest voice, since it's the
+            # only component that actually understands scene *content*), and
+            # dialogue 1-2 on top. Each sub-signal below is worth at most 1
+            # so a scene has to be good on several axes to reach 3, rather
+            # than maxing out on sharpness alone.
             score = 0
-            if s['laplacian'] > med_lap * 1.2: score += 2
-            elif s['laplacian'] > med_lap * 0.8: score += 1
-            if 80 < s['brightness'] < 180: score += 2
-            elif s['brightness'] > 30: score += 1
-            if 1 < s['duration'] < 8: score += 2
-            elif s['duration'] > 8: score += 1
-            elif s['duration'] < 0.7:
+            if s['laplacian'] > med_lap * 1.2: score += 1
+            if 80 < s['brightness'] < 180: score += 1
+            if 1 < s['duration'] < 8: score += 1
+            if s['has_face']:
+                # A face/reaction shot is generally more useful in a trailer than
+                # empty B-roll of similar sharpness/brightness.
+                score += 1
+            if s['duration'] < 0.7:
                 # Sub-fragment scenes (whip-pans, flash cuts) can still win on raw
                 # sharpness/brightness alone with no duration credit at all —
                 # penalize them explicitly so they don't out-rank a real scene of
                 # similar visual quality and end up as a flicker cut in the output.
                 score -= 1
-            if s['has_face']:
-                # A face/reaction shot is generally more useful in a trailer than
-                # empty B-roll of similar sharpness/brightness.
-                score += 1
-            s['quality_score'] = score
+            # Clamped to the documented 1-3 range: four possible +1s above
+            # could otherwise reach 4, and the -1 penalty could reach -1,
+            # either of which would silently break the "quality is 1-3"
+            # contract the AI/dialogue weights are balanced against.
+            s['quality_score'] = max(1, min(3, score))
 
         if mode == 'ai':
             # Only AI-score scenes that could realistically make the cut. Previously
@@ -4694,10 +4704,18 @@ def _run_trailer_job(jid, params):
                     ).strip()
                     s['dialogue'] = overlap_text
                     if overlap_text:
-                        bonus = 1
-                        if '?' in overlap_text or '!' in overlap_text:
-                            bonus += 1
+                        # Speech contributes 1-2: 1 for having quotable
+                        # dialogue at all, 2 if it's a question or
+                        # exclamation (which tend to make better trailer
+                        # beats than flat statements). Smallest of the three
+                        # components alongside quality (1-3) and AI vision
+                        # (1-5) -- it's a useful nudge, not a reason to pick
+                        # a visually poor scene.
+                        bonus = 2 if ('?' in overlap_text or '!' in overlap_text) else 1
+                        s['speech_score'] = bonus
                         s['total_score'] += bonus
+                    else:
+                        s['speech_score'] = 0
             else:
                 whisper_enhance = False  # transcription unavailable/failed — skip the snapping logic below too
 
@@ -4836,6 +4854,44 @@ def _run_trailer_job(jid, params):
                 last['selected_dur'] += grow
                 total_sel += grow
                 shortfall -= grow
+
+        # Final exact-length correction. Everything above works in tolerances
+        # (the loop breaks at abs(shortfall) <= 0.5, and the grow-the-last-clip
+        # step only handles being UNDER target and only as far as that clip's
+        # own slack allows), so a finished trailer could legitimately land up
+        # to ~0.5s off the requested length -- and being OVER wasn't corrected
+        # at all. For a broadcast promo plug that has to fit an exact slot,
+        # "15 sec" needs to mean 15.00, not 14.6 or 15.4.
+        #
+        # Distributes the remaining error across clips proportionally rather
+        # than dumping it all on one: taking 0.4s off a single clip is an
+        # audible jolt, taking ~0.05s off each of eight is not. Grows are
+        # capped by each clip's real remaining slack inside its own detected
+        # scene (never invents footage that isn't there); trims are floored at
+        # min_seg_dur so correction can't shave a clip into a sliver.
+        n_seg = len(selected) + len(card_files)
+        xfade_loss = max(0, (n_seg - 1)) * xfade_dur
+        residual = trailer_length - (total_sel + total_card_dur - xfade_loss)
+        if selected and abs(residual) > 0.01:
+            for _ in range(3):  # a couple of passes: caps mean one pass may not absorb it all
+                if abs(residual) <= 0.01:
+                    break
+                if residual > 0:
+                    headroom = [(s, max(0.0, s['duration'] - s['selected_dur'])) for s in selected]
+                else:
+                    headroom = [(s, max(0.0, s['selected_dur'] - min_seg_dur)) for s in selected]
+                total_head = sum(h for _s, h in headroom)
+                if total_head <= 0.01:
+                    break  # nothing left to give -- accept the residual rather than distort a clip
+                step = residual
+                for s, head in headroom:
+                    if head <= 0:
+                        continue
+                    delta = step * (head / total_head)
+                    delta = min(delta, head) if delta > 0 else max(delta, -head)
+                    s['selected_dur'] += delta
+                    total_sel += delta
+                    residual -= delta
 
     if not selected:
         job_set(jid, error='No scenes selected.')
@@ -5064,6 +5120,23 @@ def _run_trailer_job(jid, params):
         all_inputs = normed_inputs
         n_total = len(all_inputs)
 
+        # The exact length this assembly should come out at. Two candidates,
+        # and the distinction matters: sum(durations) - crossfade overlaps is
+        # what the filter graph will *naturally* produce, but that inherits
+        # every clip's frame-quantisation error (a real render asking for
+        # 15.0s landed at 15.10s this way). trailer_length is what the user
+        # actually asked for and what a broadcast slot requires. Prefer the
+        # requested length, but only when the natural assembly is already
+        # within a hair of it -- if they differ by more than ~0.75s the
+        # shortfall is real (not enough usable source material; see the
+        # correction pass in the analysis half) and hard-cutting to
+        # trailer_length would just chop the tail off the last clip, which is
+        # worse than shipping slightly short. See the -t note below.
+        natural_target = sum(durations) - max(0, n_total - 1) * xfade_dur
+        assembled_target = (trailer_length
+                            if abs(natural_target - trailer_length) <= 0.75
+                            else natural_target)
+
         norm = (f'scale={src_w}:{src_h}:force_original_aspect_ratio=decrease,'
                 f'pad={src_w}:{src_h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={src_fps}')
         filter_parts = [f'[{i}:v]{norm}[n{i}]' for i in range(n_total)]
@@ -5127,6 +5200,24 @@ def _run_trailer_job(jid, params):
             prev = f'af{i-1}' if i > 1 else 'a0'
             audio_parts.append(f'[{prev}][a{i}]acrossfade=d={xfade_dur}:c1=tri[af{i}]')
         last_audio_label = f'af{n_total-1}'
+        # Pin the audio chain to exactly the target length before it reaches
+        # the encoder. -t alone (below) leaves the audio stream a frame or two
+        # long, because AAC encodes in fixed-size frames and rounds up to the
+        # next frame boundary past the cut -- a real render pinned video to
+        # exactly 15.000s this way while audio still came out 15.100s. apad
+        # first so a marginally-short chain gets padded rather than
+        # truncated-to-nothing, then atrim to the exact sample position;
+        # apad's padding is silence, so it can only ever add inaudible tail,
+        # never cut real audio short.
+        if n_total > 1:
+            audio_parts.append(
+                f'[{last_audio_label}]apad=whole_dur={assembled_target:.3f},'
+                f'atrim=0:{assembled_target:.3f},asetpts=PTS-STARTPTS[afinal]')
+        else:
+            audio_parts.append(
+                f'[a0]apad=whole_dur={assembled_target:.3f},'
+                f'atrim=0:{assembled_target:.3f},asetpts=PTS-STARTPTS[afinal]')
+        last_audio_label = 'afinal'
         filter_parts.extend(audio_parts)
 
         cmd = [FFMPEG, '-y']
@@ -5137,7 +5228,26 @@ def _run_trailer_job(jid, params):
         last_vlabel = f'[{prev_label}]'
         cmd.extend(['-map', last_vlabel, '-map', f'[{last_audio_label}]'])
         cmd.extend(['-c:v', 'libx264', '-preset', 'fast', '-crf', '22', '-pix_fmt', 'yuv420p',
-                     '-c:a', 'aac', '-b:a', '128k', out_path])
+                     '-c:a', 'aac', '-b:a', '128k'])
+        # Force the assembled output to exactly the intended length, and keep
+        # the two streams the same length as each other.
+        #
+        # Two separate problems this fixes, both observed in a real render
+        # (requested 15.0s -> got 15.20s total, with video 15.08s and audio
+        # 15.20s, i.e. 0.12s of A/V drift):
+        #  * Extracted clips are frame-quantised, so each one is a few ms
+        #    longer or shorter than the float duration asked for. Summed over
+        #    8-10 clips that's a visible overshoot no amount of upstream
+        #    arithmetic can remove, because the arithmetic isn't what's wrong.
+        #  * The audio chain trims each input to durations[i] (the *requested*
+        #    length) while the video chain concatenates the *actual* extracted
+        #    frames, so the two chains disagree by exactly that quantisation
+        #    error and the audio ends up trailing the video.
+        # -t caps both streams at the same wall-clock length, and -shortest
+        # stops encoding as soon as either ends, so neither can run past the
+        # other. Applied as output options (after the codec flags, before
+        # out_path) so they govern the muxed result rather than any one input.
+        cmd.extend(['-t', f'{assembled_target:.3f}', '-shortest', out_path])
         try:
             r = run_ffmpeg(cmd, timeout=FFMPEG_LONG_TIMEOUT, label='xfade concat')
             if r.returncode != 0:
@@ -5178,9 +5288,20 @@ def _run_trailer_job(jid, params):
     # sidechain detection, VO ducking) working off a predictable baseline instead of
     # being thrown off by an unusually quiet or hot original recording.
     sot_norm = os.path.join(app.config['UPLOAD_FOLDER'], f'sotnorm_{base_ts}.mp4')
+    # -t/-shortest here as well as on the concat above: loudnorm re-encodes
+    # the audio, and an AAC re-encode rounds its stream length up to the next
+    # frame boundary, which silently undoes the exact-length pinning the
+    # concat step just did (observed: concat produced video 15.000s / audio
+    # 15.000s, then this pass shipped audio at 15.100s against the same
+    # 15.000s video). Video is stream-copied here so it can't drift; capping
+    # both keeps them equal. assembled_duration is probed from the actual
+    # concat output rather than reusing assembled_target, so this can only
+    # ever preserve that file's real length, never impose a different one.
+    _norm_cap = ['-t', f'{assembled_duration:.3f}', '-shortest'] if assembled_duration else []
     r = subprocess.run([FFMPEG, '-y', '-i', out_path,
                         '-af', f'loudnorm=I={target_loudness}:TP={true_peak}:LRA=7',
-                        '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', sot_norm],
+                        '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k']
+                       + _norm_cap + [sot_norm],
                        capture_output=True, text=True, timeout=120)
     if os.path.exists(sot_norm) and os.path.getsize(sot_norm) > 0:
         os.replace(sot_norm, out_path)
