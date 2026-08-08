@@ -2089,6 +2089,184 @@ def nearest_word_boundary(target, boundaries, max_snap=0.35):
         return target
     return min(candidates, key=lambda b: abs(b - target))
 
+# ---- Script-driven scene priority ----
+# A production script/rundown usually already says which moments matter and
+# when they happen. These parse that out of an uploaded PDF or image and turn
+# it into a per-scene priority boost, so selection can follow the script's
+# intent instead of relying purely on the automatic scoring.
+
+# Matches the timecode formats a rundown realistically uses, in the order we
+# want to try them: HH:MM:SS(:FF or .mmm), then MM:SS. Broadcast scripts are
+# usually HH:MM:SS:FF (SMPTE, frames last); a plain MM:SS is common in
+# informal ones. Deliberately NOT matching a bare number of seconds -- far too
+# easy to false-positive on a scene number, page number or duration column.
+_TC_PATTERNS = [
+    re.compile(r'\b(\d{1,2}):(\d{2}):(\d{2})[:.](\d{1,3})\b'),  # HH:MM:SS:FF / HH:MM:SS.mmm
+    re.compile(r'\b(\d{1,2}):(\d{2}):(\d{2})\b'),               # HH:MM:SS
+    re.compile(r'\b(\d{1,2}):(\d{2})\b'),                       # MM:SS
+]
+
+def _parse_timecode_line(line, fps=25.0):
+    """First timecode found in `line`, as seconds, plus the remaining text of
+    the line as its description. Returns (seconds, description) or None.
+
+    The 4th group is frames for SMPTE (HH:MM:SS:FF) but milliseconds when
+    separated by a dot (HH:MM:SS.mmm) -- treated accordingly rather than
+    assuming one, since both show up in real rundowns and mixing them up
+    would put a cue up to a second out."""
+    for idx, pat in enumerate(_TC_PATTERNS):
+        m = pat.search(line)
+        if not m:
+            continue
+        g = m.groups()
+        if idx == 0:
+            h, mnt, s, frac = int(g[0]), int(g[1]), int(g[2]), g[3]
+            sub = int(frac) / 1000.0 if m.group(0)[8] == '.' else int(frac) / max(fps, 1)
+            secs = h * 3600 + mnt * 60 + s + sub
+        elif idx == 1:
+            secs = int(g[0]) * 3600 + int(g[1]) * 60 + int(g[2])
+        else:
+            secs = int(g[0]) * 60 + int(g[1])
+        desc = (line[:m.start()] + ' ' + line[m.end():]).strip(' \t-–—:|.')
+        return secs, desc
+    return None
+
+def parse_script_cues(text, fps=25.0):
+    """Every (seconds, description) cue found in a script's text, sorted by
+    time. Lines without a recognisable timecode are ignored rather than
+    guessed at -- a rundown is mostly prose and column headers, and inventing
+    cues from unparseable lines would quietly skew selection."""
+    cues = []
+    for raw_line in (text or '').splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        parsed = _parse_timecode_line(line, fps=fps)
+        if parsed:
+            secs, desc = parsed
+            cues.append({'time': secs, 'desc': desc})
+    cues.sort(key=lambda c: c['time'])
+    return cues
+
+def extract_script_text(file_storage):
+    """Plain text from an uploaded script. Returns (text, error).
+
+    PDFs are read via pypdf's text layer first; if that comes back empty the
+    PDF is image-only (a scan or an exported still), so it falls through to
+    OCR the same way an uploaded image would. Images always go to OCR.
+    Both optional dependencies degrade to a clear message rather than a
+    crash, since a deployment that never uploads scripts doesn't need
+    either installed."""
+    name = secure_filename(file_storage.filename or '')
+    ext = os.path.splitext(name)[1].lower()
+    raw = file_storage.read()
+    if not raw:
+        return None, 'That file is empty.'
+
+    def _ocr(image_bytes):
+        try:
+            import pytesseract
+            from PIL import Image
+        except ImportError:
+            return None, ('Reading a scanned/image script needs the "pytesseract" and "Pillow" '
+                          'packages plus the tesseract binary on the server. A text-based PDF '
+                          'works without them.')
+        try:
+            return pytesseract.image_to_string(Image.open(io.BytesIO(image_bytes))), None
+        except Exception as e:
+            return None, f'Could not read text from that image: {e}'
+
+    if ext == '.pdf':
+        try:
+            import pypdf
+        except ImportError:
+            return None, ('Reading a PDF script needs the "pypdf" package on the server '
+                          '(pip install pypdf), which is not installed here.')
+        try:
+            reader = pypdf.PdfReader(io.BytesIO(raw))
+            if reader.is_encrypted:
+                return None, 'That PDF is password-protected.'
+            text = '\n'.join((p.extract_text() or '') for p in reader.pages)
+        except Exception as e:
+            return None, f'Could not read that PDF: {e}'
+        if text.strip():
+            return text, None
+        # No text layer -- render each page to an image and OCR it. Needs
+        # pdf2image/poppler on top of the OCR deps, so this is a best-effort
+        # extra step with its own clear message rather than a hard
+        # requirement.
+        try:
+            from pdf2image import convert_from_bytes
+        except ImportError:
+            return None, ('That PDF has no text layer (it looks like a scan). Reading it needs '
+                          'the "pdf2image" package and poppler on the server, or you can upload '
+                          'the pages as images instead.')
+        try:
+            pages = convert_from_bytes(raw)
+        except Exception as e:
+            return None, f'Could not rasterise that scanned PDF: {e}'
+        chunks = []
+        for pg in pages:
+            buf = io.BytesIO()
+            pg.save(buf, format='PNG')
+            t, err = _ocr(buf.getvalue())
+            if err:
+                return None, err
+            chunks.append(t or '')
+        return '\n'.join(chunks), None
+
+    if ext in {'.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff'}:
+        return _ocr(raw)
+
+    if ext in {'.txt', '.md', '.csv', '.rtf', ''}:
+        try:
+            return raw.decode('utf-8'), None
+        except UnicodeDecodeError:
+            return raw.decode('utf-8', errors='replace'), None
+
+    return None, (f'Unsupported script file type "{ext}". Use a PDF, an image (PNG/JPG), '
+                  'or a plain text file.')
+
+def apply_script_priority(scenes_data, cues, window=2.5, boost=8.0):
+    """Boosts scenes that line up with a script cue's timecode.
+
+    `boost` is deliberately large relative to the scoring components it
+    competes with (quality 1-3, vision 1-5, speech 1-2, so ~10 combined at
+    the absolute maximum): if a script explicitly calls for a moment, that
+    intent should generally win over the automatic scoring rather than merely
+    nudge it. 8.0 at full strength is enough for a cue-matched scene with a
+    poor automatic score to outrank an unmatched scene with a good one, which
+    is the whole point of supplying a script -- an earlier 4.0 left the
+    scripted moment still losing to a high-scoring unscripted one in testing.
+    Falls off linearly with distance from the cue so a scene that merely
+    brushes the window doesn't get the same weight as one centred on it, and
+    each cue only boosts the single best-matching scene -- otherwise one cue
+    near a cluster of short scenes would promote all of them.
+
+    Returns how many cues actually matched a scene, so the caller can tell
+    the user when a script parsed fine but its timecodes didn't line up with
+    the video at all (usually means the script is for a different cut)."""
+    matched = 0
+    for c in cues:
+        best, best_dist = None, None
+        for s in scenes_data:
+            centre = s['start'] + s['duration'] / 2.0
+            if s['start'] - window <= c['time'] <= s['start'] + s['duration'] + window:
+                dist = abs(centre - c['time'])
+                if best_dist is None or dist < best_dist:
+                    best, best_dist = s, dist
+        if best is None:
+            continue
+        span = max(best['duration'] / 2.0 + window, 0.001)
+        falloff = max(0.0, 1.0 - (best_dist / span))
+        best['script_boost'] = max(best.get('script_boost', 0.0), boost * falloff)
+        best['script_desc'] = c['desc']
+        matched += 1
+    for s in scenes_data:
+        if s.get('script_boost'):
+            s['total_score'] += s['script_boost']
+    return matched
+
 def librosa_load(path, sr=22050, mono=True, duration=None):
     """librosa.load, but never via the deprecated audioread fallback.
 
@@ -2686,6 +2864,35 @@ def api_trailer():
         adaptive_threshold = max(1.0, min(10.0, float(request.form.get('adaptive_threshold', 3.0))))
     except ValueError:
         adaptive_threshold = 3.0
+
+    # Scene priority: how the selector decides which moments matter.
+    #   'auto'   -- top automatic score wins (the behaviour before this option existed)
+    #   'prompt' -- free-text description of what to prioritise, matched by AI vision
+    #   'script' -- uploaded script/rundown with timecodes, parsed into cues
+    # Parsed here (in the request, where the upload exists) rather than in the
+    # job thread, which has no access to request.files.
+    scene_priority = request.form.get('scene_priority', 'auto')
+    if scene_priority not in ('auto', 'prompt', 'script'):
+        scene_priority = 'auto'
+    priority_prompt = (request.form.get('priority_prompt') or '').strip()
+    script_cues = []
+    script_error = None
+    if scene_priority == 'script':
+        script_file = request.files.get('script_file')
+        if not script_file or not script_file.filename:
+            return jsonify(error='Scene priority is set to "from script", but no script file was uploaded.'), 400
+        text, err = extract_script_text(script_file)
+        if err:
+            return jsonify(error=err), 400
+        script_cues = parse_script_cues(text)
+        if not script_cues:
+            return jsonify(error='No timecodes were found in that script. Each cue line needs a '
+                                 'timecode like 00:01:30:12, 00:01:30, or 1:30 -- lines without '
+                                 'one are ignored.'), 400
+    elif scene_priority == 'prompt' and not priority_prompt:
+        return jsonify(error='Scene priority is set to "describe what to prioritise", but the '
+                             'description is empty.'), 400
+
     transition = request.form.get('transition', 'fade')
     transition_matte_path = None
     if genre in GENRE_PRESETS:
@@ -3007,6 +3214,8 @@ def api_trailer():
                   trailer_length=trailer_length, max_scene_dur=max_scene_dur,
                   scene_threshold=scene_threshold, min_scene_len_sec=min_scene_len_sec,
                   detector=detector, adaptive_threshold=adaptive_threshold,
+                  scene_priority=scene_priority, priority_prompt=priority_prompt,
+                  script_cues=script_cues,
                   transition=transition, xfade_dur=xfade_dur, transition_matte_path=transition_matte_path,
                   target_loudness=target_loudness, true_peak=true_peak, music_duck_db=music_duck_db, duck_depth_db=duck_depth_db, duck_release_hold=duck_release_hold, beat_match=beat_match, broadcast_stereo=broadcast_stereo, model=model,
                   sfx_mode=sfx_mode, sfx_upload_path=sfx_upload_path,
@@ -4527,6 +4736,17 @@ def _run_trailer_job(jid, params):
             if genre in GENRE_PRESETS and 'DESC:' in prompt:
                 ai_prompt = prompt.replace('for a movie trailer',
                                            f'for a {genre} promo trailer', 1)
+            # Scene-priority 'prompt' mode: the user described what this
+            # particular promo should favour ("the confrontation in the
+            # kitchen", "anything with the red car"). Appended to the scoring
+            # prompt so it steers the 1-5 vision score itself, rather than
+            # being applied as a separate boost afterwards -- the model is
+            # the only component that can actually tell whether a frame
+            # matches a description, so this is where that judgement belongs.
+            if params.get('scene_priority') == 'prompt' and params.get('priority_prompt'):
+                ai_prompt = (f"{ai_prompt}\n\nPRIORITY: This promo should especially feature: "
+                             f"{params['priority_prompt']}. Score scenes matching that description "
+                             f"noticeably higher than scenes that don't.")
 
             n_scenes_ai = len(ai_pool)
             _ai_progress = {'done': 0}
@@ -4741,6 +4961,19 @@ def _run_trailer_job(jid, params):
         job_set(jid, percent=28, step='Selecting best scenes')
         # Pick top scenes by score to fill target, then sort by timecode
         # Iterative: xfade transitions shorten output, so compensate
+        # Apply script-driven priority (if a script/rundown was uploaded)
+        # after every automatic scoring component has contributed, and before
+        # any selection happens -- so cue-matched scenes compete on their
+        # boosted score throughout the passes below rather than being
+        # promoted after the fact.
+        script_cues = params.get('script_cues') or []
+        if script_cues:
+            matched = apply_script_priority(scenes_data, script_cues)
+            job_set(jid, step=f'Applied script priority ({matched}/{len(script_cues)} cues matched)')
+            if not matched:
+                print(f'Script priority: none of the {len(script_cues)} cue timecodes fell inside '
+                      f'a detected scene (video is {video_duration:.0f}s) -- script may be for a '
+                      f'different cut of this episode.')
         # Floor for how short a *budget-truncated* clip is allowed to be. Without this,
         # whichever scene happens to land last (in score order, not timeline order) just
         # gets clipped to "whatever duration is left" — which can be a fraction of a

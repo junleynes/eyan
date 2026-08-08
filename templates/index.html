@@ -762,6 +762,22 @@ document.addEventListener("DOMContentLoaded", function(){
     <option value=ai_stt data-requires="whisper" selected>VISION + STT (adds faster-whisper dialogue transcription)</option>
   </select>
   <p id=mode-gating-note style="display:none;margin-top:-4px;margin-bottom:8px;font-size:12px;color:var(--amber)">VISION + STT is unavailable — faster-whisper isn't reachable.</p>
+
+  <label>Scene priority:</label>
+  <select name=scene_priority id=scene-priority-select onchange="updateScenePriorityVisibility()">
+    <option value=auto selected>Automatic — highest scoring scenes win</option>
+    <option value=prompt>Describe what to prioritise</option>
+    <option value=script>From a script with timecodes (PDF or image)</option>
+  </select>
+  <div id=scene-priority-prompt-row style="display:none">
+    <input type=text name=priority_prompt class=input-box placeholder="e.g. the confrontation in the kitchen, anything with the red car">
+    <p style="font-size:12px;opacity:.7;margin-top:-4px">Added to the AI vision scoring prompt, so scenes matching your description score higher. Needs a rating mode that uses AI Vision (both of the options above do).</p>
+  </div>
+  <div id=scene-priority-script-row style="display:none">
+    <input type=file name=script_file accept=".pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.txt,.md,.csv">
+    <p style="font-size:12px;opacity:.7;margin-top:-4px">Upload a rundown/script whose lines carry timecodes — <code>00:01:30:12</code>, <code>00:01:30</code>, or <code>1:30</code> all work. Scenes at those timecodes are strongly prioritised. Text-based PDFs are read directly; scans and images are OCR'd. Lines without a timecode are ignored.</p>
+  </div>
+
   <label>Episodic Promo Plug length:</label>
   <select name=trailer_length>
     <option value=15 selected>15 sec (needs 22.5s raw video)</option>
@@ -1577,6 +1593,13 @@ document.addEventListener("DOMContentLoaded", function(){
 
   document.querySelector('select[name=genre]').addEventListener('change', updateGenreManualVisibility)
   document.querySelector('select[name=transition]').addEventListener('change', updateTransitionMatteVisibility)
+  function updateScenePriorityVisibility(){
+    var mode = document.getElementById('scene-priority-select').value
+    document.getElementById('scene-priority-prompt-row').style.display = (mode === 'prompt') ? '' : 'none'
+    document.getElementById('scene-priority-script-row').style.display = (mode === 'script') ? '' : 'none'
+  }
+  window.updateScenePriorityVisibility = updateScenePriorityVisibility
+
   function updateTransitionMatteVisibility(){
     var el = document.getElementById('transition-matte-area')
     el.style.display = (document.querySelector('select[name=transition]').value === 'custom_matte') ? '' : 'none'
