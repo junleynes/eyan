@@ -259,6 +259,22 @@ def preview_get(pid):
         return dict(p) if p else None
 
 ACE_STEP_URL = os.environ.get('ACE_STEP_URL', 'http://localhost:8001')
+# Optional, for a hosted ACE-Step endpoint (e.g. acemusic.ai) instead of a
+# self-hosted server -- confirmed against the upstream ACE-Step API docs
+# (docs/en/API.md in ace-step/ACE-Step-1.5): /release_task supports optional
+# Bearer-token auth, same convention as FISH_AUDIO_API_KEY below. Leave blank
+# for a self-hosted server with no auth configured, which is this app's
+# original, unchanged default behavior.
+ACE_STEP_API_KEY = os.environ.get('ACE_STEP_API_KEY', '')
+
+def _ace_step_headers():
+    """Shared by every ACE_STEP_URL request (release_task, query_result
+    polling, the result download, /models) -- a hosted endpoint like
+    acemusic.ai needs the Bearer token on all of them, not just the initial
+    generate call. Returns {} when no key is set, so a self-hosted server
+    with no auth configured sees no Authorization header at all, same as
+    before this existed."""
+    return {'Authorization': f'Bearer {ACE_STEP_API_KEY}'} if ACE_STEP_API_KEY else {}
 # Diffusion steps for music generation. The previous hardcoded 8 was far below
 # ACE-Step's documented default and produced noticeably thin, smeared beds.
 ACE_STEP_STEPS = int(os.environ.get('ACE_STEP_STEPS', 27))
@@ -334,9 +350,13 @@ def fish_tag_catalogue():
 
 # ---- Network (SMB) folder browsing — alternative to local file upload ----
 # Lets the upload panels list and pull media straight from a Windows network
-# share instead of requiring a local drag-and-drop/browse. Override any of
-# these with env vars; not exposed through the Config tab since it holds a
-# plaintext password.
+# share instead of requiring a local drag-and-drop/browse. Configurable from
+# Config > Services now (see CONFIGURABLE_SERVICES below) rather than only
+# via env vars -- previously excluded specifically because
+# NETWORK_SHARE_PASSWORD is a plaintext secret, but FISH_AUDIO_API_KEY
+# already established the same admin-only, masked-password-field treatment
+# for a secret of the same sensitivity, so there's no new category of risk
+# in extending it here too.
 NETWORK_SHARE_HOST = os.environ.get('NETWORK_SHARE_HOST', '')
 NETWORK_SHARE_NAME = os.environ.get('NETWORK_SHARE_NAME', '')
 NETWORK_SHARE_SUBDIR = os.environ.get('NETWORK_SHARE_SUBDIR', '')
@@ -438,14 +458,21 @@ CONFIGURABLE_SERVICES = {
     'FISH_AUDIO_API_KEY':('Fish Audio API key', 'Only needed for the hosted fish.audio cloud API — leave blank for a self-hosted server'),
     'WHISPER_URL':       ('faster-whisper', 'Base server URL, e.g. http://localhost:8000'),
     'OLLAMA_URL':        ('Ollama', 'Base server URL, e.g. http://localhost:11434'),
-    'ACE_STEP_URL':      ('ACE-Step', 'Base server URL, e.g. http://localhost:8001'),
+    'ACE_STEP_URL':      ('ACE-Step', 'Base server URL, e.g. http://localhost:8001 — or a hosted endpoint like acemusic.ai'),
+    'ACE_STEP_API_KEY':  ('ACE-Step API key', 'Only needed for a hosted ACE-Step endpoint (e.g. acemusic.ai) — leave blank for a self-hosted server with no auth'),
     'WOOSH_URL':         ('Woosh', 'Base server URL, e.g. http://localhost:8030'),
+    'NETWORK_SHARE_HOST':     ('Network share host', 'Hostname or IP of the SMB server, e.g. 10.0.1.130'),
+    'NETWORK_SHARE_NAME':     ('Network share name', 'The share name itself, e.g. media'),
+    'NETWORK_SHARE_SUBDIR':   ('Network share subfolder', 'Optional path under the share root, e.g. promos/2026'),
+    'NETWORK_SHARE_USERNAME': ('Network share username', 'Include the domain if needed, e.g. DOMAIN\\username'),
+    'NETWORK_SHARE_PASSWORD': ('Network share password', 'Stored the same way FISH_AUDIO_API_KEY is — admin-only, masked in the UI'),
 }
 
 def load_config_overrides():
     """Applies any saved Config-tab overrides on top of the env-var defaults above.
     Called once at startup, after every constant it might touch is already defined."""
-    global FISH_AUDIO_URL, FISH_AUDIO_API_KEY, WHISPER_URL, OLLAMA_URL, ACE_STEP_URL, WOOSH_URL
+    global FISH_AUDIO_URL, FISH_AUDIO_API_KEY, WHISPER_URL, OLLAMA_URL, ACE_STEP_URL, ACE_STEP_API_KEY, WOOSH_URL
+    global NETWORK_SHARE_HOST, NETWORK_SHARE_NAME, NETWORK_SHARE_SUBDIR, NETWORK_SHARE_USERNAME, NETWORK_SHARE_PASSWORD
     if not os.path.exists(CONFIG_FILE):
         return
     try:
@@ -459,12 +486,19 @@ def load_config_overrides():
     if 'WHISPER_URL' in cfg and cfg['WHISPER_URL']: WHISPER_URL = cfg['WHISPER_URL']
     if 'OLLAMA_URL' in cfg and cfg['OLLAMA_URL']: OLLAMA_URL = cfg['OLLAMA_URL']
     if 'ACE_STEP_URL' in cfg and cfg['ACE_STEP_URL']: ACE_STEP_URL = cfg['ACE_STEP_URL']
+    if 'ACE_STEP_API_KEY' in cfg: ACE_STEP_API_KEY = cfg['ACE_STEP_API_KEY']
     if 'WOOSH_URL' in cfg and cfg['WOOSH_URL']: WOOSH_URL = cfg['WOOSH_URL']
+    if 'NETWORK_SHARE_HOST' in cfg: NETWORK_SHARE_HOST = cfg['NETWORK_SHARE_HOST']
+    if 'NETWORK_SHARE_NAME' in cfg: NETWORK_SHARE_NAME = cfg['NETWORK_SHARE_NAME']
+    if 'NETWORK_SHARE_SUBDIR' in cfg: NETWORK_SHARE_SUBDIR = cfg['NETWORK_SHARE_SUBDIR']
+    if 'NETWORK_SHARE_USERNAME' in cfg: NETWORK_SHARE_USERNAME = cfg['NETWORK_SHARE_USERNAME']
+    if 'NETWORK_SHARE_PASSWORD' in cfg: NETWORK_SHARE_PASSWORD = cfg['NETWORK_SHARE_PASSWORD']
 
 def save_config_overrides(updates):
     """Merges `updates` (dict of the CONFIGURABLE_SERVICES keys) into the config file
     and applies them to the live module globals immediately — no restart needed."""
-    global FISH_AUDIO_URL, FISH_AUDIO_API_KEY, WHISPER_URL, OLLAMA_URL, ACE_STEP_URL, WOOSH_URL
+    global FISH_AUDIO_URL, FISH_AUDIO_API_KEY, WHISPER_URL, OLLAMA_URL, ACE_STEP_URL, ACE_STEP_API_KEY, WOOSH_URL
+    global NETWORK_SHARE_HOST, NETWORK_SHARE_NAME, NETWORK_SHARE_SUBDIR, NETWORK_SHARE_USERNAME, NETWORK_SHARE_PASSWORD
     existing = {}
     if os.path.exists(CONFIG_FILE):
         try:
@@ -480,13 +514,23 @@ def save_config_overrides(updates):
     if 'WHISPER_URL' in updates: WHISPER_URL = updates['WHISPER_URL'] or WHISPER_URL
     if 'OLLAMA_URL' in updates: OLLAMA_URL = updates['OLLAMA_URL'] or OLLAMA_URL
     if 'ACE_STEP_URL' in updates: ACE_STEP_URL = updates['ACE_STEP_URL'] or ACE_STEP_URL
+    if 'ACE_STEP_API_KEY' in updates: ACE_STEP_API_KEY = updates['ACE_STEP_API_KEY']
     if 'WOOSH_URL' in updates: WOOSH_URL = updates['WOOSH_URL'] or WOOSH_URL
+    if 'NETWORK_SHARE_HOST' in updates: NETWORK_SHARE_HOST = updates['NETWORK_SHARE_HOST']
+    if 'NETWORK_SHARE_NAME' in updates: NETWORK_SHARE_NAME = updates['NETWORK_SHARE_NAME']
+    if 'NETWORK_SHARE_SUBDIR' in updates: NETWORK_SHARE_SUBDIR = updates['NETWORK_SHARE_SUBDIR']
+    if 'NETWORK_SHARE_USERNAME' in updates: NETWORK_SHARE_USERNAME = updates['NETWORK_SHARE_USERNAME']
+    if 'NETWORK_SHARE_PASSWORD' in updates: NETWORK_SHARE_PASSWORD = updates['NETWORK_SHARE_PASSWORD']
 
 def current_config_values():
     return {
         'FISH_AUDIO_URL': FISH_AUDIO_URL, 'FISH_AUDIO_API_KEY': FISH_AUDIO_API_KEY,
         'WHISPER_URL': WHISPER_URL,
-        'OLLAMA_URL': OLLAMA_URL, 'ACE_STEP_URL': ACE_STEP_URL, 'WOOSH_URL': WOOSH_URL,
+        'OLLAMA_URL': OLLAMA_URL, 'ACE_STEP_URL': ACE_STEP_URL, 'ACE_STEP_API_KEY': ACE_STEP_API_KEY,
+        'WOOSH_URL': WOOSH_URL,
+        'NETWORK_SHARE_HOST': NETWORK_SHARE_HOST, 'NETWORK_SHARE_NAME': NETWORK_SHARE_NAME,
+        'NETWORK_SHARE_SUBDIR': NETWORK_SHARE_SUBDIR, 'NETWORK_SHARE_USERNAME': NETWORK_SHARE_USERNAME,
+        'NETWORK_SHARE_PASSWORD': NETWORK_SHARE_PASSWORD,
     }
 
 # ---- Branding ----
@@ -1907,13 +1951,13 @@ def prepare_bgm_track(genre, scoring_mode, scoring_audio_path, duration, base_ts
             }
             if ACE_STEP_NEGATIVE_PROMPT:
                 payload['negative_prompt'] = ACE_STEP_NEGATIVE_PROMPT
-            r = requests.post(f'{ACE_STEP_URL}/release_task', json=payload, timeout=10)
+            r = requests.post(f'{ACE_STEP_URL}/release_task', json=payload, headers=_ace_step_headers(), timeout=10)
             data = r.json()
             task_id = data.get('data', {}).get('task_id')
             if task_id:
                 for _ in range(60):
                     time.sleep(2)
-                    q = requests.post(f'{ACE_STEP_URL}/query_result', json={'task_id_list': [task_id]}, timeout=5)
+                    q = requests.post(f'{ACE_STEP_URL}/query_result', json={'task_id_list': [task_id]}, headers=_ace_step_headers(), timeout=5)
                     qd = q.json()
                     items = qd.get('data', [])
                     if items and items[0].get('status') == 1:
@@ -1921,7 +1965,7 @@ def prepare_bgm_track(genre, scoring_mode, scoring_audio_path, duration, base_ts
                         audio_path = result[0]['file'] if isinstance(result, list) else result.get('file', '')
                         if audio_path:
                             dl_url = f'{ACE_STEP_URL}{audio_path}'
-                            resp = requests.get(dl_url, timeout=60)
+                            resp = requests.get(dl_url, headers=_ace_step_headers(), timeout=60)
                             with open(gen_audio, 'wb') as f:
                                 f.write(resp.content)
                             if os.path.getsize(gen_audio) > 0:
@@ -3573,14 +3617,14 @@ def acestep_generate(prompt, duration, lyrics=None, bpm=None, samples=1,
 
     base_ts = base_ts or f'tool{int(time.time()*1000)}'
     try:
-        r = requests.post(f'{ACE_STEP_URL}/release_task', json=payload, timeout=15)
+        r = requests.post(f'{ACE_STEP_URL}/release_task', json=payload, headers=_ace_step_headers(), timeout=15)
         task_id = (r.json().get('data') or {}).get('task_id')
         if not task_id:
             return [], f'ACE-Step did not accept the request (no task id). Response: {r.text[:200]}'
         for _ in range(90):
             time.sleep(2)
             q = requests.post(f'{ACE_STEP_URL}/query_result',
-                              json={'task_id_list': [task_id]}, timeout=10)
+                              json={'task_id_list': [task_id]}, headers=_ace_step_headers(), timeout=10)
             items = q.json().get('data') or []
             if not items:
                 continue
@@ -3599,7 +3643,7 @@ def acestep_generate(prompt, duration, lyrics=None, bpm=None, samples=1,
                 dest = os.path.join(app.config['UPLOAD_FOLDER'],
                                     f'music_{base_ts}_{i}{os.path.splitext(remote)[1] or ".wav"}')
                 try:
-                    resp = requests.get(f'{ACE_STEP_URL}{remote}', timeout=120)
+                    resp = requests.get(f'{ACE_STEP_URL}{remote}', headers=_ace_step_headers(), timeout=120)
                     with open(dest, 'wb') as f:
                         f.write(resp.content)
                 except Exception as e:
@@ -3744,7 +3788,7 @@ def api_music_models():
     way (see acestep_generate's `model` param), this is purely to populate
     the picker's suggestions when the server can tell us what's available."""
     try:
-        r = requests.get(f'{ACE_STEP_URL}/models', timeout=5)
+        r = requests.get(f'{ACE_STEP_URL}/models', headers=_ace_step_headers(), timeout=5)
         if not r.ok:
             return jsonify(ok=True, models=[])
         data = r.json()

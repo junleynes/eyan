@@ -4310,7 +4310,19 @@ This is [emphasis] the one you cannot miss.
 </div><!-- container -->
 
 <script>
-var CONFIG_FIELD_ORDER = ['FISH_AUDIO_URL','FISH_AUDIO_API_KEY','WHISPER_URL','OLLAMA_URL','ACE_STEP_URL','WOOSH_URL']
+var CONFIG_FIELD_ORDER = ['FISH_AUDIO_URL','FISH_AUDIO_API_KEY','WHISPER_URL','OLLAMA_URL','ACE_STEP_URL','ACE_STEP_API_KEY','WOOSH_URL','NETWORK_SHARE_HOST','NETWORK_SHARE_NAME','NETWORK_SHARE_SUBDIR','NETWORK_SHARE_USERNAME','NETWORK_SHARE_PASSWORD']
+// Fields that are secrets (masked as password inputs) -- API keys plus the
+// network share password specifically, not its host/name/subdir/username,
+// which aren't sensitive on their own.
+var CONFIG_SECRET_FIELDS = {'FISH_AUDIO_API_KEY':1, 'ACE_STEP_API_KEY':1, 'NETWORK_SHARE_PASSWORD':1}
+// Fields with no "Test" button -- secrets (testing a bare API key against
+// nothing isn't meaningful) plus every network-share field, since a share
+// isn't reachable by pinging any ONE of host/name/subdir/username/password
+// alone the way a plain service URL is; /api/network/list already exercises
+// the combination for real when you actually browse a folder.
+var CONFIG_NO_TEST_FIELDS = {'FISH_AUDIO_API_KEY':1, 'ACE_STEP_API_KEY':1,
+  'NETWORK_SHARE_HOST':1, 'NETWORK_SHARE_NAME':1, 'NETWORK_SHARE_SUBDIR':1,
+  'NETWORK_SHARE_USERNAME':1, 'NETWORK_SHARE_PASSWORD':1}
 var configTabLoaded = false
 async function loadConfigTab(){
   var container = document.getElementById('config-rows')
@@ -4323,7 +4335,7 @@ async function loadConfigTab(){
     CONFIG_FIELD_ORDER.forEach(function(key){
       var meta = d.fields[key] || {label: key, help: ''}
       var val = d.config[key] || ''
-      var isKey = key === 'FISH_AUDIO_API_KEY'
+      var isKey = !!CONFIG_SECRET_FIELDS[key]
       var row = document.createElement('div')
       row.style.cssText = 'display:flex;flex-direction:column;gap:4px'
       var labelEl = document.createElement('label')
@@ -4338,7 +4350,7 @@ async function loadConfigTab(){
       input.placeholder = meta.help
       input.style.cssText = 'flex:1;min-width:260px'
       inputRow.appendChild(input)
-      if(!isKey){
+      if(!CONFIG_NO_TEST_FIELDS[key]){
         var testBtn = document.createElement('button')
         testBtn.type = 'button'
         testBtn.textContent = 'Test'
