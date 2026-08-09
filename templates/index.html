@@ -93,32 +93,55 @@
    defaults above in BOTH themes -- placed after both :root and
    [data-theme="light"] so the cascade picks this last regardless of which
    theme is active, without needing !important or duplicating every other
-   theme-specific variable. A single --accent override here used to be all
-   this did, but --accent is used far less throughout this stylesheet than
+   theme-specific variable. A single --accent override used to be all this
+   did, but --accent is used far less throughout this stylesheet than
    --phosphor/--amber (the active-tab highlight, most buttons, badges, status
-   dots) are -- swapping only --accent barely changed how the app looked.
-   All five swap together as a coordinated set now (see THEME_PRESETS in
-   library_db.py for the actual combinations). Falls back to the same
+   dots) are, AND neither touched the actual surface colors (--bg/--panel/
+   etc) at all -- so a "theme" only ever changed a few buttons and text,
+   never the sidebar or main-body background behind them, which is the part
+   that actually reads as a reskin. Now overrides both: the five accent-style
+   roles (shared across light/dark, same simplification as before) plus a
+   full set of tinted surface colors per mode (genuinely different lightness
+   values needed for dark vs light, not shared). Falls back to the same
    defaults as an unconfigured install when nothing's been customized, so
-   this block is a no-op until an admin actually picks a theme. */
-:root, [data-theme="light"]{
+   this is a no-op until an admin actually picks a theme. */
+:root{
   --accent: {{ brand_theme.accent }};
   --phosphor: {{ brand_theme.phosphor }};
   --phosphor-dim: {{ brand_theme.phosphor_dim }};
   --tally: {{ brand_theme.tally }};
   --amber: {{ brand_theme.amber }};
+  --bg: {{ brand_theme.bg_dark }};
+  --panel: {{ brand_theme.panel_dark }};
+  --panel-2: {{ brand_theme.panel_2_dark }};
+  --elevated: {{ brand_theme.elevated_dark }};
+  --sunken: {{ brand_theme.sunken_dark }};
+  --rail-bg: {{ brand_theme.rail_bg_dark }};
+}
+[data-theme="light"]{
+  --accent: {{ brand_theme.accent }};
+  --phosphor: {{ brand_theme.phosphor }};
+  --phosphor-dim: {{ brand_theme.phosphor_dim }};
+  --tally: {{ brand_theme.tally }};
+  --amber: {{ brand_theme.amber }};
+  --bg: {{ brand_theme.bg_light }};
+  --panel: {{ brand_theme.panel_light }};
+  --panel-2: {{ brand_theme.panel_2_light }};
+  --elevated: {{ brand_theme.elevated_light }};
+  --sunken: {{ brand_theme.sunken_light }};
+  --rail-bg: {{ brand_theme.rail_bg_light }};
 }
 html{scroll-behavior:smooth}
 [data-theme="light"] body{
   background:
-    radial-gradient(ellipse 900px 480px at 12% -12%, rgba(14,138,118,.05), transparent 60%),
-    radial-gradient(ellipse 700px 400px at 100% 0%, rgba(161,95,10,.04), transparent 55%),
+    radial-gradient(ellipse 900px 480px at 12% -12%, color-mix(in srgb, var(--phosphor) 5%, transparent), transparent 60%),
+    radial-gradient(ellipse 700px 400px at 100% 0%, color-mix(in srgb, var(--amber) 4%, transparent), transparent 55%),
     var(--bg);
 }
 body{
   background:
-    radial-gradient(ellipse 900px 480px at 12% -12%, rgba(52,230,197,.07), transparent 60%),
-    radial-gradient(ellipse 700px 400px at 100% 0%, rgba(255,181,69,.05), transparent 55%),
+    radial-gradient(ellipse 900px 480px at 12% -12%, color-mix(in srgb, var(--phosphor) 7%, transparent), transparent 60%),
+    radial-gradient(ellipse 700px 400px at 100% 0%, color-mix(in srgb, var(--amber) 5%, transparent), transparent 55%),
     var(--bg);
   color:var(--ink);
   font-family:'IBM Plex Sans',system-ui,-apple-system,sans-serif;
