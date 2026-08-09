@@ -373,22 +373,42 @@ AUDIO_EXTENSIONS = {'mp3', 'wav', 'm4a', 'flac', 'ogg', 'aac', 'wma'}
 #   \\<share-host>\<share-name>\<subdir>\MUSIC  -> background music
 #   \\<share-host>\<share-name>\<subdir>\VO     -> narration / voiceover
 #   \\<share-host>\<share-name>\<subdir>\SFX    -> sound effects
-NETWORK_CATEGORIES = {
-    'hires': {'folder': 'HIRES', 'exts': ALLOWED_EXTENSIONS, 'label': 'Video (HIRES)'},
-    # Cards live in their own delivery folders, not with the raw video mats.
-    # NOTE the legacy form-field names: 'end_card_video' is the TITLE card and
-    # 'schedule_video' is the END card (see TEMPLATE_SLOTS for the same mapping).
-    'tcard': {'folder': 'TCARD',   'exts': ALLOWED_EXTENSIONS, 'label': 'Title card (TCARD)'},
-    'endcard': {'folder': 'ENDCARD', 'exts': ALLOWED_EXTENSIONS, 'label': 'End card (ENDCARD)'},
-    'music': {'folder': 'MUSIC', 'exts': AUDIO_EXTENSIONS, 'label': 'Music'},
-    'vo':    {'folder': 'VO',    'exts': AUDIO_EXTENSIONS, 'label': 'VO'},
-    'sfx':   {'folder': 'SFX',   'exts': AUDIO_EXTENSIONS, 'label': 'SFX'},
-}
+# Folder names under the network share root for each browse category --
+# configurable at runtime from Config > Network (see CONFIGURABLE_SERVICES),
+# since different orgs structure their share differently. exts/label stay
+# code-level: those are implementation details (which file types are valid,
+# what the picker calls it), not something that varies by deployment the way
+# a folder name does.
+NETWORK_FOLDER_HIRES = os.environ.get('NETWORK_FOLDER_HIRES', 'HIRES')
+NETWORK_FOLDER_TCARD = os.environ.get('NETWORK_FOLDER_TCARD', 'TCARD')
+NETWORK_FOLDER_ENDCARD = os.environ.get('NETWORK_FOLDER_ENDCARD', 'ENDCARD')
+NETWORK_FOLDER_MUSIC = os.environ.get('NETWORK_FOLDER_MUSIC', 'MUSIC')
+NETWORK_FOLDER_VO = os.environ.get('NETWORK_FOLDER_VO', 'VO')
+NETWORK_FOLDER_SFX = os.environ.get('NETWORK_FOLDER_SFX', 'SFX')
 DEFAULT_NETWORK_CATEGORY = 'hires'
+
+def _network_categories():
+    """Built fresh on every call rather than a frozen module-level dict,
+    since the folder names above are configurable at runtime (Config >
+    Network) and can change without a restart -- a static dict built once at
+    import time would keep serving the old folder names after a save."""
+    return {
+        'hires': {'folder': NETWORK_FOLDER_HIRES, 'exts': ALLOWED_EXTENSIONS, 'label': 'Video (HIRES)'},
+        # Cards live in their own delivery folders, not with the raw video mats.
+        # NOTE the legacy form-field names: 'end_card_video' is the TITLE card
+        # and 'schedule_video' is the END card (see TEMPLATE_SLOTS for the same
+        # mapping).
+        'tcard': {'folder': NETWORK_FOLDER_TCARD, 'exts': ALLOWED_EXTENSIONS, 'label': 'Title card (TCARD)'},
+        'endcard': {'folder': NETWORK_FOLDER_ENDCARD, 'exts': ALLOWED_EXTENSIONS, 'label': 'End card (ENDCARD)'},
+        'music': {'folder': NETWORK_FOLDER_MUSIC, 'exts': AUDIO_EXTENSIONS, 'label': 'Music'},
+        'vo':    {'folder': NETWORK_FOLDER_VO,    'exts': AUDIO_EXTENSIONS, 'label': 'VO'},
+        'sfx':   {'folder': NETWORK_FOLDER_SFX,   'exts': AUDIO_EXTENSIONS, 'label': 'SFX'},
+    }
 
 def _network_category(category):
     """Validates/normalizes a category key, falling back to 'hires'."""
-    return NETWORK_CATEGORIES.get(category, NETWORK_CATEGORIES[DEFAULT_NETWORK_CATEGORY])
+    cats = _network_categories()
+    return cats.get(category, cats[DEFAULT_NETWORK_CATEGORY])
 
 def _network_share_root(category=DEFAULT_NETWORK_CATEGORY):
     """UNC path of the folder we browse for `category`, e.g.
@@ -466,6 +486,12 @@ CONFIGURABLE_SERVICES = {
     'NETWORK_SHARE_SUBDIR':   ('Network share subfolder', 'Optional path under the share root, e.g. promos/2026'),
     'NETWORK_SHARE_USERNAME': ('Network share username', 'Include the domain if needed, e.g. DOMAIN\\username'),
     'NETWORK_SHARE_PASSWORD': ('Network share password', 'Stored the same way FISH_AUDIO_API_KEY is — admin-only, masked in the UI'),
+    'NETWORK_FOLDER_HIRES':   ('Video (HIRES) folder', 'Subfolder name under the share root, e.g. HIRES'),
+    'NETWORK_FOLDER_TCARD':   ('Title card folder', 'Subfolder name under the share root, e.g. TCARD'),
+    'NETWORK_FOLDER_ENDCARD': ('End card folder', 'Subfolder name under the share root, e.g. ENDCARD'),
+    'NETWORK_FOLDER_MUSIC':   ('Music folder', 'Subfolder name under the share root, e.g. MUSIC'),
+    'NETWORK_FOLDER_VO':      ('VO folder', 'Subfolder name under the share root, e.g. VO'),
+    'NETWORK_FOLDER_SFX':     ('SFX folder', 'Subfolder name under the share root, e.g. SFX'),
 }
 
 def load_config_overrides():
@@ -473,6 +499,7 @@ def load_config_overrides():
     Called once at startup, after every constant it might touch is already defined."""
     global FISH_AUDIO_URL, FISH_AUDIO_API_KEY, WHISPER_URL, OLLAMA_URL, ACE_STEP_URL, ACE_STEP_API_KEY, WOOSH_URL
     global NETWORK_SHARE_HOST, NETWORK_SHARE_NAME, NETWORK_SHARE_SUBDIR, NETWORK_SHARE_USERNAME, NETWORK_SHARE_PASSWORD
+    global NETWORK_FOLDER_HIRES, NETWORK_FOLDER_TCARD, NETWORK_FOLDER_ENDCARD, NETWORK_FOLDER_MUSIC, NETWORK_FOLDER_VO, NETWORK_FOLDER_SFX
     if not os.path.exists(CONFIG_FILE):
         return
     try:
@@ -493,12 +520,19 @@ def load_config_overrides():
     if 'NETWORK_SHARE_SUBDIR' in cfg: NETWORK_SHARE_SUBDIR = cfg['NETWORK_SHARE_SUBDIR']
     if 'NETWORK_SHARE_USERNAME' in cfg: NETWORK_SHARE_USERNAME = cfg['NETWORK_SHARE_USERNAME']
     if 'NETWORK_SHARE_PASSWORD' in cfg: NETWORK_SHARE_PASSWORD = cfg['NETWORK_SHARE_PASSWORD']
+    if cfg.get('NETWORK_FOLDER_HIRES'): NETWORK_FOLDER_HIRES = cfg['NETWORK_FOLDER_HIRES']
+    if cfg.get('NETWORK_FOLDER_TCARD'): NETWORK_FOLDER_TCARD = cfg['NETWORK_FOLDER_TCARD']
+    if cfg.get('NETWORK_FOLDER_ENDCARD'): NETWORK_FOLDER_ENDCARD = cfg['NETWORK_FOLDER_ENDCARD']
+    if cfg.get('NETWORK_FOLDER_MUSIC'): NETWORK_FOLDER_MUSIC = cfg['NETWORK_FOLDER_MUSIC']
+    if cfg.get('NETWORK_FOLDER_VO'): NETWORK_FOLDER_VO = cfg['NETWORK_FOLDER_VO']
+    if cfg.get('NETWORK_FOLDER_SFX'): NETWORK_FOLDER_SFX = cfg['NETWORK_FOLDER_SFX']
 
 def save_config_overrides(updates):
     """Merges `updates` (dict of the CONFIGURABLE_SERVICES keys) into the config file
     and applies them to the live module globals immediately — no restart needed."""
     global FISH_AUDIO_URL, FISH_AUDIO_API_KEY, WHISPER_URL, OLLAMA_URL, ACE_STEP_URL, ACE_STEP_API_KEY, WOOSH_URL
     global NETWORK_SHARE_HOST, NETWORK_SHARE_NAME, NETWORK_SHARE_SUBDIR, NETWORK_SHARE_USERNAME, NETWORK_SHARE_PASSWORD
+    global NETWORK_FOLDER_HIRES, NETWORK_FOLDER_TCARD, NETWORK_FOLDER_ENDCARD, NETWORK_FOLDER_MUSIC, NETWORK_FOLDER_VO, NETWORK_FOLDER_SFX
     existing = {}
     if os.path.exists(CONFIG_FILE):
         try:
@@ -521,6 +555,12 @@ def save_config_overrides(updates):
     if 'NETWORK_SHARE_SUBDIR' in updates: NETWORK_SHARE_SUBDIR = updates['NETWORK_SHARE_SUBDIR']
     if 'NETWORK_SHARE_USERNAME' in updates: NETWORK_SHARE_USERNAME = updates['NETWORK_SHARE_USERNAME']
     if 'NETWORK_SHARE_PASSWORD' in updates: NETWORK_SHARE_PASSWORD = updates['NETWORK_SHARE_PASSWORD']
+    if updates.get('NETWORK_FOLDER_HIRES'): NETWORK_FOLDER_HIRES = updates['NETWORK_FOLDER_HIRES']
+    if updates.get('NETWORK_FOLDER_TCARD'): NETWORK_FOLDER_TCARD = updates['NETWORK_FOLDER_TCARD']
+    if updates.get('NETWORK_FOLDER_ENDCARD'): NETWORK_FOLDER_ENDCARD = updates['NETWORK_FOLDER_ENDCARD']
+    if updates.get('NETWORK_FOLDER_MUSIC'): NETWORK_FOLDER_MUSIC = updates['NETWORK_FOLDER_MUSIC']
+    if updates.get('NETWORK_FOLDER_VO'): NETWORK_FOLDER_VO = updates['NETWORK_FOLDER_VO']
+    if updates.get('NETWORK_FOLDER_SFX'): NETWORK_FOLDER_SFX = updates['NETWORK_FOLDER_SFX']
 
 def current_config_values():
     return {
@@ -531,6 +571,9 @@ def current_config_values():
         'NETWORK_SHARE_HOST': NETWORK_SHARE_HOST, 'NETWORK_SHARE_NAME': NETWORK_SHARE_NAME,
         'NETWORK_SHARE_SUBDIR': NETWORK_SHARE_SUBDIR, 'NETWORK_SHARE_USERNAME': NETWORK_SHARE_USERNAME,
         'NETWORK_SHARE_PASSWORD': NETWORK_SHARE_PASSWORD,
+        'NETWORK_FOLDER_HIRES': NETWORK_FOLDER_HIRES, 'NETWORK_FOLDER_TCARD': NETWORK_FOLDER_TCARD,
+        'NETWORK_FOLDER_ENDCARD': NETWORK_FOLDER_ENDCARD, 'NETWORK_FOLDER_MUSIC': NETWORK_FOLDER_MUSIC,
+        'NETWORK_FOLDER_VO': NETWORK_FOLDER_VO, 'NETWORK_FOLDER_SFX': NETWORK_FOLDER_SFX,
     }
 
 # ---- Branding ----
@@ -4035,7 +4078,7 @@ def _check_service(name, base_url, path='/', timeout=3):
 def api_network_list():
     """Lists the files sitting in the network folder for ?category=hires|music|vo|sfx
     (defaults to hires/video). Each category maps to its own subfolder and its
-    own allowed extensions -- see NETWORK_CATEGORIES."""
+    own allowed extensions -- see _network_categories()."""
     category = request.args.get('category', DEFAULT_NETWORK_CATEGORY)
     try:
         root, files = list_network_files(category)

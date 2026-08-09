@@ -588,7 +588,7 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
 </nav>
 <div class="container">
 
-<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active')}
+<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadConfigNetworkTab==='function'&&!configNetworkTabLoaded){loadConfigNetworkTab()}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active');if(id==='p-config-users'){var f=document.getElementById('config-users-frame');if(f&&!f.getAttribute('src'))f.setAttribute('src',f.getAttribute('data-src'))}}
 
 // ---- Theme (light / dark / auto) ----
 // The <head> script (see near the top of the page) already resolved and
@@ -4232,7 +4232,9 @@ This is [emphasis] the one you cannot miss.
 <h2>Config</h2>
 <div class="sub-tabs">
   <div class="sub-tab active" onclick="switchSubTab('p-config-services',this)" role="button" tabindex="0">Services</div>
+  <div class="sub-tab" onclick="switchSubTab('p-config-network',this)" role="button" tabindex="0">Network</div>
   <div class="sub-tab" onclick="switchSubTab('p-config-branding',this)" role="button" tabindex="0">Branding</div>
+  <div class="sub-tab" onclick="switchSubTab('p-config-users',this)" role="button" tabindex="0">Users</div>
 </div>
 
 <div id="p-config-services" class="sub-panel active">
@@ -4244,6 +4246,17 @@ This is [emphasis] the one you cannot miss.
 <div style="margin-top:18px;display:flex;gap:10px;align-items:center">
   <button type=button class=btn id=config-save-btn onclick="saveConfigTab()">Save all</button>
   <span id="config-save-status" style="font-size:13px"></span>
+</div>
+</div>
+
+<div id="p-config-network" class="sub-panel">
+<p style="margin-top:-4px;color:var(--ink-dim)">Where Browse Library looks for files, and how it authenticates — the SMB share connection, plus the subfolder name under that share root for each category (Video/HIRES, Title card, End card, Music, VO, SFX). Split out from Services since these aren't AI model endpoints. Takes effect immediately; no restart needed.</p>
+<div id="config-network-rows" style="display:flex;flex-direction:column;gap:14px;margin-top:16px">
+  <!-- rows injected by loadConfigNetworkTab() -->
+</div>
+<div style="margin-top:18px;display:flex;gap:10px;align-items:center">
+  <button type=button class=btn id=config-network-save-btn onclick="saveConfigNetworkTab()">Save all</button>
+  <span id="config-network-save-status" style="font-size:13px"></span>
 </div>
 </div>
 
@@ -4305,12 +4318,17 @@ This is [emphasis] the one you cannot miss.
 </div>
 </div>
 
+<div id="p-config-users" class="sub-panel">
+<p style="margin-top:-4px;color:var(--ink-dim)">Full user and group management, embedded from the same admin page reachable at <code>/admin/users</code> directly.</p>
+<iframe id="config-users-frame" data-src="/admin/users?embed=1" style="width:100%;min-height:640px;border:1px solid var(--line);border-radius:10px;margin-top:12px;background:var(--elevated)" title="Manage users"></iframe>
+</div>
+
 </div>
 
 </div><!-- container -->
 
 <script>
-var CONFIG_FIELD_ORDER = ['FISH_AUDIO_URL','FISH_AUDIO_API_KEY','WHISPER_URL','OLLAMA_URL','ACE_STEP_URL','ACE_STEP_API_KEY','WOOSH_URL','NETWORK_SHARE_HOST','NETWORK_SHARE_NAME','NETWORK_SHARE_SUBDIR','NETWORK_SHARE_USERNAME','NETWORK_SHARE_PASSWORD']
+var CONFIG_FIELD_ORDER = ['FISH_AUDIO_URL','FISH_AUDIO_API_KEY','WHISPER_URL','OLLAMA_URL','ACE_STEP_URL','ACE_STEP_API_KEY','WOOSH_URL']
 // Fields that are secrets (masked as password inputs) -- API keys plus the
 // network share password specifically, not its host/name/subdir/username,
 // which aren't sensitive on their own.
@@ -4322,8 +4340,60 @@ var CONFIG_SECRET_FIELDS = {'FISH_AUDIO_API_KEY':1, 'ACE_STEP_API_KEY':1, 'NETWO
 // the combination for real when you actually browse a folder.
 var CONFIG_NO_TEST_FIELDS = {'FISH_AUDIO_API_KEY':1, 'ACE_STEP_API_KEY':1,
   'NETWORK_SHARE_HOST':1, 'NETWORK_SHARE_NAME':1, 'NETWORK_SHARE_SUBDIR':1,
-  'NETWORK_SHARE_USERNAME':1, 'NETWORK_SHARE_PASSWORD':1}
+  'NETWORK_SHARE_USERNAME':1, 'NETWORK_SHARE_PASSWORD':1,
+  'NETWORK_FOLDER_HIRES':1, 'NETWORK_FOLDER_TCARD':1, 'NETWORK_FOLDER_ENDCARD':1,
+  'NETWORK_FOLDER_MUSIC':1, 'NETWORK_FOLDER_VO':1, 'NETWORK_FOLDER_SFX':1}
 var configTabLoaded = false
+var configNetworkTabLoaded = false
+// The network-share connection fields plus the six per-category folder
+// names -- split out of CONFIG_FIELD_ORDER (which now covers only the AI
+// service URLs/keys) into their own list for the Network sub-tab.
+var CONFIG_NETWORK_FIELD_ORDER = ['NETWORK_SHARE_HOST','NETWORK_SHARE_NAME','NETWORK_SHARE_SUBDIR','NETWORK_SHARE_USERNAME','NETWORK_SHARE_PASSWORD','NETWORK_FOLDER_HIRES','NETWORK_FOLDER_TCARD','NETWORK_FOLDER_ENDCARD','NETWORK_FOLDER_MUSIC','NETWORK_FOLDER_VO','NETWORK_FOLDER_SFX']
+
+// Shared by loadConfigTab/loadConfigNetworkTab below -- same row shape
+// (label, input, optional Test button, status, help text) regardless of
+// which field list and container it's rendering into.
+function _renderConfigRows(fieldOrder, container, fields, config){
+  container.innerHTML = ''
+  fieldOrder.forEach(function(key){
+    var meta = fields[key] || {label: key, help: ''}
+    var val = config[key] || ''
+    var isKey = !!CONFIG_SECRET_FIELDS[key]
+    var row = document.createElement('div')
+    row.style.cssText = 'display:flex;flex-direction:column;gap:4px'
+    var labelEl = document.createElement('label')
+    labelEl.style.cssText = 'font-size:13px;text-transform:none;letter-spacing:0'
+    labelEl.textContent = meta.label
+    var inputRow = document.createElement('div')
+    inputRow.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap'
+    var input = document.createElement('input')
+    input.type = isKey ? 'password' : 'text'
+    input.id = 'cfg-' + key
+    input.value = val
+    input.placeholder = meta.help
+    input.style.cssText = 'flex:1;min-width:260px'
+    inputRow.appendChild(input)
+    if(!CONFIG_NO_TEST_FIELDS[key]){
+      var testBtn = document.createElement('button')
+      testBtn.type = 'button'
+      testBtn.textContent = 'Test'
+      testBtn.addEventListener('click', function(){ testConfigRow(key) })
+      inputRow.appendChild(testBtn)
+    }
+    var statusSpan = document.createElement('span')
+    statusSpan.id = 'cfg-status-' + key
+    statusSpan.style.cssText = 'font-size:12px;min-width:140px'
+    inputRow.appendChild(statusSpan)
+    var helpSpan = document.createElement('span')
+    helpSpan.style.cssText = 'font-size:11px;opacity:.65'
+    helpSpan.textContent = meta.help
+    row.appendChild(labelEl)
+    row.appendChild(inputRow)
+    row.appendChild(helpSpan)
+    container.appendChild(row)
+  })
+}
+
 async function loadConfigTab(){
   var container = document.getElementById('config-rows')
   container.innerHTML = '<p style="opacity:.7">Loading current configuration…</p>'
@@ -4331,45 +4401,21 @@ async function loadConfigTab(){
     var r = await fetch('/api/config')
     var d = await r.json()
     if(!d.ok){ container.innerHTML = '<p style="color:var(--amber)">Could not load config.</p>'; return }
-    container.innerHTML = ''
-    CONFIG_FIELD_ORDER.forEach(function(key){
-      var meta = d.fields[key] || {label: key, help: ''}
-      var val = d.config[key] || ''
-      var isKey = !!CONFIG_SECRET_FIELDS[key]
-      var row = document.createElement('div')
-      row.style.cssText = 'display:flex;flex-direction:column;gap:4px'
-      var labelEl = document.createElement('label')
-      labelEl.style.cssText = 'font-size:13px;text-transform:none;letter-spacing:0'
-      labelEl.textContent = meta.label
-      var inputRow = document.createElement('div')
-      inputRow.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap'
-      var input = document.createElement('input')
-      input.type = isKey ? 'password' : 'text'
-      input.id = 'cfg-' + key
-      input.value = val
-      input.placeholder = meta.help
-      input.style.cssText = 'flex:1;min-width:260px'
-      inputRow.appendChild(input)
-      if(!CONFIG_NO_TEST_FIELDS[key]){
-        var testBtn = document.createElement('button')
-        testBtn.type = 'button'
-        testBtn.textContent = 'Test'
-        testBtn.addEventListener('click', function(){ testConfigRow(key) })
-        inputRow.appendChild(testBtn)
-      }
-      var statusSpan = document.createElement('span')
-      statusSpan.id = 'cfg-status-' + key
-      statusSpan.style.cssText = 'font-size:12px;min-width:140px'
-      inputRow.appendChild(statusSpan)
-      var helpSpan = document.createElement('span')
-      helpSpan.style.cssText = 'font-size:11px;opacity:.65'
-      helpSpan.textContent = meta.help
-      row.appendChild(labelEl)
-      row.appendChild(inputRow)
-      row.appendChild(helpSpan)
-      container.appendChild(row)
-    })
+    _renderConfigRows(CONFIG_FIELD_ORDER, container, d.fields, d.config)
     configTabLoaded = true
+  }catch(e){
+    container.innerHTML = '<p style="color:var(--amber)">Error loading config: '+e+'</p>'
+  }
+}
+async function loadConfigNetworkTab(){
+  var container = document.getElementById('config-network-rows')
+  container.innerHTML = '<p style="opacity:.7">Loading current configuration…</p>'
+  try{
+    var r = await fetch('/api/config')
+    var d = await r.json()
+    if(!d.ok){ container.innerHTML = '<p style="color:var(--amber)">Could not load config.</p>'; return }
+    _renderConfigRows(CONFIG_NETWORK_FIELD_ORDER, container, d.fields, d.config)
+    configNetworkTabLoaded = true
   }catch(e){
     container.innerHTML = '<p style="color:var(--amber)">Error loading config: '+e+'</p>'
   }
@@ -4385,11 +4431,11 @@ async function testConfigRow(key){
     else{ status.textContent = 'Unreachable: '+(d.error||'unknown error'); status.style.color = 'var(--amber)' }
   }catch(e){ status.textContent = 'Test failed: '+e; status.style.color = 'var(--amber)' }
 }
-async function saveConfigTab(){
-  var btn = document.getElementById('config-save-btn')
-  var status = document.getElementById('config-save-status')
+async function _saveConfigFields(fieldOrder, btnId, statusId){
+  var btn = document.getElementById(btnId)
+  var status = document.getElementById(statusId)
   var payload = {}
-  CONFIG_FIELD_ORDER.forEach(function(key){
+  fieldOrder.forEach(function(key){
     var el = document.getElementById('cfg-'+key)
     if(el) payload[key] = el.value.trim()
   })
@@ -4402,6 +4448,8 @@ async function saveConfigTab(){
   }catch(e){ status.textContent = 'Save failed: '+e; status.style.color = 'var(--amber)' }
   btn.disabled = false
 }
+function saveConfigTab(){ _saveConfigFields(CONFIG_FIELD_ORDER, 'config-save-btn', 'config-save-status') }
+function saveConfigNetworkTab(){ _saveConfigFields(CONFIG_NETWORK_FIELD_ORDER, 'config-network-save-btn', 'config-network-save-status') }
 
 // ---- Branding (Config > Branding) ----
 var brandingTabLoaded = false
