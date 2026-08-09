@@ -566,6 +566,10 @@ admin_reset_if_requested()
 def _admin_users_page(error=None, notice=None):
     users = user_list()
     groups = group_list()
+    brand = load_branding()
+    brand_name = escape(brand['name'])
+    brand_tagline = escape(brand['tagline'])
+    theme = brand['theme_colors']
     group_options = ''.join(f'<option value={g["id"]}>{g["name"]}</option>' for g in groups)
     rows = ''
     for u in users:
@@ -630,41 +634,113 @@ def _admin_users_page(error=None, notice=None):
         group_rows = '<p style="font-size:12px;opacity:.7;margin:4px 0 0">No groups yet. Accounts with no group assigned have unrestricted access to every tab.</p>'
 
     return f'''<!doctype html><html><head><meta charset="utf-8">
-<title>Manage users</title>
+<title>Manage users &mdash; {brand_name}</title>
+<link rel="icon" href="/branding/favicon">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-body{{font-family:system-ui,sans-serif;background:#0b1220;color:#e6e9ef;margin:0;padding:32px}}
-.wrap{{max-width:960px;margin:0 auto}}
-h1{{font-size:20px;margin:0 0 4px}}
-.back{{color:#7fa4ff;text-decoration:none;font-size:13px}}
-.card{{background:#141b2d;border:1px solid #232b41;border-radius:10px;padding:20px;margin-top:20px}}
-table{{width:100%;border-collapse:collapse;font-size:13px}}
-th,td{{text-align:left;padding:8px 10px;border-bottom:1px solid #232b41;vertical-align:middle}}
-th{{color:#8b94a8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.03em}}
-.you{{color:#7fa4ff;font-size:11px}}
-.inline-form{{display:inline-flex;gap:4px;align-items:center;margin:0 4px 0 0}}
-.actions{{display:flex;flex-wrap:wrap;gap:4px;align-items:center}}
+:root{{
+  --bg:{theme['bg_dark']}; --panel:{theme['panel_dark']}; --panel-2:{theme['panel_2_dark']};
+  --elevated:{theme['elevated_dark']}; --line:#263149; --ink:#e7edf6; --ink-dim:#8b98ad;
+  --phosphor:{theme['phosphor']}; --amber:{theme['amber']}; --tally:{theme['tally']}; --accent:{theme['accent']};
+  --rail-bg:{theme['rail_bg_dark']};
+}}
+*{{box-sizing:border-box}}
+body{{
+  font-family:'IBM Plex Sans',system-ui,-apple-system,sans-serif; margin:0; color:var(--ink);
+  background:
+    radial-gradient(ellipse 900px 480px at 12% -12%, color-mix(in srgb, var(--phosphor) 7%, transparent), transparent 60%),
+    radial-gradient(ellipse 700px 420px at 100% 0%, color-mix(in srgb, var(--amber) 5%, transparent), transparent 55%),
+    var(--bg);
+  display:flex; min-height:100vh; -webkit-font-smoothing:antialiased;
+}}
+/* ---- Left rail -- same structural role as the main app's sidebar (brand
+   identity up top, a short nav, signed-in-as at the bottom), so this admin
+   page reads as part of the app rather than a separate unstyled backend
+   screen you can only leave via the browser's Back button. Not a byte-for-
+   byte copy of the real one (that's SPA-tab-driven; this is a handful of
+   plain links), but the same visual weight and position. ---- */
+.rail{{
+  width:220px; flex-shrink:0; background:var(--rail-bg); backdrop-filter:blur(12px);
+  border-right:1px solid var(--line); padding:20px 16px; display:flex; flex-direction:column;
+  position:sticky; top:0; height:100vh; overflow-y:auto;
+}}
+.rail-brand{{display:flex; align-items:center; gap:10px; margin-bottom:22px}}
+.rail-logo{{width:28px; height:28px; border-radius:7px; object-fit:contain; flex-shrink:0}}
+.rail-name{{font-family:'JetBrains Mono',monospace; font-size:14px; font-weight:700;
+  letter-spacing:.04em; text-transform:uppercase; line-height:1.2}}
+.rail-tagline{{font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--ink-dim);
+  letter-spacing:.02em; margin-top:2px}}
+.rail-nav{{display:flex; flex-direction:column; gap:2px}}
+.rail-link{{
+  font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:.03em;
+  color:var(--ink-dim); text-decoration:none; padding:9px 10px; border-radius:7px;
+  display:flex; align-items:center; gap:8px; transition:background .15s,color .15s;
+}}
+.rail-link:hover{{background:var(--wash-4,rgba(255,255,255,.06)); color:var(--ink)}}
+.rail-link.active{{background:color-mix(in srgb, var(--phosphor) 12%, transparent); color:var(--phosphor)}}
+.rail-sep{{height:1px; background:var(--line); margin:12px 0; opacity:.6}}
+.rail-foot{{margin-top:auto; padding-top:16px; font-size:11px; color:var(--ink-dim); line-height:1.6}}
+.rail-foot a{{color:var(--ink-dim)}}
+.main{{flex:1; padding:32px 40px; min-width:0}}
+.wrap{{max-width:960px}}
+h1{{font-family:'JetBrains Mono',monospace; font-size:13px; font-weight:600; text-transform:uppercase;
+  letter-spacing:.06em; margin:0 0 4px; color:var(--ink-dim); display:flex; align-items:center; gap:8px}}
+h1::before{{content:'\u25b6'; color:var(--phosphor); font-size:11px}}
+h2{{font-family:'JetBrains Mono',monospace; font-size:12px; text-transform:uppercase; letter-spacing:.05em;
+  color:var(--ink-dim); margin:0}}
+.card{{background:var(--elevated); border:1px solid var(--line); border-radius:12px; padding:20px; margin-top:20px}}
+table{{width:100%; border-collapse:collapse; font-size:13px}}
+th,td{{text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:middle}}
+th{{color:var(--ink-dim); font-family:'JetBrains Mono',monospace; font-weight:600; font-size:10px;
+  text-transform:uppercase; letter-spacing:.05em}}
+.you{{color:var(--phosphor); font-size:11px}}
+.inline-form{{display:inline-flex; gap:4px; align-items:center; margin:0 4px 0 0}}
+.actions{{display:flex; flex-wrap:wrap; gap:4px; align-items:center}}
 .pw-form input{{width:110px}}
-select,input{{background:#0b1220;border:1px solid #232b41;color:#e6e9ef;border-radius:5px;padding:5px 7px;font-size:12px}}
-.btn-sm{{background:#232b41;border:1px solid #2d3752;color:#e6e9ef;border-radius:5px;padding:5px 9px;font-size:12px;cursor:pointer}}
-.btn-sm:hover{{background:#2d3752}}
-.btn-sm:disabled{{opacity:.4;cursor:not-allowed}}
-.btn-danger{{background:#3c1f24;border-color:#5c2a30;color:#e08a8a}}
-.btn-danger:hover{{background:#4a2429}}
-.primary-sm{{background:#1a3a33;border-color:#245144;color:#7fd9c5}}
-.primary-sm:hover{{background:#204a40}}
-.add-form{{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px}}
-.add-form input{{flex:1;min-width:140px}}
-.primary{{background:#4f8cff;border:none;color:#fff;border-radius:6px;padding:8px 16px;font-size:13px;cursor:pointer}}
-.err{{color:#e08a3c;font-size:13px;margin-bottom:12px}}
-.notice{{color:#7fd99a;font-size:13px;margin-bottom:12px}}
-.group-card{{border:1px solid #232b41;border-radius:8px;padding:12px 14px;margin-top:12px}}
-.group-head{{display:flex;align-items:center;gap:10px;margin-bottom:10px}}
-.group-meta{{color:#8b94a8;font-size:11px;flex:1}}
-.perm-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px 14px}}
-.perm-check{{display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer}}
+select,input{{background:var(--panel); border:1px solid var(--line); color:var(--ink);
+  border-radius:7px; padding:6px 8px; font-size:12px; font-family:inherit}}
+.btn-sm{{background:transparent; border:1px solid var(--phosphor); color:var(--phosphor);
+  font-family:'JetBrains Mono',monospace; text-transform:uppercase; letter-spacing:.03em;
+  border-radius:7px; padding:6px 10px; font-size:11px; cursor:pointer; transition:background .15s}}
+.btn-sm:hover{{background:color-mix(in srgb, var(--phosphor) 12%, transparent)}}
+.btn-sm:disabled{{opacity:.35; cursor:not-allowed}}
+.btn-danger{{color:var(--tally); border-color:var(--tally)}}
+.btn-danger:hover{{background:color-mix(in srgb, var(--tally) 12%, transparent)}}
+.primary-sm{{color:var(--phosphor); border-color:var(--phosphor); font-weight:600}}
+.add-form{{display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:10px}}
+.add-form input{{flex:1; min-width:140px}}
+.primary{{background:var(--accent); border:none; color:#fff; font-family:'JetBrains Mono',monospace;
+  text-transform:uppercase; letter-spacing:.04em; border-radius:8px; padding:9px 18px; font-size:12px;
+  cursor:pointer; transition:opacity .15s}}
+.primary:hover{{opacity:.9}}
+.err{{background:color-mix(in srgb, var(--tally) 14%, transparent); border:1px solid color-mix(in srgb, var(--tally) 40%, transparent);
+  color:var(--tally); font-size:12px; padding:10px 12px; border-radius:8px; margin-bottom:16px}}
+.notice{{background:color-mix(in srgb, var(--phosphor) 14%, transparent); border:1px solid color-mix(in srgb, var(--phosphor) 40%, transparent);
+  color:var(--phosphor); font-size:12px; padding:10px 12px; border-radius:8px; margin-bottom:16px}}
+.group-card{{border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-top:12px}}
+.group-head{{display:flex; align-items:center; gap:10px; margin-bottom:10px}}
+.group-meta{{color:var(--ink-dim); font-size:11px; flex:1}}
+.perm-grid{{display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:6px 14px}}
+.perm-check{{display:flex; align-items:center; gap:6px; font-size:12px; cursor:pointer; color:var(--ink)}}
 </style></head><body>
-<div class=wrap>
-<a class=back href="/">&larr; Back to app</a>
+<nav class="rail">
+  <div class="rail-brand">
+    <img class="rail-logo" src="/branding/logo" alt="">
+    <div><div class="rail-name">{brand_name}</div><div class="rail-tagline">{brand_tagline}</div></div>
+  </div>
+  <div class="rail-nav">
+    <a class="rail-link" href="/">&larr; Back to app</a>
+    <div class="rail-sep"></div>
+    <a class="rail-link active" href="/admin/users">Manage users</a>
+    <a class="rail-link" href="/#p-config">Config</a>
+  </div>
+  <div class="rail-foot">
+    Signed in as <strong style="color:var(--ink)">{escape(session.get('username') or '')}</strong><br>
+    <a href="/logout">Sign out</a>
+  </div>
+</nav>
+<div class="main"><div class=wrap>
 <h1>Manage users</h1>
 {f'<div class="err">{error}</div>' if error else ''}
 {f'<div class="notice">{notice}</div>' if notice else ''}
@@ -675,7 +751,7 @@ select,input{{background:#0b1220;border:1px solid #232b41;color:#e6e9ef;border-r
 </table>
 </div>
 <div class=card>
-<h2 style="font-size:14px;margin:0">Add user</h2>
+<h2>Add user</h2>
 <form method=post action="/admin/users/create" class=add-form>
 <input type=text name=username placeholder="Username" required>
 <input type=password name=password placeholder="Password (min 6 chars)" minlength=6 required>
@@ -684,15 +760,15 @@ select,input{{background:#0b1220;border:1px solid #232b41;color:#e6e9ef;border-r
 </form>
 </div>
 <div class=card>
-<h2 style="font-size:14px;margin:0 0 4px">Groups</h2>
-<p style="font-size:12px;opacity:.7;margin:0">A group grants access to only the checked tabs. An account with no group assigned (the default) is unrestricted -- creating and assigning a group is an opt-in way to <em>narrow</em> access, not something that happens automatically. Admins always have full access regardless of group.</p>
+<h2>Groups</h2>
+<p style="font-size:12px;opacity:.7;margin:8px 0 0">A group grants access to only the checked tabs. An account with no group assigned (the default) is unrestricted -- creating and assigning a group is an opt-in way to <em>narrow</em> access, not something that happens automatically. Admins always have full access regardless of group.</p>
 {group_rows}
 <form method=post action="/admin/groups/create" class=add-form style="margin-top:14px">
 <input type=text name=name placeholder="New group name (e.g. Editors)" required>
 <button type=submit class=primary>Create group</button>
 </form>
 </div>
-</div>
+</div></div>
 </body></html>'''
 
 @app.route('/admin/users')

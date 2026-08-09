@@ -528,6 +528,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
 // at all -- pointless noise on your own items, useful context on an
 // admin's whole-server view.
 var IS_ADMIN = {{ 'true' if current_role == 'admin' else 'false' }}
+var CURRENT_USERNAME = {{ current_username|tojson }}
 </script>
 <nav class="rail">
   <div class="rail-brand">
@@ -2154,6 +2155,76 @@ document.getElementById('tf').addEventListener('submit', function(e){
   e.preventDefault()
   submitTrailer(false)
 })
+
+// A page refresh while a promo job was running used to orphan it: the
+// in-flight job_id only ever lived in a local variable inside
+// submitTrailer(), lost on reload even though the job itself keeps running
+// server-side and is already visible to /api/monitor (session-filtered
+// there). This looks for exactly that on load and, if found, reconstructs
+// the Generate tab's inline progress UI and resumes polling via the same
+// pollJob()/render path submitTrailer() itself uses -- rather than leaving
+// the tab looking idle while a job silently continues in the background.
+async function resumeActiveJobIfAny(){
+  var r
+  try{ r = await fetch('/api/monitor') }catch(e){ return }
+  var d = await r.json()
+  // /api/monitor's "active" list is trailer-generation jobs specifically
+  // (music/SFX/TTS are synchronous request/response, never in this list) and
+  // is already filtered to this session's own jobs for a regular account --
+  // for an admin (who sees everyone's), only auto-resume one that's actually
+  // theirs, so an admin never has someone else's job silently take over
+  // their own Generate tab's progress bar and Cancel button.
+  var mine = (d.active || []).find(function(j){
+    return j.job_id && (!IS_ADMIN || !j.username || j.username === CURRENT_USERNAME)
+  })
+  if(!mine){
+    // Also check jobs still waiting for a free concurrency slot -- a job
+    // submitted right as the page was refreshed could still be queued, not
+    // running yet, and is just as orphaned without this. pollJob() itself
+    // fetches the authoritative current state on its first tick regardless
+    // of what's shown here first, so an initial 0%/"Queued" is only ever
+    // displayed for a moment.
+    mine = (d.queued || []).find(function(j){
+      return j.job_id && (!IS_ADMIN || !j.username || j.username === CURRENT_USERNAME)
+    })
+  }
+  if(!mine) return
+
+  var progArea=document.getElementById('tr-progress-area')
+  var progBar=document.getElementById('tr-progress-bar')
+  var progPct=document.getElementById('tr-progress-pct')
+  var progStep=document.getElementById('tr-progress-step')
+  var cancelBtn = document.getElementById('tr-cancel-btn')
+  document.getElementById('tr-area').style.display='none'
+  document.getElementById('tr-prompt').style.display='none'
+  document.getElementById('tr-preview-area').style.display='none'
+  progArea.style.display='block'
+  var pct = mine.percent || 0
+  progBar.style.width=pct+'%'; progPct.textContent=pct+'%'
+  progStep.textContent = mine.step || 'Resuming\u2026'
+  cancelBtn.style.display='inline-block'; cancelBtn.disabled=false
+  document.getElementById('trailer-submit-btn').disabled = true
+  document.getElementById('trailer-preview-btn').disabled = true
+
+  var jobId = mine.job_id
+  var cancelled = false
+  cancelBtn.onclick = async function(){
+    cancelled = true
+    cancelBtn.disabled = true
+    try{ await fetch('/api/trailer/cancel/'+jobId, {method:'POST'}) }catch(err){}
+  }
+  var result = await pollJob(jobId, function(){ return cancelled })
+  cancelBtn.disabled = false
+  cancelBtn.style.display='none'
+  progArea.style.display='none'
+  document.getElementById('trailer-submit-btn').disabled = false
+  document.getElementById('trailer-preview-btn').disabled = false
+  if(result && result.preview) renderPreviewCut(result)
+  else renderTrailerResult(result)
+  if(window.refreshTrailerHistory) refreshTrailerHistory()
+  if(window.refreshMonitor) refreshMonitor()
+}
+document.addEventListener('DOMContentLoaded', resumeActiveJobIfAny)
 
 // ---- Preview cut review ----
 var _previewId = null
