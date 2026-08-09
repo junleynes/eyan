@@ -54,7 +54,18 @@ def index():
 
 @app.route('/uploads/<filename>')
 def uploaded(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+    resp = send_from_directory(app.config['UPLOAD_FOLDER'], filename,
+                               conditional=True)
+    # Everything under UPLOAD_FOLDER is written once under a name that already
+    # embeds a job/preview id or timestamp and is never rewritten in place, so
+    # it's safe to mark immutable. Matters most for preview thumbnails: a
+    # preview shows ~20 of them, and without this the browser re-requests
+    # every one on each re-render of that panel. Over a high-latency link
+    # (VPN) the round-trips, not the bytes, are what makes it feel slow.
+    # conditional=True above also enables Range requests, so a video can be
+    # scrubbed without refetching from the start.
+    resp.headers['Cache-Control'] = 'private, max-age=86400, immutable'
+    return resp
 
 @app.route('/download/<filename>')
 @require_permission('promo_generation')

@@ -3805,7 +3805,7 @@ def library_file(tid):
         return jsonify(error='Not found'), 404
     if not _owns_or_admin(row.get('user_id')):
         return jsonify(error='Not found'), 404
-    return send_from_directory(LIBRARY_DIR, row['filename'])
+    return send_from_directory(LIBRARY_DIR, row['filename'], conditional=True)
 
 @app.route('/library/<int:tid>/download')
 @require_permission('promo_generation')
@@ -5398,7 +5398,8 @@ def _run_trailer_job(jid, params):
         try:
             r = run_ffmpeg([FFMPEG, '-y', '-i', all_inputs[0], '-vf', norm,
                             '-c:v', 'libx264', '-preset', 'fast', '-crf', '22',
-                            '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k', out_path],
+                            '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '128k',
+                            '-movflags', '+faststart', out_path],
                            label='single-clip encode')
             if r.returncode != 0:
                 print(f'FFMPEG single concat error: {r.stderr[:500]}')
@@ -5562,7 +5563,7 @@ def _run_trailer_job(jid, params):
         last_vlabel = f'[{prev_label}]'
         cmd.extend(['-map', last_vlabel, '-map', f'[{last_audio_label}]'])
         cmd.extend(['-c:v', 'libx264', '-preset', 'fast', '-crf', '22', '-pix_fmt', 'yuv420p',
-                     '-c:a', 'aac', '-b:a', '128k'])
+                     '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart'])
         # Force the assembled output to exactly the intended length, and keep
         # the two streams the same length as each other.
         #
@@ -5634,7 +5635,7 @@ def _run_trailer_job(jid, params):
     _norm_cap = ['-t', f'{assembled_duration:.3f}', '-shortest'] if assembled_duration else []
     r = subprocess.run([FFMPEG, '-y', '-i', out_path,
                         '-af', f'loudnorm=I={target_loudness}:TP={true_peak}:LRA=7',
-                        '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k']
+                        '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart']
                        + _norm_cap + [sot_norm],
                        capture_output=True, text=True, timeout=120)
     if os.path.exists(sot_norm) and os.path.getsize(sot_norm) > 0:

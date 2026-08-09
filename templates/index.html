@@ -2154,11 +2154,11 @@ function buildSceneCard(s, cls, num, checked, badge, overlayPlay){
         'font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0 0 0 2px">&#9654;</button>'
       : ''
     thumbHtml = '<div style="position:relative">' +
-      (s.thumb ? '<img src="'+s.thumb+'" alt="'+escapeHtmlLite(badge)+'" style="width:100%;display:block;aspect-ratio:4/3;object-fit:cover">'
+      (s.thumb ? '<img src="'+s.thumb+'" alt="'+escapeHtmlLite(badge)+'" loading="lazy" decoding="async" style="width:100%;display:block;aspect-ratio:4/3;object-fit:cover">'
                : '<div style="aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;opacity:.4;font-size:11px">no thumbnail</div>') +
       overlayBtn + '</div>'
   }else{
-    thumbHtml = s.thumb ? '<img src="'+s.thumb+'" alt="'+escapeHtmlLite(badge)+'" style="width:100%;display:block;aspect-ratio:4/3;object-fit:cover">'
+    thumbHtml = s.thumb ? '<img src="'+s.thumb+'" alt="'+escapeHtmlLite(badge)+'" loading="lazy" decoding="async" style="width:100%;display:block;aspect-ratio:4/3;object-fit:cover">'
                         : '<div style="aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;opacity:.4;font-size:11px">no thumbnail</div>'
   }
   var inlineBtn = (!overlayPlay && canPlay)
