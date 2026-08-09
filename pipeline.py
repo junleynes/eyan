@@ -26,7 +26,8 @@ import smbclient  # pip install smbprotocol -- lets the upload panels browse a W
 from core import app, ALLOWED_EXTENSIONS
 from library_db import (LIBRARY_DIR, _sqlite_connect, library_add, library_list, library_get_row, library_delete,
     load_branding, save_branding_text, save_branding_color, save_branding_logo, save_branding_favicon,
-    clear_branding_logo, clear_branding_favicon, clear_branding_color, BRANDING_DIR)
+    clear_branding_logo, clear_branding_favicon, clear_branding_color, BRANDING_DIR,
+    load_disabled_services, set_service_disabled)
 from auth import require_permission
 
 # ---- Per-show asset templates (SQLite) ----
@@ -3371,7 +3372,10 @@ def acestep_generate(prompt, duration, lyrics=None, bpm=None, samples=1,
                      steps=None, seed=None, base_ts=None,
                      ref_audio_path=None, ref_strength=0.5,
                      keyscale=None, timesignature=None, thinking=False,
-                     negative_prompt=None, model=None):
+                     negative_prompt=None, model=None,
+                     guidance_scale=None, scheduler_type=None, cfg_type=None,
+                     omega_scale=None, use_erg_tag=None, use_erg_lyric=None,
+                     use_erg_diffusion=None):
     """Generate music with ACE-Step directly. Returns (paths, error).
 
     Unlike prepare_bgm_track (which is shaped around the trailer pipeline: one
@@ -3413,7 +3417,32 @@ def acestep_generate(prompt, duration, lyrics=None, bpm=None, samples=1,
     aliases -- see api_music_models() for how the picker discovers what's
     available). Omitted from the payload entirely when blank, so a
     single-model server that doesn't recognize the field at all is
-    unaffected either way."""
+    unaffected either way.
+
+    `guidance_scale`/`scheduler_type`/`cfg_type`/`omega_scale`/`use_erg_*`:
+    the actual quality/style knobs ACE-Step's own pipeline exposes (see
+    pipeline_ace_step.py upstream) that this app never sent before -- every
+    generation went out with whatever this server's own internal defaults
+    happen to be, which is a real, likely explanation for a self-hosted
+    instance sounding different from a tuned hosted service running the same
+    checkpoint. All are None by default and OMITTED from the payload when
+    None, same principle as `model` above: a caller (or the UI) that doesn't
+    ask for a specific value gets today's unchanged behavior, not a newly
+    invented default silently imposed on them. Field names verified against
+    the upstream pipeline signature and multiple real working request bodies
+    (both a direct-pipeline caller's actual logged request and a separate
+    from-scratch FastAPI wrapper's schema agree on these exact names), unlike
+    `inference_steps` above which is left untouched precisely because it
+    ISN'T independently confirmed against this specific server and already
+    works without erroring -- changing it speculatively risks turning a
+    working-but-maybe-ineffective control into a broken one.
+
+    A turbo/distilled checkpoint (per ACE-Step 1.5's docs) ignores CFG
+    guidance entirely by design -- if the configured model is a turbo
+    variant, guidance_scale/cfg_type/omega_scale may have no audible effect
+    regardless of value, which is itself useful to know when comparing
+    against a hosted service that might be running the same checkpoint with
+    settings actually tuned for it."""
     tags = (prompt or '').strip() or 'cinematic, instrumental'
     if bpm:
         # Don't double up if the user already typed a bpm into the prompt.
@@ -3465,6 +3494,20 @@ def acestep_generate(prompt, duration, lyrics=None, bpm=None, samples=1,
     model = (model or '').strip()
     if model:
         payload['model'] = model
+    if guidance_scale is not None:
+        payload['guidance_scale'] = float(guidance_scale)
+    if scheduler_type:
+        payload['scheduler_type'] = scheduler_type
+    if cfg_type:
+        payload['cfg_type'] = cfg_type
+    if omega_scale is not None:
+        payload['omega_scale'] = float(omega_scale)
+    if use_erg_tag is not None:
+        payload['use_erg_tag'] = bool(use_erg_tag)
+    if use_erg_lyric is not None:
+        payload['use_erg_lyric'] = bool(use_erg_lyric)
+    if use_erg_diffusion is not None:
+        payload['use_erg_diffusion'] = bool(use_erg_diffusion)
 
     base_ts = base_ts or f'tool{int(time.time()*1000)}'
     try:
@@ -3544,6 +3587,30 @@ def api_music_generate():
     thinking = (request.form.get('thinking') or '').strip().lower() in ('1', 'true', 'on', 'yes')
     model = (request.form.get('model') or '').strip()
 
+    # Advanced quality controls -- all optional and left unsent (None) unless
+    # the form actually supplied a value, so a request that doesn't touch the
+    # new "Advanced generation settings" section behaves exactly as before
+    # this existed. See acestep_generate's docstring for what these do and
+    # why the field names are trusted.
+    guidance_scale = _num('guidance_scale', None, 1.0, 30.0)
+    omega_scale = _num('omega_scale', None, 1.0, 20.0)
+    scheduler_type = (request.form.get('scheduler_type') or '').strip()
+    if scheduler_type not in ('euler', 'heun', 'pingpong'):
+        scheduler_type = ''
+    cfg_type = (request.form.get('cfg_type') or '').strip()
+    if cfg_type not in ('apg', 'cfg'):
+        cfg_type = ''
+
+    def _bool_or_none(key):
+        raw = request.form.get(key)
+        if raw is None or raw == '':
+            return None
+        return raw.strip().lower() in ('1', 'true', 'on', 'yes')
+
+    use_erg_tag = _bool_or_none('use_erg_tag')
+    use_erg_lyric = _bool_or_none('use_erg_lyric')
+    use_erg_diffusion = _bool_or_none('use_erg_diffusion')
+
     if not prompt:
         return jsonify(ok=False, error='Enter a prompt describing the style you want.'), 400
 
@@ -3576,7 +3643,11 @@ def api_music_generate():
                                       samples=samples, steps=steps, seed=seed, base_ts=base_ts,
                                       ref_audio_path=ref_path, ref_strength=ref_strength,
                                       keyscale=keyscale, timesignature=timesignature,
-                                      thinking=thinking, negative_prompt=negative_prompt, model=model)
+                                      thinking=thinking, negative_prompt=negative_prompt, model=model,
+                                      guidance_scale=guidance_scale, scheduler_type=scheduler_type,
+                                      cfg_type=cfg_type, omega_scale=omega_scale,
+                                      use_erg_tag=use_erg_tag, use_erg_lyric=use_erg_lyric,
+                                      use_erg_diffusion=use_erg_diffusion)
     finally:
         # The reference only needs to survive the generation call itself.
         if ref_path and os.path.exists(ref_path):
@@ -4173,7 +4244,16 @@ def api_health():
     """Reachability check for every local model/media service the app talks to
     (Ollama, Fish Audio S2, faster-whisper, ACE-Step, Woosh), checked in parallel
     so one slow/dead service doesn't stall the others. Returns per-service status
-    plus an overall ok flag."""
+    plus an overall ok flag.
+
+    A service an admin has manually disabled (see set_service_disabled in
+    library_db.py) is reported as status='disabled' without actually being
+    probed -- skips the wasted network round-trip, and keeps "manually turned
+    off" visibly distinct from "happens to be unreachable right now" rather
+    than reporting both as the same generic 'down'. The UI's gating treats
+    anything other than 'up' as unavailable either way, so this needs no
+    special-casing there."""
+    disabled = load_disabled_services()
     checks = [
         ('ollama', OLLAMA_URL, '/api/tags'),
         ('fish_audio', FISH_AUDIO_URL.rsplit('/v1/', 1)[0] if '/v1/' in FISH_AUDIO_URL else FISH_AUDIO_URL, '/'),
@@ -4186,6 +4266,8 @@ def api_health():
     def worker(name, url, path):
         results[name] = _check_service(name, url, path)
     for name, url, path in checks:
+        if name in disabled:
+            continue
         th = threading.Thread(target=worker, args=(name, url, path))
         th.start()
         threads.append(th)
@@ -4196,10 +4278,29 @@ def api_health():
     deadline = time.time() + 5
     for th in threads:
         th.join(timeout=max(0, deadline - time.time()))
-    ordered = [results.get(name, {'name': name, 'url': url, 'status': 'down', 'error': 'no response'})
-               for name, url, path in checks]
+    ordered = []
+    for name, url, path in checks:
+        if name in disabled:
+            ordered.append({'name': name, 'url': url, 'status': 'disabled',
+                            'error': 'Manually disabled by an admin (Config > Services).'})
+        else:
+            ordered.append(results.get(name, {'name': name, 'url': url, 'status': 'down', 'error': 'no response'}))
     overall_ok = all(c['status'] == 'up' for c in ordered)
     return jsonify(ok=overall_ok, checked_at=time.time(), services=ordered)
+
+@app.route('/api/services/toggle', methods=['POST'])
+def api_services_toggle():
+    """Admin-only: manually mark a service disabled/enabled, independent of
+    its live reachability. See load_disabled_services' docstring for why this
+    exists alongside the automatic health check."""
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='Admin access required.'), 403
+    name = (request.form.get('name') or '').strip()
+    disabled = request.form.get('disabled') == '1'
+    ok, err = set_service_disabled(name, disabled)
+    if not ok:
+        return jsonify(ok=False, error=err), 400
+    return jsonify(ok=True, name=name, disabled=disabled)
 
 @app.route('/api/stt/transcribe', methods=['POST'])
 @require_permission('speech_to_text')

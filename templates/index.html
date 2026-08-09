@@ -1686,6 +1686,36 @@ document.addEventListener("DOMContentLoaded", function(){
         if(note) note.style.display = available ? 'none' : ''
       }
     })
+
+    // Standalone Music Generation / Text to SFX / Text to Speech tabs each
+    // depend entirely on one service (unlike the promo generator's options
+    // above, which have a "None" fallback) -- so instead of greying out a
+    // radio, the whole tab is hidden and its Generate button disabled.
+    // Someone already sitting on a tab that goes down mid-session is bounced
+    // to a tab they can still use, rather than left looking at a form that
+    // can no longer submit.
+    var tabServiceMap = [
+      {tabId: 'p-music', svc: 'ace_step', btnId: 'music-gen-btn', label: 'ACE-Step'},
+      {tabId: 'p-sfx',   svc: 'woosh',    btnId: 'sfx-gen-btn',   label: 'Woosh'},
+      {tabId: 'p-fish',  svc: 'fish_audio', btnId: 'p-fish-btn',  label: 'Fish Audio'},
+    ]
+    var currentPanel = document.querySelector('.panel.active')
+    var strandedOnHiddenTab = false
+    tabServiceMap.forEach(function(entry){
+      var up = status[entry.svc] === 'up'
+      var navTab = document.querySelector('.tab[onclick*="switchTab(\'' + entry.tabId + '\'"]')
+      if(navTab) navTab.style.display = up ? '' : 'none'
+      var btn = document.getElementById(entry.btnId)
+      if(btn){
+        btn.disabled = !up
+        btn.title = up ? '' : entry.label + ' is unreachable — start it, then use "Check services" on the API tab.'
+      }
+      if(!up && currentPanel && currentPanel.id === entry.tabId) strandedOnHiddenTab = true
+    })
+    if(strandedOnHiddenTab){
+      var fallback = document.querySelector('.tab:not([style*="display: none"])')
+      if(fallback) fallback.click()
+    }
   }
   // Title/end card VO: preview player + set-in/set-out from playhead (or type the
   // seconds manually in the number inputs next to it - both write to the same fields).
@@ -2333,6 +2363,27 @@ function updateLyricsHint(){
   }
 }
 
+function updateMusicAdvancedSummary(){
+  var el = document.getElementById('summary-music-advanced')
+  if(!el) return
+  var parts = []
+  var gs = document.getElementById('music-guidance-scale').value
+  if(gs) parts.push('guidance ' + gs)
+  var os_ = document.getElementById('music-omega-scale').value
+  if(os_) parts.push('omega ' + os_)
+  var sched = document.getElementById('music-scheduler-type').value
+  if(sched) parts.push(sched)
+  var cfgt = document.getElementById('music-cfg-type').value
+  if(cfgt) parts.push(cfgt.toUpperCase())
+  var erg = []
+  if(document.getElementById('music-erg-tag').checked) erg.push('tag')
+  if(document.getElementById('music-erg-lyric').checked) erg.push('lyric')
+  if(document.getElementById('music-erg-diffusion').checked) erg.push('diffusion')
+  if(erg.length) parts.push('ERG: ' + erg.join('+'))
+  el.textContent = parts.length ? parts.join(', ') : 'Server defaults'
+}
+window.updateMusicAdvancedSummary = updateMusicAdvancedSummary
+
 async function generateMusicTool(){
   var btn = document.getElementById('music-gen-btn')
   var out = document.getElementById('music-result')
@@ -2363,6 +2414,17 @@ async function generateMusicTool(){
   fd.append('steps', document.getElementById('music-steps').value)
   fd.append('seed', document.getElementById('music-seed').value)
   fd.append('model', document.getElementById('music-model').value.trim())
+  var gs = document.getElementById('music-guidance-scale').value
+  if(gs) fd.append('guidance_scale', gs)
+  var os_ = document.getElementById('music-omega-scale').value
+  if(os_) fd.append('omega_scale', os_)
+  var sched = document.getElementById('music-scheduler-type').value
+  if(sched) fd.append('scheduler_type', sched)
+  var cfgt = document.getElementById('music-cfg-type').value
+  if(cfgt) fd.append('cfg_type', cfgt)
+  if(document.getElementById('music-erg-tag').checked) fd.append('use_erg_tag', '1')
+  if(document.getElementById('music-erg-lyric').checked) fd.append('use_erg_lyric', '1')
+  if(document.getElementById('music-erg-diffusion').checked) fd.append('use_erg_diffusion', '1')
   var ref = document.getElementById('music-ref')
   if(ref && ref.files && ref.files[0]){
     fd.append('ref_audio', ref.files[0])
@@ -3594,6 +3656,46 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 </label>
 <p style="font-size:12px;opacity:.7;margin-top:-4px">Runs an extra planning pass over your prompt and lyrics before generating, auto-filling in whatever you left on auto (tempo, key, structure). Slower — often better when you don't have strong opinions on the specifics above; leave it off for a fast, literal take on exactly what you typed.</p>
 
+<div class="asset-section" id=asset-music-advanced>
+  <div class="asset-section-header" onclick="toggleAssetSection(this)">
+    <span class="asset-section-title">Advanced generation settings</span>
+    <span class="asset-section-summary" id=summary-music-advanced>Server defaults</span>
+    <span class="asset-section-chevron">&#9656;</span>
+  </div>
+  <div class="asset-section-body">
+    <p style="font-size:12px;opacity:.7;margin-top:-4px">The actual quality/style controls ACE-Step's own pipeline exposes underneath the fields above. Left on "server default" (unchanged from before this existed) unless you set them. If your self-hosted output sounds different from a hosted service running the same checkpoint, this is usually why — a tuned service has picked deliberate values here.</p>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:8px 0">
+      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Guidance scale:</span>
+      <input type=number id=music-guidance-scale placeholder="server default" min=1 max=30 step=0.5 style="width:100px" onchange="updateMusicAdvancedSummary()"></span>
+      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Omega scale (APG):</span>
+      <input type=number id=music-omega-scale placeholder="server default" min=1 max=20 step=0.5 style="width:100px" onchange="updateMusicAdvancedSummary()"></span>
+    </div>
+    <p style="font-size:12px;opacity:.7;margin-top:-4px">Guidance scale: how strictly the output follows your prompt/lyrics — ACE-Step's own default is 15; lower gives the model more creative freedom, higher can sound overcooked. Omega scale only matters when CFG type below is "apg" (default 10) — controls how fine-grained that guidance is.</p>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:8px 0">
+      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Scheduler:</span>
+      <select id=music-scheduler-type onchange="updateMusicAdvancedSummary()">
+        <option value="">Server default</option>
+        <option value=euler>Euler (fast, standard)</option>
+        <option value=heun>Heun (slower, more stable)</option>
+        <option value=pingpong>Ping-pong (stochastic)</option>
+      </select></span>
+      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">CFG type:</span>
+      <select id=music-cfg-type onchange="updateMusicAdvancedSummary()">
+        <option value="">Server default</option>
+        <option value=apg>APG (adaptive)</option>
+        <option value=cfg>Standard CFG</option>
+      </select></span>
+    </div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin:8px 0">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px"><input type=checkbox id=music-erg-tag onchange="updateMusicAdvancedSummary()"> Enhanced tag realism</label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px"><input type=checkbox id=music-erg-lyric onchange="updateMusicAdvancedSummary()"> Enhanced lyric realism</label>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px"><input type=checkbox id=music-erg-diffusion onchange="updateMusicAdvancedSummary()"> Enhanced diffusion detail</label>
+    </div>
+    <p style="font-size:12px;opacity:.7;margin-top:-4px">ERG (Enhanced Realism Generation) settings — left unchecked here means "use the server's own default" for each, not "off". Check a box to explicitly force it on; ACE-Step's own pipeline defaults all three to on.</p>
+    <p style="font-size:12px;opacity:.6;margin-top:4px">Note: a turbo/distilled checkpoint ignores CFG guidance by design — if your ACE-Step server is running a turbo variant, guidance scale/CFG type/omega scale above may have no audible effect regardless of value.</p>
+  </div>
+</div>
+
 <div style="margin-top:14px">
   <button class=btn type=button id=music-gen-btn onclick="generateMusicTool()">Generate music</button>
 </div>
@@ -4334,10 +4436,21 @@ function runHealthCheck(){
     var up=d.services.filter(s=>s.status==='up').length
     summary.textContent=up+'/'+d.services.length+' services up'
     summary.style.color=d.ok?'var(--phosphor)':'var(--amber)'
+    // The API tab only renders for admins at all (Jinja-gated), so the
+    // Disable/Enable button below needs no separate admin check of its own.
     results.innerHTML=d.services.map(function(s){
-      var color=s.status==='up'?'var(--phosphor)':'var(--amber)'
-      var detail=s.status==='up'?(s.latency_ms+'ms (HTTP '+s.http_status+')'):(s.error||'unreachable')
-      return '<div class="info-item"><strong style="color:'+color+'">&#9679;</strong> '+s.name+'<br><small>'+detail+'</small></div>'
+      var color=s.status==='up'?'var(--phosphor)':(s.status==='disabled'?'var(--ink-dim)':'var(--amber)')
+      var detail
+      if(s.status==='up') detail=s.latency_ms+'ms (HTTP '+s.http_status+')'
+      else if(s.status==='disabled') detail='Manually disabled'
+      else detail=s.error||'unreachable'
+      var isDisabled = s.status==='disabled'
+      var toggleLabel = isDisabled ? 'Enable' : 'Disable'
+      return '<div class="info-item">' +
+        '<strong style="color:'+color+'">&#9679;</strong> '+s.name+
+        '<button type=button class=btn style="padding:2px 8px;font-size:11px;float:right" ' +
+        'onclick="toggleServiceDisabled(\''+s.name+'\','+(!isDisabled)+')">'+toggleLabel+'</button>' +
+        '<br><small>'+detail+'</small></div>'
     }).join('')
     if(typeof applyServiceGating === 'function') applyServiceGating(d.services)
     var engineSel = document.querySelector('input[name=vo_engine]:checked')
@@ -4351,13 +4464,30 @@ function runHealthCheck(){
     btn.disabled=false; btn.textContent='Check services'
   })
 }
+function toggleServiceDisabled(name, disabled){
+  var fd = new FormData()
+  fd.append('name', name)
+  fd.append('disabled', disabled ? '1' : '0')
+  fetch('/api/services/toggle', {method:'POST', body: fd})
+    .then(function(r){ return r.json() })
+    .then(function(d){
+      if(!d.ok){ alert(d.error || 'Could not update that service.'); return }
+      runHealthCheck()
+    })
+    .catch(function(e){ alert('Request failed: ' + e) })
+}
+window.toggleServiceDisabled = toggleServiceDisabled
 document.querySelector('.tab[onclick*="p-api"]').addEventListener('click', function(){
   if(!document.getElementById('health-results').innerHTML) runHealthCheck()
 })
 // Run once automatically at load so the "Generate music" / "From genre" SFX /
 // "Narration (AI voice)" options are already greyed out if their service is
-// down, before the person even opens the API tab.
+// down, before the person even opens the API tab. Re-run periodically after
+// that (not just on load/API-tab-click) so a service going down -- or an
+// admin disabling one -- while someone's already on e.g. the Music
+// Generation tab actually takes effect for them without a page reload.
 document.addEventListener('DOMContentLoaded', runHealthCheck)
+setInterval(runHealthCheck, 45000)
 </script>
 
 <script>

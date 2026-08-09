@@ -282,5 +282,45 @@ def clear_branding_logo():
 def clear_branding_favicon():
     return _clear_branding_file('favicon_filename')
 
+# ---- Manual per-service disable (admin override, independent of live health) ----
+# The health check (/api/health) already detects a service being unreachable
+# and the UI greys things out accordingly -- this is for the other case: an
+# admin who KNOWS a service is flaky, being maintained, or just not meant to
+# be offered right now, and wants it treated as unavailable everywhere a live
+# health check would treat it that way, without waiting for it to actually
+# fail a probe (or continuing to offer it during a maintenance window where it
+# might flicker back "up" between checks).
+SERVICE_OVERRIDES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'service_overrides.json')
+# Same five names /api/health already checks -- kept as the single source of
+# truth for "which services exist" rather than letting this file invent its
+# own list that could drift out of sync with it.
+KNOWN_SERVICES = {'ollama', 'fish_audio', 'whisper', 'ace_step', 'woosh'}
+
+def load_disabled_services():
+    """Set of service names an admin has manually disabled. Never raises --
+    a missing or corrupt file just means nothing is disabled, same as a
+    fresh install."""
+    if not os.path.exists(SERVICE_OVERRIDES_FILE):
+        return set()
+    try:
+        with open(SERVICE_OVERRIDES_FILE) as f:
+            data = json.load(f)
+        return {s for s in data.get('disabled', []) if s in KNOWN_SERVICES}
+    except Exception as e:
+        print(f'Service overrides load error ({SERVICE_OVERRIDES_FILE}): {e}')
+        return set()
+
+def set_service_disabled(name, disabled):
+    if name not in KNOWN_SERVICES:
+        return False, f'Unknown service "{name}".'
+    current = load_disabled_services()
+    if disabled:
+        current.add(name)
+    else:
+        current.discard(name)
+    with open(SERVICE_OVERRIDES_FILE, 'w') as f:
+        json.dump({'disabled': sorted(current)}, f, indent=2)
+    return True, None
+
 library_db_init()
 

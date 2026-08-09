@@ -7,4 +7,5 @@ show_templates/
 branding/
 ai_services_config.json
 branding_config.json
+service_overrides.json
 .env
