@@ -54,7 +54,7 @@ def login():
     brand = load_branding()
     brand_name = escape(brand['name'])
     brand_tagline = escape(brand['tagline'])
-    accent = brand['accent_color']
+    accent = brand['theme_colors']['accent']
     brand_footer = escape(brand['footer']) if brand['footer'] else None
     # /branding/logo always resolves to something displayable (falls back to
     # the built-in mark itself when no custom logo is configured -- see

@@ -14,7 +14,7 @@ safer done incrementally against a real render on the actual server, where
 the AI services, ffmpeg, and real footage can actually be exercised --
 not blind in a sandbox that has none of those available.
 """
-import os, cv2, numpy as np, tempfile, threading, time, pathlib, base64, json, requests, subprocess, shutil, re, sqlite3, uuid, secrets, io, mimetypes
+import os, cv2, numpy as np, tempfile, threading, time, pathlib, base64, json, requests, subprocess, shutil, re, sqlite3, uuid, secrets, io, mimetypes, hashlib
 from concurrent.futures import ThreadPoolExecutor
 from collections import deque
 from scenedetect import open_video, SceneManager
@@ -27,7 +27,7 @@ from core import app, ALLOWED_EXTENSIONS
 from library_db import (LIBRARY_DIR, _sqlite_connect, library_add, library_list, library_get_row, library_delete,
     load_branding, save_branding_text, save_branding_color, save_branding_logo, save_branding_favicon,
     clear_branding_logo, clear_branding_favicon, clear_branding_color, BRANDING_DIR,
-    load_disabled_services, set_service_disabled)
+    load_disabled_services, set_service_disabled, save_branding_theme, THEME_PRESETS)
 from auth import require_permission
 
 # ---- Per-show asset templates (SQLite) ----
@@ -2520,6 +2520,68 @@ def api_media_playable():
                                            f'ffmpeg error: {r.stderr[-400:]}'), 502
     return jsonify(ok=True, url=f'/uploads/{out_name}')
 
+@app.route('/api/scene/clip', methods=['POST'])
+def api_scene_clip():
+    """Extracts a short clip from a staged source video for the preview
+    modal's play button, instead of pointing the browser at the full episode
+    and seeking client-side (the previous approach). Two real problems that
+    fixes, not just one: (1) a multi-GB HIRES source is either a slow
+    download over a bad link or, if the codec isn't browser-native
+    (ProRes/DNxHD/MXF), needs a FULL transcode -- see api_media_playable
+    above -- before a single frame can show, just to watch a 3-second scene;
+    (2) -ss placed BEFORE -i (not after) seeks to the nearest keyframe
+    without decoding anything before it, so extraction is sub-second
+    regardless of source length or codec, and the output (a small 640px-wide
+    H.264/AAC proxy) plays instantly in any browser once it's ready.
+
+    Trade-off worth knowing: -ss-before-i seeking is keyframe-accurate, not
+    frame-accurate -- the extracted clip can start up to one GOP early/late
+    (commonly under a second for typical broadcast encodes). Irrelevant for
+    what this is actually for (sanity-checking which scene this is before
+    committing to it), and a vastly better trade than the alternative this
+    replaces. A final render still uses the precise, slower path.
+
+    Cached by (filename, start, end) so replaying the same handful of clips
+    while deciding between alternates -- a real, common part of the preview
+    workflow -- doesn't re-extract every time."""
+    name = secure_filename(request.form.get('filename', ''))
+    if not name or name != request.form.get('filename', ''):
+        return jsonify(ok=False, error='Invalid filename.'), 400
+    src = os.path.join(app.config['UPLOAD_FOLDER'], name)
+    if not os.path.isfile(src):
+        return jsonify(ok=False, error='That file is no longer staged -- pick it again.'), 404
+    try:
+        start = max(0.0, float(request.form.get('start', 0)))
+        end = float(request.form.get('end', start + 3))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error='Invalid start/end time.'), 400
+    if end <= start:
+        return jsonify(ok=False, error='End time must be after start time.'), 400
+    dur = min(30.0, max(0.1, end - start))  # 30s cap -- this is a preview clip, not a full render
+
+    # Not keyed on the source file's mtime the way api_media_playable's
+    # whole-file cache is: a preview's staged upload is never rewritten in
+    # place once it exists, so there's nothing to invalidate against here.
+    key = f'{name}_{start:.2f}_{dur:.2f}'
+    out_name = 'clip_' + hashlib.sha1(key.encode()).hexdigest()[:16] + '.mp4'
+    out_path = os.path.join(app.config['UPLOAD_FOLDER'], out_name)
+    if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+        return jsonify(ok=True, url=f'/uploads/{out_name}')
+
+    try:
+        r = run_ffmpeg([FFMPEG, '-y', '-ss', f'{start:.3f}', '-i', src,
+                        '-t', f'{dur:.3f}',
+                        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
+                        '-vf', "scale='min(640,iw)':-2", '-pix_fmt', 'yuv420p',
+                        '-c:a', 'aac', '-b:a', '128k', '-ac', '2',
+                        '-movflags', '+faststart', out_path],
+                       timeout=FFMPEG_TIMEOUT, label='scene preview clip')
+    except MediaToolTimeout as e:
+        return jsonify(ok=False, error=f'Clip extraction took too long: {e}'), 504
+    if not (os.path.exists(out_path) and os.path.getsize(out_path) > 0):
+        return jsonify(ok=False, error=f'Could not extract that clip. ffmpeg error: {r.stderr[-400:]}'), 502
+    return jsonify(ok=True, url=f'/uploads/{out_name}')
+
 # ---- Ollama Vision ----
 
 OLLAMA_URL = os.environ.get('OLLAMA_URL', 'http://localhost:11434')
@@ -4186,26 +4248,30 @@ def branding_favicon():
 
 @app.route('/api/branding', methods=['GET'])
 def api_branding_get():
-    """Current brand name/tagline/footer/accent color/logo/favicon state,
-    for the Config > Branding tab to populate its fields and for the
-    login/index pages' <title>/sidebar/footer/theme. Read-only and not
+    """Current brand name/tagline/footer/theme/logo/favicon state, for the
+    Config > Branding tab to populate its fields and for the login/index
+    pages' <title>/sidebar/footer/CSS variables. Read-only and not
     admin-gated -- knowing the current branding isn't sensitive, only
-    changing it is (see the POST route below)."""
+    changing it is (see the POST route below). Includes both the available
+    theme presets (so the UI never hardcodes its own copy of them, which
+    would drift from THEME_PRESETS) and the currently-resolved colors."""
     cfg = load_branding()
     return jsonify(ok=True, name=cfg['name'], tagline=cfg['tagline'], footer=cfg['footer'],
-                   accent_color=cfg['accent_color'],
+                   accent_color=cfg['accent_color'], theme_name=cfg['theme_name'],
+                   theme_colors=cfg['theme_colors'],
+                   themes={k: v for k, v in THEME_PRESETS.items()},
                    has_logo=bool(cfg['logo_filename']), has_favicon=bool(cfg['favicon_filename']))
 
 @app.route('/api/branding', methods=['POST'])
 def api_branding_post():
-    """Saves Branding-tab edits: name/tagline/footer/accent_color (form
-    fields) and/or a new logo/favicon (file uploads) in the same request.
-    reset_logo=1/reset_favicon=1/reset_accent_color=1 clear that item back to
-    the built-in default without needing to re-enter anything -- footer has
-    no equivalent reset flag since an empty string already means "no
-    footer", the same thing a reset would produce; just save it blank.
-    Admin-only -- this changes what every signed-in account (and the login
-    page) sees, the same reasoning as /api/config."""
+    """Saves Branding-tab edits: name/tagline/footer/theme_name/accent_color
+    (form fields) and/or a new logo/favicon (file uploads) in the same
+    request. reset_logo=1/reset_favicon=1/reset_accent_color=1 clear that
+    item back to the built-in default without needing to re-enter anything
+    -- footer has no equivalent reset flag since an empty string already
+    means "no footer", the same thing a reset would produce; just save it
+    blank. Admin-only -- this changes what every signed-in account (and the
+    login page) sees, the same reasoning as /api/config."""
     if session.get('role') != 'admin':
         return jsonify(ok=False, error='Admin access required.'), 403
     name = request.form.get('name')
@@ -4213,6 +4279,11 @@ def api_branding_post():
     footer = request.form.get('footer')
     if name is not None or tagline is not None or footer is not None:
         save_branding_text(name, tagline, footer)
+    theme_name = request.form.get('theme_name')
+    if theme_name:
+        _, err = save_branding_theme(theme_name)
+        if err:
+            return jsonify(ok=False, error=err), 400
     accent_color = request.form.get('accent_color')
     if accent_color:
         _, err = save_branding_color(accent_color)
@@ -4236,7 +4307,8 @@ def api_branding_post():
         clear_branding_color()
     cfg = load_branding()
     return jsonify(ok=True, name=cfg['name'], tagline=cfg['tagline'], footer=cfg['footer'],
-                   accent_color=cfg['accent_color'],
+                   accent_color=cfg['accent_color'], theme_name=cfg['theme_name'],
+                   theme_colors=cfg['theme_colors'], themes={k: v for k, v in THEME_PRESETS.items()},
                    has_logo=bool(cfg['logo_filename']), has_favicon=bool(cfg['favicon_filename']))
 
 @app.route('/api/health')

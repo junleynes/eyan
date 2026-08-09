@@ -89,15 +89,24 @@
   --wash-4:rgba(0,0,0,.07);
   --wash-5:rgba(0,0,0,.09);
 }
-/* Admin-configured accent color (Config > Branding) overrides the built-in
-   --accent default above in BOTH themes -- placed after both :root and
+/* Admin-configured color theme (Config > Branding) overrides the built-in
+   defaults above in BOTH themes -- placed after both :root and
    [data-theme="light"] so the cascade picks this last regardless of which
    theme is active, without needing !important or duplicating every other
-   theme-specific variable. Falls back to the same #4f8cff default as an
-   unconfigured install when nothing's been customized, so this block is a
-   no-op until an admin actually picks a color. */
+   theme-specific variable. A single --accent override here used to be all
+   this did, but --accent is used far less throughout this stylesheet than
+   --phosphor/--amber (the active-tab highlight, most buttons, badges, status
+   dots) are -- swapping only --accent barely changed how the app looked.
+   All five swap together as a coordinated set now (see THEME_PRESETS in
+   library_db.py for the actual combinations). Falls back to the same
+   defaults as an unconfigured install when nothing's been customized, so
+   this block is a no-op until an admin actually picks a theme. */
 :root, [data-theme="light"]{
-  --accent: {{ brand_accent }};
+  --accent: {{ brand_theme.accent }};
+  --phosphor: {{ brand_theme.phosphor }};
+  --phosphor-dim: {{ brand_theme.phosphor_dim }};
+  --tally: {{ brand_theme.tally }};
+  --amber: {{ brand_theme.amber }};
 }
 html{scroll-behavior:smooth}
 [data-theme="light"] body{
@@ -2131,12 +2140,14 @@ var _trPreviewVideoFilename = null
 // NOT a label: a <label> wrapping another <label> is invalid HTML and a click
 // would activate both and cancel itself out.
 //
-// overlayPlay=true (used for the selected-scenes grid) puts a centered play
-// button directly on the thumbnail, YouTube-style -- bigger click target,
-// more compact than a separate button row, and doesn't compete visually with
-// the keep/drop checkbox below it. The alternates grid keeps the smaller
-// inline button (overlayPlay=false): those are secondary swap-in options,
-// so a lighter-weight treatment fits.
+// overlayPlay=true puts a centered play button directly on the thumbnail,
+// YouTube-style -- bigger click target, more compact than a separate button
+// row, and doesn't compete visually with the keep/drop checkbox below it.
+// Used for both the selected-scenes grid and the alternates ("Show more
+// clips") grid, so a suggested cut and its swap-in alternatives look and
+// behave identically -- overlayPlay=false (inline button) is kept as an
+// option in case a future, denser card layout needs it, but nothing
+// currently calls buildSceneCard with it set to false.
 function buildSceneCard(s, cls, num, checked, badge, overlayPlay){
   var card = document.createElement('div')
   card.style.cssText = 'border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--panel-2,#1f232b)'
@@ -2214,7 +2225,7 @@ function renderPreviewCut(d){
   agrid.innerHTML = ''
   if(alts.length){
     alts.forEach(function(s){
-      agrid.appendChild(buildSceneCard(s, 'tr-alt-pick', s.alt, false, 'Alt ' + s.alt, false))
+      agrid.appendChild(buildSceneCard(s, 'tr-alt-pick', s.alt, false, 'Alt ' + s.alt, true))
     })
     agrid.querySelectorAll('.tr-alt-pick').forEach(function(cb){
       cb.addEventListener('change', updatePreviewKept)
@@ -4158,14 +4169,14 @@ This is [emphasis] the one you cannot miss.
   <span id=brand-text-status style="font-size:13px;margin-left:8px"></span>
 </div>
 
-<div style="margin-top:20px;min-width:220px">
-  <label>Color theme (accent color):</label>
-  <p style="font-size:11px;opacity:.65;margin:2px 0 8px">Used app-wide for buttons, links, and highlights in both light and dark mode &mdash; including the sign-in page.</p>
-  <div style="display:flex;align-items:center;gap:10px">
+<div style="margin-top:20px;min-width:260px">
+  <label>Color theme:</label>
+  <p style="font-size:11px;opacity:.65;margin:2px 0 8px">A coordinated set of colors used app-wide &mdash; the active-tab highlight, most buttons, badges, and status indicators, in both light and dark mode, including the sign-in page. Pick "Custom" to set just the accent color instead.</p>
+  <div id=brand-theme-swatches style="display:flex;flex-wrap:wrap;gap:10px"></div>
+  <div id=brand-custom-accent-row style="display:none;margin-top:12px;align-items:center;gap:10px">
     <input type=color id=brand-accent-input value="#4f8cff" style="width:44px;height:32px;padding:2px;border-radius:6px;border:1px solid var(--line);background:var(--panel-2);cursor:pointer">
     <input type=text id=brand-accent-text class=input-box style="width:110px;margin-bottom:0" placeholder="#4f8cff">
     <button type=button class=btn style="padding:5px 11px;font-size:12px" onclick="saveBrandAccent()">Save color</button>
-    <button type=button class=btn style="padding:5px 11px;font-size:12px" onclick="resetBrandAccent()">Reset</button>
   </div>
   <span id=brand-accent-status style="font-size:12px;margin-top:6px;display:inline-block"></span>
 </div>
@@ -4302,8 +4313,62 @@ async function loadBrandingTab(){
     document.getElementById('brand-accent-text').value = d.accent_color
     document.getElementById('brand-logo-status').textContent = d.has_logo ? 'Custom logo in use' : 'Using the built-in default'
     document.getElementById('brand-favicon-status').textContent = d.has_favicon ? 'Custom favicon in use' : 'Using the built-in default'
+    renderThemeSwatches(d.themes, d.theme_name)
+    document.getElementById('brand-custom-accent-row').style.display = (d.theme_name === 'custom') ? 'flex' : 'none'
   }catch(e){}
 }
+
+function renderThemeSwatches(themes, currentName){
+  var container = document.getElementById('brand-theme-swatches')
+  var entries = Object.keys(themes).map(function(key){ return {key: key, theme: themes[key]} })
+  entries.push({key: 'custom', theme: {label: 'Custom', accent: null}})
+  container.innerHTML = entries.map(function(e){
+    var isCurrent = e.key === currentName
+    var dots
+    if(e.key === 'custom'){
+      dots = '<span style="font-size:16px">&#127912;</span>'
+    }else{
+      dots = ['phosphor', 'accent', 'amber', 'tally'].map(function(role){
+        return '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:' + e.theme[role] + '"></span>'
+      }).join('')
+    }
+    return '<div onclick="selectTheme(\'' + e.key + '\')" style="cursor:pointer;padding:8px 12px;border-radius:8px;' +
+      'border:1.5px solid ' + (isCurrent ? 'var(--phosphor)' : 'var(--line)') + ';' +
+      'background:' + (isCurrent ? 'rgba(52,230,197,.08)' : 'var(--panel-2)') + ';' +
+      'display:flex;flex-direction:column;align-items:center;gap:6px;min-width:88px">' +
+      '<div style="display:flex;gap:3px">' + dots + '</div>' +
+      '<span style="font-size:11px;white-space:nowrap">' + e.theme.label + '</span>' +
+    '</div>'
+  }).join('')
+}
+
+async function selectTheme(themeName){
+  var status = document.getElementById('brand-accent-status')
+  document.getElementById('brand-custom-accent-row').style.display = (themeName === 'custom') ? 'flex' : 'none'
+  if(themeName === 'custom'){
+    // Custom needs an actual color before there's anything to save --
+    // just reveal the picker and wait for "Save color" rather than saving
+    // a theme_name with no accent behind it yet.
+    return
+  }
+  status.textContent = 'Saving…'; status.style.color = 'var(--ink-dim)'
+  try{
+    var fd = new FormData()
+    fd.append('theme_name', themeName)
+    var r = await fetch('/api/branding', {method:'POST', body: fd})
+    var d = await r.json()
+    if(d.ok){
+      status.textContent = 'Saved. Reload the page to see it applied everywhere.'
+      status.style.color = 'var(--phosphor)'
+      renderThemeSwatches(d.themes, d.theme_name)
+    }else{
+      status.textContent = 'Save failed: ' + (d.error || 'unknown error')
+      status.style.color = 'var(--amber)'
+    }
+  }catch(e){ status.textContent = 'Save failed: ' + e; status.style.color = 'var(--amber)' }
+}
+window.selectTheme = selectTheme
+
 // Keep the swatch (<input type=color>, always #rrggbb) and the free-typed
 // hex field in sync with each other without fighting -- each only writes to
 // the other, never to itself, so there's no cursor-jump/loop.
@@ -4320,6 +4385,7 @@ async function saveBrandAccent(){
   status.textContent = 'Saving…'; status.style.color = 'var(--ink-dim)'
   try{
     var fd = new FormData()
+    fd.append('theme_name', 'custom')
     fd.append('accent_color', color)
     var r = await fetch('/api/branding', {method:'POST', body: fd})
     var d = await r.json()
@@ -4331,26 +4397,6 @@ async function saveBrandAccent(){
       status.style.color = 'var(--amber)'
     }
   }catch(e){ status.textContent = 'Save failed: ' + e; status.style.color = 'var(--amber)' }
-}
-
-async function resetBrandAccent(){
-  var status = document.getElementById('brand-accent-status')
-  status.textContent = 'Resetting…'; status.style.color = 'var(--ink-dim)'
-  try{
-    var fd = new FormData()
-    fd.append('reset_accent_color', '1')
-    var r = await fetch('/api/branding', {method:'POST', body: fd})
-    var d = await r.json()
-    if(d.ok){
-      document.getElementById('brand-accent-input').value = d.accent_color
-      document.getElementById('brand-accent-text').value = d.accent_color
-      status.textContent = 'Back to the built-in default. Reload the page to see it applied everywhere.'
-      status.style.color = 'var(--phosphor)'
-    }else{
-      status.textContent = 'Reset failed: ' + (d.error || 'unknown error')
-      status.style.color = 'var(--amber)'
-    }
-  }catch(e){ status.textContent = 'Reset failed: ' + e; status.style.color = 'var(--amber)' }
 }
 
 async function saveBrandText(){
@@ -4593,29 +4639,50 @@ window.playClip = function(videoFilename, startSec, endSec, label){
   var overlay = document.getElementById('clip-modal-overlay')
   var v = document.getElementById('clip-modal-video')
   var status = document.getElementById('clip-modal-status')
-  var fellBack = {done: false}
 
   document.getElementById('clip-modal-title').textContent = label || 'Scene'
-  status.textContent = ''
+  status.textContent = 'Preparing clip…'
   status.style.color = ''
   overlay.classList.add('open')
   document.addEventListener('keydown', _clipEscHandler)
+  v.removeAttribute('src')
+  v.onloadedmetadata = null
+  v.ontimeupdate = null
 
-  v.onloadedmetadata = function(){ v.currentTime = startSec }
-  v.ontimeupdate = function(){
-    // Auto-pause at the scene's end so this plays just that one clip instead
-    // of running on into whatever follows it in the source video.
-    if(endSec != null && v.currentTime >= endSec) v.pause()
-  }
-  v.onerror = function(){
-    attemptPlayableFallback(v, videoFilename, fellBack, function(msg, isError){
-      status.style.color = isError ? 'var(--amber)' : ''
-      status.textContent = msg
+  // Asks the server for just this scene's few seconds, extracted from the
+  // source via a fast keyframe seek, rather than pointing <video> at the
+  // full episode and seeking client-side (the previous approach) -- that
+  // meant downloading (or, for a non-browser-native codec like ProRes,
+  // fully transcoding) the whole source just to watch one short scene.
+  // See /api/scene/clip's docstring for the trade-off this makes.
+  var fd = new FormData()
+  fd.append('filename', videoFilename)
+  fd.append('start', startSec)
+  fd.append('end', endSec != null ? endSec : startSec + 3)
+  fetch('/api/scene/clip', {method: 'POST', body: fd})
+    .then(function(r){ return r.json() })
+    .then(function(d){
+      if(!d.ok){
+        status.style.color = 'var(--amber)'
+        status.textContent = d.error || 'Could not prepare that clip.'
+        return
+      }
+      status.textContent = ''
+      v.onerror = function(){
+        status.style.color = 'var(--amber)'
+        status.textContent = "This clip couldn't be played back."
+      }
+      // The returned clip is already trimmed to exactly this scene -- no
+      // client-side seeking or auto-pause-at-end needed, unlike the old
+      // full-video approach; it just plays start to finish.
+      v.src = d.url
+      v.load()
+      v.play().catch(function(){})   // autoplay may be blocked; controls still work
     })
-  }
-  v.src = '/uploads/' + videoFilename
-  v.load()
-  v.play().catch(function(){})   // autoplay may be blocked; controls still work
+    .catch(function(e){
+      status.style.color = 'var(--amber)'
+      status.textContent = 'Request failed: ' + e
+    })
 }
 
 document.addEventListener('DOMContentLoaded', function(){

@@ -159,19 +159,75 @@ DEFAULT_BRAND_TAGLINE = 'AI Media Provider'
 # Matches the dark-theme --accent default baked into templates/index.html, so
 # an unconfigured install renders identically to before this existed.
 DEFAULT_BRAND_ACCENT = '#4f8cff'
+
+# A single accent color barely changes how the app looks: --phosphor and
+# --amber (the active-tab highlight, most buttons, badges, status dots) are
+# used far more throughout the stylesheet than --accent is, and swapping only
+# --accent left the app looking almost the same as before. A real "color
+# theme" needs to be a coordinated set, not one hex value -- these five keys
+# are the same semantic roles templates/index.html's own :root already
+# defines (see the CSS comments there for what each one means), just made
+# swappable as a matched set rather than piecemeal.
+#
+# Curated combinations rather than generating a palette algorithmically from
+# one picked color: an arbitrary hue run through a generator can produce
+# genuinely clashing or illegible combinations (a phosphor and tally that are
+# too close in value, an amber that reads as brown), where a hand-picked set
+# is guaranteed to look intentional. 'custom' is the escape hatch for anyone
+# who wants to pick their own accent instead of a preset -- it keeps the
+# original single-accent behavior (default phosphor/tally/amber, custom
+# accent only) rather than removing that option.
+THEME_PRESETS = {
+    'teal_amber': {'label': 'Teal & Amber (default)',
+                   'phosphor': '#34e6c5', 'phosphor_dim': '#1d8f7c',
+                   'tally': '#ff5470', 'amber': '#ffb545', 'accent': '#4f8cff'},
+    'ocean': {'label': 'Ocean Blue',
+             'phosphor': '#38bdf8', 'phosphor_dim': '#0284c7',
+             'tally': '#f43f5e', 'amber': '#fbbf24', 'accent': '#6366f1'},
+    'sunset': {'label': 'Sunset',
+              'phosphor': '#fb923c', 'phosphor_dim': '#c2410c',
+              'tally': '#ec4899', 'amber': '#fbbf24', 'accent': '#f97316'},
+    'forest': {'label': 'Forest',
+              'phosphor': '#4ade80', 'phosphor_dim': '#16a34a',
+              'tally': '#ef4444', 'amber': '#eab308', 'accent': '#22c55e'},
+    'crimson': {'label': 'Crimson',
+               'phosphor': '#f87171', 'phosphor_dim': '#b91c1c',
+               'tally': '#fb7185', 'amber': '#fbbf24', 'accent': '#ef4444'},
+    'violet': {'label': 'Violet',
+              'phosphor': '#a78bfa', 'phosphor_dim': '#7c3aed',
+              'tally': '#f472b6', 'amber': '#fbbf24', 'accent': '#8b5cf6'},
+}
+DEFAULT_THEME_NAME = 'teal_amber'
 _BRANDING_IMAGE_EXTS = {'.svg', '.png', '.jpg', '.jpeg', '.webp', '.gif'}
 _BRANDING_FAVICON_EXTS = {'.ico', '.svg', '.png'}
 _HEX_COLOR_RE = re.compile(r'^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$')
 
+def resolve_theme_colors(theme_name, custom_accent):
+    """The five hex values actually applied for the given theme choice.
+    'custom' (or any unrecognized name -- e.g. a preset removed in a future
+    version) falls back to the default preset's phosphor/tally/amber with
+    only accent swapped, preserving the original single-accent-color
+    behavior for anyone using it that way."""
+    preset = THEME_PRESETS.get(theme_name)
+    if preset:
+        return {k: v for k, v in preset.items() if k != 'label'}
+    base = dict(THEME_PRESETS[DEFAULT_THEME_NAME])
+    base.pop('label', None)
+    base['accent'] = custom_accent or DEFAULT_BRAND_ACCENT
+    return base
+
 def load_branding():
-    """Current brand name/tagline/footer/accent color/logo/favicon. Falls
-    back to the built-in AIMP defaults for anything never configured --
-    footer's default is an empty string (no footer shown at all) rather than
-    built-in text, since unlike name/tagline there's no sensible non-empty
-    default to fall back to. This always returns a complete dict, never
-    partial, so callers don't each need their own fallback logic."""
+    """Current brand name/tagline/footer/theme/logo/favicon. Falls back to
+    the built-in AIMP defaults for anything never configured -- footer's
+    default is an empty string (no footer shown at all) rather than built-in
+    text, since unlike name/tagline there's no sensible non-empty default to
+    fall back to. This always returns a complete dict, never partial, so
+    callers don't each need their own fallback logic. Includes a resolved
+    'theme_colors' dict (see resolve_theme_colors) so callers never need to
+    re-derive it themselves."""
     cfg = {'name': DEFAULT_BRAND_NAME, 'tagline': DEFAULT_BRAND_TAGLINE, 'footer': '',
-           'accent_color': DEFAULT_BRAND_ACCENT, 'logo_filename': None, 'favicon_filename': None}
+           'accent_color': DEFAULT_BRAND_ACCENT, 'theme_name': DEFAULT_THEME_NAME,
+           'logo_filename': None, 'favicon_filename': None}
     if os.path.exists(BRANDING_FILE):
         try:
             with open(BRANDING_FILE) as f:
@@ -188,11 +244,16 @@ def load_branding():
                     cfg[k] = saved[k]
         except Exception as e:
             print(f'Branding config load error ({BRANDING_FILE}): {e}')
+    cfg['theme_colors'] = resolve_theme_colors(cfg['theme_name'], cfg['accent_color'])
     return cfg
 
 def _write_branding(cfg):
+    # theme_colors is derived (see resolve_theme_colors), not stored -- keeps
+    # the presets themselves editable in code without stale resolved values
+    # lingering in old branding_config.json files.
+    to_write = {k: v for k, v in cfg.items() if k != 'theme_colors'}
     with open(BRANDING_FILE, 'w') as f:
-        json.dump(cfg, f, indent=2)
+        json.dump(to_write, f, indent=2)
 
 def save_branding_text(name=None, tagline=None, footer=None):
     cfg = load_branding()
@@ -207,6 +268,18 @@ def save_branding_text(name=None, tagline=None, footer=None):
         cfg['footer'] = footer.strip()
     _write_branding(cfg)
     return cfg
+
+def save_branding_theme(theme_name):
+    """Sets the coordinated color theme (see THEME_PRESETS) for this
+    install. 'custom' is valid and just means "use accent_color with the
+    default preset's other colors" -- see resolve_theme_colors."""
+    theme_name = (theme_name or '').strip()
+    if theme_name != 'custom' and theme_name not in THEME_PRESETS:
+        return None, f'Unknown theme "{theme_name}".'
+    cfg = load_branding()
+    cfg['theme_name'] = theme_name
+    _write_branding(cfg)
+    return cfg, None
 
 def save_branding_color(accent_color):
     """Sets the accent color used app-wide (buttons, links, highlights, the
