@@ -28,7 +28,7 @@ from library_db import (LIBRARY_DIR, _sqlite_connect, library_add, library_list,
     load_branding, save_branding_text, save_branding_color, save_branding_logo, save_branding_favicon,
     clear_branding_logo, clear_branding_favicon, clear_branding_color, BRANDING_DIR,
     load_disabled_services, set_service_disabled, save_branding_theme, THEME_PRESETS,
-    load_network_overrides, save_network_override, NETWORK_CATEGORY_KEYS)
+    load_network_folders, save_network_folder, NETWORK_CATEGORY_KEYS)
 from auth import require_permission
 
 # ---- Per-show asset templates (SQLite) ----
@@ -351,59 +351,48 @@ def fish_tag_catalogue():
 
 # ---- Network (SMB) folder browsing — alternative to local file upload ----
 # Lets the upload panels list and pull media straight from a Windows network
-# share instead of requiring a local drag-and-drop/browse. Configurable from
-# Config > Services now (see CONFIGURABLE_SERVICES below) rather than only
-# via env vars -- previously excluded specifically because
-# NETWORK_SHARE_PASSWORD is a plaintext secret, but FISH_AUDIO_API_KEY
-# already established the same admin-only, masked-password-field treatment
-# for a secret of the same sensitivity, so there's no new category of risk
-# in extending it here too.
-NETWORK_SHARE_HOST = os.environ.get('NETWORK_SHARE_HOST', '')
-NETWORK_SHARE_NAME = os.environ.get('NETWORK_SHARE_NAME', '')
-NETWORK_SHARE_SUBDIR = os.environ.get('NETWORK_SHARE_SUBDIR', '')
-NETWORK_SHARE_USERNAME = os.environ.get('NETWORK_SHARE_USERNAME', '')
-NETWORK_SHARE_PASSWORD = os.environ.get('NETWORK_SHARE_PASSWORD', '')
-
+# share instead of requiring a local drag-and-drop/browse.
+#
+# Config > Network now (see CONFIGURABLE_SERVICES below) rather than only
+# via env vars -- previously excluded specifically because a share password
+# is a plaintext secret, but FISH_AUDIO_API_KEY already established the same
+# admin-only, masked-password-field treatment for a secret of the same
+# sensitivity, so there's no new category of risk in extending it here too.
+#
+# Each of the six browsable categories (HIRES, title/end cards, music, VO,
+# SFX) is configured independently with its own full network path and its
+# own credentials -- there is no shared "default share" to fall back to.
+# An earlier version of this had a default-share-plus-per-category-override
+# system; replaced with this simpler direct model, since in practice
+# whoever's filling this in already knows the exact path and login for each
+# folder rather than thinking of them as subdivisions of one base share.
 AUDIO_EXTENSIONS = {'mp3', 'wav', 'm4a', 'flac', 'ogg', 'aac', 'wma'}
-
-# Each browsable panel gets its own subfolder under the share root, and its own
-# allowed extension set.
-#   \\<share-host>\<share-name>\<subdir>\HIRES    -> raw video mats
-#   \\<share-host>\<share-name>\<subdir>\TCARD    -> title cards
-#   \\<share-host>\<share-name>\<subdir>\ENDCARD  -> end cards
-#   \\<share-host>\<share-name>\<subdir>\MUSIC  -> background music
-#   \\<share-host>\<share-name>\<subdir>\VO     -> narration / voiceover
-#   \\<share-host>\<share-name>\<subdir>\SFX    -> sound effects
-# Folder names under the network share root for each browse category --
-# configurable at runtime from Config > Network (see CONFIGURABLE_SERVICES),
-# since different orgs structure their share differently. exts/label stay
-# code-level: those are implementation details (which file types are valid,
-# what the picker calls it), not something that varies by deployment the way
-# a folder name does.
-NETWORK_FOLDER_HIRES = os.environ.get('NETWORK_FOLDER_HIRES', 'HIRES')
-NETWORK_FOLDER_TCARD = os.environ.get('NETWORK_FOLDER_TCARD', 'TCARD')
-NETWORK_FOLDER_ENDCARD = os.environ.get('NETWORK_FOLDER_ENDCARD', 'ENDCARD')
-NETWORK_FOLDER_MUSIC = os.environ.get('NETWORK_FOLDER_MUSIC', 'MUSIC')
-NETWORK_FOLDER_VO = os.environ.get('NETWORK_FOLDER_VO', 'VO')
-NETWORK_FOLDER_SFX = os.environ.get('NETWORK_FOLDER_SFX', 'SFX')
 DEFAULT_NETWORK_CATEGORY = 'hires'
 
+def _normalize_unc_path(path):
+    """Accepts whatever format someone reasonably types into a "full network
+    path" field -- \\\\server\\share\\folder, //server/share/folder, or
+    without the leading slashes at all -- and returns it in the exact
+    backslash UNC form smbclient expects. Forgiving on input since this is
+    typed by hand, not selected from a picker."""
+    p = (path or '').strip().replace('/', '\\')
+    p = p.lstrip('\\')
+    return '\\\\' + p if p else ''
+
 def _network_categories():
-    """Built fresh on every call rather than a frozen module-level dict,
-    since the folder names above are configurable at runtime (Config >
-    Network) and can change without a restart -- a static dict built once at
-    import time would keep serving the old folder names after a save."""
+    """label/exts per browsable category. No 'folder' key anymore -- each
+    category's full path (including whatever its actual folder name is) is
+    stored directly per-category now, see load_network_folders()."""
     return {
-        'hires': {'folder': NETWORK_FOLDER_HIRES, 'exts': ALLOWED_EXTENSIONS, 'label': 'Video (HIRES)'},
-        # Cards live in their own delivery folders, not with the raw video mats.
-        # NOTE the legacy form-field names: 'end_card_video' is the TITLE card
-        # and 'schedule_video' is the END card (see TEMPLATE_SLOTS for the same
-        # mapping).
-        'tcard': {'folder': NETWORK_FOLDER_TCARD, 'exts': ALLOWED_EXTENSIONS, 'label': 'Title card (TCARD)'},
-        'endcard': {'folder': NETWORK_FOLDER_ENDCARD, 'exts': ALLOWED_EXTENSIONS, 'label': 'End card (ENDCARD)'},
-        'music': {'folder': NETWORK_FOLDER_MUSIC, 'exts': AUDIO_EXTENSIONS, 'label': 'Music'},
-        'vo':    {'folder': NETWORK_FOLDER_VO,    'exts': AUDIO_EXTENSIONS, 'label': 'VO'},
-        'sfx':   {'folder': NETWORK_FOLDER_SFX,   'exts': AUDIO_EXTENSIONS, 'label': 'SFX'},
+        'hires': {'exts': ALLOWED_EXTENSIONS, 'label': 'Video (HIRES)'},
+        # NOTE the legacy form-field names: 'end_card_video' is the TITLE
+        # card and 'schedule_video' is the END card (see TEMPLATE_SLOTS for
+        # the same mapping).
+        'tcard': {'exts': ALLOWED_EXTENSIONS, 'label': 'Title card (TCARD)'},
+        'endcard': {'exts': ALLOWED_EXTENSIONS, 'label': 'End card (ENDCARD)'},
+        'music': {'exts': AUDIO_EXTENSIONS, 'label': 'Music'},
+        'vo':    {'exts': AUDIO_EXTENSIONS, 'label': 'VO'},
+        'sfx':   {'exts': AUDIO_EXTENSIONS, 'label': 'SFX'},
     }
 
 def _network_category(category):
@@ -411,50 +400,34 @@ def _network_category(category):
     cats = _network_categories()
     return cats.get(category, cats[DEFAULT_NETWORK_CATEGORY])
 
-def _resolve_network_share(category):
-    """Effective (host, share_name, subdir, username, password) for `category`
-    -- each field independently falls back to the default NETWORK_SHARE_*
-    value when that category has no override for it, or none at all. This is
-    the one place that fallback logic lives; every caller below goes through
-    this rather than reading NETWORK_SHARE_* or the overrides directly."""
-    override = load_network_overrides().get(category, {})
-    return (
-        override.get('host') or NETWORK_SHARE_HOST,
-        override.get('share') or NETWORK_SHARE_NAME,
-        override.get('subdir') or NETWORK_SHARE_SUBDIR,
-        override.get('username') or NETWORK_SHARE_USERNAME,
-        override.get('password') or NETWORK_SHARE_PASSWORD,
-    )
-
 def _network_share_root(category=DEFAULT_NETWORK_CATEGORY):
-    """UNC path of the folder we browse for `category`, e.g.
-    \\\\<share-host>\\<share-name>\\MUSIC -- host/share/subdir are resolved
-    per-category (see _resolve_network_share), since a real broadcast setup
-    often has HIRES/cards/music/VO/SFX on genuinely different volumes."""
-    cat = _network_category(category)
-    host, share, subdir, _user, _pw = _resolve_network_share(category)
-    root = f'\\\\{host}\\{share}'
-    if subdir:
-        root += f'\\{subdir}'
-    if cat['folder']:
-        root += f'\\{cat["folder"]}'
-    return root
+    """The configured full UNC path for `category`, normalized -- empty
+    string if that category hasn't been set up in Config > Network yet."""
+    row = load_network_folders().get(category, {})
+    return _normalize_unc_path(row.get('path', ''))
 
 def _network_session(category=DEFAULT_NETWORK_CATEGORY):
-    """(Re)registers the SMB session for `category`'s resolved share.
+    """(Re)registers the SMB session for `category`'s configured host.
     smbclient caches connections per-server, so calling this repeatedly is
-    cheap once logged in -- including across categories that share the same
-    host, which is still the common case even with per-category overrides
-    available."""
-    host, _share, _subdir, user, pw = _resolve_network_share(category)
-    smbclient.register_session(host, username=user, password=pw, connection_timeout=10)
+    cheap once logged in -- including across categories that happen to
+    share the same server, still a common case even though each is
+    independently configured."""
+    row = load_network_folders().get(category, {})
+    root = _normalize_unc_path(row.get('path', ''))
+    # Host is the third UNC path segment: \\HOST\share\...
+    parts = root.split('\\')
+    host = parts[2] if len(parts) > 2 else ''
+    smbclient.register_session(host, username=row.get('username', ''),
+                                password=row.get('password', ''), connection_timeout=10)
 
 def list_network_files(category=DEFAULT_NETWORK_CATEGORY):
     """Returns the files (name/size/modified) in the network folder for `category`,
     filtered to that category's allowed extensions."""
     cat = _network_category(category)
-    _network_session(category)
     root = _network_share_root(category)
+    if not root:
+        raise ValueError(f'No network path configured for {cat["label"]} yet -- set it in Config > Network.')
+    _network_session(category)
     out = []
     for entry in smbclient.scandir(root):
         if not entry.is_file():
@@ -473,8 +446,11 @@ def fetch_network_file(name, category=DEFAULT_NETWORK_CATEGORY):
     cat = _network_category(category)
     if os.path.basename(name) != name or not allowed_file(name, cat['exts']):
         raise ValueError('Invalid filename')
+    root = _network_share_root(category)
+    if not root:
+        raise ValueError(f'No network path configured for {cat["label"]} yet -- set it in Config > Network.')
     _network_session(category)
-    remote_path = _network_share_root(category) + '\\' + name
+    remote_path = root + '\\' + name
     local_name = f'net_{int(time.time())}_{secure_filename(name)}'
     local_path = os.path.join(app.config['UPLOAD_FOLDER'], local_name)
     with smbclient.open_file(remote_path, mode='rb') as rf, open(local_path, 'wb') as lf:
@@ -503,25 +479,16 @@ CONFIGURABLE_SERVICES = {
     'ACE_STEP_URL':      ('ACE-Step', 'Base server URL, e.g. http://localhost:8001 — or a hosted endpoint like acemusic.ai'),
     'ACE_STEP_API_KEY':  ('ACE-Step API key', 'Only needed for a hosted ACE-Step endpoint (e.g. acemusic.ai) — leave blank for a self-hosted server with no auth'),
     'WOOSH_URL':         ('Woosh', 'Base server URL, e.g. http://localhost:8030'),
-    'NETWORK_SHARE_HOST':     ('Network share host', 'Hostname or IP of the SMB server, e.g. 10.0.1.130'),
-    'NETWORK_SHARE_NAME':     ('Network share name', 'The share name itself, e.g. media'),
-    'NETWORK_SHARE_SUBDIR':   ('Network share subfolder', 'Optional path under the share root, e.g. promos/2026'),
-    'NETWORK_SHARE_USERNAME': ('Network share username', 'Include the domain if needed, e.g. DOMAIN\\username'),
-    'NETWORK_SHARE_PASSWORD': ('Network share password', 'Stored the same way FISH_AUDIO_API_KEY is — admin-only, masked in the UI'),
-    'NETWORK_FOLDER_HIRES':   ('Video (HIRES) folder', 'Subfolder name under the share root, e.g. HIRES'),
-    'NETWORK_FOLDER_TCARD':   ('Title card folder', 'Subfolder name under the share root, e.g. TCARD'),
-    'NETWORK_FOLDER_ENDCARD': ('End card folder', 'Subfolder name under the share root, e.g. ENDCARD'),
-    'NETWORK_FOLDER_MUSIC':   ('Music folder', 'Subfolder name under the share root, e.g. MUSIC'),
-    'NETWORK_FOLDER_VO':      ('VO folder', 'Subfolder name under the share root, e.g. VO'),
-    'NETWORK_FOLDER_SFX':     ('SFX folder', 'Subfolder name under the share root, e.g. SFX'),
+    # Network share paths/credentials are NOT here -- each of the six
+    # browsable categories is configured independently via
+    # /api/network/shares (see load_network_folders/save_network_folder in
+    # library_db.py), not through this flat single-value-per-key mechanism.
 }
 
 def load_config_overrides():
     """Applies any saved Config-tab overrides on top of the env-var defaults above.
     Called once at startup, after every constant it might touch is already defined."""
     global FISH_AUDIO_URL, FISH_AUDIO_API_KEY, WHISPER_URL, OLLAMA_URL, ACE_STEP_URL, ACE_STEP_API_KEY, WOOSH_URL
-    global NETWORK_SHARE_HOST, NETWORK_SHARE_NAME, NETWORK_SHARE_SUBDIR, NETWORK_SHARE_USERNAME, NETWORK_SHARE_PASSWORD
-    global NETWORK_FOLDER_HIRES, NETWORK_FOLDER_TCARD, NETWORK_FOLDER_ENDCARD, NETWORK_FOLDER_MUSIC, NETWORK_FOLDER_VO, NETWORK_FOLDER_SFX
     if not os.path.exists(CONFIG_FILE):
         return
     try:
@@ -537,24 +504,11 @@ def load_config_overrides():
     if 'ACE_STEP_URL' in cfg and cfg['ACE_STEP_URL']: ACE_STEP_URL = cfg['ACE_STEP_URL']
     if 'ACE_STEP_API_KEY' in cfg: ACE_STEP_API_KEY = cfg['ACE_STEP_API_KEY']
     if 'WOOSH_URL' in cfg and cfg['WOOSH_URL']: WOOSH_URL = cfg['WOOSH_URL']
-    if 'NETWORK_SHARE_HOST' in cfg: NETWORK_SHARE_HOST = cfg['NETWORK_SHARE_HOST']
-    if 'NETWORK_SHARE_NAME' in cfg: NETWORK_SHARE_NAME = cfg['NETWORK_SHARE_NAME']
-    if 'NETWORK_SHARE_SUBDIR' in cfg: NETWORK_SHARE_SUBDIR = cfg['NETWORK_SHARE_SUBDIR']
-    if 'NETWORK_SHARE_USERNAME' in cfg: NETWORK_SHARE_USERNAME = cfg['NETWORK_SHARE_USERNAME']
-    if 'NETWORK_SHARE_PASSWORD' in cfg: NETWORK_SHARE_PASSWORD = cfg['NETWORK_SHARE_PASSWORD']
-    if cfg.get('NETWORK_FOLDER_HIRES'): NETWORK_FOLDER_HIRES = cfg['NETWORK_FOLDER_HIRES']
-    if cfg.get('NETWORK_FOLDER_TCARD'): NETWORK_FOLDER_TCARD = cfg['NETWORK_FOLDER_TCARD']
-    if cfg.get('NETWORK_FOLDER_ENDCARD'): NETWORK_FOLDER_ENDCARD = cfg['NETWORK_FOLDER_ENDCARD']
-    if cfg.get('NETWORK_FOLDER_MUSIC'): NETWORK_FOLDER_MUSIC = cfg['NETWORK_FOLDER_MUSIC']
-    if cfg.get('NETWORK_FOLDER_VO'): NETWORK_FOLDER_VO = cfg['NETWORK_FOLDER_VO']
-    if cfg.get('NETWORK_FOLDER_SFX'): NETWORK_FOLDER_SFX = cfg['NETWORK_FOLDER_SFX']
 
 def save_config_overrides(updates):
     """Merges `updates` (dict of the CONFIGURABLE_SERVICES keys) into the config file
     and applies them to the live module globals immediately — no restart needed."""
     global FISH_AUDIO_URL, FISH_AUDIO_API_KEY, WHISPER_URL, OLLAMA_URL, ACE_STEP_URL, ACE_STEP_API_KEY, WOOSH_URL
-    global NETWORK_SHARE_HOST, NETWORK_SHARE_NAME, NETWORK_SHARE_SUBDIR, NETWORK_SHARE_USERNAME, NETWORK_SHARE_PASSWORD
-    global NETWORK_FOLDER_HIRES, NETWORK_FOLDER_TCARD, NETWORK_FOLDER_ENDCARD, NETWORK_FOLDER_MUSIC, NETWORK_FOLDER_VO, NETWORK_FOLDER_SFX
     existing = {}
     if os.path.exists(CONFIG_FILE):
         try:
@@ -572,17 +526,6 @@ def save_config_overrides(updates):
     if 'ACE_STEP_URL' in updates: ACE_STEP_URL = updates['ACE_STEP_URL'] or ACE_STEP_URL
     if 'ACE_STEP_API_KEY' in updates: ACE_STEP_API_KEY = updates['ACE_STEP_API_KEY']
     if 'WOOSH_URL' in updates: WOOSH_URL = updates['WOOSH_URL'] or WOOSH_URL
-    if 'NETWORK_SHARE_HOST' in updates: NETWORK_SHARE_HOST = updates['NETWORK_SHARE_HOST']
-    if 'NETWORK_SHARE_NAME' in updates: NETWORK_SHARE_NAME = updates['NETWORK_SHARE_NAME']
-    if 'NETWORK_SHARE_SUBDIR' in updates: NETWORK_SHARE_SUBDIR = updates['NETWORK_SHARE_SUBDIR']
-    if 'NETWORK_SHARE_USERNAME' in updates: NETWORK_SHARE_USERNAME = updates['NETWORK_SHARE_USERNAME']
-    if 'NETWORK_SHARE_PASSWORD' in updates: NETWORK_SHARE_PASSWORD = updates['NETWORK_SHARE_PASSWORD']
-    if updates.get('NETWORK_FOLDER_HIRES'): NETWORK_FOLDER_HIRES = updates['NETWORK_FOLDER_HIRES']
-    if updates.get('NETWORK_FOLDER_TCARD'): NETWORK_FOLDER_TCARD = updates['NETWORK_FOLDER_TCARD']
-    if updates.get('NETWORK_FOLDER_ENDCARD'): NETWORK_FOLDER_ENDCARD = updates['NETWORK_FOLDER_ENDCARD']
-    if updates.get('NETWORK_FOLDER_MUSIC'): NETWORK_FOLDER_MUSIC = updates['NETWORK_FOLDER_MUSIC']
-    if updates.get('NETWORK_FOLDER_VO'): NETWORK_FOLDER_VO = updates['NETWORK_FOLDER_VO']
-    if updates.get('NETWORK_FOLDER_SFX'): NETWORK_FOLDER_SFX = updates['NETWORK_FOLDER_SFX']
 
 def current_config_values():
     return {
@@ -590,12 +533,6 @@ def current_config_values():
         'WHISPER_URL': WHISPER_URL,
         'OLLAMA_URL': OLLAMA_URL, 'ACE_STEP_URL': ACE_STEP_URL, 'ACE_STEP_API_KEY': ACE_STEP_API_KEY,
         'WOOSH_URL': WOOSH_URL,
-        'NETWORK_SHARE_HOST': NETWORK_SHARE_HOST, 'NETWORK_SHARE_NAME': NETWORK_SHARE_NAME,
-        'NETWORK_SHARE_SUBDIR': NETWORK_SHARE_SUBDIR, 'NETWORK_SHARE_USERNAME': NETWORK_SHARE_USERNAME,
-        'NETWORK_SHARE_PASSWORD': NETWORK_SHARE_PASSWORD,
-        'NETWORK_FOLDER_HIRES': NETWORK_FOLDER_HIRES, 'NETWORK_FOLDER_TCARD': NETWORK_FOLDER_TCARD,
-        'NETWORK_FOLDER_ENDCARD': NETWORK_FOLDER_ENDCARD, 'NETWORK_FOLDER_MUSIC': NETWORK_FOLDER_MUSIC,
-        'NETWORK_FOLDER_VO': NETWORK_FOLDER_VO, 'NETWORK_FOLDER_SFX': NETWORK_FOLDER_SFX,
     }
 
 # ---- Branding ----
@@ -4544,42 +4481,41 @@ def api_config_test():
 
 @app.route('/api/network/shares', methods=['GET'])
 def api_network_shares_get():
-    """Per-category network share overrides (HIRES/TCARD/ENDCARD/MUSIC/VO/SFX),
-    for the Config > Network tab. Admin-only, same reasoning as /api/config --
-    these can include a share password. Never returns saved passwords in
-    plaintext for display; the UI shows a masked placeholder and only sends a
-    new password when the admin actually types one (see the POST route)."""
+    """Full network path/username for each of the six browsable categories
+    (HIRES/TCARD/ENDCARD/MUSIC/VO/SFX), for the Config > Network tab.
+    Admin-only, same reasoning as /api/config -- these can include a share
+    password. Never returns saved passwords in plaintext for display; the
+    UI shows a masked placeholder and only sends a new password when the
+    admin actually types one (see the POST route)."""
     if session.get('role') != 'admin':
         return jsonify(ok=False, error='Admin access required.'), 403
-    overrides = load_network_overrides()
+    folders = load_network_folders()
     out = {}
     for cat in NETWORK_CATEGORY_KEYS:
-        row = overrides.get(cat, {})
+        row = folders.get(cat, {})
         out[cat] = {
-            'host': row.get('host', ''), 'share': row.get('share', ''),
-            'subdir': row.get('subdir', ''), 'username': row.get('username', ''),
+            'path': row.get('path', ''), 'username': row.get('username', ''),
             'has_password': bool(row.get('password')),
         }
-    return jsonify(ok=True, categories=out, default=current_config_values())
+    return jsonify(ok=True, categories=out)
 
 @app.route('/api/network/shares', methods=['POST'])
 def api_network_shares_post():
-    """Saves one category's share override. Body: {"category": "music",
-    "host": "...", "share": "...", "subdir": "...", "username": "...",
-    "password": "..." (omit to leave the saved password unchanged, send ""
-    to explicitly clear it back to 'inherit from default')}. Every field is
-    independent -- leaving one blank falls back to the default share's same
-    field at resolve time (see _resolve_network_share), not to that
-    category's own previous value, so clearing just the host while keeping a
-    category-specific username is a valid, meaningful state."""
+    """Saves one category's network path/username/password. Body:
+    {"category": "music", "path": "\\\\server\\share\\folder",
+    "username": "...", "password": "..." (omit to leave the saved password
+    unchanged, send "" to explicitly clear it)}. Each of the six categories
+    is fully independent -- there's no shared default any of these fall
+    back to, so a category with no path configured simply isn't reachable
+    until one is set here."""
     if session.get('role') != 'admin':
         return jsonify(ok=False, error='Admin access required.'), 403
     data = request.get_json(silent=True) or {}
     category = (data.get('category') or '').strip()
     if category not in NETWORK_CATEGORY_KEYS:
         return jsonify(ok=False, error=f'Unknown category "{category}".'), 400
-    fields = {k: data[k] for k in ('host', 'share', 'subdir', 'username', 'password') if k in data}
-    ok, err = save_network_override(category, fields)
+    fields = {k: data[k] for k in ('path', 'username', 'password') if k in data}
+    ok, err = save_network_folder(category, fields)
     if not ok:
         return jsonify(ok=False, error=err), 400
     return jsonify(ok=True, category=category)

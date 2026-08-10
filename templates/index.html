@@ -588,7 +588,7 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
 </nav>
 <div class="container">
 
-<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadConfigNetworkTab==='function'&&!configNetworkTabLoaded){loadConfigNetworkTab()}if(id==='p-config'&&typeof loadNetworkOverrides==='function'&&!networkOverridesLoaded){loadNetworkOverrides()}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active');if(id==='p-config-users'){var f=document.getElementById('config-users-frame');if(f&&!f.getAttribute('src'))f.setAttribute('src',f.getAttribute('data-src'))}}
+<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadNetworkFolders==='function'&&!networkFoldersLoaded){loadNetworkFolders()}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active');if(id==='p-config-users'){var f=document.getElementById('config-users-frame');if(f&&!f.getAttribute('src'))f.setAttribute('src',f.getAttribute('data-src'))}}
 
 // ---- Theme (light / dark / auto) ----
 // The <head> script (see near the top of the page) already resolved and
@@ -4142,7 +4142,7 @@ job. Configured via env vars:
 <tr><td>VO / narration, title &amp; end card VO</td><td><code>VO</code></td><td>Audio</td></tr>
 <tr><td>SFX</td><td><code>SFX</code></td><td>Audio</td></tr>
 </table>
-<p>These sit under one shared root (<code>\\host\share\subdir\HIRES</code>, <code>...\MUSIC</code>, etc.) set via the <code>NETWORK_SHARE_*</code> environment variables — see the README for the full list. A picked network file is copied into the app's working folder the same way an upload would be, so the rest of the pipeline treats both identically.</p>
+<p>Each category is configured independently in Config &gt; Network (admin-only) with its own full network path, username, and password — not env vars, and no shared root, since HIRES/cards/music/VO/SFX often live on genuinely different volumes with different credentials. A picked network file is copied into the app's working folder the same way an upload would be, so the rest of the pipeline treats both identically.</p>
 
 <h3>Job monitor &amp; saved trailers</h3>
 <p>Two collapsible panels sit above the generator form:</p>
@@ -4281,19 +4281,9 @@ This is [emphasis] the one you cannot miss.
 </div>
 
 <div id="p-config-network" class="sub-panel">
-<p style="margin-top:-4px;color:var(--ink-dim)">Where Browse Library looks for files, and how it authenticates — the SMB share connection, plus the subfolder name under that share root for each category (Video/HIRES, Title card, End card, Music, VO, SFX). Split out from Services since these aren't AI model endpoints. Takes effect immediately; no restart needed.</p>
-<div id="config-network-rows" style="display:flex;flex-direction:column;gap:14px;margin-top:16px">
-  <!-- rows injected by loadConfigNetworkTab() -->
-</div>
-<div style="margin-top:18px;display:flex;gap:10px;align-items:center">
-  <button type=button class=btn id=config-network-save-btn onclick="saveConfigNetworkTab()">Save all</button>
-  <span id="config-network-save-status" style="font-size:13px"></span>
-</div>
-
-<h3 style="margin-top:28px">Per-category overrides</h3>
-<p style="margin-top:-4px;color:var(--ink-dim)">HIRES, title/end cards, music, VO, and SFX often live on genuinely different network volumes with different credentials, not just different subfolders of one share. Turn on an override for a category to point it at its own host/share/credentials — any field left blank still falls back to the default share above, so you only need to fill in what's actually different (e.g. just a different username for one category, keeping the same server and share as everything else).</p>
-<div id="config-network-overrides" style="display:flex;flex-direction:column;gap:10px;margin-top:12px">
-  <!-- rows injected by loadNetworkOverrides() -->
+<p style="margin-top:-4px;color:var(--ink-dim)">Where Browse Library looks for files. Each category is fully independent — its own full network path, username, and password — since HIRES, cards, music, VO, and SFX often live on genuinely different volumes with different credentials. Takes effect immediately; no restart needed.</p>
+<div id="config-network-folders" style="display:flex;flex-direction:column;gap:12px;margin-top:16px">
+  <!-- cards injected by loadNetworkFolders() -->
 </div>
 </div>
 
@@ -4366,28 +4356,14 @@ This is [emphasis] the one you cannot miss.
 
 <script>
 var CONFIG_FIELD_ORDER = ['FISH_AUDIO_URL','FISH_AUDIO_API_KEY','WHISPER_URL','OLLAMA_URL','ACE_STEP_URL','ACE_STEP_API_KEY','WOOSH_URL']
-// Fields that are secrets (masked as password inputs) -- API keys plus the
-// network share password specifically, not its host/name/subdir/username,
-// which aren't sensitive on their own.
-var CONFIG_SECRET_FIELDS = {'FISH_AUDIO_API_KEY':1, 'ACE_STEP_API_KEY':1, 'NETWORK_SHARE_PASSWORD':1}
-// Fields with no "Test" button -- secrets (testing a bare API key against
-// nothing isn't meaningful) plus every network-share field, since a share
-// isn't reachable by pinging any ONE of host/name/subdir/username/password
-// alone the way a plain service URL is; /api/network/list already exercises
-// the combination for real when you actually browse a folder.
-var CONFIG_NO_TEST_FIELDS = {'FISH_AUDIO_API_KEY':1, 'ACE_STEP_API_KEY':1,
-  'NETWORK_SHARE_HOST':1, 'NETWORK_SHARE_NAME':1, 'NETWORK_SHARE_SUBDIR':1,
-  'NETWORK_SHARE_USERNAME':1, 'NETWORK_SHARE_PASSWORD':1,
-  'NETWORK_FOLDER_HIRES':1, 'NETWORK_FOLDER_TCARD':1, 'NETWORK_FOLDER_ENDCARD':1,
-  'NETWORK_FOLDER_MUSIC':1, 'NETWORK_FOLDER_VO':1, 'NETWORK_FOLDER_SFX':1}
+// Fields that are secrets (masked as password inputs).
+var CONFIG_SECRET_FIELDS = {'FISH_AUDIO_API_KEY':1, 'ACE_STEP_API_KEY':1}
+// Fields with no "Test" button -- a bare API key isn't meaningfully
+// pingable on its own the way a service URL is.
+var CONFIG_NO_TEST_FIELDS = {'FISH_AUDIO_API_KEY':1, 'ACE_STEP_API_KEY':1}
 var configTabLoaded = false
-var configNetworkTabLoaded = false
-// The network-share connection fields plus the six per-category folder
-// names -- split out of CONFIG_FIELD_ORDER (which now covers only the AI
-// service URLs/keys) into their own list for the Network sub-tab.
-var CONFIG_NETWORK_FIELD_ORDER = ['NETWORK_SHARE_HOST','NETWORK_SHARE_NAME','NETWORK_SHARE_SUBDIR','NETWORK_SHARE_USERNAME','NETWORK_SHARE_PASSWORD','NETWORK_FOLDER_HIRES','NETWORK_FOLDER_TCARD','NETWORK_FOLDER_ENDCARD','NETWORK_FOLDER_MUSIC','NETWORK_FOLDER_VO','NETWORK_FOLDER_SFX']
 
-// Shared by loadConfigTab/loadConfigNetworkTab below -- same row shape
+// Shared by loadConfigTab below -- same row shape
 // (label, input, optional Test button, status, help text) regardless of
 // which field list and container it's rendering into.
 function _renderConfigRows(fieldOrder, container, fields, config){
@@ -4444,117 +4420,52 @@ async function loadConfigTab(){
     container.innerHTML = '<p style="color:var(--amber)">Error loading config: '+e+'</p>'
   }
 }
-async function loadConfigNetworkTab(){
-  var container = document.getElementById('config-network-rows')
-  container.innerHTML = '<p style="opacity:.7">Loading current configuration…</p>'
-  try{
-    var r = await fetch('/api/config')
-    var d = await r.json()
-    if(!d.ok){ container.innerHTML = '<p style="color:var(--amber)">Could not load config.</p>'; return }
-    _renderConfigRows(CONFIG_NETWORK_FIELD_ORDER, container, d.fields, d.config)
-    configNetworkTabLoaded = true
-  }catch(e){
-    container.innerHTML = '<p style="color:var(--amber)">Error loading config: '+e+'</p>'
-  }
-}
-async function testConfigRow(key){
-  var status = document.getElementById('cfg-status-'+key)
-  var url = document.getElementById('cfg-'+key).value.trim()
-  status.textContent = 'Testing…'; status.style.color = 'var(--ink-dim)'
-  try{
-    var r = await fetch('/api/config/test', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:key, url:url})})
-    var d = await r.json()
-    if(d.ok){ status.textContent = 'Reachable ('+d.latency_ms+'ms, HTTP '+d.http_status+')'; status.style.color = 'var(--phosphor)' }
-    else{ status.textContent = 'Unreachable: '+(d.error||'unknown error'); status.style.color = 'var(--amber)' }
-  }catch(e){ status.textContent = 'Test failed: '+e; status.style.color = 'var(--amber)' }
-}
-async function _saveConfigFields(fieldOrder, btnId, statusId){
-  var btn = document.getElementById(btnId)
-  var status = document.getElementById(statusId)
-  var payload = {}
-  fieldOrder.forEach(function(key){
-    var el = document.getElementById('cfg-'+key)
-    if(el) payload[key] = el.value.trim()
-  })
-  btn.disabled = true; status.textContent = 'Saving…'; status.style.color = 'var(--ink-dim)'
-  try{
-    var r = await fetch('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)})
-    var d = await r.json()
-    if(d.ok){ status.textContent = 'Saved — applied immediately, no restart needed.'; status.style.color = 'var(--phosphor)' }
-    else{ status.textContent = 'Save failed: '+(d.error||'unknown error'); status.style.color = 'var(--amber)' }
-  }catch(e){ status.textContent = 'Save failed: '+e; status.style.color = 'var(--amber)' }
-  btn.disabled = false
-}
-function saveConfigTab(){ _saveConfigFields(CONFIG_FIELD_ORDER, 'config-save-btn', 'config-save-status') }
-function saveConfigNetworkTab(){ _saveConfigFields(CONFIG_NETWORK_FIELD_ORDER, 'config-network-save-btn', 'config-network-save-status') }
-
 var NETWORK_CATEGORY_LABELS = {hires: 'Video (HIRES)', tcard: 'Title card', endcard: 'End card', music: 'Music', vo: 'VO', sfx: 'SFX'}
-var networkOverridesLoaded = false
-async function loadNetworkOverrides(){
-  var container = document.getElementById('config-network-overrides')
-  container.innerHTML = '<p style="opacity:.7">Loading…</p>'
+var networkFoldersLoaded = false
+async function loadNetworkFolders(){
+  var container = document.getElementById('config-network-folders')
+  container.innerHTML = '<p style="opacity:.7">Loading\u2026</p>'
   try{
     var r = await fetch('/api/network/shares')
     var d = await r.json()
-    if(!d.ok){ container.innerHTML = '<p style="color:var(--amber)">Could not load overrides.</p>'; return }
+    if(!d.ok){ container.innerHTML = '<p style="color:var(--amber)">Could not load network config.</p>'; return }
     container.innerHTML = ''
     Object.keys(NETWORK_CATEGORY_LABELS).forEach(function(cat){
       var row = d.categories[cat] || {}
-      var hasOverride = !!(row.host || row.share || row.subdir || row.username || row.has_password)
       var wrap = document.createElement('div')
-      wrap.style.cssText = 'border:1px solid var(--line);border-radius:10px;padding:12px 16px'
+      wrap.style.cssText = 'border:1px solid var(--line);border-radius:10px;padding:14px 16px'
       wrap.innerHTML =
-        '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600">' +
-          '<input type=checkbox id="net-ov-on-' + cat + '" ' + (hasOverride ? 'checked' : '') + '> ' + NETWORK_CATEGORY_LABELS[cat] +
-          ' <span style="font-weight:400;opacity:.6;font-size:11px">' + (hasOverride ? '— using its own share' : '— using the default share above') + '</span>' +
-        '</label>' +
-        '<div id="net-ov-fields-' + cat + '" style="display:' + (hasOverride ? 'flex' : 'none') + ';flex-direction:column;gap:8px;margin-top:10px">' +
-          '<input type=text id="net-ov-host-' + cat + '" placeholder="Host (blank = use default)" value="' + (row.host || '').replace(/"/g,'&quot;') + '">' +
-          '<input type=text id="net-ov-share-' + cat + '" placeholder="Share name (blank = use default)" value="' + (row.share || '').replace(/"/g,'&quot;') + '">' +
-          '<input type=text id="net-ov-subdir-' + cat + '" placeholder="Subfolder (blank = use default)" value="' + (row.subdir || '').replace(/"/g,'&quot;') + '">' +
-          '<input type=text id="net-ov-username-' + cat + '" placeholder="Username (blank = use default)" value="' + (row.username || '').replace(/"/g,'&quot;') + '">' +
-          '<input type=password id="net-ov-password-' + cat + '" placeholder="' + (row.has_password ? 'Password set — leave blank to keep it' : 'Password (blank = use default)') + '">' +
-          '<div><button type=button class=btn style="padding:5px 11px;font-size:12px" onclick="saveNetworkOverride(\'' + cat + '\')">Save</button> ' +
-          '<span id="net-ov-status-' + cat + '" style="font-size:12px;margin-left:6px"></span></div>' +
+        '<label style="font-size:13px;font-weight:600;display:block;margin-bottom:8px">' + NETWORK_CATEGORY_LABELS[cat] + '</label>' +
+        '<div style="display:flex;flex-direction:column;gap:8px">' +
+          '<input type=text id="net-path-' + cat + '" class=input-box placeholder="Full network path, e.g. \\\\10.0.1.130\\media\\' + cat.toUpperCase() + '" value="' + (row.path || '').replace(/"/g,'&quot;') + '" style="margin-bottom:0">' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+            '<input type=text id="net-user-' + cat + '" placeholder="Username" value="' + (row.username || '').replace(/"/g,'&quot;') + '" style="flex:1;min-width:160px">' +
+            '<input type=password id="net-pass-' + cat + '" placeholder="' + (row.has_password ? 'Password set \u2014 leave blank to keep it' : 'Password') + '" style="flex:1;min-width:160px">' +
+          '</div>' +
+          '<div><button type=button class=btn style="padding:5px 11px;font-size:12px" onclick="saveNetworkFolder(\'' + cat + '\')">Save</button> ' +
+          '<span id="net-status-' + cat + '" style="font-size:12px;margin-left:6px"></span></div>' +
         '</div>'
       container.appendChild(wrap)
-      var checkbox = wrap.querySelector('#net-ov-on-' + cat)
-      var fields = wrap.querySelector('#net-ov-fields-' + cat)
-      checkbox.addEventListener('change', function(){
-        fields.style.display = checkbox.checked ? 'flex' : 'none'
-        // Unchecking clears every field and saves immediately -- that's the
-        // actual "go back to the default share" action, not just a UI
-        // toggle, since a category with fields still saved server-side
-        // would keep using them next time this panel loads even though the
-        // checkbox visually looked off.
-        if(!checkbox.checked) saveNetworkOverride(cat, true)
-      })
-      networkOverridesLoaded = true
     })
+    networkFoldersLoaded = true
   }catch(e){
-    container.innerHTML = '<p style="color:var(--amber)">Error loading overrides: '+e+'</p>'
+    container.innerHTML = '<p style="color:var(--amber)">Error loading network config: '+e+'</p>'
   }
 }
-async function saveNetworkOverride(cat, clearAll){
-  var status = document.getElementById('net-ov-status-' + cat)
+async function saveNetworkFolder(cat){
+  var status = document.getElementById('net-status-' + cat)
   var payload = {category: cat}
-  if(clearAll){
-    payload.host = ''; payload.share = ''; payload.subdir = ''; payload.username = ''; payload.password = ''
-  }else{
-    payload.host = document.getElementById('net-ov-host-' + cat).value.trim()
-    payload.share = document.getElementById('net-ov-share-' + cat).value.trim()
-    payload.subdir = document.getElementById('net-ov-subdir-' + cat).value.trim()
-    payload.username = document.getElementById('net-ov-username-' + cat).value.trim()
-    var pw = document.getElementById('net-ov-password-' + cat).value
-    if(pw) payload.password = pw   // omitted entirely when blank -- leaves the saved password untouched, see the route's docstring
-  }
-  if(status){ status.textContent = 'Saving…'; status.style.color = 'var(--ink-dim)' }
+  payload.path = document.getElementById('net-path-' + cat).value.trim()
+  payload.username = document.getElementById('net-user-' + cat).value.trim()
+  var pw = document.getElementById('net-pass-' + cat).value
+  if(pw) payload.password = pw   // omitted entirely when blank -- leaves the saved password untouched, see the route's docstring
+  if(status){ status.textContent = 'Saving\u2026'; status.style.color = 'var(--ink-dim)' }
   try{
     var r = await fetch('/api/network/shares', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)})
     var d = await r.json()
     if(d.ok){
       if(status){ status.textContent = 'Saved.'; status.style.color = 'var(--phosphor)' }
-      loadNetworkOverrides()   // re-render so the "using its own share" summary text and password placeholder reflect what actually saved
+      loadNetworkFolders()   // re-render so the password placeholder reflects what actually saved
     }else{
       if(status){ status.textContent = 'Save failed: ' + (d.error || 'unknown error'); status.style.color = 'var(--amber)' }
     }
@@ -4562,7 +4473,7 @@ async function saveNetworkOverride(cat, clearAll){
     if(status){ status.textContent = 'Save failed: ' + e; status.style.color = 'var(--amber)' }
   }
 }
-window.saveNetworkOverride = saveNetworkOverride
+window.saveNetworkFolder = saveNetworkFolder
 
 // ---- Branding (Config > Branding) ----
 var brandingTabLoaded = false

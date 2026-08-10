@@ -9,4 +9,5 @@ ai_services_config.json
 branding_config.json
 service_overrides.json
 network_shares.json
+network_folders.json
 .env
