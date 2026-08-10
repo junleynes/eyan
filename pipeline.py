@@ -4021,17 +4021,32 @@ def api_music_models():
     least one hosted wrapper observed in the wild) exposes these at GET
     /models; older/single-model servers and other wrappers don't have this
     endpoint at all -- that's not an error, it just means there's nothing to
-    switch between, so this returns an empty list rather than surfacing a
+    switch between, so an empty list is returned rather than surfacing a
     failure. /api/music/generate still takes a free-typed model name either
     way (see acestep_generate's `model` param), this is purely to populate
-    the picker's suggestions when the server can tell us what's available."""
+    the picker's suggestions when the server can tell us what's available.
+
+    A genuine connection failure (wrong host/port, server down, timeout) is
+    a DIFFERENT situation from "this server just doesn't have /models", and
+    is reported as such via `reachable`/`error` -- collapsing both into the
+    same empty-list response made a bad ACE_STEP_URL indistinguishable from
+    a working server with nothing to list."""
     try:
         r = requests.get(f'{ACE_STEP_URL}/models', headers=_ace_step_headers(), timeout=5)
-        if not r.ok:
-            return jsonify(ok=True, models=[])
+    except requests.exceptions.RequestException as e:
+        return jsonify(ok=True, models=[], reachable=False,
+                        error=f'Could not reach ACE-Step at {ACE_STEP_URL}: {e}')
+    if not r.ok:
+        # Reached a server, it just doesn't have this endpoint (404) or
+        # rejected the request (401/403/etc) -- still "reachable", just no
+        # model list to offer.
+        return jsonify(ok=True, models=[], reachable=True,
+                        error=f'ACE-Step at {ACE_STEP_URL} responded {r.status_code} to /models')
+    try:
         data = r.json()
-    except Exception:
-        return jsonify(ok=True, models=[])
+    except ValueError:
+        return jsonify(ok=True, models=[], reachable=True,
+                        error=f'ACE-Step at {ACE_STEP_URL} responded to /models, but not with JSON')
     if isinstance(data, dict):
         items = data.get('models') or data.get('data') or data.get('aliases') or []
     elif isinstance(data, list):
@@ -4046,7 +4061,7 @@ def api_music_models():
             name = it.get('alias') or it.get('name') or it.get('id') or it.get('model')
             if name:
                 models.append(name)
-    return jsonify(ok=True, models=models)
+    return jsonify(ok=True, models=models, reachable=True)
 
 @app.route('/api/music/genres')
 @require_permission('music_generation')

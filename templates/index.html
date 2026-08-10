@@ -588,7 +588,7 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
 </nav>
 <div class="container">
 
-<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadNetworkFolders==='function'&&!networkFoldersLoaded){loadNetworkFolders()}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active');if(id==='p-config-users'){var f=document.getElementById('config-users-frame');if(f&&!f.getAttribute('src'))f.setAttribute('src',f.getAttribute('data-src'))}}
+<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadNetworkFolders==='function'&&!networkFoldersLoaded){loadNetworkFolders()}if(id==='p-music'&&typeof loadAceStepModels==='function'){loadAceStepModels()}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active');if(id==='p-config-users'){var f=document.getElementById('config-users-frame');if(f&&!f.getAttribute('src'))f.setAttribute('src',f.getAttribute('data-src'))}}
 
 // ---- Theme (light / dark / auto) ----
 // The <head> script (see near the top of the page) already resolved and
@@ -3699,12 +3699,28 @@ async function loadAceStepModels(){
       sel.appendChild(o)
     })
     if(note){
-      note.textContent = models.length
-        ? 'Server reports ' + models.length + ' model' + (models.length === 1 ? '' : 's') + ' available. Leave on "server default" to use whatever it loads by default.'
-        : "This ACE-Step server doesn't expose a model list (older builds and some wrappers don't), so there's nothing to switch between \u2014 it'll use its own default."
+      if(models.length){
+        note.style.color = ''
+        note.textContent = 'Server reports ' + models.length + ' model' + (models.length === 1 ? '' : 's') + ' available. Leave on "server default" to use whatever it loads by default.'
+      }else if(d && d.reachable === false){
+        // Genuine connection failure -- wrong ACE_STEP_URL, server down,
+        // firewalled, etc. Shown distinctly from "reached it fine, nothing
+        // to list" below so a bad URL doesn't look identical to a working
+        // single-model server.
+        note.style.color = 'var(--amber)'
+        note.textContent = (d.error || 'Could not reach the ACE-Step server') + ' \u2014 check the URL in Config > Services.'
+      }else if(d && d.error){
+        // Reached a server, but it either doesn't have /models or returned
+        // something unexpected -- not a connection problem.
+        note.style.color = ''
+        note.textContent = d.error + " \u2014 that's fine, older/single-model builds don't expose a list; it'll use its own default."
+      }else{
+        note.style.color = ''
+        note.textContent = "This ACE-Step server doesn't expose a model list (older builds and some wrappers don't), so there's nothing to switch between \u2014 it'll use its own default."
+      }
     }
   }catch(e){
-    if(note) note.textContent = 'Could not reach the ACE-Step server to list models: ' + e
+    if(note){ note.style.color = 'var(--amber)'; note.textContent = 'Could not reach the ACE-Step server to list models: ' + e }
   }
 }
 // The Vision panel is rendered further down the page (it lives in the rail now,
