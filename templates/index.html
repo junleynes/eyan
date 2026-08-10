@@ -801,13 +801,6 @@ document.addEventListener("DOMContentLoaded", function(){
   <p style="margin-top:-4px;margin-bottom:10px;font-size:12px;opacity:.75">A template carries its whole setup — genre, transition, lengths, audio targets, voice — plus its music bed, SFX, VO and cards. Picking one fills the form in below; change anything you like afterwards and it applies to this job only.</p>
   <div id=template-summary style="font-size:12px;opacity:.85;margin:0 0 14px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;display:none"></div>
 
-  <label>Rating mode:</label>
-  <select name=mode id=scoring-mode-select>
-    <option value=ai>VISION (OpenCV + AI Vision rating)</option>
-    <option value=ai_stt data-requires="whisper" selected>VISION + STT (adds faster-whisper dialogue transcription)</option>
-  </select>
-  <p id=mode-gating-note style="display:none;margin-top:-4px;margin-bottom:8px;font-size:12px;color:var(--amber)">VISION + STT is unavailable — faster-whisper isn't reachable.</p>
-
   <label>Scene priority:</label>
   <select name=scene_priority id=scene-priority-select onchange="updateScenePriorityVisibility()">
     <option value=auto selected>Automatic — highest scoring scenes win</option>
@@ -924,7 +917,7 @@ document.addEventListener("DOMContentLoaded", function(){
       <input type=checkbox name=sync_beats checked> Sync cuts to beat
     </label>
   </div>
-  <p style="margin-top:-4px;margin-bottom:8px;font-size:12px;opacity:.75">Selecting "VISION + STT" above transcribes dialogue locally to boost ratings for scenes with quotable lines, and snap cut points to word boundaries instead of mid-word. Uses the large-v2 Whisper model by default (needed for reliable Tagalog — smaller models are noticeably worse at it), so the first run may take a bit to load.</p>
+  <p style="margin-top:-4px;margin-bottom:8px;font-size:12px;opacity:.75">Dialogue is transcribed locally to boost ratings for scenes with quotable lines, and to place cut points on phrase/word boundaries instead of mid-sentence. Uses the large-v2 Whisper model by default (needed for reliable Tagalog — smaller models are noticeably worse at it), so the first run may take a bit to load.</p>
   <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0">
     <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
       <input type=checkbox name=broadcast_stereo> Broadcast dual-mono (force all audio identical in L/R)
@@ -1371,7 +1364,7 @@ document.addEventListener("DOMContentLoaded", function(){
   // Human labels + value formatting for every setting a template can carry, so
   // the preview lists what was actually adjusted instead of a bare count.
   var TPL_SETTING_LABELS = {
-    mode: 'Rating mode', trailer_length: 'Duration', genre: 'Genre',
+    trailer_length: 'Duration', genre: 'Genre',
     transition: 'Transition', xfade_dur: 'Crossfade', transition_matte: 'Transition matte',
     max_scene_dur: 'Max clip length', scene_threshold: 'Cut sensitivity',
     min_scene_len_sec: 'Min scene length', min_scene_len: 'Min scene length',
@@ -1390,7 +1383,6 @@ document.addEventListener("DOMContentLoaded", function(){
     whisper_enhance: 'Dialogue-aware cuts',
   }
   var TPL_SETTING_VALUES = {
-    mode: {ai: 'VISION', ai_stt: 'VISION + STT'},
     scoring_mode: {generate: 'AI generated', upload: 'uploaded file', none: 'none'},
     sfx_mode: {genre: 'from genre', upload: 'uploaded file', none: 'none'},
     vo_mode: {tts: 'text-to-speech', upload: 'uploaded file', none: 'none'},
@@ -1714,7 +1706,7 @@ document.addEventListener("DOMContentLoaded", function(){
         if(note) note.style.display = available ? 'none' : ''
       }
     })
-    // Same idea, but for <select><option> pairs (e.g. VISION + STT needs whisper).
+    // Same idea, but for <select><option> pairs that declare a service dependency.
     document.querySelectorAll('#tf option[data-requires]').forEach(function(opt){
       var reqs = opt.dataset.requires.split(',')
       var available = reqs.some(function(r){ return status[r] === 'up' })
@@ -1725,10 +1717,6 @@ document.addEventListener("DOMContentLoaded", function(){
         var fallback = Array.prototype.find.call(select.options, function(o){ return !o.disabled })
         if(fallback){ fallback.selected = true }
         select.dispatchEvent(new Event('change', {bubbles:true}))
-      }
-      if(select.id === 'scoring-mode-select'){
-        var note = document.getElementById('mode-gating-note')
-        if(note) note.style.display = available ? 'none' : ''
       }
     })
 
@@ -4253,7 +4241,7 @@ job. Configured via env vars:
 </div>
 <ol style="line-height:1.9">
   <li><strong>Scene detection</strong> — PySceneDetect (Content or Adaptive, your choice) finds every cut in the source video, using the same sensitivity/minimum-length/detector settings as the "Scene Detection &amp; Analysis" tool in Tools, so what you preview there is what actually gets used.</li>
-  <li><strong>Rating</strong> — each scene is rated on sharpness/brightness/duration/face presence (OpenCV), boosted by AI Vision's 1-5 quality rating, and boosted further for scenes with quotable dialogue when VISION + STT is selected (faster-whisper transcription).</li>
+  <li><strong>Rating</strong> — each scene is rated on sharpness/brightness/duration/face presence (OpenCV), boosted by AI Vision's 1-5 quality rating, and boosted further for scenes with quotable dialogue (faster-whisper transcription, which also places cut points on phrase boundaries so lines aren't cut mid-sentence).</li>
   <li><strong>Beat/dialogue prep (optional)</strong> — if "sync cuts to beat" is on, a music track is prepared early and its beat grid drives cut timing; if dialogue transcription is on, word-level timestamps are generated for clean-cut alignment.</li>
   <li><strong>Scene selection</strong> — highest-rated scenes are picked to fill the target duration, respecting min/max clip length and a minimum spacing between picks so the trailer isn't built from one over-represented stretch of the source, snapping cut points to the beat grid and/or word boundaries when enabled, and topping up across a few passes to land within ~0.5s of the target length.</li>
   <li><strong>Assembly</strong> — selected scenes plus title/end cards are concatenated with the genre's signature transition (see table below), or a custom transition driven by an uploaded matte video/image if selected; any clip that fails to extract is dropped and the reported scene count reflects what actually made it in.</li>

@@ -3242,15 +3242,17 @@ def api_trailer():
     if not path:
         return jsonify(error=orig_name), 400
 
-    # Rating mode: 'ai' (OpenCV + Ollama Vision) or 'ai_stt' (adds faster-whisper
-    # dialogue transcription on top of Vision scoring). 'ai_stt' is normalized down to
-    # 'ai' for the scoring logic below, with whisper_enhance derived from it.
-    mode = request.form.get('mode', 'ai')
-    if mode not in ('ai', 'ai_stt'):
-        mode = 'ai'
-    mode_includes_stt = (mode == 'ai_stt')
-    if mode_includes_stt:
-        mode = 'ai'
+    # Rating mode is no longer user-selectable -- scene selection always uses
+    # OpenCV heuristics + AI Vision + faster-whisper dialogue scoring. The old
+    # VISION-only option existed mainly from before transcription was reliable,
+    # and picking it only ever made selection worse (it threw away the dialogue
+    # signal entirely) while also, until recently, silently disabling
+    # speech-safe cut placement as a side effect. `mode` is still accepted from
+    # the form rather than rejected outright so saved templates carrying an old
+    # 'ai'/'ai_stt' value keep loading without error -- both now resolve to the
+    # same behavior.
+    mode = 'ai'
+    mode_includes_stt = True
     genre = request.form.get('genre', '').strip()
     scoring_mode = request.form.get('scoring_mode', 'generate')
     trailer_length = int(request.form.get('trailer_length', 15))
