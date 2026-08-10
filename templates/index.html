@@ -2019,6 +2019,7 @@ document.addEventListener("DOMContentLoaded", function(){
     })
   }
 
+  var trNetworkSearchSeq = 0
   function runTrNetworkSearch(){
     var q = (trNetworkSearchInput.value || '').trim()
     if(!trNetworkRecursiveCheckbox.checked){
@@ -2029,11 +2030,21 @@ document.addEventListener("DOMContentLoaded", function(){
       return
     }
     networkList.innerHTML = '<div class="net-modal-empty">Searching every subfolder\u2026</div>'
+    // A recursive search is a real network round-trip that can take a
+    // moment, and nothing guarantees responses arrive in the order their
+    // requests were sent -- typing "mo" then quickly continuing to "movie"
+    // can genuinely leave the broader "mo" response landing AFTER "movie"'s,
+    // silently overwriting the correct, narrower results with stale ones
+    // that no longer match what's in the search box. This sequence number
+    // is captured per-request and checked on arrival; a response is only
+    // rendered if no newer request has been issued since.
+    var mySeq = ++trNetworkSearchSeq
     fetch('/api/network/search?category=hires&subpath=' + encodeURIComponent(trNetworkSubpath || '') + '&q=' + encodeURIComponent(q))
       .then(function(r){ return r.json() }).then(function(d){
+        if(mySeq !== trNetworkSearchSeq) return  // a newer search has since been issued; this response is stale
         if(!d.ok){ networkList.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + d.error + '</div>'; return }
         renderTrNetworkSearchResults(d.files, d.truncated)
-      }).catch(function(e){ networkList.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + e + '</div>' })
+      }).catch(function(e){ if(mySeq === trNetworkSearchSeq) networkList.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + e + '</div>' })
   }
   trNetworkSearchInput.addEventListener('input', function(){
     clearTimeout(trNetworkSearchDebounce)
@@ -5265,6 +5276,7 @@ document.addEventListener('DOMContentLoaded', function(){
     })
   }
 
+  var netModalSearchSeq = 0
   function runSearch(){
     if(!active) return
     var q = (searchInput.value || '').trim()
@@ -5279,12 +5291,20 @@ document.addEventListener('DOMContentLoaded', function(){
       return
     }
     listEl.innerHTML = '<div class="net-modal-empty">Searching every subfolder&hellip;</div>'
+    // Same race a recursive search over the network is prone to as the
+    // HIRES panel's version of this: nothing guarantees responses arrive in
+    // the order their requests were sent, so a broader/earlier query's
+    // response landing AFTER a narrower/later one would otherwise silently
+    // overwrite correct results with stale, mismatched ones. Captured
+    // per-request, checked on arrival.
+    var mySeq = ++netModalSearchSeq
     fetch('/api/network/search?category=' + encodeURIComponent(active.category) +
           '&subpath=' + encodeURIComponent(active.subpath || '') + '&q=' + encodeURIComponent(q))
       .then(function(r){ return r.json() }).then(function(d){
+        if(mySeq !== netModalSearchSeq) return  // a newer search has since been issued; this response is stale
         if(!d.ok){ listEl.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + d.error + '</div>'; return }
         renderSearchResults(d.files, d.truncated)
-      }).catch(function(e){ listEl.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + e + '</div>' })
+      }).catch(function(e){ if(mySeq === netModalSearchSeq) listEl.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + e + '</div>' })
   }
   searchInput.addEventListener('input', function(){
     clearTimeout(searchDebounceTimer)
