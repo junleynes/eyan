@@ -400,6 +400,18 @@ def _network_category(category):
     cats = _network_categories()
     return cats.get(category, cats[DEFAULT_NETWORK_CATEGORY])
 
+def _sanitize_subpath(subpath):
+    """Validates a subfolder path (relative to a category's configured root)
+    typed or clicked into from the browse-library modal. Accepts either slash
+    style, collapses '.' segments, and rejects '..' outright so browsing can
+    never escape the configured root. Returns the cleaned path joined with
+    backslashes -- '' means the root itself."""
+    raw = (subpath or '').strip().replace('/', '\\')
+    parts = [p for p in raw.split('\\') if p and p != '.']
+    if any(p == '..' for p in parts):
+        raise ValueError('Invalid subfolder path')
+    return '\\'.join(parts)
+
 def _network_share_root(category=DEFAULT_NETWORK_CATEGORY):
     """The configured full UNC path for `category`, normalized -- empty
     string if that category hasn't been set up in Config > Network yet."""
@@ -420,46 +432,52 @@ def _network_session(category=DEFAULT_NETWORK_CATEGORY):
     smbclient.register_session(host, username=row.get('username', ''),
                                 password=row.get('password', ''), connection_timeout=10)
 
-def list_network_files(category=DEFAULT_NETWORK_CATEGORY):
-    """Returns the files (name/size/modified) in the network folder for `category`,
-    filtered to that category's allowed extensions."""
+def list_network_files(category=DEFAULT_NETWORK_CATEGORY, subpath=''):
+    """Returns the subfolders and files (name/size/modified) inside `subpath`
+    (relative to `category`'s configured root -- '' for the root itself),
+    files filtered to that category's allowed extensions. Subfolders aren't
+    extension-filtered since you need to see them to browse into them."""
     cat = _network_category(category)
     root = _network_share_root(category)
     if not root:
         raise ValueError(f'No network path configured for {cat["label"]} yet -- set it in Config > Network.')
+    sub = _sanitize_subpath(subpath)
+    full = root + ('\\' + sub if sub else '')
     _network_session(category)
-    out = []
-    for entry in smbclient.scandir(root):
-        if not entry.is_file():
-            continue
-        if not allowed_file(entry.name, cat['exts']):
-            continue
-        st = entry.stat()
-        out.append({'name': entry.name, 'size': st.st_size, 'mtime': st.st_mtime})
-    out.sort(key=lambda e: e['name'].lower())
-    return root, out
+    folders, files = [], []
+    for entry in smbclient.scandir(full):
+        if entry.is_dir():
+            folders.append({'name': entry.name})
+        elif entry.is_file() and allowed_file(entry.name, cat['exts']):
+            st = entry.stat()
+            files.append({'name': entry.name, 'size': st.st_size, 'mtime': st.st_mtime})
+    folders.sort(key=lambda e: e['name'].lower())
+    files.sort(key=lambda e: e['name'].lower())
+    return full, sub, folders, files
 
-def fetch_network_file(name, category=DEFAULT_NETWORK_CATEGORY):
-    """Copies `name` from the network folder for `category` into UPLOAD_FOLDER and
-    returns the local staged filename (prefixed net_<ts>_ so load_video() /
-    _resolve_upload() can recognize and trust it)."""
+def fetch_network_file(name, category=DEFAULT_NETWORK_CATEGORY, subpath=''):
+    """Copies `name` from inside `subpath` of the network folder for `category`
+    into UPLOAD_FOLDER and returns the local staged filename (prefixed
+    net_<ts>_ so load_video() / _resolve_upload() can recognize and trust it)."""
     cat = _network_category(category)
     if os.path.basename(name) != name or not allowed_file(name, cat['exts']):
         raise ValueError('Invalid filename')
     root = _network_share_root(category)
     if not root:
         raise ValueError(f'No network path configured for {cat["label"]} yet -- set it in Config > Network.')
+    sub = _sanitize_subpath(subpath)
     _network_session(category)
-    remote_path = root + '\\' + name
+    remote_path = root + ('\\' + sub if sub else '') + '\\' + name
     local_name = f'net_{int(time.time())}_{secure_filename(name)}'
     local_path = os.path.join(app.config['UPLOAD_FOLDER'], local_name)
     with smbclient.open_file(remote_path, mode='rb') as rf, open(local_path, 'wb') as lf:
         shutil.copyfileobj(rf, lf)
     return local_name
 
-# Back-compat aliases (old names, always the 'hires'/video category).
+# Back-compat aliases (old names, always the 'hires'/video category, root only).
 def list_network_videos():
-    return list_network_files('hires')
+    root, sub, folders, files = list_network_files('hires')
+    return root, files
 
 def fetch_network_video(name):
     return fetch_network_file(name, 'hires')
@@ -4243,28 +4261,34 @@ def _check_service(name, base_url, path='/', timeout=3):
 
 @app.route('/api/network/list')
 def api_network_list():
-    """Lists the files sitting in the network folder for ?category=hires|music|vo|sfx
-    (defaults to hires/video). Each category maps to its own subfolder and its
-    own allowed extensions -- see _network_categories()."""
+    """Lists the folders and files sitting in ?subpath= (default: the root)
+    of the network folder for ?category=hires|music|vo|sfx (defaults to
+    hires/video). Each category maps to its own root and its own allowed
+    extensions -- see _network_categories()."""
     category = request.args.get('category', DEFAULT_NETWORK_CATEGORY)
+    subpath = request.args.get('subpath', '')
     try:
-        root, files = list_network_files(category)
-        return jsonify(ok=True, root=root, category=category, files=files)
+        full, sub, folders, files = list_network_files(category, subpath)
+        return jsonify(ok=True, root=full, category=category, subpath=sub,
+                        folders=folders, files=files)
+    except ValueError as e:
+        return jsonify(ok=False, error=str(e)), 400
     except Exception as e:
         return jsonify(ok=False, error=f'Could not reach network folder: {e}'), 500
 
 @app.route('/api/network/fetch', methods=['POST'])
 def api_network_fetch():
-    """Copies one file from the network folder (for the given category) into the
-    local upload folder so it can be used exactly like a drag-and-dropped file
-    (see load_video() / _resolve_upload())."""
+    """Copies one file from inside `subpath` of the network folder (for the
+    given category) into the local upload folder so it can be used exactly
+    like a drag-and-dropped file (see load_video() / _resolve_upload())."""
     data = request.get_json(silent=True) or request.form
     name = (data.get('name') or '').strip()
     category = (data.get('category') or DEFAULT_NETWORK_CATEGORY).strip()
+    subpath = (data.get('subpath') or '').strip()
     if not name:
         return jsonify(ok=False, error='No filename given'), 400
     try:
-        local_name = fetch_network_file(name, category)
+        local_name = fetch_network_file(name, category, subpath)
         local_path = os.path.join(app.config['UPLOAD_FOLDER'], local_name)
         # `url` lets the Player play the staged copy directly; callers that stage
         # a file for the generate form use `filename`.

@@ -1928,21 +1928,44 @@ document.addEventListener("DOMContentLoaded", function(){
     dropzone.style.display = ''
   }
 
-  function loadNetworkList(){
+  var trNetworkSubpath = ''
+
+  function loadNetworkList(subpath){
+    trNetworkSubpath = subpath || ''
     networkList.innerHTML = 'Loading\u2026'
-    fetch('/api/network/list?category=hires').then(function(r){ return r.json() }).then(function(d){
+    fetch('/api/network/list?category=hires&subpath=' + encodeURIComponent(trNetworkSubpath)).then(function(r){ return r.json() }).then(function(d){
       if(!d.ok){ networkList.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + d.error + '</div>'; return }
+      trNetworkSubpath = d.subpath || ''
       var pathEl = document.getElementById('tr-network-path')
       if(pathEl) pathEl.textContent = d.root
-      if(!d.files.length){ networkList.innerHTML = '<div class="net-modal-empty">No video files found in this folder.</div>'; return }
       networkList.innerHTML = ''
+      if(trNetworkSubpath){
+        var up = document.createElement('div')
+        up.className = 'net-modal-row'
+        var upParts = trNetworkSubpath.split('\\')
+        upParts.pop()
+        var upPath = upParts.join('\\')
+        up.innerHTML = '<span class="row-name">&#128194; ..</span>'
+        up.addEventListener('click', function(){ loadNetworkList(upPath) })
+        networkList.appendChild(up)
+      }
+      d.folders.forEach(function(f){
+        var row = document.createElement('div')
+        row.className = 'net-modal-row'
+        row.innerHTML = '<span class="row-name">&#128193; ' + f.name + '</span>'
+        row.addEventListener('click', function(){
+          loadNetworkList(trNetworkSubpath ? trNetworkSubpath + '\\' + f.name : f.name)
+        })
+        networkList.appendChild(row)
+      })
+      if(!d.files.length && !d.folders.length){ networkList.innerHTML = '<div class="net-modal-empty">No video files found in this folder.</div>'; return }
       d.files.forEach(function(f){
         var row = document.createElement('div')
         row.className = 'net-modal-row'
         row.innerHTML = '<span class="row-name">' + f.name + '</span><span class="row-size">' + humanSize(f.size) + '</span>'
         row.addEventListener('click', function(){
           networkList.innerHTML = '<div class="net-modal-empty">Fetching ' + f.name + '\u2026</div>'
-          fetch('/api/network/fetch', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: f.name, category: 'hires'})})
+          fetch('/api/network/fetch', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: f.name, category: 'hires', subpath: trNetworkSubpath})})
             .then(function(r){ return r.json() })
             .then(function(d2){
               if(!d2.ok){ networkList.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + d2.error + '</div>'; return }
@@ -4432,18 +4455,25 @@ async function loadNetworkFolders(){
     container.innerHTML = ''
     Object.keys(NETWORK_CATEGORY_LABELS).forEach(function(cat){
       var row = d.categories[cat] || {}
+      // Small, consistent field style for this row only -- the shared
+      // .input-box / input[type=text] rules elsewhere in the app are sized
+      // for primary fields (prompts, scripts) and read oversized here, where
+      // four fields need to sit compactly in one row.
+      var fieldStyle = 'width:100%;box-sizing:border-box;padding:6px 9px;margin:0;' +
+        'font-size:12px;border:1px solid var(--line);border-radius:6px;' +
+        'background:var(--elevated);color:var(--ink);font-family:inherit'
       var wrap = document.createElement('div')
-      wrap.style.cssText = 'border:1px solid var(--line);border-radius:10px;padding:14px 16px'
+      wrap.style.cssText = 'border:1px solid var(--line);border-radius:10px;padding:10px 12px'
       wrap.innerHTML =
-        '<label style="font-size:13px;font-weight:600;display:block;margin-bottom:8px">' + NETWORK_CATEGORY_LABELS[cat] + '</label>' +
-        '<div style="display:flex;flex-direction:column;gap:8px">' +
-          '<input type=text id="net-path-' + cat + '" class=input-box placeholder="Full network path, e.g. \\\\10.0.1.130\\media\\' + cat.toUpperCase() + '" value="' + (row.path || '').replace(/"/g,'&quot;') + '" style="margin-bottom:0">' +
-          '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
-            '<input type=text id="net-user-' + cat + '" placeholder="Username" value="' + (row.username || '').replace(/"/g,'&quot;') + '" style="flex:1;min-width:160px">' +
-            '<input type=password id="net-pass-' + cat + '" placeholder="' + (row.has_password ? 'Password set \u2014 leave blank to keep it' : 'Password') + '" style="flex:1;min-width:160px">' +
+        '<label style="font-size:12px;font-weight:600;display:block;margin-bottom:6px">' + NETWORK_CATEGORY_LABELS[cat] + '</label>' +
+        '<div style="display:flex;flex-direction:column;gap:6px">' +
+          '<input type=text id="net-path-' + cat + '" placeholder="Full network path, e.g. \\\\10.0.1.130\\media\\' + cat.toUpperCase() + '" value="' + (row.path || '').replace(/"/g,'&quot;') + '" style="' + fieldStyle + '">' +
+          '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+            '<input type=text id="net-user-' + cat + '" placeholder="Username" value="' + (row.username || '').replace(/"/g,'&quot;') + '" style="' + fieldStyle + ';flex:1;min-width:130px">' +
+            '<input type=password id="net-pass-' + cat + '" placeholder="' + (row.has_password ? 'Password set \u2014 leave blank to keep it' : 'Password') + '" style="' + fieldStyle + ';flex:1;min-width:130px">' +
           '</div>' +
-          '<div><button type=button class=btn style="padding:5px 11px;font-size:12px" onclick="saveNetworkFolder(\'' + cat + '\')">Save</button> ' +
-          '<span id="net-status-' + cat + '" style="font-size:12px;margin-left:6px"></span></div>' +
+          '<div><button type=button class=btn style="padding:4px 10px;font-size:11px" onclick="saveNetworkFolder(\'' + cat + '\')">Save</button> ' +
+          '<span id="net-status-' + cat + '" style="font-size:11px;margin-left:6px"></span></div>' +
         '</div>'
       container.appendChild(wrap)
     })
@@ -4890,7 +4920,7 @@ document.addEventListener('DOMContentLoaded', function(){
   var pathEl = document.getElementById('net-modal-path')
   var listEl = document.getElementById('net-modal-list')
   var closeBtn = document.getElementById('net-modal-close')
-  var active = null // {fieldName, category}
+  var active = null // {fieldName, category, subpath}
 
   function humanSize(bytes){
     if(bytes < 1024) return bytes + ' B'
@@ -4952,12 +4982,42 @@ document.addEventListener('DOMContentLoaded', function(){
   }
   window.clearNetworkField = clearChip
 
-  function renderList(files){
+  // Builds the ".." row plus one row per subfolder, above the file rows --
+  // clicking a folder re-lists that folder in place; clicking ".." goes up
+  // one level. Both just call loadFolder() with the new subpath.
+  function renderFolders(folders, subpath){
+    var frag = document.createDocumentFragment()
+    if(subpath){
+      var up = document.createElement('div')
+      up.className = 'net-modal-row'
+      var upParts = subpath.split('\\')
+      upParts.pop()
+      var upPath = upParts.join('\\')
+      up.innerHTML = '<span class="row-name">&#128194; ..</span>'
+      up.addEventListener('click', function(){ loadFolder(upPath) })
+      frag.appendChild(up)
+    }
+    folders.forEach(function(f){
+      var row = document.createElement('div')
+      row.className = 'net-modal-row'
+      row.innerHTML = '<span class="row-name">&#128193; ' + f.name + '</span>'
+      row.addEventListener('click', function(){
+        loadFolder(subpath ? subpath + '\\' + f.name : f.name)
+      })
+      frag.appendChild(row)
+    })
+    return frag
+  }
+
+  function renderList(folders, files, subpath){
+    listEl.innerHTML = ''
+    listEl.appendChild(renderFolders(folders || [], subpath || ''))
     if(!files.length){
-      listEl.innerHTML = '<div class="net-modal-empty">No matching files found in this folder.</div>'
+      if(!(folders && folders.length)){
+        listEl.innerHTML = '<div class="net-modal-empty">No matching files found in this folder.</div>'
+      }
       return
     }
-    listEl.innerHTML = ''
     files.forEach(function(f){
       var row = document.createElement('div')
       row.className = 'net-modal-row'
@@ -4967,7 +5027,7 @@ document.addEventListener('DOMContentLoaded', function(){
         listEl.innerHTML = '<div class="net-modal-empty">Fetching ' + f.name + '&hellip;</div>'
         fetch('/api/network/fetch', {
           method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({name: f.name, category: active.category})
+          body: JSON.stringify({name: f.name, category: active.category, subpath: active.subpath || ''})
         }).then(function(r){ return r.json() }).then(function(d){
           if(!d.ok){ listEl.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + d.error + '</div>'; return }
           if(active.fieldName === 'pl'){
@@ -5003,17 +5063,25 @@ document.addEventListener('DOMContentLoaded', function(){
     })
   }
 
+  function loadFolder(subpath){
+    if(!active) return
+    active.subpath = subpath || ''
+    listEl.innerHTML = '<div class="net-modal-empty">Loading&hellip;</div>'
+    fetch('/api/network/list?category=' + encodeURIComponent(active.category) +
+          '&subpath=' + encodeURIComponent(active.subpath))
+      .then(function(r){ return r.json() }).then(function(d){
+        if(!d.ok){ listEl.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + d.error + '</div>'; return }
+        pathEl.textContent = d.root
+        renderList(d.folders, d.files, d.subpath)
+      }).catch(function(e){ listEl.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + e + '</div>' })
+  }
+
   function openNetworkBrowser(fieldName, category, label){
-    active = {fieldName: fieldName, category: category}
+    active = {fieldName: fieldName, category: category, subpath: ''}
     titleEl.textContent = 'Browse ' + label + ' folder'
     pathEl.textContent = ''
-    listEl.innerHTML = '<div class="net-modal-empty">Loading&hellip;</div>'
     overlay.classList.add('open')
-    fetch('/api/network/list?category=' + encodeURIComponent(category)).then(function(r){ return r.json() }).then(function(d){
-      if(!d.ok){ listEl.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + d.error + '</div>'; return }
-      pathEl.textContent = d.root
-      renderList(d.files)
-    }).catch(function(e){ listEl.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + e + '</div>' })
+    loadFolder('')
   }
   window.openNetworkBrowser = openNetworkBrowser
 
