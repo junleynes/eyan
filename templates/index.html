@@ -3066,6 +3066,29 @@ async function sendChatMessage(){
   }
 }
 
+async function loadChatHistory(){
+  try{
+    var r = await fetch('/api/chat/history')
+    var d = await r.json()
+    if(!d.ok || !d.messages || !d.messages.length) return
+    chatHistory = d.messages
+    var box = document.getElementById('chat-messages')
+    if(box) box.innerHTML = ''
+    // Text-only restoration -- saved messages carry role/content/images (for
+    // correctly resending images to the model on the next turn) but not the
+    // original attachment display metadata (filename/previewUrl), so a
+    // restored bubble with an image won't re-show its thumbnail chip the
+    // way a message sent earlier in the same session does. The image itself
+    // is still genuinely part of the conversation the model sees -- only
+    // the visual chip is the part not restored.
+    chatHistory.forEach(function(m){
+      renderChatMessage(m.role, m.content, null, null)
+    })
+    var box2 = document.getElementById('chat-messages')
+    if(box2) box2.scrollTop = box2.scrollHeight
+  }catch(e){}
+}
+
 function clearChat(){
   chatHistory = []
   pendingAttachments = []
@@ -3074,6 +3097,7 @@ function clearChat(){
   if(box) box.innerHTML = ''
   var status = document.getElementById('chat-status')
   if(status){ status.textContent = ''; status.style.color = '' }
+  fetch('/api/chat/clear', {method: 'POST'}).catch(function(){})
 }
 
 document.addEventListener('DOMContentLoaded', function(){
@@ -3129,6 +3153,7 @@ document.addEventListener('DOMContentLoaded', function(){
     })
   }
   loadChatModels()
+  loadChatHistory()
 })
 
 // ---- Fish Audio inline delivery tags ----
@@ -4140,7 +4165,7 @@ job. Configured via env vars:
 <h3>AI Assistant</h3>
 <p>A chat interface over whatever models Ollama has installed — separate from the vision/rating pipeline the promo generator uses, and nothing typed here feeds into a job. Useful for testing how a model behaves, drafting text, or asking it something directly.</p>
 <p><strong>Answer questions about AIMP's own features, limitations, and workflow</strong> (checked by default) prepends a built-in description of the app — its tabs, the generate workflow, how scene scoring works, and known limitations — to the conversation, so it can actually answer "how do I..." or "why did X happen" questions about AIMP itself instead of guessing. Turn it off for a fully generic chat. Anything typed in the optional System prompt box below it is added on top, not instead of it, so style/language preferences ("be concise", "answer in Tagalog") still work alongside the app knowledge.</p>
-<p>The conversation lives only in the page — there is no server-side session and nothing is saved, so switching tabs or reloading starts fresh. Every send resends the full conversation so far (Ollama has no server-side memory of its own between calls), capped at <code>CHAT_MAX_HISTORY</code> messages (default 60) to bound the request size on a very long conversation.</p>
+<p>Each account's conversation is saved server-side and restored automatically on reload or coming back later — strictly per-account (there's no admin view into another user's chat history, unlike job/library ownership elsewhere in this app, since a chat history is closer to a personal scratchpad than operational data). "Clear chat" wipes the saved copy too, not just what's on screen. Every send resends the full conversation so far (Ollama has no server-side memory of its own between calls), and storage is capped at <code>CHAT_MAX_HISTORY</code> messages (default 60) the same way the per-request resend already was, so a heavy chat history can't grow unbounded.</p>
 <p><strong>Show model reasoning</strong> requests Ollama's <code>think</code> mode for models that support it, and renders the reasoning in a collapsed "Reasoning" block under the reply rather than mixing it into the answer. Off by default, since most models don't need it and it roughly doubles response time.</p>
 <p>Responses are not streamed — the full reply comes back in one request. This keeps the implementation simple and consistent with the rest of the app (job progress here is polled, not pushed, for the same reason), at the cost of watching a "Thinking…" status instead of text appearing as it's generated.</p>
 <p>Assistant replies are rendered as markdown — headers, bold/italic, inline code, fenced code blocks, and lists all display properly rather than showing raw <code>**</code>/<code>#</code>/<code>-</code> characters, which is what some models return unprompted for anything resembling a structured answer. This is a small built-in renderer, not an external library — the app has no CDN dependencies, matching a LAN deployment with no assumed internet access — and everything it emits as HTML is built from text that was escaped first, so a reply containing something that looks like a tag or script can't affect the page. Your own typed messages are never run through this — they show exactly as typed, so a literal asterisk you type stays a literal asterisk.</p>

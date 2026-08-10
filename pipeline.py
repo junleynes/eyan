@@ -2839,6 +2839,75 @@ def api_vision_models():
 CHAT_TIMEOUT = int(os.environ.get('CHAT_TIMEOUT', 180))
 CHAT_MAX_HISTORY = int(os.environ.get('CHAT_MAX_HISTORY', 60))  # messages, not turns
 
+# ---- Per-user chat memory (SQLite) ----
+# The chat used to live only in the page -- reloading or coming back later
+# started completely fresh. This persists each account's conversation
+# server-side, scoped strictly to that account: deliberately no admin
+# bypass the way job/library ownership has one elsewhere in this app, since
+# a chat history is closer to a personal scratchpad than operational data
+# an admin would legitimately need to see across accounts.
+CHAT_MEMORY_DB_PATH = os.path.join(LIBRARY_DIR, 'chat_memory.db')
+
+def _chat_memory_db():
+    return _sqlite_connect(CHAT_MEMORY_DB_PATH)
+
+def chat_memory_db_init():
+    conn = _chat_memory_db()
+    conn.execute('CREATE TABLE IF NOT EXISTS chat_messages ('
+                 'id INTEGER PRIMARY KEY AUTOINCREMENT,'
+                 'user_id INTEGER NOT NULL,'
+                 'role TEXT NOT NULL,'
+                 'content TEXT NOT NULL,'
+                 'images TEXT,'
+                 'created_at REAL NOT NULL)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_chat_messages_user ON chat_messages(user_id, id)')
+    conn.commit()
+    conn.close()
+
+def chat_memory_append(user_id, role, content, images=None):
+    """Records one message and prunes that user's history back down to
+    CHAT_MAX_HISTORY afterward -- storage is capped the same way the
+    per-request resend already is, so a heavy chat user's history can't
+    grow unbounded. Runs the prune every append rather than periodically:
+    simpler, and the cost is one indexed DELETE against a table that's
+    never more than CHAT_MAX_HISTORY+1 rows deep per user to begin with."""
+    conn = _chat_memory_db()
+    conn.execute('INSERT INTO chat_messages (user_id, role, content, images, created_at) VALUES (?,?,?,?,?)',
+                 (user_id, role, content, json.dumps(images) if images else None, time.time()))
+    conn.execute('DELETE FROM chat_messages WHERE user_id=? AND id NOT IN '
+                 '(SELECT id FROM chat_messages WHERE user_id=? ORDER BY id DESC LIMIT ?)',
+                 (user_id, user_id, CHAT_MAX_HISTORY))
+    conn.commit()
+    conn.close()
+
+def chat_memory_load(user_id):
+    """This user's saved conversation, oldest first, shaped exactly like the
+    {role, content, images?} entries the frontend already keeps in its own
+    chatHistory array -- so restoring on page load is just 'use this as the
+    starting array' with no reshaping needed."""
+    conn = _chat_memory_db()
+    rows = conn.execute('SELECT role, content, images FROM chat_messages WHERE user_id=? ORDER BY id ASC',
+                        (user_id,)).fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        entry = {'role': r['role'], 'content': r['content']}
+        if r['images']:
+            try:
+                entry['images'] = json.loads(r['images'])
+            except (ValueError, TypeError):
+                pass
+        out.append(entry)
+    return out
+
+def chat_memory_clear(user_id):
+    conn = _chat_memory_db()
+    conn.execute('DELETE FROM chat_messages WHERE user_id=?', (user_id,))
+    conn.commit()
+    conn.close()
+
+chat_memory_db_init()
+
 # ---- Built-in app-knowledge grounding for AI Assistant ----
 # The chat tab is otherwise a fully generic Ollama front-end with no idea
 # what app it's running inside -- this gives it accurate, current
@@ -3026,6 +3095,12 @@ def api_chat():
         clean.append(entry)
     if not clean:
         return jsonify(ok=False, error='No conversation to send.'), 400
+    # Captured before `system` is prepended below, so this is unambiguously
+    # the newest real turn -- what gets persisted to this user's chat memory
+    # once the reply comes back successfully, not the system prompt or any
+    # earlier turn the client re-sent for its own context-window purposes
+    # (those are already in storage from previous exchanges).
+    newest_user_turn = clean[-1]
 
     system = (data.get('system') or '').strip()
     # include_app_help defaults to True (opt-out, not opt-in) -- answering
@@ -3066,7 +3141,36 @@ def api_chat():
         content = thinking
     if not content:
         return jsonify(ok=False, error='The model returned an empty response.'), 502
+    # Persisted only now that the exchange has genuinely succeeded -- a
+    # failed/timed-out request (handled by the returns above) never writes
+    # anything, so this user's chat memory can't end up with a stored user
+    # turn that has no reply, or drift from what they actually saw on screen.
+    try:
+        chat_memory_append(session['user_id'], newest_user_turn['role'], newest_user_turn['content'],
+                           images=newest_user_turn.get('images'))
+        chat_memory_append(session['user_id'], 'assistant', content)
+    except Exception as e:
+        print(f'Chat memory save failed (reply still succeeded): {e}')
     return jsonify(ok=True, content=content, thinking=thinking or None, model=resp.get('model') or model)
+
+@app.route('/api/chat/history', methods=['GET'])
+@require_permission('ai_chat')
+def api_chat_history():
+    """This account's saved conversation, for the AI Assistant tab to
+    restore on load instead of always starting empty. Strictly own-account
+    only -- see the chat-memory module docstring for why there's no admin
+    bypass here unlike job/library ownership elsewhere."""
+    return jsonify(ok=True, messages=chat_memory_load(session['user_id']))
+
+@app.route('/api/chat/clear', methods=['POST'])
+@require_permission('ai_chat')
+def api_chat_clear():
+    """Wipes this account's saved conversation server-side -- pairs with the
+    existing client-side 'Clear chat' button, which used to only reset the
+    page's own in-memory array and left the (previously nonexistent)
+    server copy untouched."""
+    chat_memory_clear(session['user_id'])
+    return jsonify(ok=True)
 
 # ---- Trailer Generator (ffmpeg) ----
 
