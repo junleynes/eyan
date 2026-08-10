@@ -774,6 +774,12 @@ document.addEventListener("DOMContentLoaded", function(){
       </div>
       <span class="net-modal-close" id=tr-network-cancel title="Cancel">&#10005;</span>
     </div>
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+      <input type=text id=tr-network-search placeholder="Search filenames&hellip;" style="flex:1;font-size:13px;padding:6px 10px;border-radius:7px;border:1px solid var(--line);background:var(--panel);color:var(--ink)">
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;white-space:nowrap;cursor:pointer">
+        <input type=checkbox id=tr-network-recursive> Include subfolders
+      </label>
+    </div>
     <div id=tr-network-list class="net-modal-list" style="padding:0;max-height:280px">Loading&hellip;</div>
   </div>
   <div id=tr-file-preview class="growing-preview">
@@ -1935,52 +1941,122 @@ document.addEventListener("DOMContentLoaded", function(){
   }
 
   var trNetworkSubpath = ''
+  var trNetworkSearchInput = document.getElementById('tr-network-search')
+  var trNetworkRecursiveCheckbox = document.getElementById('tr-network-recursive')
+  var trNetworkSearchDebounce = null
+  var trNetworkLoadedFolders = []
+  var trNetworkLoadedFiles = []
+
+  // Shared by normal browsing and search results below -- fetches `name`
+  // from `subpath` (which for a search result may be a different, deeper
+  // folder than trNetworkSubpath itself, since a recursive search can span
+  // many subfolders at once) and shows the picked-file preview.
+  function pickTrNetworkFile(name, subpath){
+    networkList.innerHTML = '<div class="net-modal-empty">Fetching ' + name + '\u2026</div>'
+    fetch('/api/network/fetch', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: name, category: 'hires', subpath: subpath || ''})})
+      .then(function(r){ return r.json() })
+      .then(function(d2){
+        if(!d2.ok){ networkList.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + d2.error + '</div>'; return }
+        showNetworkPreview(d2.filename, d2.orig_name, d2.size)
+      })
+      .catch(function(e){ networkList.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + e + '</div>' })
+  }
+
+  function renderTrNetworkList(folders, files, subpath){
+    networkList.innerHTML = ''
+    if(subpath){
+      var up = document.createElement('div')
+      up.className = 'net-modal-row'
+      var upParts = subpath.split('\\')
+      upParts.pop()
+      var upPath = upParts.join('\\')
+      up.innerHTML = '<span class="row-name">&#128194; ..</span>'
+      up.addEventListener('click', function(){ loadNetworkList(upPath) })
+      networkList.appendChild(up)
+    }
+    folders.forEach(function(f){
+      var row = document.createElement('div')
+      row.className = 'net-modal-row'
+      row.innerHTML = '<span class="row-name">&#128193; ' + f.name + '</span>'
+      row.addEventListener('click', function(){
+        loadNetworkList(subpath ? subpath + '\\' + f.name : f.name)
+      })
+      networkList.appendChild(row)
+    })
+    if(!files.length && !folders.length){ networkList.innerHTML = '<div class="net-modal-empty">No video files found in this folder.</div>'; return }
+    files.forEach(function(f){
+      var row = document.createElement('div')
+      row.className = 'net-modal-row'
+      row.innerHTML = '<span class="row-name">' + f.name + '</span><span class="row-size">' + humanSize(f.size) + '</span>'
+      row.addEventListener('click', function(){ pickTrNetworkFile(f.name, subpath) })
+      networkList.appendChild(row)
+    })
+  }
+
+  // Recursive-search results are flat (files from many different
+  // subfolders at once), so each row shows where it actually lives.
+  function renderTrNetworkSearchResults(files, truncated){
+    networkList.innerHTML = ''
+    if(!files.length){
+      networkList.innerHTML = '<div class="net-modal-empty">No files matched, searched every subfolder.</div>'
+      return
+    }
+    if(truncated){
+      var note = document.createElement('div')
+      note.className = 'net-modal-empty'
+      note.style.cssText = 'color:var(--amber);padding:6px 10px;font-size:12px'
+      note.textContent = 'Showing the first ' + files.length + ' matches -- narrow your search to see the rest.'
+      networkList.appendChild(note)
+    }
+    files.forEach(function(f){
+      var row = document.createElement('div')
+      row.className = 'net-modal-row'
+      var locationLabel = f.subpath ? f.subpath.replace(/\\/g, ' / ') + ' / ' : ''
+      row.innerHTML = '<span class="row-name"><span style="opacity:.55;font-size:11px">' + locationLabel + '</span>' + f.name +
+                      '</span><span class="row-size">' + humanSize(f.size) + '</span>'
+      row.addEventListener('click', function(){ pickTrNetworkFile(f.name, f.subpath) })
+      networkList.appendChild(row)
+    })
+  }
+
+  function runTrNetworkSearch(){
+    var q = (trNetworkSearchInput.value || '').trim()
+    if(!trNetworkRecursiveCheckbox.checked){
+      var f = trNetworkLoadedFiles.filter(function(x){
+        return !q || x.name.toLowerCase().indexOf(q.toLowerCase()) !== -1
+      })
+      renderTrNetworkList(trNetworkLoadedFolders, f, trNetworkSubpath)
+      return
+    }
+    networkList.innerHTML = '<div class="net-modal-empty">Searching every subfolder\u2026</div>'
+    fetch('/api/network/search?category=hires&subpath=' + encodeURIComponent(trNetworkSubpath || '') + '&q=' + encodeURIComponent(q))
+      .then(function(r){ return r.json() }).then(function(d){
+        if(!d.ok){ networkList.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + d.error + '</div>'; return }
+        renderTrNetworkSearchResults(d.files, d.truncated)
+      }).catch(function(e){ networkList.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + e + '</div>' })
+  }
+  trNetworkSearchInput.addEventListener('input', function(){
+    clearTimeout(trNetworkSearchDebounce)
+    trNetworkSearchDebounce = setTimeout(runTrNetworkSearch, 250)
+  })
+  trNetworkRecursiveCheckbox.addEventListener('change', runTrNetworkSearch)
 
   function loadNetworkList(subpath){
     trNetworkSubpath = subpath || ''
+    // Navigating to a (new) folder always starts that folder's view fresh --
+    // an in-progress search is reset rather than silently carried into a
+    // different location.
+    trNetworkSearchInput.value = ''
+    trNetworkRecursiveCheckbox.checked = false
     networkList.innerHTML = 'Loading\u2026'
     fetch('/api/network/list?category=hires&subpath=' + encodeURIComponent(trNetworkSubpath)).then(function(r){ return r.json() }).then(function(d){
       if(!d.ok){ networkList.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + d.error + '</div>'; return }
       trNetworkSubpath = d.subpath || ''
       var pathEl = document.getElementById('tr-network-path')
       if(pathEl) pathEl.textContent = d.root
-      networkList.innerHTML = ''
-      if(trNetworkSubpath){
-        var up = document.createElement('div')
-        up.className = 'net-modal-row'
-        var upParts = trNetworkSubpath.split('\\')
-        upParts.pop()
-        var upPath = upParts.join('\\')
-        up.innerHTML = '<span class="row-name">&#128194; ..</span>'
-        up.addEventListener('click', function(){ loadNetworkList(upPath) })
-        networkList.appendChild(up)
-      }
-      d.folders.forEach(function(f){
-        var row = document.createElement('div')
-        row.className = 'net-modal-row'
-        row.innerHTML = '<span class="row-name">&#128193; ' + f.name + '</span>'
-        row.addEventListener('click', function(){
-          loadNetworkList(trNetworkSubpath ? trNetworkSubpath + '\\' + f.name : f.name)
-        })
-        networkList.appendChild(row)
-      })
-      if(!d.files.length && !d.folders.length){ networkList.innerHTML = '<div class="net-modal-empty">No video files found in this folder.</div>'; return }
-      d.files.forEach(function(f){
-        var row = document.createElement('div')
-        row.className = 'net-modal-row'
-        row.innerHTML = '<span class="row-name">' + f.name + '</span><span class="row-size">' + humanSize(f.size) + '</span>'
-        row.addEventListener('click', function(){
-          networkList.innerHTML = '<div class="net-modal-empty">Fetching ' + f.name + '\u2026</div>'
-          fetch('/api/network/fetch', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: f.name, category: 'hires', subpath: trNetworkSubpath})})
-            .then(function(r){ return r.json() })
-            .then(function(d2){
-              if(!d2.ok){ networkList.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + d2.error + '</div>'; return }
-              showNetworkPreview(d2.filename, d2.orig_name, d2.size)
-            })
-            .catch(function(e){ networkList.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + e + '</div>' })
-        })
-        networkList.appendChild(row)
-      })
+      trNetworkLoadedFolders = d.folders || []
+      trNetworkLoadedFiles = d.files || []
+      renderTrNetworkList(trNetworkLoadedFolders, trNetworkLoadedFiles, trNetworkSubpath)
     }).catch(function(e){ networkList.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + e + '</div>' })
   }
 
