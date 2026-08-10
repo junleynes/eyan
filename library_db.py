@@ -422,5 +422,54 @@ def set_service_disabled(name, disabled):
         json.dump({'disabled': sorted(current)}, f, indent=2)
     return True, None
 
+# ---- Per-category network share overrides ----
+# HIRES, title/end cards, music, VO, and SFX often live on genuinely
+# different network volumes with different credentials in a real broadcast
+# setup -- not just different subfolders under one share, which is all the
+# original NETWORK_SHARE_* fields (still the fallback/default below)
+# supported. Each category can independently override host/share
+# name/subdir/username/password; any field left blank for a category falls
+# back to that same field on the default share, so someone who only has one
+# share for everything never needs to touch this at all.
+NETWORK_SHARES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'network_shares.json')
+NETWORK_CATEGORY_KEYS = ['hires', 'tcard', 'endcard', 'music', 'vo', 'sfx']
+_NETWORK_SHARE_FIELDS = ('host', 'share', 'subdir', 'username', 'password')
+
+def load_network_overrides():
+    """{category: {host, share, subdir, username, password}} for every
+    category that has at least one override field set. A category absent
+    from this dict (the common case) means "use the default share
+    entirely" -- callers should treat a missing category the same as one
+    present with every field blank."""
+    if not os.path.exists(NETWORK_SHARES_FILE):
+        return {}
+    try:
+        with open(NETWORK_SHARES_FILE) as f:
+            data = json.load(f)
+        return {cat: {k: v.get(k, '') for k in _NETWORK_SHARE_FIELDS}
+                for cat, v in data.items() if cat in NETWORK_CATEGORY_KEYS and isinstance(v, dict)}
+    except Exception as e:
+        print(f'Network share overrides load error ({NETWORK_SHARES_FILE}): {e}')
+        return {}
+
+def save_network_override(category, fields):
+    """Sets category's override fields (any of host/share/subdir/username/
+    password; a field not present in `fields` is left as its current saved
+    value, but an explicitly empty string DOES clear that one field back to
+    'inherit from default' -- same is-present-vs-is-empty distinction
+    load_branding uses for footer, for the same reason: clearing a field on
+    purpose is a real, valid state here too."""
+    if category not in NETWORK_CATEGORY_KEYS:
+        return False, f'Unknown category "{category}".'
+    current = load_network_overrides()
+    row = current.get(category, {k: '' for k in _NETWORK_SHARE_FIELDS})
+    for k in _NETWORK_SHARE_FIELDS:
+        if k in fields:
+            row[k] = fields[k] or ''
+    current[category] = row
+    with open(NETWORK_SHARES_FILE, 'w') as f:
+        json.dump(current, f, indent=2)
+    return True, None
+
 library_db_init()
 

@@ -27,7 +27,8 @@ from core import app, ALLOWED_EXTENSIONS
 from library_db import (LIBRARY_DIR, _sqlite_connect, library_add, library_list, library_get_row, library_delete,
     load_branding, save_branding_text, save_branding_color, save_branding_logo, save_branding_favicon,
     clear_branding_logo, clear_branding_favicon, clear_branding_color, BRANDING_DIR,
-    load_disabled_services, set_service_disabled, save_branding_theme, THEME_PRESETS)
+    load_disabled_services, set_service_disabled, save_branding_theme, THEME_PRESETS,
+    load_network_overrides, save_network_override, NETWORK_CATEGORY_KEYS)
 from auth import require_permission
 
 # ---- Per-show asset templates (SQLite) ----
@@ -410,28 +411,49 @@ def _network_category(category):
     cats = _network_categories()
     return cats.get(category, cats[DEFAULT_NETWORK_CATEGORY])
 
+def _resolve_network_share(category):
+    """Effective (host, share_name, subdir, username, password) for `category`
+    -- each field independently falls back to the default NETWORK_SHARE_*
+    value when that category has no override for it, or none at all. This is
+    the one place that fallback logic lives; every caller below goes through
+    this rather than reading NETWORK_SHARE_* or the overrides directly."""
+    override = load_network_overrides().get(category, {})
+    return (
+        override.get('host') or NETWORK_SHARE_HOST,
+        override.get('share') or NETWORK_SHARE_NAME,
+        override.get('subdir') or NETWORK_SHARE_SUBDIR,
+        override.get('username') or NETWORK_SHARE_USERNAME,
+        override.get('password') or NETWORK_SHARE_PASSWORD,
+    )
+
 def _network_share_root(category=DEFAULT_NETWORK_CATEGORY):
     """UNC path of the folder we browse for `category`, e.g.
-    \\\\<share-host>\\<share-name>\\MUSIC"""
+    \\\\<share-host>\\<share-name>\\MUSIC -- host/share/subdir are resolved
+    per-category (see _resolve_network_share), since a real broadcast setup
+    often has HIRES/cards/music/VO/SFX on genuinely different volumes."""
     cat = _network_category(category)
-    root = f'\\\\{NETWORK_SHARE_HOST}\\{NETWORK_SHARE_NAME}'
-    if NETWORK_SHARE_SUBDIR:
-        root += f'\\{NETWORK_SHARE_SUBDIR}'
+    host, share, subdir, _user, _pw = _resolve_network_share(category)
+    root = f'\\\\{host}\\{share}'
+    if subdir:
+        root += f'\\{subdir}'
     if cat['folder']:
         root += f'\\{cat["folder"]}'
     return root
 
-def _network_session():
-    """(Re)registers the SMB session for the configured share. smbclient caches
-    connections per-server, so calling this repeatedly is cheap once logged in."""
-    smbclient.register_session(NETWORK_SHARE_HOST, username=NETWORK_SHARE_USERNAME,
-                                password=NETWORK_SHARE_PASSWORD, connection_timeout=10)
+def _network_session(category=DEFAULT_NETWORK_CATEGORY):
+    """(Re)registers the SMB session for `category`'s resolved share.
+    smbclient caches connections per-server, so calling this repeatedly is
+    cheap once logged in -- including across categories that share the same
+    host, which is still the common case even with per-category overrides
+    available."""
+    host, _share, _subdir, user, pw = _resolve_network_share(category)
+    smbclient.register_session(host, username=user, password=pw, connection_timeout=10)
 
 def list_network_files(category=DEFAULT_NETWORK_CATEGORY):
     """Returns the files (name/size/modified) in the network folder for `category`,
     filtered to that category's allowed extensions."""
     cat = _network_category(category)
-    _network_session()
+    _network_session(category)
     root = _network_share_root(category)
     out = []
     for entry in smbclient.scandir(root):
@@ -451,7 +473,7 @@ def fetch_network_file(name, category=DEFAULT_NETWORK_CATEGORY):
     cat = _network_category(category)
     if os.path.basename(name) != name or not allowed_file(name, cat['exts']):
         raise ValueError('Invalid filename')
-    _network_session()
+    _network_session(category)
     remote_path = _network_share_root(category) + '\\' + name
     local_name = f'net_{int(time.time())}_{secure_filename(name)}'
     local_path = os.path.join(app.config['UPLOAD_FOLDER'], local_name)
@@ -4415,6 +4437,48 @@ def api_config_test():
     path = '/api/tags' if name == 'OLLAMA_URL' else '/'
     result = _check_service(name, base, path)
     return jsonify(ok=result['status'] == 'up', **result)
+
+@app.route('/api/network/shares', methods=['GET'])
+def api_network_shares_get():
+    """Per-category network share overrides (HIRES/TCARD/ENDCARD/MUSIC/VO/SFX),
+    for the Config > Network tab. Admin-only, same reasoning as /api/config --
+    these can include a share password. Never returns saved passwords in
+    plaintext for display; the UI shows a masked placeholder and only sends a
+    new password when the admin actually types one (see the POST route)."""
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='Admin access required.'), 403
+    overrides = load_network_overrides()
+    out = {}
+    for cat in NETWORK_CATEGORY_KEYS:
+        row = overrides.get(cat, {})
+        out[cat] = {
+            'host': row.get('host', ''), 'share': row.get('share', ''),
+            'subdir': row.get('subdir', ''), 'username': row.get('username', ''),
+            'has_password': bool(row.get('password')),
+        }
+    return jsonify(ok=True, categories=out, default=current_config_values())
+
+@app.route('/api/network/shares', methods=['POST'])
+def api_network_shares_post():
+    """Saves one category's share override. Body: {"category": "music",
+    "host": "...", "share": "...", "subdir": "...", "username": "...",
+    "password": "..." (omit to leave the saved password unchanged, send ""
+    to explicitly clear it back to 'inherit from default')}. Every field is
+    independent -- leaving one blank falls back to the default share's same
+    field at resolve time (see _resolve_network_share), not to that
+    category's own previous value, so clearing just the host while keeping a
+    category-specific username is a valid, meaningful state."""
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='Admin access required.'), 403
+    data = request.get_json(silent=True) or {}
+    category = (data.get('category') or '').strip()
+    if category not in NETWORK_CATEGORY_KEYS:
+        return jsonify(ok=False, error=f'Unknown category "{category}".'), 400
+    fields = {k: data[k] for k in ('host', 'share', 'subdir', 'username', 'password') if k in data}
+    ok, err = save_network_override(category, fields)
+    if not ok:
+        return jsonify(ok=False, error=err), 400
+    return jsonify(ok=True, category=category)
 
 # ---- Branding routes ----
 # /branding/logo and /branding/favicon are in _PUBLIC_PATHS (see core.py) so
