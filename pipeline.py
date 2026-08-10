@@ -455,6 +455,68 @@ def list_network_files(category=DEFAULT_NETWORK_CATEGORY, subpath=''):
     files.sort(key=lambda e: e['name'].lower())
     return full, sub, folders, files
 
+# Recursive search is capped on both depth and result count -- an SMB walk
+# over a large or deep tree can otherwise take a very long time (or
+# effectively hang) rather than fail fast. Returns whatever it found before
+# hitting either cap, with a truncated flag, rather than blocking
+# indefinitely trying to be exhaustive.
+NETWORK_RECURSIVE_MAX_RESULTS = int(os.environ.get('NETWORK_RECURSIVE_MAX_RESULTS', 500))
+NETWORK_RECURSIVE_MAX_DEPTH = int(os.environ.get('NETWORK_RECURSIVE_MAX_DEPTH', 8))
+
+def list_network_files_recursive(category=DEFAULT_NETWORK_CATEGORY, subpath='', query=''):
+    """Walks every subfolder under `subpath` (relative to `category`'s
+    configured root) and returns every matching file found at any depth,
+    each annotated with its own subpath so the caller knows where it
+    actually lives and can fetch it correctly -- results from different
+    folders are otherwise indistinguishable once flattened. `query`
+    (case-insensitive substring against the filename) is optional; blank
+    means every file, which is a reasonable search on its own ("show me
+    everything under here" instead of clicking through folders one at a
+    time).
+
+    Breadth-first rather than recursive Python calls -- straightforward to
+    cap depth/result count cleanly, and avoids any recursion-depth concern
+    on a pathological folder tree. An unreadable subfolder (permissions,
+    a transient SMB error) is skipped rather than aborting the whole
+    search, since one bad folder shouldn't hide results from every other
+    one."""
+    cat = _network_category(category)
+    root = _network_share_root(category)
+    if not root:
+        raise ValueError(f'No network path configured for {cat["label"]} yet -- set it in Config > Network.')
+    start_sub = _sanitize_subpath(subpath)
+    _network_session(category)
+    q = (query or '').strip().lower()
+
+    results = []
+    truncated = False
+    queue = [(start_sub, 0)]
+    while queue:
+        cur_sub, depth = queue.pop(0)
+        full = root + ('\\' + cur_sub if cur_sub else '')
+        try:
+            entries = list(smbclient.scandir(full))
+        except Exception:
+            continue
+        for entry in entries:
+            if entry.is_dir():
+                if depth < NETWORK_RECURSIVE_MAX_DEPTH:
+                    queue.append((cur_sub + '\\' + entry.name if cur_sub else entry.name, depth + 1))
+                continue
+            if not entry.is_file() or not allowed_file(entry.name, cat['exts']):
+                continue
+            if q and q not in entry.name.lower():
+                continue
+            st = entry.stat()
+            results.append({'name': entry.name, 'subpath': cur_sub, 'size': st.st_size, 'mtime': st.st_mtime})
+            if len(results) >= NETWORK_RECURSIVE_MAX_RESULTS:
+                truncated = True
+                break
+        if truncated:
+            break
+    results.sort(key=lambda e: (e['subpath'], e['name'].lower()))
+    return root, results, truncated
+
 def fetch_network_file(name, category=DEFAULT_NETWORK_CATEGORY, subpath=''):
     """Copies `name` from inside `subpath` of the network folder for `category`
     into UPLOAD_FOLDER and returns the local staged filename (prefixed
@@ -4300,6 +4362,25 @@ def api_network_list():
         return jsonify(ok=False, error=str(e)), 400
     except Exception as e:
         return jsonify(ok=False, error=f'Could not reach network folder: {e}'), 500
+
+@app.route('/api/network/search')
+def api_network_search():
+    """Recursive file search starting at ?subpath= (default: category root)
+    for ?category=..., optionally filtered by ?q= (case-insensitive filename
+    substring -- blank returns every file found at any depth). See
+    list_network_files_recursive for the depth/result caps this respects and
+    why they exist."""
+    category = request.args.get('category', DEFAULT_NETWORK_CATEGORY)
+    subpath = request.args.get('subpath', '')
+    query = request.args.get('q', '')
+    try:
+        root, results, truncated = list_network_files_recursive(category, subpath, query)
+        return jsonify(ok=True, root=root, category=category, subpath=_sanitize_subpath(subpath),
+                        files=results, truncated=truncated)
+    except ValueError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    except Exception as e:
+        return jsonify(ok=False, error=f'Could not search network folder: {e}'), 500
 
 @app.route('/api/network/fetch', methods=['POST'])
 def api_network_fetch():

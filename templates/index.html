@@ -502,6 +502,12 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
       </div>
       <span class="net-modal-close" id="net-modal-close">&#10005;</span>
     </div>
+    <div class="net-modal-search-row" style="display:flex;gap:8px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line)">
+      <input type=text id="net-modal-search" placeholder="Search filenames&hellip;" style="flex:1;font-size:13px;padding:6px 10px;border-radius:7px;border:1px solid var(--line);background:var(--panel);color:var(--ink)">
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;white-space:nowrap;cursor:pointer">
+        <input type=checkbox id="net-modal-recursive"> Include subfolders
+      </label>
+    </div>
     <div class="net-modal-list" id="net-modal-list">Loading&hellip;</div>
   </div>
 </div>
@@ -5000,7 +5006,10 @@ document.addEventListener('DOMContentLoaded', function(){
   var pathEl = document.getElementById('net-modal-path')
   var listEl = document.getElementById('net-modal-list')
   var closeBtn = document.getElementById('net-modal-close')
+  var searchInput = document.getElementById('net-modal-search')
+  var recursiveCheckbox = document.getElementById('net-modal-recursive')
   var active = null // {fieldName, category, subpath}
+  var searchDebounceTimer = null
 
   function humanSize(bytes){
     if(bytes < 1024) return bytes + ' B'
@@ -5089,6 +5098,51 @@ document.addEventListener('DOMContentLoaded', function(){
     return frag
   }
 
+  // Shared by both normal folder browsing and search results below --
+  // fetches `name` from `subpath` and applies it to whatever this modal
+  // instance is for (a form field's chip, or the Player). Search results
+  // need their OWN per-row subpath here (where that specific file actually
+  // lives), not active.subpath (the folder the search started from), since
+  // a recursive search can return files from many different subfolders at
+  // once.
+  function pickNetworkFile(name, subpath, size){
+    if(!active) return
+    listEl.innerHTML = '<div class="net-modal-empty">Fetching ' + name + '&hellip;</div>'
+    fetch('/api/network/fetch', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: name, category: active.category, subpath: subpath || ''})
+    }).then(function(r){ return r.json() }).then(function(d){
+      if(!d.ok){ listEl.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + d.error + '</div>'; return }
+      if(active.fieldName === 'pl'){
+        // The Player isn't a form field -- picking a file here should just
+        // start playing it, reusing showPlayer() so the transcode-on-error
+        // fallback (see handlePlayerError) still has the staged filename to
+        // work with if the browser can't decode this format natively.
+        window.showPlayer(d.url, d.orig_name, d.filename)
+        closeModal()
+        return
+      }
+      var hidden = document.getElementById(active.fieldName + '_network')
+      var fileInput = document.querySelector('input[name="' + active.fieldName + '"]')
+      if(hidden) hidden.value = d.filename
+      if(fileInput) fileInput.value = '' // network selection and local file are mutually exclusive
+      setChip(active.fieldName, d.orig_name, d.size)
+      // Card-VO fields (title_card_vo / end_card_vo) have their own preview
+      // player + set-in/set-out controls, normally fed by cardVoFileChosen()
+      // from a local File object. A network fetch has no File object, but
+      // the file is already reachable at /uploads/<filename>, so wire the
+      // player up the same way manually.
+      var player = document.getElementById(active.fieldName + '_player')
+      var note = document.getElementById(active.fieldName + '_preview_note')
+      if(player){
+        player.src = '/uploads/' + encodeURIComponent(d.filename)
+        player.style.display = ''
+        if(note) note.textContent = 'Play the file, pause where you want the cut, then click Set in / Set out.'
+      }
+      closeModal()
+    }).catch(function(e){ listEl.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + e + '</div>' })
+  }
+
   function renderList(folders, files, subpath){
     listEl.innerHTML = ''
     listEl.appendChild(renderFolders(folders || [], subpath || ''))
@@ -5102,56 +5156,82 @@ document.addEventListener('DOMContentLoaded', function(){
       var row = document.createElement('div')
       row.className = 'net-modal-row'
       row.innerHTML = '<span class="row-name">' + f.name + '</span><span class="row-size">' + humanSize(f.size) + '</span>'
-      row.addEventListener('click', function(){
-        if(!active) return
-        listEl.innerHTML = '<div class="net-modal-empty">Fetching ' + f.name + '&hellip;</div>'
-        fetch('/api/network/fetch', {
-          method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({name: f.name, category: active.category, subpath: active.subpath || ''})
-        }).then(function(r){ return r.json() }).then(function(d){
-          if(!d.ok){ listEl.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + d.error + '</div>'; return }
-          if(active.fieldName === 'pl'){
-            // The Player isn't a form field -- picking a file here should just
-            // start playing it, reusing showPlayer() so the transcode-on-error
-            // fallback (see handlePlayerError) still has the staged filename to
-            // work with if the browser can't decode this format natively.
-            window.showPlayer(d.url, d.orig_name, d.filename)
-            closeModal()
-            return
-          }
-          var hidden = document.getElementById(active.fieldName + '_network')
-          var fileInput = document.querySelector('input[name="' + active.fieldName + '"]')
-          if(hidden) hidden.value = d.filename
-          if(fileInput) fileInput.value = '' // network selection and local file are mutually exclusive
-          setChip(active.fieldName, d.orig_name, d.size)
-          // Card-VO fields (title_card_vo / end_card_vo) have their own preview
-          // player + set-in/set-out controls, normally fed by cardVoFileChosen()
-          // from a local File object. A network fetch has no File object, but
-          // the file is already reachable at /uploads/<filename>, so wire the
-          // player up the same way manually.
-          var player = document.getElementById(active.fieldName + '_player')
-          var note = document.getElementById(active.fieldName + '_preview_note')
-          if(player){
-            player.src = '/uploads/' + encodeURIComponent(d.filename)
-            player.style.display = ''
-            if(note) note.textContent = 'Play the file, pause where you want the cut, then click Set in / Set out.'
-          }
-          closeModal()
-        }).catch(function(e){ listEl.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + e + '</div>' })
-      })
+      row.addEventListener('click', function(){ pickNetworkFile(f.name, active ? active.subpath : '', f.size) })
       listEl.appendChild(row)
     })
   }
 
+  // Recursive-search results are flat (files from many different
+  // subfolders at once), so each row shows where it actually lives --
+  // unlike renderList's rows, which are all implicitly "in the folder
+  // you're looking at" and don't need that repeated per row.
+  function renderSearchResults(files, truncated){
+    listEl.innerHTML = ''
+    if(!files.length){
+      listEl.innerHTML = '<div class="net-modal-empty">No files matched, searched every subfolder.</div>'
+      return
+    }
+    if(truncated){
+      var note = document.createElement('div')
+      note.className = 'net-modal-empty'
+      note.style.cssText = 'color:var(--amber);padding:6px 10px;font-size:12px'
+      note.textContent = 'Showing the first ' + files.length + ' matches -- narrow your search to see the rest.'
+      listEl.appendChild(note)
+    }
+    files.forEach(function(f){
+      var row = document.createElement('div')
+      row.className = 'net-modal-row'
+      var locationLabel = f.subpath ? f.subpath.replace(/\\/g, ' / ') + ' / ' : ''
+      row.innerHTML = '<span class="row-name"><span style="opacity:.55;font-size:11px">' + locationLabel + '</span>' + f.name +
+                      '</span><span class="row-size">' + humanSize(f.size) + '</span>'
+      row.addEventListener('click', function(){ pickNetworkFile(f.name, f.subpath, f.size) })
+      listEl.appendChild(row)
+    })
+  }
+
+  function runSearch(){
+    if(!active) return
+    var q = (searchInput.value || '').trim()
+    if(!recursiveCheckbox.checked){
+      // No network call needed -- filter what's already loaded for the
+      // current folder. Folders themselves aren't filtered by the search
+      // box (they're navigation, not search results), only files are.
+      var f = (active.loadedFiles || []).filter(function(x){
+        return !q || x.name.toLowerCase().indexOf(q.toLowerCase()) !== -1
+      })
+      renderList(active.loadedFolders || [], f, active.subpath)
+      return
+    }
+    listEl.innerHTML = '<div class="net-modal-empty">Searching every subfolder&hellip;</div>'
+    fetch('/api/network/search?category=' + encodeURIComponent(active.category) +
+          '&subpath=' + encodeURIComponent(active.subpath || '') + '&q=' + encodeURIComponent(q))
+      .then(function(r){ return r.json() }).then(function(d){
+        if(!d.ok){ listEl.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + d.error + '</div>'; return }
+        renderSearchResults(d.files, d.truncated)
+      }).catch(function(e){ listEl.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + e + '</div>' })
+  }
+  searchInput.addEventListener('input', function(){
+    clearTimeout(searchDebounceTimer)
+    searchDebounceTimer = setTimeout(runSearch, 250)
+  })
+  recursiveCheckbox.addEventListener('change', runSearch)
+
   function loadFolder(subpath){
     if(!active) return
     active.subpath = subpath || ''
+    // Navigating to a (new) folder always starts that folder's view fresh --
+    // any in-progress search is reset rather than silently re-applied to a
+    // different location, which would be surprising.
+    searchInput.value = ''
+    recursiveCheckbox.checked = false
     listEl.innerHTML = '<div class="net-modal-empty">Loading&hellip;</div>'
     fetch('/api/network/list?category=' + encodeURIComponent(active.category) +
           '&subpath=' + encodeURIComponent(active.subpath))
       .then(function(r){ return r.json() }).then(function(d){
         if(!d.ok){ listEl.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + d.error + '</div>'; return }
         pathEl.textContent = d.root
+        active.loadedFolders = d.folders || []
+        active.loadedFiles = d.files || []
         renderList(d.folders, d.files, d.subpath)
       }).catch(function(e){ listEl.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + e + '</div>' })
   }
