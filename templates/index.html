@@ -3985,7 +3985,7 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <div id=chat-attachments style="display:none;flex-wrap:wrap;gap:6px;margin:0 0 8px"></div>
 
 <div class="chat-input-box">
-  <input type=file id=chat-attach-input multiple accept="image/*,.pdf,.txt,.md,.markdown,.csv,.tsv,.json,.log,.yaml,.yml,.ini,.cfg,.conf,.xml,.html,.htm,.css,.py,.js,.ts,.jsx,.tsx,.java,.c,.h,.cpp,.hpp,.go,.rs,.rb,.php,.sh,.sql,.srt,.vtt" style="display:none">
+  <input type=file id=chat-attach-input multiple data-skip-clear-ui="1" accept="image/*,.pdf,.txt,.md,.markdown,.csv,.tsv,.json,.log,.yaml,.yml,.ini,.cfg,.conf,.xml,.html,.htm,.css,.py,.js,.ts,.jsx,.tsx,.java,.c,.h,.cpp,.hpp,.go,.rs,.rb,.php,.sh,.sql,.srt,.vtt" style="display:none">
   <textarea id=chat-input rows=1 placeholder="Write a message…"></textarea>
   <div class="chat-input-toolbar">
     <button type=button class="chat-icon-btn chat-icon-btn-round" id=chat-attach-btn title="Attach an image or document" onclick="document.getElementById('chat-attach-input').click()">
