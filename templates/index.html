@@ -4443,6 +4443,69 @@ async function loadConfigTab(){
     container.innerHTML = '<p style="color:var(--amber)">Error loading config: '+e+'</p>'
   }
 }
+
+// Pings a single service URL (via /api/config/test) using whatever's
+// currently typed in that row's field -- lets a typo be caught before Save.
+async function testConfigRow(key){
+  var input = document.getElementById('cfg-' + key)
+  var status = document.getElementById('cfg-status-' + key)
+  if(!input) return
+  var url = input.value.trim()
+  if(status){ status.textContent = 'Testing\u2026'; status.style.color = 'var(--ink-dim)' }
+  try{
+    var r = await fetch('/api/config/test', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: key, url: url})
+    })
+    var d = await r.json()
+    if(status){
+      if(d.ok){
+        status.textContent = 'Up' + (d.latency_ms != null ? ' (' + d.latency_ms + 'ms)' : '')
+        status.style.color = 'var(--phosphor)'
+      }else{
+        status.textContent = d.error || 'Down'
+        status.style.color = 'var(--amber)'
+      }
+    }
+  }catch(e){
+    if(status){ status.textContent = 'Test failed: ' + e; status.style.color = 'var(--amber)' }
+  }
+}
+window.testConfigRow = testConfigRow
+
+// Saves every field currently shown in Config > Services in one request --
+// including blank ones, so clearing a field back to empty (e.g. removing an
+// API key) actually takes.
+async function saveConfigTab(){
+  var status = document.getElementById('config-save-status')
+  var btn = document.getElementById('config-save-btn')
+  var payload = {}
+  CONFIG_FIELD_ORDER.forEach(function(key){
+    var input = document.getElementById('cfg-' + key)
+    if(input) payload[key] = input.value.trim()
+  })
+  if(btn) btn.disabled = true
+  if(status){ status.textContent = 'Saving\u2026'; status.style.color = 'var(--ink-dim)' }
+  try{
+    var r = await fetch('/api/config', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    })
+    var d = await r.json()
+    if(d.ok){
+      if(status){ status.textContent = 'Saved.'; status.style.color = 'var(--phosphor)' }
+      loadConfigTab()   // re-render so fields reflect exactly what's now saved
+    }else{
+      if(status){ status.textContent = 'Save failed: ' + (d.error || 'unknown error'); status.style.color = 'var(--amber)' }
+    }
+  }catch(e){
+    if(status){ status.textContent = 'Save failed: ' + e; status.style.color = 'var(--amber)' }
+  }finally{
+    if(btn) btn.disabled = false
+  }
+}
+window.saveConfigTab = saveConfigTab
+
 var NETWORK_CATEGORY_LABELS = {hires: 'Video (HIRES)', tcard: 'Title card', endcard: 'End card', music: 'Music', vo: 'VO', sfx: 'SFX'}
 var networkFoldersLoaded = false
 async function loadNetworkFolders(){
