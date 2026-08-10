@@ -1995,7 +1995,18 @@ def prepare_bgm_track(genre, scoring_mode, scoring_audio_path, duration, base_ts
             if ACE_STEP_NEGATIVE_PROMPT:
                 payload['negative_prompt'] = ACE_STEP_NEGATIVE_PROMPT
             r = requests.post(f'{ACE_STEP_URL}/release_task', json=payload, headers=_ace_step_headers(), timeout=10)
-            data = r.json()
+            try:
+                data = r.json()
+            except ValueError:
+                # Same distinction as acestep_generate(): a response that
+                # isn't JSON usually means a wrong path or rejected auth for
+                # this specific server, not that it's unreachable -- worth
+                # having the real status/body in the server log even though
+                # this path just falls back to a synth bed rather than
+                # surfacing an error to the user directly.
+                print(f'ACE-Step at {ACE_STEP_URL} responded without JSON '
+                      f'(HTTP {r.status_code}): {(r.text or "(empty body)")[:300]!r}')
+                data = {}
             task_id = data.get('data', {}).get('task_id')
             if task_id:
                 for _ in range(60):
@@ -3661,14 +3672,43 @@ def acestep_generate(prompt, duration, lyrics=None, bpm=None, samples=1,
     base_ts = base_ts or f'tool{int(time.time()*1000)}'
     try:
         r = requests.post(f'{ACE_STEP_URL}/release_task', json=payload, headers=_ace_step_headers(), timeout=15)
-        task_id = (r.json().get('data') or {}).get('task_id')
-        if not task_id:
-            return [], f'ACE-Step did not accept the request (no task id). Response: {r.text[:200]}'
+    except requests.exceptions.RequestException as e:
+        # Genuinely couldn't connect (DNS, refused, timeout) -- no response to
+        # show, so this is the one case where the generic message is the
+        # whole story.
+        return [], f'Could not reach ACE-Step at {ACE_STEP_URL}: {e}'
+    try:
+        release_data = r.json()
+    except ValueError:
+        # The request DID reach a server and got a response back -- it just
+        # wasn't JSON. Previously this fell through to the same generic
+        # "Could not reach ACE-Step" message as an actual connection
+        # failure, discarding the one thing that would explain it: the
+        # real HTTP status and body. A non-JSON body here usually means
+        # either a wrong path (an HTML 404 page instead of the API
+        # response -- worth double-checking the base URL against whatever
+        # base path the specific hosted account actually uses, which can
+        # differ from the self-hosted convention) or a plain-text/HTML
+        # auth-rejection page rather than a JSON error (worth checking
+        # that the API key is actually being accepted).
+        return [], (f'ACE-Step at {ACE_STEP_URL} responded, but not with JSON '
+                    f'(HTTP {r.status_code}). This usually means the URL path or '
+                    f'authentication is wrong for this server, not that it\'s '
+                    f'unreachable. Response started with: {(r.text or "(empty body)")[:300]!r}')
+    task_id = (release_data.get('data') or {}).get('task_id')
+    if not task_id:
+        return [], f'ACE-Step did not accept the request (no task id). Response: {r.text[:200]}'
+    try:
         for _ in range(90):
             time.sleep(2)
             q = requests.post(f'{ACE_STEP_URL}/query_result',
                               json={'task_id_list': [task_id]}, headers=_ace_step_headers(), timeout=10)
-            items = q.json().get('data') or []
+            try:
+                query_data = q.json()
+            except ValueError:
+                return [], (f'ACE-Step\'s status check responded without JSON '
+                            f'(HTTP {q.status_code}): {(q.text or "(empty body)")[:300]!r}')
+            items = query_data.get('data') or []
             if not items:
                 continue
             status = items[0].get('status')
