@@ -4017,14 +4017,14 @@ def api_music_generate():
 @require_permission('music_generation')
 def api_music_models():
     """Model/checkpoint aliases the ACE-Step server has loaded, for the Music
-    Generation tab's model picker. ACE-Step 1.5's multi-model routing (and at
-    least one hosted wrapper observed in the wild) exposes these at GET
-    /models; older/single-model servers and other wrappers don't have this
-    endpoint at all -- that's not an error, it just means there's nothing to
-    switch between, so an empty list is returned rather than surfacing a
-    failure. /api/music/generate still takes a free-typed model name either
-    way (see acestep_generate's `model` param), this is purely to populate
-    the picker's suggestions when the server can tell us what's available.
+    Generation tab's model picker. ACE-Step 1.5's REST API exposes these at
+    GET /v1/models (OpenAI-style listing); older/single-model servers and
+    other wrappers don't have this endpoint at all -- that's not an error,
+    it just means there's nothing to switch between, so an empty list is
+    returned rather than surfacing a failure. /api/music/generate still
+    takes a free-typed model name either way (see acestep_generate's `model`
+    param), this is purely to populate the picker's suggestions when the
+    server can tell us what's available.
 
     A genuine connection failure (wrong host/port, server down, timeout) is
     a DIFFERENT situation from "this server just doesn't have /models", and
@@ -4032,7 +4032,7 @@ def api_music_models():
     same empty-list response made a bad ACE_STEP_URL indistinguishable from
     a working server with nothing to list."""
     try:
-        r = requests.get(f'{ACE_STEP_URL}/models', headers=_ace_step_headers(), timeout=5)
+        r = requests.get(f'{ACE_STEP_URL}/v1/models', headers=_ace_step_headers(), timeout=5)
     except requests.exceptions.RequestException as e:
         return jsonify(ok=True, models=[], reachable=False,
                         error=f'Could not reach ACE-Step at {ACE_STEP_URL}: {e}')
@@ -4041,12 +4041,12 @@ def api_music_models():
         # rejected the request (401/403/etc) -- still "reachable", just no
         # model list to offer.
         return jsonify(ok=True, models=[], reachable=True,
-                        error=f'ACE-Step at {ACE_STEP_URL} responded {r.status_code} to /models')
+                        error=f'ACE-Step at {ACE_STEP_URL} responded {r.status_code} to /v1/models')
     try:
         data = r.json()
     except ValueError:
         return jsonify(ok=True, models=[], reachable=True,
-                        error=f'ACE-Step at {ACE_STEP_URL} responded to /models, but not with JSON')
+                        error=f'ACE-Step at {ACE_STEP_URL} responded to /v1/models, but not with JSON')
     if isinstance(data, dict):
         items = data.get('models') or data.get('data') or data.get('aliases') or []
     elif isinstance(data, list):
