@@ -3673,7 +3673,7 @@ ACE_STEP_MAX_SAMPLES = int(os.environ.get('ACE_STEP_MAX_SAMPLES', 4))
 # path on both sides.
 ACE_STEP_REF_DIR = os.environ.get('ACE_STEP_REF_DIR', '')
 
-def acestep_generate(prompt, duration, lyrics=None, bpm=None, samples=1,
+def acestep_generate(prompt, duration=None, lyrics=None, bpm=None, samples=1,
                      steps=None, seed=None, base_ts=None,
                      ref_audio_path=None, ref_strength=0.5,
                      keyscale=None, timesignature=None, thinking=False,
@@ -3747,7 +3747,13 @@ def acestep_generate(prompt, duration, lyrics=None, bpm=None, samples=1,
     variant, guidance_scale/cfg_type/omega_scale may have no audible effect
     regardless of value, which is itself useful to know when comparing
     against a hosted service that might be running the same checkpoint with
-    settings actually tuned for it."""
+    settings actually tuned for it.
+
+    `duration` in seconds, or None/blank for automatic -- when omitted,
+    `audio_duration` is left out of the payload entirely so the ACE-Step
+    server picks its own length rather than this app silently imposing a
+    fixed default (previously always 30s even when the caller never asked
+    for one)."""
     tags = (prompt or '').strip() or 'cinematic, instrumental'
     if bpm:
         # Don't double up if the user already typed a bpm into the prompt.
@@ -3770,7 +3776,6 @@ def acestep_generate(prompt, duration, lyrics=None, bpm=None, samples=1,
 
     payload = {
         'prompt': tags,
-        'audio_duration': float(duration),
         'thinking': bool(thinking),
         'inference_steps': int(steps or ACE_STEP_STEPS),
         'batch_size': samples,
@@ -3779,6 +3784,11 @@ def acestep_generate(prompt, duration, lyrics=None, bpm=None, samples=1,
         # vocal-suppressing negative prompt, which would otherwise fight them.
         'lyrics': '[inst]' if instrumental else lyrics,
     }
+    if duration not in (None, ''):
+        try:
+            payload['audio_duration'] = float(duration)
+        except (TypeError, ValueError):
+            pass
     if seed not in (None, ''):
         try:
             payload['manual_seeds'] = str(int(seed))
@@ -3905,7 +3915,7 @@ def api_music_generate():
         except (TypeError, ValueError):
             return default
 
-    duration = _num('duration', 30.0, 5.0, 300.0)
+    duration = _num('duration', None, 5.0, 300.0)
     samples = _num('samples', 1, 1, ACE_STEP_MAX_SAMPLES, int)
     bpm = _num('bpm', None, 40, 220, int)
     steps = _num('steps', ACE_STEP_STEPS, 8, 120, int)
@@ -3995,7 +4005,7 @@ def api_music_generate():
     return jsonify(ok=True, samples=[{
         'url': f'/uploads/{os.path.basename(p)}',
         'filename': os.path.basename(p),
-        'duration': round(probe_duration(p) or duration, 1),
+        'duration': round(probe_duration(p) or duration or 0, 1),
     } for p in paths],
         prompt=prompt, lyrics=lyrics or None, bpm=bpm, steps=steps,
         instrumental=not lyrics,

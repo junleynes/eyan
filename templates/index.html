@@ -2522,11 +2522,11 @@ async function generateMusicTool(){
     note.innerHTML = '<span style="color:var(--amber)">Enter a prompt describing the style you want.</span>'
     return
   }
-  var dur = document.getElementById('music-duration').value
+  var dur = document.getElementById('music-duration').value.trim()
   var n = parseInt(document.getElementById('music-samples').value, 10) || 1
   btn.disabled = true
   note.style.display = 'block'
-  note.textContent = 'Generating ' + n + ' \u00d7 ' + dur + 's\u2026 this can take a few minutes.'
+  note.textContent = 'Generating ' + n + ' \u00d7 ' + (dur ? dur + 's' : 'auto-length') + '\u2026 this can take a few minutes.'
   out.style.display = 'none'
 
   var fd = new FormData()
@@ -3777,7 +3777,8 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 
 <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:12px 0">
   <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Duration (s):</span>
-  <input type=number id=music-duration value=30 min=5 max=300 step=5 style="width:85px"></span>
+  <input type=number id=music-duration placeholder="auto" min=5 max=300 step=5 style="width:85px"></span>
+  <span style="font-size:11px;opacity:.55">(blank = let ACE-Step pick)</span>
   <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">BPM:</span>
   <input type=number id=music-bpm placeholder="auto" min=40 max=220 step=1 style="width:85px"></span>
   <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Key:</span>
