@@ -564,14 +564,6 @@ admin_reset_if_requested()
 # _access_control's _ADMIN_PREFIX check). Anyone else gets a redirect/403.
 
 def _admin_users_page(error=None, notice=None):
-    # Covers both the initial GET (?embed=1 in the iframe's src, set by
-    # Config > Users in the main app) and every subsequent form POST on this
-    # page (embed=1 as a hidden field, added automatically by a small script
-    # near the bottom of this page's own HTML -- see the embed-detection
-    # <script> below). request.values checks both request.args and
-    # request.form in one call, so this one line covers every route that
-    # calls this function, not just the GET.
-    embed = request.values.get('embed') == '1'
     users = user_list()
     groups = group_list()
     brand = load_branding()
@@ -732,24 +724,7 @@ select,input{{background:var(--panel); border:1px solid var(--line); color:var(-
 .perm-grid{{display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:6px 14px}}
 .group-check{{display:flex; align-items:center; gap:6px; font-size:12px; cursor:pointer; color:var(--ink)}}
 </style></head><body>
-{'' if embed else f'''<nav class="rail">
-  <div class="rail-brand">
-    <img class="rail-logo" src="/branding/logo" alt="">
-    <div><div class="rail-name">{brand_name}</div><div class="rail-tagline">{brand_tagline}</div></div>
-  </div>
-  <div class="rail-nav">
-    <a class="rail-link" href="/">&larr; Back to app</a>
-    <div class="rail-sep"></div>
-    <a class="rail-link active" href="/admin/users">Manage users</a>
-    <a class="rail-link" href="/#p-config">Config</a>
-  </div>
-  <div class="rail-foot">
-    Signed in as <strong style="color:var(--ink)">{escape(session.get('username') or '')}</strong><br>
-    <a href="/logout">Sign out</a>
-  </div>
-</nav>'''}
 <div class="main"><div class=wrap>
-{'' if embed else '<h1>Manage users</h1>'}
 {f'<div class="err">{error}</div>' if error else ''}
 {f'<div class="notice">{notice}</div>' if notice else ''}
 <div class=card>
@@ -777,28 +752,18 @@ select,input{{background:var(--panel); border:1px solid var(--line); color:var(-
 </form>
 </div>
 </div></div>
-<script>
-// When this page is loaded inside the Config > Users iframe (rather than
-// directly at /admin/users), every form submission needs to carry embed=1
-// too, not just the initial GET -- otherwise submitting "Create user" (or
-// any other form here) would reload with the full sidebar instead of
-// staying embedded. Simpler and more robust than threading an embed_qs
-// string through every single form's action="" server-side: just tag every
-// form with a hidden field once, here, and _admin_users_page's
-// request.values.get('embed') check (covers both query string and form
-// field in one place) picks it up on whichever route the form posts to.
-if(window.self !== window.top){{
-  document.querySelectorAll('form').forEach(function(f){{
-    var i = document.createElement('input')
-    i.type = 'hidden'; i.name = 'embed'; i.value = '1'
-    f.appendChild(i)
-  }})
-}}
-</script>
 </body></html>'''
 
 @app.route('/admin/users')
 def admin_users():
+    # Direct navigation here (bookmarked, typed in, an old link) now redirects
+    # into the app instead of showing the old standalone page -- user
+    # management is only meant to be reached via Config > Users from here on.
+    # The Config > Users iframe itself loads this exact URL with ?embed=1, so
+    # that specific request still renders the real page; everything else
+    # bounces to '/', where Config > Users is one click away.
+    if request.args.get('embed') != '1':
+        return redirect('/')
     return _admin_users_page()
 
 @app.route('/admin/users/create', methods=['POST'])

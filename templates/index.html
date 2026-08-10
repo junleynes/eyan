@@ -579,7 +579,7 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
   </div>
   <div class="hdr-engines">scene detection &middot; ai vision &middot; ffmpeg &middot; ai music &middot; tts &middot; stt</div>
   <div style="text-align:center;font-size:11px;padding:8px 8px 2px;color:var(--ink-dim)">
-    Signed in as <strong>{{ current_username }}</strong>{% if current_role == 'admin' %} &middot; <a href="#" onclick="event.preventDefault();switchTab('p-config',document.querySelector('.tab[onclick*=\'p-config\']'));switchSubTab('p-config-users',document.querySelector('.sub-tab[onclick*=\'p-config-users\']'))" style="color:var(--ink-dim)">Manage users</a>{% endif %}
+    Signed in as <strong>{{ current_username }}</strong>
     &middot; <a href="/logout" style="color:var(--ink-dim)">Sign out</a>
   </div>
   {% if brand_footer %}
@@ -4157,7 +4157,7 @@ POST /api/chat  + model, messages[{role,content,images?}], system?, think?</pre>
 <p>Every route — the UI, uploads, library files, template assets, all API endpoints — requires a signed-in session. What exists:</p>
 <ul style="line-height:1.8">
 
-  <li><strong>Per-user accounts</strong>, stored (username + salted/hashed password + role) in <code>users.db</code> next to the trailer library. Roles are <code>admin</code> or <code>user</code>; admins get a <strong>Manage users</strong> link in the rail (<code>/admin/users</code>) to create accounts, change roles, disable/enable, reset passwords, or delete accounts. Regular users can use the app but can't reach <code>/admin/users</code>.</li>
+  <li><strong>Per-user accounts</strong>, stored (username + salted/hashed password + role) in <code>users.db</code> next to the trailer library. Roles are <code>admin</code> or <code>user</code>; admins manage accounts from <strong>Config &gt; Users</strong> -- create accounts, change roles, disable/enable, reset passwords, or delete accounts. Regular users can use the app but don't see that tab.</li>
   <li><strong>First-run bootstrap</strong> — if <code>users.db</code> has no accounts yet (a fresh deploy), a default admin is created automatically: username <code>admin</code>, password <code>Aimp#Admin2026!</code> (hardcoded as <code>DEFAULT_ADMIN_PASSWORD</code> near the top of this file — not a secret, since it's in source). Override with <code>ADMIN_USERNAME</code>/<code>ADMIN_PASSWORD</code> env vars, and change this account's password from Admin &gt; Users right after first login.</li>
   <li><strong>Lost the admin password?</strong> Set <code>RESET_ADMIN=1</code> (optionally with <code>ADMIN_USERNAME</code>/<code>ADMIN_PASSWORD</code>) and restart — this resets that account to an active admin with a new password every boot (falling back to the same hardcoded default if <code>ADMIN_PASSWORD</code> isn't set), regardless of what's already in <code>users.db</code>, and creates it if it doesn't exist. <strong>Remove <code>RESET_ADMIN</code> afterward</strong>, or the account keeps getting reset to that password on every restart.</li>
   <li><strong>Rate limiting on the direct file routes</strong> (<code>/uploads/</code>, <code>/library/&lt;id&gt;/*</code>, <code>/download/</code>, template <code>/asset/</code>), always on — <code>FILE_ROUTE_RATE_LIMIT</code> requests per IP per minute (default 40). This exists because those routes are otherwise reachable by anyone who can reach the port: library IDs are sequential and upload filenames are guessable, so without a limit a script could enumerate every trailer ever generated.</li>
@@ -4165,7 +4165,7 @@ POST /api/chat  + model, messages[{role,content,images?}], system?, think?</pre>
 </ul>
 <p>The session cookie is signed with a key in <code>SECRET_KEY_FILE</code> (a <code>.secret_key</code> file next to this script by default), generated once and reused — regenerating it on every restart would silently log everyone out on each pm2 restart. Keep that file, and <code>users.db</code>, out of version control.</p>
 <p>Sessions last <code>SESSION_LIFETIME_DAYS</code> (default 30). The cookie is marked <code>Secure</code> only when <code>FORCE_HTTPS=1</code> is set — on the plain-HTTP LAN deployment this app defaults to, a <code>Secure</code> cookie would never actually be sent, which would look like the gate silently not working.</p>
-<p>There's no audit trail beyond each account's <em>last login</em> timestamp shown on the Manage users page — actions inside the app (renders, deletes, template edits) aren't currently attributed to a specific user.</p>
+<p>There's no audit trail beyond each account's <em>last login</em> timestamp shown on Config &gt; Users — actions inside the app (renders, deletes, template edits) aren't currently attributed to a specific user.</p>
 
 <h3>Templates</h3>
 <p>A <strong>template</strong> is the complete configuration for a programme: its rating mode and target duration, genre, transition and crossfade, scene-detection thresholds, loudness and ducking targets, narration engine/voice/language — plus its background music bed, SFX one-shot, voiceover, title card and end card (each card with an optional card VO and in/out points).</p>
@@ -4319,7 +4319,7 @@ This is [emphasis] the one you cannot miss.
 </div>
 
 <div id="p-config-users" class="sub-panel">
-<p style="margin-top:-4px;color:var(--ink-dim)">Full user and group management, embedded from the same admin page reachable at <code>/admin/users</code> directly.</p>
+<p style="margin-top:-4px;color:var(--ink-dim)">Full user and group management, right here — this is the only way to reach it now.</p>
 <iframe id="config-users-frame" data-src="/admin/users?embed=1" style="width:100%;min-height:640px;border:1px solid var(--line);border-radius:10px;margin-top:12px;background:var(--elevated)" title="Manage users"></iframe>
 </div>
 
