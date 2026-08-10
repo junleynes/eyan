@@ -579,7 +579,7 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
   </div>
   <div class="hdr-engines">scene detection &middot; ai vision &middot; ffmpeg &middot; ai music &middot; tts &middot; stt</div>
   <div style="text-align:center;font-size:11px;padding:8px 8px 2px;color:var(--ink-dim)">
-    Signed in as <strong>{{ current_username }}</strong>{% if current_role == 'admin' %} &middot; <a href="/admin/users" style="color:var(--ink-dim)">Manage users</a>{% endif %}
+    Signed in as <strong>{{ current_username }}</strong>{% if current_role == 'admin' %} &middot; <a href="#" onclick="event.preventDefault();switchTab('p-config',document.querySelector('.tab[onclick*=\'p-config\']'));switchSubTab('p-config-users',document.querySelector('.sub-tab[onclick*=\'p-config-users\']'))" style="color:var(--ink-dim)">Manage users</a>{% endif %}
     &middot; <a href="/logout" style="color:var(--ink-dim)">Sign out</a>
   </div>
   {% if brand_footer %}
