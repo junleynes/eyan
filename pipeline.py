@@ -2227,6 +2227,50 @@ def nearest_word_boundary(target, boundaries, max_snap=0.35):
         return target
     return min(candidates, key=lambda b: abs(b - target))
 
+def nearest_speech_out(target, phrase_ends, word_ends,
+                       phrase_snap=1.2, word_snap=0.35):
+    """Best out-point near `target`, preferring the end of a complete phrase
+    over the end of a mere word.
+
+    Landing on a word boundary is enough to avoid severing a syllable, but
+    a cut at "...and then she |" is still audibly clipped -- the sentence
+    just stops. A phrase end ("...and then she left. |") sounds finished.
+    So phrase ends get a much wider snap window (1.2s vs 0.35s): it's worth
+    moving the cut a noticeably longer way to land somewhere that sounds
+    deliberate, where a word boundary is only worth a small nudge since it
+    buys much less.
+
+    Falls back to word boundaries, then to `target` unchanged when there's
+    no speech nearby at all (silent B-roll -- nothing to protect, so leave
+    the visual cut point alone)."""
+    if phrase_ends:
+        near = [b for b in phrase_ends if abs(b - target) <= phrase_snap]
+        if near:
+            return min(near, key=lambda b: abs(b - target))
+    return nearest_word_boundary(target, word_ends, max_snap=word_snap)
+
+def speech_free_slack(clip_start, clip_end, speech_spans, guard=0.12):
+    """How much of [clip_start, clip_end) can be trimmed off the END without
+    touching speech, given `speech_spans` [(start, end), ...].
+
+    Used by the exact-duration corrector so it takes its rounding error out
+    of silence rather than off the end of a spoken line. `guard` keeps a
+    small breath of silence after the last word instead of trimming flush
+    to it, which sounds abrupt even though technically no speech was cut.
+
+    Returns 0.0 when speech runs to (or past) the clip's end -- meaning this
+    clip has nothing safe to give and the corrector should leave it alone."""
+    if not speech_spans:
+        return max(0.0, clip_end - clip_start)
+    last_speech_end = 0.0
+    for s_start, s_end in speech_spans:
+        if s_start < clip_end and s_end > clip_start:
+            last_speech_end = max(last_speech_end, s_end)
+    if last_speech_end <= 0.0:
+        return max(0.0, clip_end - clip_start)   # no speech in this clip at all
+    safe_end = min(clip_end, max(clip_start, last_speech_end + guard))
+    return max(0.0, clip_end - safe_end)
+
 # ---- Script-driven scene priority ----
 # A production script/rundown usually already says which moments matter and
 # when they happen. These parse that out of an uploaded PDF or image and turn
@@ -5102,6 +5146,16 @@ def _run_trailer_job(jid, params):
     vo_trim_start = params.get('vo_trim_start', 0.0); vo_trim_end = params.get('vo_trim_end')
     sync_beats = params['sync_beats']
     whisper_enhance = params.get('whisper_enhance', False)
+    # Speech-safe cutting shouldn't be a side effect of which RATING mode was
+    # picked. Knowing where speech is matters for every promo -- cutting a
+    # sentence in half sounds broken regardless of whether dialogue also
+    # influenced which scenes got chosen. So transcription now runs whenever
+    # faster-whisper is reachable, and `whisper_enhance` narrows to its real
+    # remaining job: whether dialogue also contributes to a scene's SCORE.
+    # Opt-out via SPEECH_SAFE_CUTS=0 for anyone who'd rather not spend the
+    # transcription time on a source with no dialogue worth protecting.
+    transcribe_for_cuts = (whisper_enhance or
+                           os.environ.get('SPEECH_SAFE_CUTS', '1').lower() not in ('0', 'false', 'no'))
     end_card_path = params['end_card_path']; schedule_card_path = params['schedule_card_path']
     title_card_vo_path = params.get('title_card_vo_path'); title_card_vo_start = params.get('title_card_vo_start', 0.0); title_card_vo_end = params.get('title_card_vo_end')
     end_card_vo_path = params.get('end_card_vo_path'); end_card_vo_start = params.get('end_card_vo_start', 0.0); end_card_vo_end = params.get('end_card_vo_end')
@@ -5504,24 +5558,39 @@ def _run_trailer_job(jid, params):
             for s in scenes_data:
                 s['total_score'] = s['quality_score']
 
-        # Dialogue transcription (faster-whisper) — improves scene selection two ways:
+        # Dialogue transcription (faster-whisper) — improves scene selection and
+        # cutting several ways:
         # 1. Scenes with actual quotable dialogue get a small scoring boost, so
         #    selection isn't purely based on visual sharpness/brightness/AI framing.
         # 2. Word-level timestamps let cut in/out points snap to word boundaries
         #    later, instead of landing mid-word.
-        word_starts, word_ends = [], []
-        if whisper_enhance:
+        # 3. Segment (phrase/sentence) ends are the PREFERRED snap target -- landing
+        #    on "...and then she left." sounds finished, where a word boundary
+        #    mid-sentence ("...and then she") is technically not mid-word but still
+        #    reads as clipped. See phrase_ends below.
+        # 4. speech_spans lets the exact-duration corrector know which parts of a
+        #    clip actually contain talking, so it can absorb its rounding error out
+        #    of silence instead of shaving syllables off dialogue.
+        word_starts, word_ends, phrase_ends, speech_spans = [], [], [], []
+        if transcribe_for_cuts:
             job_set(jid, percent=22, step='Transcribing dialogue (faster-whisper)')
             words, segments = transcribe_video(path)
             if words or segments:
                 word_starts = [w['start'] for w in words]
                 word_ends = [w['end'] for w in words]
+                phrase_ends = [sg['end'] for sg in segments]
+                speech_spans = [(sg['start'], sg['end']) for sg in segments]
                 for s in scenes_data:
                     overlap_text = ' '.join(
                         sg['text'] for sg in segments if sg['start'] < s['end'] and sg['end'] > s['start']
                     ).strip()
                     s['dialogue'] = overlap_text
-                    if overlap_text:
+                    # The scoring bonus below is still gated on the user actually
+                    # choosing an STT rating mode -- transcribing for cut safety
+                    # shouldn't silently change how scenes are *scored* when they
+                    # picked VISION-only. Cut safety and scoring are now separate
+                    # concerns (see transcribe_for_cuts vs whisper_enhance).
+                    if overlap_text and whisper_enhance:
                         # Speech contributes 1-2: 1 for having quotable
                         # dialogue at all, 2 if it's a question or
                         # exclamation (which tend to make better trailer
@@ -5535,7 +5604,10 @@ def _run_trailer_job(jid, params):
                     else:
                         s['speech_score'] = 0
             else:
-                whisper_enhance = False  # transcription unavailable/failed — skip the snapping logic below too
+                # Transcription unavailable/failed -- skip every speech-aware
+                # behavior below rather than half-applying it.
+                transcribe_for_cuts = False
+                whisper_enhance = False
 
         # "Edit to music": prep the BGM *before* picking scenes so cut points can be
         # snapped onto its beat grid. Only worth the extra generation pass when the
@@ -5616,7 +5688,7 @@ def _run_trailer_job(jid, params):
                 if max_scene_dur:
                     seg_dur = min(seg_dur, max_scene_dur)
                 seg_start = s['start']
-                if whisper_enhance and word_starts:
+                if transcribe_for_cuts and word_starts:
                     # Don't start playback mid-word — nudge the in-point forward to
                     # the start of the nearest word within this scene (capped so we
                     # never drift far from the original visual cut point).
@@ -5632,15 +5704,19 @@ def _run_trailer_job(jid, params):
                     target_cut = total_sel + seg_dur
                     snapped_cut = nearest_beat(target_cut, beat_times, total_sel + 0.3, total_sel + (scene_end - seg_start))
                     seg_dur = max(0.3, min(scene_end - seg_start, snapped_cut - total_sel))
-                if whisper_enhance and word_ends and seg_dur < (scene_end - seg_start):
+                if transcribe_for_cuts and (phrase_ends or word_ends) and seg_dur < (scene_end - seg_start):
                     # This is a separate `if`, not `elif` -- beat-sync above (when
                     # enabled) picks a rhythmically-aligned out-point first, and this
-                    # then refines THAT point for word safety, rather than being
+                    # then refines THAT point for speech safety, rather than being
                     # skipped whenever beat-sync is on. It used to be `elif`, which
                     # meant turning on "sync cuts to the beat" silently disabled
                     # "don't cut mid-word" for every clip's out-point.
+                    #
+                    # Prefers a complete-phrase end over a bare word end -- see
+                    # nearest_speech_out for why that distinction is worth a
+                    # wider snap window.
                     target_end = seg_start + seg_dur
-                    snapped_end = nearest_word_boundary(target_end, word_ends, max_snap=0.35)
+                    snapped_end = nearest_speech_out(target_end, phrase_ends, word_ends)
                     if seg_start < snapped_end <= scene_end:
                         seg_dur = max(0.3, snapped_end - seg_start)
                 s['trim_start'] = seg_start
@@ -5671,14 +5747,14 @@ def _run_trailer_job(jid, params):
             if slack > 0.05:
                 grow = min(slack, shortfall)
                 new_end = last['trim_start'] + last['selected_dur'] + grow
-                if whisper_enhance and word_ends:
+                if transcribe_for_cuts and (phrase_ends or word_ends):
                     # Growing this clip to close the shortfall creates a new cut
-                    # point too -- give it the same word-boundary safety the main
+                    # point too -- give it the same speech-boundary safety the main
                     # truncation path gets above, or this top-up can reintroduce
                     # exactly the mid-word cut the rest of this mechanism exists
                     # to prevent.
                     scene_end_abs = last['start'] + last['duration']
-                    snapped = nearest_word_boundary(new_end, word_ends, max_snap=0.35)
+                    snapped = nearest_speech_out(new_end, phrase_ends, word_ends)
                     if last['trim_start'] < snapped <= scene_end_abs:
                         new_end = snapped
                 grow = max(0.0, new_end - (last['trim_start'] + last['selected_dur']))
@@ -5700,6 +5776,19 @@ def _run_trailer_job(jid, params):
         # capped by each clip's real remaining slack inside its own detected
         # scene (never invents footage that isn't there); trims are floored at
         # min_seg_dur so correction can't shave a clip into a sliver.
+        #
+        # IMPORTANT -- trims are ALSO capped by each clip's speech-free tail
+        # (see speech_free_slack). Without that, this pass silently undid the
+        # word/phrase snapping above: every cut point was carefully placed on
+        # a phrase end, then this shaved ~0.05s off each one to hit an exact
+        # total, putting them all back inside speech by a syllable's width.
+        # Exact duration and speech integrity were directly fighting, and
+        # duration was winning. A clip whose dialogue runs to its end now
+        # contributes nothing to the correction and is left exactly where the
+        # snapping put it; the error is absorbed by clips that have actual
+        # silence to give. If NO clip has silence to spare, the trailer ships
+        # a few hundredths off target rather than clipping a word -- the right
+        # trade for something whose whole job is sounding broadcast-clean.
         n_seg = len(selected) + len(card_files)
         xfade_loss = max(0, (n_seg - 1)) * xfade_dur
         residual = trailer_length - (total_sel + total_card_dur - xfade_loss)
@@ -5710,7 +5799,14 @@ def _run_trailer_job(jid, params):
                 if residual > 0:
                     headroom = [(s, max(0.0, s['duration'] - s['selected_dur'])) for s in selected]
                 else:
-                    headroom = [(s, max(0.0, s['selected_dur'] - min_seg_dur)) for s in selected]
+                    headroom = []
+                    for s in selected:
+                        room = max(0.0, s['selected_dur'] - min_seg_dur)
+                        if transcribe_for_cuts and speech_spans:
+                            clip_start = s['trim_start']
+                            clip_end = clip_start + s['selected_dur']
+                            room = min(room, speech_free_slack(clip_start, clip_end, speech_spans))
+                        headroom.append((s, room))
                 total_head = sum(h for _s, h in headroom)
                 if total_head <= 0.01:
                     break  # nothing left to give -- accept the residual rather than distort a clip
