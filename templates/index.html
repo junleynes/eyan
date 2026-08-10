@@ -158,12 +158,12 @@ h1 small{font-family:'JetBrains Mono',monospace;font-weight:400;text-transform:n
 
 /* ---- Inline delivery tag picker (Fish Audio) ---- */
 .rail-sep{height:1px;background:var(--line);margin:8px 4px;opacity:.6}
-/* ---- Rendered markdown inside AI Chat assistant bubbles ---- */
-/* ---- AI Chat: unified input box (textarea + toolbar in one rounded shell) ---- */
-/* ---- Shared rounded input-box look (same visual language as the AI Chat
+/* ---- Rendered markdown inside AI Assistant bubbles ---- */
+/* ---- AI Assistant: unified input box (textarea + toolbar in one rounded shell) ---- */
+/* ---- Shared rounded input-box look (same visual language as the AI Assistant
    input) reused on every primary text field across the app -- Music
    prompt/lyrics, SFX description, TTS script, Scene Detection's custom
-   prompt, the VO script field, and AI Chat's own system prompt. Applied
+   prompt, the VO script field, and AI Assistant's own system prompt. Applied
    directly to the textarea/input itself; no wrapper element needed. ---- */
 textarea.input-box, input.input-box{
   display:block;width:100%;box-sizing:border-box;
@@ -563,7 +563,7 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
     <div class="tab{{ ' active' if default_tab == 'p-vision' else '' }}" onclick="switchTab('p-vision',this)" role="button" tabindex="0"><span class=tab-icon>&#9673;</span><span class=tab-text>Scene Detection<div class=tab-sub>vision + pyscenedetect</div></span></div>
     {% endif %}
     {% if current_role == 'admin' or 'ai_chat' in current_permissions %}
-    <div class="tab{{ ' active' if default_tab == 'p-chat' else '' }}" onclick="switchTab('p-chat',this)" role="button" tabindex="0"><span class=tab-icon>&#128172;</span><span class=tab-text>AI Chat<div class=tab-sub>llm assistant</div></span></div>
+    <div class="tab{{ ' active' if default_tab == 'p-chat' else '' }}" onclick="switchTab('p-chat',this)" role="button" tabindex="0"><span class=tab-icon>&#128172;</span><span class=tab-text>AI Assistant<div class=tab-sub>llm assistant</div></span></div>
     {% endif %}
     <div class="rail-sep"></div>
     {% if current_role == 'admin' or 'player' in current_permissions %}
@@ -2697,7 +2697,7 @@ function downloadSrt(){
   setTimeout(function(){ URL.revokeObjectURL(a.href) }, 1000)
 }
 
-// ---- AI Chat ----
+// ---- AI Assistant ----
 // Conversation history lives only in this array for the life of the page --
 // no server-side session, nothing persisted, matching how every other tool
 // here is a one-shot call with no state kept between visits.
@@ -3039,7 +3039,8 @@ async function sendChatMessage(){
   status.textContent = 'Thinking…'
 
   var body = {model: model, messages: chatHistory,
-              think: document.getElementById('chat-thinking').checked}
+              think: document.getElementById('chat-thinking').checked,
+              include_app_help: document.getElementById('chat-app-help').checked}
   var sys = document.getElementById('chat-system').value.trim()
   if(sys) body.system = sys
 
@@ -3938,11 +3939,15 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 </div>
 
 <div id="p-chat" class="panel{{ ' active' if default_tab == 'p-chat' else '' }}">
-<h2>AI Chat</h2>
-<p style="font-size:12px;opacity:.75;margin-top:-6px">Chat directly with any model your Ollama server has installed — for testing how a model behaves, drafting text, or just asking it something. Separate from the vision/rating pipeline the promo generator uses; nothing here feeds into a job.</p>
+<h2>AI Assistant</h2>
+<p style="font-size:12px;opacity:.75;margin-top:-6px">Chat with any model your Ollama server has installed — for testing how a model behaves, drafting text, or asking how AIMP itself works (features, limitations, workflow). Separate from the vision/rating pipeline the promo generator uses; nothing here feeds into a job.</p>
+<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;margin-bottom:10px">
+  <input type=checkbox id=chat-app-help checked> Answer questions about AIMP's own features, limitations, and workflow
+</label>
 <details style="margin-bottom:10px">
   <summary style="cursor:pointer;font-size:12px;opacity:.75">System prompt (optional)</summary>
   <textarea id=chat-system class=input-box rows=2 placeholder="e.g. Be concise. Answer only in Tagalog." style="margin-top:6px"></textarea>
+  <p style="font-size:11px;opacity:.6;margin-top:4px">Added on top of the AIMP app-knowledge above (if that's checked), not instead of it — use this for style/language preferences, not to describe the app itself.</p>
 </details>
 <div style="display:flex;justify-content:flex-end;margin-bottom:6px">
   <button type=button class="chat-icon-btn" id=chat-clear-btn onclick="clearChat()" title="Clear chat">
@@ -4132,8 +4137,9 @@ job. Configured via env vars:
 <p>Like the Music tool, this has no fallback: if Woosh is unreachable it says so rather than substituting a placeholder sound. The trailer pipeline's own SFX-at-cuts step is different — it falls back to a procedural synth click when Woosh is down, because that stage always needs <em>something</em> to stamp at each cut; a tool you're explicitly invoking to generate a specific sound should tell you it failed instead.</p>
 <pre>POST /api/sfx/generate  + prompt, duration, samples</pre>
 
-<h3>AI Chat</h3>
-<p>A plain chat interface over whatever models Ollama has installed — separate from the vision/rating pipeline the promo generator uses, and nothing typed here feeds into a job. Useful for testing how a model behaves, drafting text, or just asking it something directly.</p>
+<h3>AI Assistant</h3>
+<p>A chat interface over whatever models Ollama has installed — separate from the vision/rating pipeline the promo generator uses, and nothing typed here feeds into a job. Useful for testing how a model behaves, drafting text, or asking it something directly.</p>
+<p><strong>Answer questions about AIMP's own features, limitations, and workflow</strong> (checked by default) prepends a built-in description of the app — its tabs, the generate workflow, how scene scoring works, and known limitations — to the conversation, so it can actually answer "how do I..." or "why did X happen" questions about AIMP itself instead of guessing. Turn it off for a fully generic chat. Anything typed in the optional System prompt box below it is added on top, not instead of it, so style/language preferences ("be concise", "answer in Tagalog") still work alongside the app knowledge.</p>
 <p>The conversation lives only in the page — there is no server-side session and nothing is saved, so switching tabs or reloading starts fresh. Every send resends the full conversation so far (Ollama has no server-side memory of its own between calls), capped at <code>CHAT_MAX_HISTORY</code> messages (default 60) to bound the request size on a very long conversation.</p>
 <p><strong>Show model reasoning</strong> requests Ollama's <code>think</code> mode for models that support it, and renders the reasoning in a collapsed "Reasoning" block under the reply rather than mixing it into the answer. Off by default, since most models don't need it and it roughly doubles response time.</p>
 <p>Responses are not streamed — the full reply comes back in one request. This keeps the implementation simple and consistent with the rest of the app (job progress here is polled, not pushed, for the same reason), at the cost of watching a "Thinking…" status instead of text appearing as it's generated.</p>
