@@ -741,14 +741,6 @@ document.addEventListener("DOMContentLoaded", function(){
 <div class="work">
 <div class="work-in">
 <form id=tf method=POST action=/api/trailer/generate enctype=multipart/form-data>
-  <div class=card style="padding:10px 14px;margin:0 0 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-    <span style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-dim)">View:</span>
-    <div style="display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden">
-      <button type=button id=view-easy-btn class="view-toggle-btn active" onclick="setViewMode('easy')">Quick</button>
-      <button type=button id=view-adv-btn class="view-toggle-btn" onclick="setViewMode('advanced')">Advanced</button>
-    </div>
-    <span style="font-size:11px;opacity:.7">Quick shows the essentials plus SFX and narration — switch to Advanced for transitions and manual tuning.</span>
-  </div>
   <div id=ollama-down-banner class=card style="display:none;border-color:var(--tally);background:rgba(255,84,112,.08);margin:0 0 16px">
     <strong style="color:var(--tally)">&#9888; AI Vision is unreachable.</strong>
     <span style="font-size:13px">Scene rating needs it, so generation is disabled until it's back. Start Ollama, then click "Check services" on the API tab to retry.</span>
@@ -894,7 +886,7 @@ document.addEventListener("DOMContentLoaded", function(){
     <p style="margin-top:4px;margin-bottom:0;font-size:12px;opacity:.75">A short video (or a single image) whose brightness drives the wipe: black keeps the outgoing scene, white reveals the incoming one, and whatever animates in between defines the transition's shape. Trimmed to the transition duration below and reused at every cut. Falls back to Fade if nothing is uploaded.</p>
   </div>
   </div>
-  <div class="adv-only" style="display:none">
+  <div class="adv-only">
   <label>Transition duration (s):</label>
   <input type=number name=xfade_dur value=0.3 min=0.1 max=2 step=0.1 style="width:100px">
   <label>Audio &amp; beat sync:</label>
@@ -908,10 +900,6 @@ document.addEventListener("DOMContentLoaded", function(){
   </div>
   <p style="margin-top:-4px;margin-bottom:8px;font-size:12px;opacity:.75">Dialogue is transcribed locally to boost ratings for scenes with quotable lines, and to place cut points on phrase/word boundaries instead of mid-sentence. Uses the large-v2 Whisper model by default (needed for reliable Tagalog — smaller models are noticeably worse at it), so the first run may take a bit to load.</p>
   <p style="margin-bottom:8px;font-size:12px;opacity:.6">Loudness target, true peak, music level, ducking, and broadcast dual-mono are set once for this deployment in <strong>Config &gt; Production</strong> — they're delivery-spec values that should be identical on every promo, not per-job choices.</p>
-  </div>
-  <div class="adv-only">
-  <label>AI Vision model:</label>
-  <select name=model id=trailer-model><option value="">Loading...</option></select>
   </div>
   <div class="asset-section" id=asset-title-card>
     <div class="asset-section-header" onclick="toggleAssetSection(this)">
@@ -927,7 +915,7 @@ document.addEventListener("DOMContentLoaded", function(){
   <input type=hidden id=end_card_video_network name=end_card_video_network value="">
   <input type=hidden id=end_card_video_skip_template name=end_card_video_skip_template value="">
   <span class="net-file-chip" id=end_card_video_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('end_card_video')">&#10005;</span></span>
-  <div class="adv-only">
+  <div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0 4px">
     <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">VO for this card (optional, replaces its audio):</span>
     <input type=file name=title_card_vo accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" style="width:auto" data-net-field="title_card_vo" onchange="cardVoFileChosen(this,'title_card_vo')"></span>
@@ -964,7 +952,7 @@ document.addEventListener("DOMContentLoaded", function(){
   <input type=hidden id=schedule_video_network name=schedule_video_network value="">
   <input type=hidden id=schedule_video_skip_template name=schedule_video_skip_template value="">
   <span class="net-file-chip" id=schedule_video_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('schedule_video')">&#10005;</span></span>
-  <div class="adv-only">
+  <div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0 4px">
     <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">VO for this card (optional, replaces its audio):</span>
     <input type=file name=end_card_vo accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" style="width:auto" data-net-field="end_card_vo" onchange="cardVoFileChosen(this,'end_card_vo')"></span>
@@ -1663,16 +1651,15 @@ document.addEventListener("DOMContentLoaded", function(){
     })
     updateTransitionMatteVisibility()
   }
-  function setViewMode(mode){
-    document.body.dataset.viewMode = mode
-    document.getElementById('view-easy-btn').classList.toggle('active', mode === 'easy')
-    document.getElementById('view-adv-btn').classList.toggle('active', mode === 'advanced')
-    document.querySelectorAll('#tf .adv-only').forEach(function(el){
-      if(!el.classList.contains('genre-manual')) el.style.display = (mode === 'easy') ? 'none' : ''
-    })
-    updateGenreManualVisibility()
-  }
-  setViewMode('easy')
+  // The Quick/Advanced toggle is gone. After moving the deployment settings to
+  // Config > Production, the vision model to Config, and the card-VO fields
+  // into their own card sections, only four genuinely creative fields were
+  // left behind it (max clip length, crossfade duration, beat match, sync cuts
+  // to beat) -- not enough to justify a third visibility mechanism layered on
+  // top of the template-collapse and the per-asset collapsible sections. The
+  // .adv-only class stays on those blocks purely as a harmless marker; nothing
+  // hides them now.
+  updateGenreManualVisibility()
   loadTemplates()  // shows are the first thing you pick, so load them up front
   refreshAllAssetSummaries()  // sets each collapsed section's initial summary text
   var voVoiceSel = document.getElementById('vo-voice-select')
@@ -3758,11 +3745,12 @@ async function loadModels(){
     let d=await r.json()
     let opts=d.models.map(m=>'<option value="'+m+'">'+m+'</option>').join('')
     if(!opts) opts='<option value="qwen3-vl:8b" selected>qwen3-vl:8b</option><option value="qwen2.5vl:7b">qwen2.5vl:7b</option>'
+    // Only the standalone Scene Detection tool has its own model picker now --
+    // the generator form's copy moved to Config > Production, since which
+    // vision model is installed is infrastructure, not a per-job choice.
     document.getElementById('vision-model').innerHTML=opts
-    document.getElementById('trailer-model').innerHTML=opts
   }catch(e){
     document.getElementById('vision-model').innerHTML='<option value="qwen3-vl:8b" selected>qwen3-vl:8b</option><option value="qwen2.5vl:7b">qwen2.5vl:7b</option>'
-    document.getElementById('trailer-model').innerHTML=document.getElementById('vision-model').innerHTML
   }
 }
 
@@ -4663,6 +4651,11 @@ async function loadProductionTab(){
           if(c === val) o.selected = true
           input.appendChild(o)
         })
+      }else if(spec.type === 'text'){
+        input = document.createElement('input')
+        input.type = 'text'
+        input.value = val == null ? '' : val
+        input.style.maxWidth = '320px'
       }else{
         input = document.createElement('input')
         input.type = 'number'

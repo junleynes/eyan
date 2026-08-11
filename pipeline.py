@@ -654,6 +654,8 @@ PRODUCTION_DEFAULT_SPEC = {
                           'help': "'content' suits most footage; 'adaptive' handles fades and gradual transitions better."},
     'adaptive_threshold':{'default': 3.0, 'type': 'float', 'label': 'Adaptive threshold',
                           'help': 'Only used when the detector above is set to adaptive.'},
+    'vision_model':      {'default': 'qwen3-vl:8b', 'type': 'text', 'label': 'AI Vision model',
+                          'help': 'Ollama model used to rate scene content. Must be a vision-capable model already pulled on the Ollama server.'},
 }
 
 def load_production_defaults():
@@ -674,6 +676,8 @@ def load_production_defaults():
                         values[k] = float(raw)
                     elif spec['type'] == 'bool':
                         values[k] = bool(raw)
+                    elif spec['type'] == 'text':
+                        values[k] = str(raw).strip() or spec['default']
                     elif spec['type'] == 'choice':
                         if raw in spec['choices']:
                             values[k] = raw
@@ -697,6 +701,12 @@ def save_production_defaults(updates):
                 current[k] = float(raw)
             elif spec['type'] == 'bool':
                 current[k] = bool(raw)
+            elif spec['type'] == 'text':
+                # An empty string falls back to the built-in rather than
+                # saving a blank -- a blank vision model name would fail
+                # every scoring call with a confusing error rather than an
+                # obvious "you cleared this" one.
+                current[k] = str(raw).strip() or spec['default']
             elif spec['type'] == 'choice':
                 if raw in spec['choices']:
                     current[k] = raw
@@ -3454,7 +3464,7 @@ def api_trailer():
         broadcast_stereo = request.form.get('broadcast_stereo') == 'on'
     else:
         broadcast_stereo = bool(_prod['broadcast_stereo'])
-    model = request.form.get('model', 'qwen3-vl:8b')
+    model = request.form.get('model') or _prod['vision_model']
 
     # SFX source selection: 'genre' (AI-generate/synth from the genre preset),
     # 'upload' (stamp a user-supplied one-shot at every cut), or 'none'.
