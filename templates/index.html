@@ -320,6 +320,17 @@ p{color:var(--ink-dim);font-size:13px;line-height:1.65;margin:8px 0}
 .browse-btn:focus-visible{outline:2px solid var(--phosphor);outline-offset:2px}
 .browse-btn.local{color:var(--accent,#4f8cff);border-color:rgba(79,140,255,.5)}
 .browse-btn.local:hover{border-color:var(--accent,#4f8cff);background:rgba(79,140,255,.1)}
+{% if not allow_local_upload %}
+/* Direct media upload is disabled server-side on this deployment (see
+   ALLOW_LOCAL_MEDIA_UPLOAD in pipeline.py). Hiding the controls keeps the UI
+   honest about what will actually work -- the server rejects these uploads
+   regardless, so this is presentation, NOT the security boundary. Every
+   affected input keeps its data-net-field, so the accompanying "Browse
+   library" button still populates the matching <field>_network hidden input
+   exactly as before. stt-file is excluded: Speech to Text reads media for
+   transcription via faster-whisper, and lives behind its own permission. */
+#tf input[type=file][data-net-field]{display:none}
+{% endif %}
 .net-file-chip{
   display:none;align-items:center;gap:6px;font-size:12px;
   background:rgba(52,230,197,.1);border:1px solid rgba(52,230,197,.35);
@@ -750,12 +761,12 @@ document.addEventListener("DOMContentLoaded", function(){
     <input type=hidden name=network_file id=tr-network-file value="">
     <div id=tr-dropzone-prompt>
       <div style="font-size:28px;line-height:1;margin-bottom:6px">&#8682;</div>
-      <div style="font-size:14px;margin-bottom:12px">Drag &amp; drop a video here</div>
+      <div style="font-size:14px;margin-bottom:12px">{% if allow_local_upload %}Drag &amp; drop a video here{% else %}Pick a video from the library{% endif %}</div>
       <div class="browse-row" style="justify-content:center">
-        <button type=button class="browse-btn local" id=tr-browse-link><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4M12 4l-4 4M12 4l4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>Browse files</button>
+        {% if allow_local_upload %}<button type=button class="browse-btn local" id=tr-browse-link><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 16V4M12 4l-4 4M12 4l4 4M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>Browse files</button>{% endif %}
         <button type=button class="browse-btn" id=tr-network-link><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
       </div>
-      <div style="font-size:11px;opacity:.6;margin-top:10px">MP4, MOV, MKV, and most common video formats</div>
+      <div style="font-size:11px;opacity:.6;margin-top:10px">{% if allow_local_upload %}MP4, MOV, MKV, and most common video formats{% else %}Direct upload is disabled on this deployment &mdash; files come from the configured network folders{% endif %}</div>
     </div>
   </div>
   <div id=tr-network-panel class=card style="display:none;text-align:left;padding:14px">

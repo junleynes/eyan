@@ -14,6 +14,7 @@ from auth import require_permission, user_permissions
 from pipeline import (   # noqa: F401 -- registers every /api/, trailer-generation,
     GENRE_DOCS_ROWS, EXPORT_FORMATS, build_export_cmd,
     _sweeper_loop, sweep_upload_folder, free_disk_mb, load_config_overrides, load_branding,
+    ALLOW_LOCAL_MEDIA_UPLOAD,
 )
 import pipeline          # noqa: F401 -- import the module itself too, for its
                           # own @app.route registrations beyond the names above
@@ -51,7 +52,8 @@ def index():
                                    brand_tagline=brand['tagline'],
                                    brand_accent=brand['theme_colors']['accent'],
                                    brand_theme=brand['theme_colors'],
-                                   brand_footer=brand['footer'])
+                                   brand_footer=brand['footer'],
+                                   allow_local_upload=ALLOW_LOCAL_MEDIA_UPLOAD)
 
 @app.route('/uploads/<filename>')
 def uploaded(filename):

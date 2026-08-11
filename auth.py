@@ -423,7 +423,8 @@ def user_get(uid):
 def user_list():
     conn = _users_db()
     rows = conn.execute(
-        'SELECT u.id, u.username, u.role, u.is_active, u.created_at, u.last_login, u.group_id, g.name AS group_name '
+        'SELECT u.id, u.username, u.role, u.is_active, u.created_at, u.last_login, u.group_id, '
+        'u.totp_enabled, g.name AS group_name '
         'FROM users u LEFT JOIN groups g ON g.id = u.group_id ORDER BY u.username COLLATE NOCASE'
     ).fetchall()
     conn.close()
@@ -435,12 +436,31 @@ def user_count_active_admins(exclude_id=None):
     conn.close()
     return len([r for r in rows if r['id'] != exclude_id])
 
+# ---- Password policy ----
+# 12 characters rather than the previous 6. Six is trivially brute-forcible
+# and was only ever defensible on a LAN-only deployment; anything reachable
+# from outside needs a length that actually costs something to guess. Length
+# is deliberately the only hard requirement -- forced character-class rules
+# reliably produce "Password1!" rather than genuinely stronger secrets, and
+# NIST's own guidance now recommends against them.
+MIN_PASSWORD_LENGTH = int(os.environ.get('MIN_PASSWORD_LENGTH', 12))
+
+def _password_policy_error(password):
+    """Returns (ok, reason)."""
+    pw = password or ''
+    if len(pw) < MIN_PASSWORD_LENGTH:
+        return False, f'Password must be at least {MIN_PASSWORD_LENGTH} characters.'
+    if pw.lower() in ('password', 'password123', '123456789012', 'administrator'):
+        return False, 'That password is too common -- pick something less guessable.'
+    return True, None
+
 def user_create(username, password, role='user'):
     username = (username or '').strip()
     if not username:
         return False, 'Username is required.'
-    if len(password or '') < 6:
-        return False, 'Password must be at least 6 characters.'
+    ok, why = _password_policy_error(password)
+    if not ok:
+        return False, why
     if role not in ('admin', 'user'):
         role = 'user'
     conn = _users_db()
@@ -456,8 +476,9 @@ def user_create(username, password, role='user'):
         conn.close()
 
 def user_set_password(uid, password):
-    if len(password or '') < 6:
-        return False, 'Password must be at least 6 characters.'
+    ok, why = _password_policy_error(password)
+    if not ok:
+        return False, why
     conn = _users_db()
     conn.execute('UPDATE users SET password_hash=? WHERE id=?', (generate_password_hash(password), uid))
     conn.commit()
@@ -881,7 +902,7 @@ def _admin_users_page(error=None, notice=None):
     <button type=submit class=btn-sm {'disabled' if is_you else ''}>{'Disable' if u['is_active'] else 'Enable'}</button>
   </form>
   <form method=post action="/admin/users/{u['id']}/password" class=inline-form pw-form>
-    <input type=password name=password placeholder="New password" minlength=6 required>
+    <input type=password name=password placeholder="New password" minlength=12 required>
     <button type=submit class=btn-sm>Set</button>
   </form>
   <form method=post action="/admin/users/{u['id']}/delete" class=inline-form
@@ -1017,7 +1038,7 @@ select,input{{background:var(--panel); border:1px solid var(--line); color:var(-
 <h2>Add user</h2>
 <form method=post action="/admin/users/create" class=add-form>
 <input type=text name=username placeholder="Username" required>
-<input type=password name=password placeholder="Password (min 6 chars)" minlength=6 required>
+<input type=password name=password placeholder="Password (min 12 chars)" minlength=12 required>
 <select name=role><option value=user selected>user</option><option value=admin>admin</option></select>
 <button type=submit class=primary>Create</button>
 </form>

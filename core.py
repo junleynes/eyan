@@ -55,7 +55,12 @@ except (FileNotFoundError, ValueError):
     except OSError as e:
         print(f'Could not persist {_SECRET_KEY_FILE} ({e}); sessions will not '
               'survive a restart until this is writable.')
-app.config['PERMANENT_SESSION_LIFETIME'] = int(os.environ.get('SESSION_LIFETIME_DAYS', 30)) * 86400
+# Sessions now default to 1 day rather than 30. A month-long session is a
+# month-long window for a stolen cookie or an unattended browser to stay
+# valid, which is a poor trade for a tool that people sign into from a
+# workstation each shift. Still configurable for a LAN-only deployment where
+# the convenience genuinely outweighs it.
+app.config['PERMANENT_SESSION_LIFETIME'] = int(os.environ.get('SESSION_LIFETIME_DAYS', 1)) * 86400
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 # Only set Secure on the cookie if the app is actually served over HTTPS -- on a
