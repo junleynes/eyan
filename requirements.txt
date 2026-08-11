@@ -21,6 +21,14 @@ smbprotocol==1.17.0
 pypdf==5.9.0
 msgpack>=1.0
 waitress>=3.0
+# Two-factor authentication (TOTP). pyotp does the actual verification;
+# qrcode renders the enrolment QR so a phone can scan the secret instead of
+# it being typed by hand. Both are imported lazily in auth.py, so an existing
+# deployment that hasn't reinstalled requirements yet still starts -- 2FA is
+# simply unavailable until they're present, rather than the app failing to
+# boot.
+pyotp>=2.9
+qrcode>=7.4
 librosa>=0.10
 soundfile>=0.12
 

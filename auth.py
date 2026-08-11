@@ -3,20 +3,64 @@
 Depends on: core (app, rate limiter, dummy-hash, default password) and
 library_db (LIBRARY_DIR, _sqlite_connect) for where users.db lives.
 """
-import os, time, sqlite3, functools
+import os, time, sqlite3, functools, secrets
 from flask import request, session, redirect, jsonify
 from markupsafe import escape
 from werkzeug.security import generate_password_hash, check_password_hash
 from core import app, _client_ip, _login_limiter, _DUMMY_PW_HASH, DEFAULT_ADMIN_PASSWORD
 from library_db import LIBRARY_DIR, _sqlite_connect, load_branding
 
+def _safe_next(dest):
+    """Only ever redirect to a path on this app -- an absolute or
+    protocol-relative 'next' would be an open-redirect vector."""
+    dest = dest or '/'
+    if not dest.startswith('/') or dest.startswith('//'):
+        return '/'
+    return dest
+
+def _establish_session(user):
+    """Promotes a verified user to a fully signed-in session. Called only
+    after EVERY required factor has passed -- password alone for an account
+    without 2FA, password + code for one with it."""
+    session.pop('pending_2fa_uid', None)
+    session.pop('pending_2fa_next', None)
+    session.permanent = True
+    session['authed'] = True
+    session['user_id'] = user['id']
+    session['username'] = user['username']
+    session['role'] = user['role']
+    user_touch_login(user['id'])
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     error = None
+    # A pending 2FA challenge: the password was already accepted, and we're
+    # waiting on the code. Held in the session (not a hidden form field) so the
+    # "password was correct" fact can't be forged by posting a crafted form
+    # straight to the second step.
+    pending_uid = session.get('pending_2fa_uid')
     if request.method == 'POST':
         if not _login_limiter.allow(_client_ip()):
             error = 'Too many attempts. Wait a few minutes and try again.'
+        elif pending_uid:
+            # ---- Step 2: verify the TOTP (or backup) code ----
+            user = user_get(pending_uid)
+            if not user or not user['is_active']:
+                session.pop('pending_2fa_uid', None)
+                error = 'That account is no longer available. Sign in again.'
+            elif user_totp_verify(user, request.form.get('totp_code')):
+                session.pop('pending_2fa_uid', None)
+                _establish_session(user)
+                return redirect(_safe_next(request.form.get('next')))
+            else:
+                locked_until = user_note_failed_login(user['id'])
+                if locked_until:
+                    session.pop('pending_2fa_uid', None)
+                    error = f'Too many failed codes. This account is locked for {LOGIN_LOCKOUT_MINUTES} minutes.'
+                else:
+                    error = 'That code was not correct. Try again, or use one of your backup codes.'
         else:
+            # ---- Step 1: username + password ----
             username = request.form.get('username', '').strip()
             password = request.form.get('password', '')
             user = user_get_by_username(username)
@@ -25,22 +69,27 @@ def login():
             # wrong password -- that timing gap would otherwise leak which
             # usernames exist.
             pw_ok = check_password_hash(user['password_hash'] if user else _DUMMY_PW_HASH, password)
-            if user and pw_ok and user['is_active']:
-                session.permanent = True
-                session['authed'] = True
-                session['user_id'] = user['id']
-                session['username'] = user['username']
-                session['role'] = user['role']
-                user_touch_login(user['id'])
-                dest = request.form.get('next') or '/'
-                # Only ever redirect to a path on this app -- an absolute or
-                # protocol-relative 'next' would be an open-redirect vector.
-                if not dest.startswith('/') or dest.startswith('//'):
-                    dest = '/'
-                return redirect(dest)
+            locked_secs = user_lockout_remaining(user) if user else 0
+            if locked_secs:
+                # Deliberately the same message whether or not the password was
+                # right -- confirming "correct password, but locked" would tell
+                # an attacker they've found valid credentials.
+                error = f'Too many failed attempts. Try again in {max(1, locked_secs // 60)} minute(s).'
+            elif user and pw_ok and user['is_active']:
+                if user['totp_enabled']:
+                    # Hold the session in a half-authenticated state: enough to
+                    # remember WHO is signing in, not enough to reach anything.
+                    session['pending_2fa_uid'] = user['id']
+                    session['pending_2fa_next'] = _safe_next(request.form.get('next'))
+                    pending_uid = user['id']
+                else:
+                    _establish_session(user)
+                    return redirect(_safe_next(request.form.get('next')))
             elif user and not user['is_active']:
                 error = 'This account has been disabled.'
             else:
+                if user:
+                    user_note_failed_login(user['id'])
                 error = 'Incorrect username or password.'
     nxt = request.args.get('next', '/')
     # 'next' and any error text land inside HTML attribute/element content
@@ -147,13 +196,15 @@ button:active{{transform:translateY(1px)}}
 </div>
 <div class="login-panel">
 <form method=post>
-<h1>Sign in</h1>
+<h1>{'Two-factor code' if pending_uid else 'Sign in'}</h1>
 {f'<div class="err">{error}</div>' if error else ''}
 <input type=hidden name=next value="{nxt}">
-<label>Username</label>
+{'''<p style="font-size:12px;color:var(--ink-dim);margin:0 0 14px;line-height:1.5">Enter the 6-digit code from your authenticator app, or one of your backup codes.</p>
+<label>Authentication code</label>
+<input type=text name=totp_code autofocus autocomplete="one-time-code" inputmode="numeric" pattern="[0-9A-Za-z]*">''' if pending_uid else '''<label>Username</label>
 <input type=text name=username autofocus autocomplete="username">
 <label>Password</label>
-<input type=password name=password autocomplete="current-password">
+<input type=password name=password autocomplete="current-password">'''}
 <button type=submit>Continue</button>
 </form>
 </div>
@@ -164,6 +215,77 @@ button:active{{transform:translateY(1px)}}
 def logout():
     session.clear()
     return redirect('/login')
+
+# ---- Two-factor enrolment (self-service, any signed-in account) ----
+# Deliberately not admin-gated: 2FA protects the individual account, so every
+# user manages their own. An admin can only turn someone else's OFF (see
+# /admin/users/<uid>/2fa/reset below) for the lost-phone case -- they can't
+# enrol on another user's behalf, since that would mean the admin holding a
+# secret that's supposed to be the user's alone.
+@app.route('/api/2fa/status')
+def api_2fa_status():
+    if not session.get('authed'):
+        return jsonify(ok=False, error='Not signed in.'), 403
+    user = user_get(session['user_id'])
+    return jsonify(ok=True, enabled=bool(user and user['totp_enabled']),
+                   available=totp_available(),
+                   backup_remaining=len([c for c in (user['totp_backup_codes'] or '').split('\n') if c]) if user else 0)
+
+@app.route('/api/2fa/begin', methods=['POST'])
+def api_2fa_begin():
+    """Generates a fresh secret and returns it plus a scannable QR. Does NOT
+    enable 2FA -- see api_2fa_confirm. Re-running this before confirming just
+    replaces the pending secret, so restarting a half-finished setup is safe."""
+    if not session.get('authed'):
+        return jsonify(ok=False, error='Not signed in.'), 403
+    if not totp_available():
+        return jsonify(ok=False, error='2FA support is not installed on this server (pip install pyotp qrcode).'), 501
+    secret, uri = user_totp_begin_enrolment(session['user_id'])
+    if not secret:
+        return jsonify(ok=False, error='Could not start 2FA setup.'), 500
+    qr_data_uri = None
+    try:
+        import qrcode, io, base64
+        img = qrcode.make(uri)
+        buf = io.BytesIO()
+        img.save(buf, format='PNG')
+        qr_data_uri = 'data:image/png;base64,' + base64.b64encode(buf.getvalue()).decode()
+    except Exception as e:
+        # A missing/broken qrcode lib shouldn't block enrolment -- the secret
+        # can still be typed into the app by hand, so this degrades to
+        # manual entry rather than failing outright.
+        print(f'2FA QR render failed (falling back to manual entry): {e}')
+    return jsonify(ok=True, secret=secret, uri=uri, qr=qr_data_uri)
+
+@app.route('/api/2fa/confirm', methods=['POST'])
+def api_2fa_confirm():
+    """Verifies a code against the pending secret and, on success, switches 2FA
+    on and returns the one-time backup codes. These are the ONLY time the
+    plaintext codes exist -- only their hashes are stored."""
+    if not session.get('authed'):
+        return jsonify(ok=False, error='Not signed in.'), 403
+    data = request.get_json(silent=True) or {}
+    codes, err = user_totp_confirm(session['user_id'], data.get('code'))
+    if err:
+        return jsonify(ok=False, error=err), 400
+    return jsonify(ok=True, backup_codes=codes)
+
+@app.route('/api/2fa/disable', methods=['POST'])
+def api_2fa_disable():
+    """Turns 2FA off for the signed-in account. Requires a currently-valid
+    code (or backup code) rather than just a session -- otherwise anyone who
+    got hold of an already-signed-in browser could quietly strip the second
+    factor off the account."""
+    if not session.get('authed'):
+        return jsonify(ok=False, error='Not signed in.'), 403
+    user = user_get(session['user_id'])
+    if not user or not user['totp_enabled']:
+        return jsonify(ok=True)   # already off; nothing to do
+    data = request.get_json(silent=True) or {}
+    if not user_totp_verify(user, data.get('code')):
+        return jsonify(ok=False, error='Enter a current code from your authenticator app (or a backup code) to turn 2FA off.'), 400
+    user_totp_disable(session['user_id'])
+    return jsonify(ok=True)
 
 
 # ---- User accounts (SQLite) ----
@@ -239,6 +361,28 @@ def users_db_init():
     have = {r[1] for r in conn.execute('PRAGMA table_info(users)')}
     if 'group_id' not in have:
         conn.execute('ALTER TABLE users ADD COLUMN group_id INTEGER')
+    # ---- Two-factor authentication (TOTP, Google Authenticator compatible) ----
+    # totp_secret holds the base32 shared secret; totp_enabled is only set to 1
+    # AFTER the user has proved they can generate a valid code from it, so an
+    # interrupted enrolment can never lock someone out of their own account with
+    # a secret they never successfully scanned. totp_backup_codes holds
+    # newline-separated HASHES of one-time recovery codes -- hashed rather than
+    # stored plainly for the same reason passwords are: a database read
+    # shouldn't hand over a working second factor.
+    if 'totp_secret' not in have:
+        conn.execute('ALTER TABLE users ADD COLUMN totp_secret TEXT')
+    if 'totp_enabled' not in have:
+        conn.execute('ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0')
+    if 'totp_backup_codes' not in have:
+        conn.execute('ALTER TABLE users ADD COLUMN totp_backup_codes TEXT')
+    if 'failed_logins' not in have:
+        # Per-ACCOUNT failure tracking, alongside the existing per-IP rate
+        # limit. The IP limiter alone is bypassed entirely by a distributed
+        # attempt (many IPs, one target account), which is exactly the shape
+        # a public-facing deployment attracts.
+        conn.execute('ALTER TABLE users ADD COLUMN failed_logins INTEGER NOT NULL DEFAULT 0')
+    if 'locked_until' not in have:
+        conn.execute('ALTER TABLE users ADD COLUMN locked_until REAL')
     conn.commit()
     count = conn.execute('SELECT COUNT(*) AS c FROM users').fetchone()['c']
     if count == 0:
@@ -356,7 +500,130 @@ def user_delete(uid):
 
 def user_touch_login(uid):
     conn = _users_db()
-    conn.execute('UPDATE users SET last_login=? WHERE id=?', (time.time(), uid))
+    # A successful sign-in clears any accumulated failure count and lockout --
+    # otherwise a user who fumbled their password a few times would stay one
+    # mistake away from a lockout indefinitely.
+    conn.execute('UPDATE users SET last_login=?, failed_logins=0, locked_until=NULL WHERE id=?',
+                 (time.time(), uid))
+    conn.commit()
+    conn.close()
+
+# ---- Per-account lockout (complements the per-IP rate limit in core.py) ----
+LOGIN_MAX_FAILURES = int(os.environ.get('LOGIN_MAX_FAILURES', 10))
+LOGIN_LOCKOUT_MINUTES = int(os.environ.get('LOGIN_LOCKOUT_MINUTES', 15))
+
+def user_note_failed_login(uid):
+    """Counts a failed attempt against the ACCOUNT and locks it temporarily
+    once the threshold is hit. The existing per-IP limiter can't see a
+    distributed attempt (many source IPs, one target account), which is the
+    realistic shape of an attack on a public-facing login."""
+    conn = _users_db()
+    row = conn.execute('SELECT failed_logins FROM users WHERE id=?', (uid,)).fetchone()
+    fails = (row['failed_logins'] if row else 0) + 1
+    locked_until = None
+    if fails >= LOGIN_MAX_FAILURES:
+        locked_until = time.time() + LOGIN_LOCKOUT_MINUTES * 60
+        fails = 0   # reset the counter so the next lockout needs a fresh run of failures
+    conn.execute('UPDATE users SET failed_logins=?, locked_until=? WHERE id=?', (fails, locked_until, uid))
+    conn.commit()
+    conn.close()
+    return locked_until
+
+def user_lockout_remaining(user):
+    """Seconds left on an active lockout, or 0 if not locked."""
+    if not user or not user['locked_until']:
+        return 0
+    return max(0, int(user['locked_until'] - time.time()))
+
+# ---- TOTP two-factor (Google Authenticator / Authy / 1Password compatible) ----
+def _totp_lib():
+    """pyotp imported lazily so the app still starts (with 2FA simply
+    unavailable) on a deployment that hasn't installed it yet, rather than
+    failing at import time and taking the whole service down."""
+    try:
+        import pyotp
+        return pyotp
+    except ImportError:
+        return None
+
+def totp_available():
+    return _totp_lib() is not None
+
+def user_totp_begin_enrolment(uid):
+    """Generates and stores a fresh secret WITHOUT enabling 2FA yet, and
+    returns (secret, otpauth_uri). Enabling only happens once the user proves
+    they can produce a valid code from it (see user_totp_confirm) -- so
+    abandoning enrolment halfway leaves the account exactly as it was."""
+    pyotp = _totp_lib()
+    if not pyotp:
+        return None, None
+    secret = pyotp.random_base32()
+    conn = _users_db()
+    row = conn.execute('SELECT username FROM users WHERE id=?', (uid,)).fetchone()
+    username = row['username'] if row else 'user'
+    conn.execute('UPDATE users SET totp_secret=?, totp_enabled=0 WHERE id=?', (secret, uid))
+    conn.commit()
+    conn.close()
+    try:
+        issuer = load_branding()['name']
+    except Exception:
+        issuer = 'AIMP'
+    uri = pyotp.totp.TOTP(secret).provisioning_uri(name=username, issuer_name=issuer)
+    return secret, uri
+
+def _hash_backup_code(code):
+    return generate_password_hash(code.strip().upper())
+
+def user_totp_confirm(uid, code):
+    """Verifies `code` against the pending secret and, on success, switches 2FA
+    on and returns freshly generated one-time backup codes. Returns (codes,
+    error) -- codes are shown to the user exactly once here, since only their
+    hashes are stored."""
+    pyotp = _totp_lib()
+    if not pyotp:
+        return None, '2FA support is not installed on this server (pip install pyotp).'
+    conn = _users_db()
+    row = conn.execute('SELECT totp_secret FROM users WHERE id=?', (uid,)).fetchone()
+    if not row or not row['totp_secret']:
+        conn.close()
+        return None, 'Start setup again -- no pending 2FA secret for this account.'
+    # valid_window=1 accepts the adjacent 30s step either side, which absorbs
+    # ordinary clock drift between the phone and the server without meaningfully
+    # widening the guess space.
+    if not pyotp.TOTP(row['totp_secret']).verify((code or '').strip(), valid_window=1):
+        conn.close()
+        return None, 'That code was not correct. Check your phone and try again.'
+    codes = [secrets.token_hex(4).upper() for _ in range(10)]
+    hashed = '\n'.join(_hash_backup_code(c) for c in codes)
+    conn.execute('UPDATE users SET totp_enabled=1, totp_backup_codes=? WHERE id=?', (hashed, uid))
+    conn.commit()
+    conn.close()
+    return codes, None
+
+def user_totp_verify(user, code):
+    """Checks `code` against the account's TOTP secret, then against its unused
+    backup codes. A matching backup code is CONSUMED (removed from the stored
+    list) so it genuinely works only once."""
+    pyotp = _totp_lib()
+    code = (code or '').strip()
+    if not code or not user or not user['totp_secret']:
+        return False
+    if pyotp and pyotp.TOTP(user['totp_secret']).verify(code, valid_window=1):
+        return True
+    stored = (user['totp_backup_codes'] or '').split('\n')
+    for h in stored:
+        if h and check_password_hash(h, code.upper()):
+            remaining = '\n'.join(x for x in stored if x != h)
+            conn = _users_db()
+            conn.execute('UPDATE users SET totp_backup_codes=? WHERE id=?', (remaining, user['id']))
+            conn.commit()
+            conn.close()
+            return True
+    return False
+
+def user_totp_disable(uid):
+    conn = _users_db()
+    conn.execute('UPDATE users SET totp_secret=NULL, totp_enabled=0, totp_backup_codes=NULL WHERE id=?', (uid,))
     conn.commit()
     conn.close()
 
@@ -563,6 +830,18 @@ admin_reset_if_requested()
 # Simple server-rendered page; only reachable by an authenticated admin (see
 # _access_control's _ADMIN_PREFIX check). Anyone else gets a redirect/403.
 
+def _twofa_cell(u):
+    """The 2FA column for one row: status, plus a Reset button when it's on.
+    Reset is the lost-phone escape hatch -- an admin can clear someone's 2FA
+    but never enrol it for them (see admin_users_2fa_reset)."""
+    if not u['totp_enabled']:
+        return '<span style="opacity:.5;font-size:11px">off</span>'
+    return (f'<span class=you style="font-size:11px">on</span> '
+            f'<form method=post action="/admin/users/{u["id"]}/2fa/reset" class=inline-form '
+            f'onsubmit="return confirm(\'Clear 2FA for {escape(u["username"])}? '
+            f'They will sign in with just their password until they set it up again.\')">'
+            f'<button type=submit class="btn-sm btn-danger" style="padding:3px 7px;font-size:10px">Reset</button></form>')
+
 def _admin_users_page(error=None, notice=None):
     users = user_list()
     groups = group_list()
@@ -594,6 +873,7 @@ def _admin_users_page(error=None, notice=None):
   </form>
 </td>
 <td>{'active' if u['is_active'] else 'disabled'}</td>
+<td>{_twofa_cell(u)}</td>
 <td>{created}</td>
 <td>{last_login}</td>
 <td class=actions>
@@ -729,7 +1009,7 @@ select,input{{background:var(--panel); border:1px solid var(--line); color:var(-
 {f'<div class="notice">{notice}</div>' if notice else ''}
 <div class=card>
 <table>
-<tr><th>Username</th><th>Role</th><th>Group</th><th>Status</th><th>Created</th><th>Last login</th><th>Actions</th></tr>
+<tr><th>Username</th><th>Role</th><th>Group</th><th>Status</th><th>2FA</th><th>Created</th><th>Last login</th><th>Actions</th></tr>
 {rows}
 </table>
 </div>
@@ -784,6 +1064,19 @@ def admin_users_toggle(uid):
         return _admin_users_page(error='User not found.')
     ok, err = user_set_active(uid, not target['is_active'])
     return _admin_users_page(error=None if ok else err, notice='Status updated.' if ok else None)
+
+@app.route('/admin/users/<int:uid>/2fa/reset', methods=['POST'])
+def admin_users_2fa_reset(uid):
+    """Clears another account's 2FA entirely -- the lost-phone escape hatch.
+    Admins can only turn it OFF, never enrol on someone's behalf: enrolling
+    would mean an admin holding a secret that's meant to be the user's alone.
+    The user then re-enrols themselves from Config > Security."""
+    target = user_get(uid)
+    if not target:
+        return _admin_users_page(error='No such account.')
+    user_totp_disable(uid)
+    return _admin_users_page(notice=f"Two-factor authentication cleared for {target['username']} — "
+                                    "they can set it up again from Config > Security.")
 
 @app.route('/admin/users/<int:uid>/password', methods=['POST'])
 def admin_users_password(uid):

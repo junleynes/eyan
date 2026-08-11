@@ -594,7 +594,7 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
 </nav>
 <div class="container">
 
-<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadNetworkFolders==='function'&&!networkFoldersLoaded){loadNetworkFolders()}if(id==='p-config'&&typeof loadProductionTab==='function'&&!productionTabLoaded){loadProductionTab()}if(id==='p-music'&&typeof loadAceStepModels==='function'){loadAceStepModels()}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active');if(id==='p-config-users'){var f=document.getElementById('config-users-frame');if(f&&!f.getAttribute('src'))f.setAttribute('src',f.getAttribute('data-src'))}}
+<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadNetworkFolders==='function'&&!networkFoldersLoaded){loadNetworkFolders()}if(id==='p-config'&&typeof loadProductionTab==='function'&&!productionTabLoaded){loadProductionTab()}if(id==='p-config'&&typeof loadTwofaStatus==='function'&&!twofaLoaded){loadTwofaStatus()}if(id==='p-music'&&typeof loadAceStepModels==='function'){loadAceStepModels()}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active');if(id==='p-config-users'){var f=document.getElementById('config-users-frame');if(f&&!f.getAttribute('src'))f.setAttribute('src',f.getAttribute('data-src'))}}
 
 // ---- Theme (light / dark / auto) ----
 // The <head> script (see near the top of the page) already resolved and
@@ -4397,6 +4397,7 @@ This is [emphasis] the one you cannot miss.
   <div class="sub-tab" onclick="switchSubTab('p-config-production',this)" role="button" tabindex="0">Production</div>
   <div class="sub-tab" onclick="switchSubTab('p-config-network',this)" role="button" tabindex="0">Network</div>
   <div class="sub-tab" onclick="switchSubTab('p-config-branding',this)" role="button" tabindex="0">Branding</div>
+  <div class="sub-tab" onclick="switchSubTab('p-config-security',this)" role="button" tabindex="0">Security</div>
   <div class="sub-tab" onclick="switchSubTab('p-config-users',this)" role="button" tabindex="0">Users</div>
 </div>
 
@@ -4485,6 +4486,33 @@ This is [emphasis] the one you cannot miss.
     </div>
     <p style="font-size:11px;opacity:.65;margin-top:6px">ICO, SVG, or PNG. Browsers cache favicons aggressively — a hard refresh may be needed to see a change.</p>
   </div>
+</div>
+</div>
+
+<div id="p-config-security" class="sub-panel">
+<h3 style="margin-top:0">Two-factor authentication</h3>
+<p style="margin-top:-4px;color:var(--ink-dim)">Adds a 6-digit code from your phone on top of your password. Works with Google Authenticator, Authy, 1Password, or any TOTP app. This applies to <strong>your own account only</strong> — every user sets up their own.</p>
+<div id=twofa-status style="margin-top:14px"><p style="opacity:.7">Loading&hellip;</p></div>
+
+<div id=twofa-setup style="display:none;margin-top:16px;border:1px solid var(--line);border-radius:10px;padding:16px">
+  <p style="margin:0 0 12px;font-size:13px"><strong>1.</strong> Scan this with your authenticator app:</p>
+  <img id=twofa-qr alt="2FA QR code" style="width:190px;height:190px;background:#fff;border-radius:8px;padding:8px;display:block">
+  <p style="font-size:12px;opacity:.7;margin:10px 0 4px">Can't scan? Enter this key manually:</p>
+  <code id=twofa-secret style="font-size:13px;letter-spacing:.08em;word-break:break-all"></code>
+  <p style="margin:16px 0 6px;font-size:13px"><strong>2.</strong> Enter the 6-digit code it shows:</p>
+  <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <input type=text id=twofa-code inputmode=numeric maxlength=6 placeholder="000000" style="width:120px;letter-spacing:.15em;font-size:15px">
+    <button type=button class=btn onclick="confirmTwofa()">Verify &amp; turn on</button>
+    <button type=button class=btn style="background:transparent;border:1px solid var(--line);color:var(--ink-dim)" onclick="cancelTwofaSetup()">Cancel</button>
+  </div>
+  <span id=twofa-setup-status style="font-size:12px;display:inline-block;margin-top:8px"></span>
+</div>
+
+<div id=twofa-backup style="display:none;margin-top:16px;border:1px solid var(--amber);border-radius:10px;padding:16px">
+  <p style="margin:0 0 8px;font-size:13px;color:var(--amber)"><strong>Save these backup codes now.</strong></p>
+  <p style="margin:0 0 12px;font-size:12px;opacity:.8">Each works once, and this is the only time they're shown — they're stored hashed, so they can't be displayed again. Use one if you lose access to your phone.</p>
+  <pre id=twofa-backup-codes style="font-family:'JetBrains Mono',monospace;font-size:13px;line-height:1.9;margin:0;padding:12px;background:var(--panel);border-radius:8px;letter-spacing:.06em"></pre>
+  <button type=button class=btn style="margin-top:12px" onclick="document.getElementById('twofa-backup').style.display='none';loadTwofaStatus()">I've saved them</button>
 </div>
 </div>
 
@@ -4625,6 +4653,83 @@ async function saveConfigTab(){
   }
 }
 window.saveConfigTab = saveConfigTab
+
+var twofaLoaded = false
+async function loadTwofaStatus(){
+  var box = document.getElementById('twofa-status')
+  try{
+    var r = await fetch('/api/2fa/status')
+    var d = await r.json()
+    if(!d.ok){ box.innerHTML = '<p style="color:var(--amber)">Could not load 2FA status.</p>'; return }
+    if(!d.available){
+      box.innerHTML = '<p style="color:var(--amber);font-size:13px">2FA support isn\'t installed on this server. Run <code>pip install pyotp qrcode</code> and restart.</p>'
+      return
+    }
+    if(d.enabled){
+      box.innerHTML =
+        '<p style="font-size:13px;margin:0 0 10px"><strong style="color:var(--phosphor)">&#9679; Two-factor is on</strong> for your account.' +
+        ' <span style="opacity:.7">' + d.backup_remaining + ' backup code' + (d.backup_remaining === 1 ? '' : 's') + ' remaining.</span></p>' +
+        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+        '<input type=text id=twofa-off-code inputmode=numeric maxlength=8 placeholder="Current code" style="width:140px">' +
+        '<button type=button class=btn style="border-color:var(--tally);color:var(--tally);background:transparent" onclick="disableTwofa()">Turn off</button>' +
+        '<span id=twofa-off-status style="font-size:12px"></span></div>'
+    }else{
+      box.innerHTML =
+        '<p style="font-size:13px;margin:0 0 10px"><strong style="opacity:.7">&#9675; Two-factor is off</strong> for your account.</p>' +
+        '<button type=button class=btn onclick="beginTwofa()">Set up two-factor</button>'
+    }
+    twofaLoaded = true
+  }catch(e){ box.innerHTML = '<p style="color:var(--amber)">Error: '+e+'</p>' }
+}
+async function beginTwofa(){
+  var setup = document.getElementById('twofa-setup')
+  try{
+    var r = await fetch('/api/2fa/begin', {method:'POST'})
+    var d = await r.json()
+    if(!d.ok){ alert(d.error || 'Could not start 2FA setup.'); return }
+    document.getElementById('twofa-secret').textContent = d.secret
+    var qr = document.getElementById('twofa-qr')
+    if(d.qr){ qr.src = d.qr; qr.style.display = '' }
+    else { qr.style.display = 'none' }   // QR render failed server-side; manual key still works
+    document.getElementById('twofa-code').value = ''
+    document.getElementById('twofa-setup-status').textContent = ''
+    setup.style.display = ''
+  }catch(e){ alert('Could not start 2FA setup: ' + e) }
+}
+window.beginTwofa = beginTwofa
+function cancelTwofaSetup(){
+  // Leaves the pending secret on the account but never enables it -- harmless,
+  // and starting setup again simply replaces it.
+  document.getElementById('twofa-setup').style.display = 'none'
+}
+window.cancelTwofaSetup = cancelTwofaSetup
+async function confirmTwofa(){
+  var status = document.getElementById('twofa-setup-status')
+  var code = document.getElementById('twofa-code').value.trim()
+  status.textContent = 'Verifying\u2026'; status.style.color = 'var(--ink-dim)'
+  try{
+    var r = await fetch('/api/2fa/confirm', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({code: code})})
+    var d = await r.json()
+    if(!d.ok){ status.textContent = d.error || 'Could not verify that code.'; status.style.color = 'var(--amber)'; return }
+    document.getElementById('twofa-setup').style.display = 'none'
+    document.getElementById('twofa-backup-codes').textContent = (d.backup_codes || []).join('\n')
+    document.getElementById('twofa-backup').style.display = ''
+    loadTwofaStatus()
+  }catch(e){ status.textContent = 'Failed: '+e; status.style.color = 'var(--amber)' }
+}
+window.confirmTwofa = confirmTwofa
+async function disableTwofa(){
+  var status = document.getElementById('twofa-off-status')
+  var code = document.getElementById('twofa-off-code').value.trim()
+  status.textContent = 'Checking\u2026'; status.style.color = 'var(--ink-dim)'
+  try{
+    var r = await fetch('/api/2fa/disable', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({code: code})})
+    var d = await r.json()
+    if(!d.ok){ status.textContent = d.error || 'Could not turn 2FA off.'; status.style.color = 'var(--amber)'; return }
+    loadTwofaStatus()
+  }catch(e){ status.textContent = 'Failed: '+e; status.style.color = 'var(--amber)' }
+}
+window.disableTwofa = disableTwofa
 
 var productionTabLoaded = false
 async function loadProductionTab(){
