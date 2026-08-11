@@ -615,6 +615,97 @@ def current_config_values():
         'WOOSH_URL': WOOSH_URL,
     }
 
+# ---- Production defaults (Config > Production) ----
+# Settings that are deployment-wide standards rather than per-promo creative
+# choices, moved off the generator form where they were 25-odd controls
+# everyone had to scroll past on every single job:
+#   * Loudness/true-peak/dual-mono are broadcast COMPLIANCE values (EBU R128 /
+#     ATSC A/85). They should be identical on every promo a station ships --
+#     varying them per job is a delivery-spec violation waiting to happen, not
+#     a feature.
+#   * Duck depth/hold/music level are the house mix standard.
+#   * Scene-detection thresholds are tuning knobs most operators can't
+#     reason about, where a wrong value silently produces bad cuts rather
+#     than an obvious error.
+# The generator still accepts all of these as form fields (saved templates
+# carry them, and a genuine one-off override stays possible via the API), but
+# when a field ISN'T supplied it now falls back to these configured values
+# instead of a constant hardcoded in the request parser.
+PRODUCTION_DEFAULTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'production_defaults.json')
+PRODUCTION_DEFAULT_SPEC = {
+    'target_loudness':   {'default': -14.0, 'type': 'float', 'label': 'Loudness target (LUFS)',
+                          'help': 'Broadcast standard is -23 LUFS (EBU R128) or -24 LKFS (ATSC A/85); -14 suits online/streaming delivery.'},
+    'true_peak':         {'default': -1.5, 'type': 'float', 'label': 'True peak ceiling (dBTP)',
+                          'help': 'Maximum permitted peak. -1.5 is a safe default; broadcast delivery often specifies -2.0.'},
+    'music_duck_db':     {'default': -3.0, 'type': 'float', 'label': 'Music bed level (dB)',
+                          'help': 'How far the music sits below full scale before any ducking is applied.'},
+    'duck_depth_db':     {'default': -15.0, 'type': 'float', 'label': 'Duck depth (dB)',
+                          'help': 'How far the music drops underneath dialogue and narration.'},
+    'duck_release_hold': {'default': 0.4, 'type': 'float', 'label': 'Duck hold (seconds)',
+                          'help': 'How long the music stays ducked after a line ends before coming back up.'},
+    'broadcast_stereo':  {'default': False, 'type': 'bool', 'label': 'Broadcast dual-mono',
+                          'help': 'Force all audio identical in L/R -- required by some broadcast delivery specs.'},
+    'scene_threshold':   {'default': 30.0, 'type': 'float', 'label': 'Cut sensitivity',
+                          'help': 'Lower finds more cuts (content detector). 30 suits most broadcast footage.'},
+    'min_scene_len':     {'default': 0.5, 'type': 'float', 'label': 'Minimum scene length (seconds)',
+                          'help': 'Scenes shorter than this are ignored, filtering out flash frames and whip pans.'},
+    'detector':          {'default': 'content', 'type': 'choice', 'choices': ['content', 'adaptive'],
+                          'label': 'Scene detector',
+                          'help': "'content' suits most footage; 'adaptive' handles fades and gradual transitions better."},
+    'adaptive_threshold':{'default': 3.0, 'type': 'float', 'label': 'Adaptive threshold',
+                          'help': 'Only used when the detector above is set to adaptive.'},
+}
+
+def load_production_defaults():
+    """Current production defaults, falling back to PRODUCTION_DEFAULT_SPEC's
+    built-ins for anything never configured. Always returns a complete dict so
+    callers never need their own fallback logic."""
+    values = {k: v['default'] for k, v in PRODUCTION_DEFAULT_SPEC.items()}
+    if os.path.exists(PRODUCTION_DEFAULTS_FILE):
+        try:
+            with open(PRODUCTION_DEFAULTS_FILE) as f:
+                saved = json.load(f)
+            for k, spec in PRODUCTION_DEFAULT_SPEC.items():
+                if k not in saved:
+                    continue
+                raw = saved[k]
+                try:
+                    if spec['type'] == 'float':
+                        values[k] = float(raw)
+                    elif spec['type'] == 'bool':
+                        values[k] = bool(raw)
+                    elif spec['type'] == 'choice':
+                        if raw in spec['choices']:
+                            values[k] = raw
+                except (TypeError, ValueError):
+                    pass  # keep the built-in default rather than a bad saved value
+        except Exception as e:
+            print(f'Production defaults load error ({PRODUCTION_DEFAULTS_FILE}): {e}')
+    return values
+
+def save_production_defaults(updates):
+    """Merges `updates` into the saved production defaults. Unknown keys and
+    values that don't parse are ignored rather than written through, so a
+    malformed request can't corrupt the delivery spec for every future job."""
+    current = load_production_defaults()
+    for k, spec in PRODUCTION_DEFAULT_SPEC.items():
+        if k not in updates:
+            continue
+        raw = updates[k]
+        try:
+            if spec['type'] == 'float':
+                current[k] = float(raw)
+            elif spec['type'] == 'bool':
+                current[k] = bool(raw)
+            elif spec['type'] == 'choice':
+                if raw in spec['choices']:
+                    current[k] = raw
+        except (TypeError, ValueError):
+            continue
+    with open(PRODUCTION_DEFAULTS_FILE, 'w') as f:
+        json.dump(current, f, indent=2)
+    return current
+
 # ---- Branding ----
 # Moved to library_db.py (see there for load_branding/save_branding_text/etc.)
 # so both this module's Config > Branding routes AND auth.py's login page can
@@ -3263,21 +3354,29 @@ def api_trailer():
         max_scene_dur = max_scene_dur if max_scene_dur > 0 else None
     except ValueError:
         max_scene_dur = None
+    # Deployment-wide production standards (Config > Production) supply the
+    # fallback for every setting below that used to have a constant hardcoded
+    # here -- an explicit form field still wins, so saved templates carrying
+    # these values and deliberate API overrides both keep working, but the
+    # generator form no longer has to ask about any of them on every job. See
+    # PRODUCTION_DEFAULT_SPEC for why these belong at deployment level rather
+    # than per-promo.
+    _prod = load_production_defaults()
     try:
-        scene_threshold = max(1.0, min(100.0, float(request.form.get('scene_threshold', 30.0))))
+        scene_threshold = max(1.0, min(100.0, float(request.form.get('scene_threshold') or _prod['scene_threshold'])))
     except ValueError:
-        scene_threshold = 30.0
+        scene_threshold = float(_prod['scene_threshold'])
     try:
-        min_scene_len_sec = max(0.1, min(5.0, float(request.form.get('min_scene_len', 0.5))))
+        min_scene_len_sec = max(0.1, min(5.0, float(request.form.get('min_scene_len') or _prod['min_scene_len'])))
     except ValueError:
-        min_scene_len_sec = 0.5
-    detector = request.form.get('detector', 'content')
+        min_scene_len_sec = float(_prod['min_scene_len'])
+    detector = request.form.get('detector') or _prod['detector']
     if detector not in ('content', 'adaptive'):
         detector = 'content'
     try:
-        adaptive_threshold = max(1.0, min(10.0, float(request.form.get('adaptive_threshold', 3.0))))
+        adaptive_threshold = max(1.0, min(10.0, float(request.form.get('adaptive_threshold') or _prod['adaptive_threshold'])))
     except ValueError:
-        adaptive_threshold = 3.0
+        adaptive_threshold = float(_prod['adaptive_threshold'])
 
     # Scene priority: how the selector decides which moments matter.
     #   'auto'   -- top automatic score wins (the behaviour before this option existed)
@@ -3332,13 +3431,29 @@ def api_trailer():
                 # Selected "Custom" but didn't upload anything — fall back rather
                 # than fail the whole job over a missing optional asset.
                 transition = 'fade'
-    target_loudness = float(request.form.get('target_loudness', -14))
-    true_peak = float(request.form.get('true_peak', -1.5))
-    music_duck_db = float(request.form.get('music_duck_db', -3))
-    duck_depth_db = float(request.form.get('duck_depth_db', -15))
-    duck_release_hold = float(request.form.get('duck_release_hold', 0.4))
+    def _prod_float(field):
+        raw = request.form.get(field)
+        if raw is None or raw == '':
+            return float(_prod[field])
+        try:
+            return float(raw)
+        except ValueError:
+            return float(_prod[field])
+    target_loudness = _prod_float('target_loudness')
+    true_peak = _prod_float('true_peak')
+    music_duck_db = _prod_float('music_duck_db')
+    duck_depth_db = _prod_float('duck_depth_db')
+    duck_release_hold = _prod_float('duck_release_hold')
     beat_match = request.form.get('beat_match') == 'on'
-    broadcast_stereo = request.form.get('broadcast_stereo') == 'on'
+    # A checkbox that isn't rendered at all sends nothing, which is
+    # indistinguishable from "rendered and unticked" -- so this can't use the
+    # usual == 'on' check alone without silently forcing the configured
+    # default off for every job the moment the field left the form. Presence
+    # of the companion hidden marker tells the two apart.
+    if request.form.get('broadcast_stereo_present') == '1':
+        broadcast_stereo = request.form.get('broadcast_stereo') == 'on'
+    else:
+        broadcast_stereo = bool(_prod['broadcast_stereo'])
     model = request.form.get('model', 'qwen3-vl:8b')
 
     # SFX source selection: 'genre' (AI-generate/synth from the genre preset),
@@ -4695,6 +4810,35 @@ def api_network_shares_post():
     if not ok:
         return jsonify(ok=False, error=err), 400
     return jsonify(ok=True, category=category)
+
+@app.route('/api/production', methods=['GET'])
+def api_production_get():
+    """Deployment-wide production defaults (broadcast loudness/peak/dual-mono,
+    house mix ducking, scene-detection tuning) plus their spec -- label, help
+    text, type, and choices -- so the Config > Production tab renders itself
+    from one source of truth rather than hardcoding a second copy of the field
+    list that could drift from PRODUCTION_DEFAULT_SPEC.
+
+    Not admin-gated for reading: these are just numbers describing how promos
+    get rendered, and the generator's own behaviour already reflects them.
+    Changing them is admin-only (see POST below)."""
+    spec = {k: {kk: vv for kk, vv in v.items() if kk != 'default'}
+            for k, v in PRODUCTION_DEFAULT_SPEC.items()}
+    return jsonify(ok=True, values=load_production_defaults(), spec=spec,
+                   order=list(PRODUCTION_DEFAULT_SPEC.keys()))
+
+@app.route('/api/production', methods=['POST'])
+def api_production_post():
+    """Saves production defaults. Admin-only -- these are effectively the
+    delivery spec every future promo is rendered against, so this is a higher
+    bar than a per-job setting. Values that don't parse are ignored rather
+    than written through (see save_production_defaults), so a malformed
+    request can't quietly corrupt the spec."""
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='Admin access required.'), 403
+    data = request.get_json(silent=True) or {}
+    values = save_production_defaults(data)
+    return jsonify(ok=True, values=values)
 
 # ---- Branding routes ----
 # /branding/logo and /branding/favicon are in _PUBLIC_PATHS (see core.py) so

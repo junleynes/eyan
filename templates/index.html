@@ -594,7 +594,7 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
 </nav>
 <div class="container">
 
-<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadNetworkFolders==='function'&&!networkFoldersLoaded){loadNetworkFolders()}if(id==='p-music'&&typeof loadAceStepModels==='function'){loadAceStepModels()}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active');if(id==='p-config-users'){var f=document.getElementById('config-users-frame');if(f&&!f.getAttribute('src'))f.setAttribute('src',f.getAttribute('data-src'))}}
+<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadNetworkFolders==='function'&&!networkFoldersLoaded){loadNetworkFolders()}if(id==='p-config'&&typeof loadProductionTab==='function'&&!productionTabLoaded){loadProductionTab()}if(id==='p-music'&&typeof loadAceStepModels==='function'){loadAceStepModels()}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active');if(id==='p-config-users'){var f=document.getElementById('config-users-frame');if(f&&!f.getAttribute('src'))f.setAttribute('src',f.getAttribute('data-src'))}}
 
 // ---- Theme (light / dark / auto) ----
 // The <head> script (see near the top of the page) already resolved and
@@ -827,23 +827,7 @@ document.addEventListener("DOMContentLoaded", function(){
   <label>Max clip length (s):</label>
   <input type=number name=max_scene_dur value=3 placeholder="no limit" min=0.5 step=0.5 style="width:100px">
   <p style="margin-top:-4px;margin-bottom:8px;font-size:12px;opacity:.75">Caps how long any single selected scene can run, even if the duration budget would allow more. Defaults to 3s, which keeps the cut moving; clear it for no limit.</p>
-  <label>Cut detector:</label>
-  <select name=detector id=detector-select onchange="document.getElementById('adaptive-threshold-row').style.display = (this.value==='adaptive' ? '' : 'none')">
-    <option value=content selected>Content (default) — best for clean hard cuts</option>
-    <option value=adaptive>Adaptive — resists false cuts from pans/handheld/zooms</option>
-  </select>
-  <p style="margin-top:-4px;margin-bottom:8px;font-size:12px;opacity:.75">Content compares each frame to a fixed threshold, so fast camera movement can look like a cut. Adaptive compares each frame to the local rolling average instead, so a sustained pan or zoom doesn't trip it the way a real cut does. Neither reliably catches slow dissolves/fades between two scenes — that's a different problem an on/off cut detector can't solve.</p>
-  <label>Scene cut sensitivity (lower = more cuts detected):</label>
-  <input type=number name=scene_threshold value=30 min=1 max=100 step=1 style="width:100px">
-  <p style="margin-top:-4px;margin-bottom:8px;font-size:12px;opacity:.75">Used when Cut detector is Content. Same threshold used by the "Scene Detection & Analysis" tool in the Tools tab — matches what you see there, so preview and generation agree on the same cut list. Lower values detect more/subtler cuts; higher values only catch hard cuts.</p>
-  <div id=adaptive-threshold-row style="display:none">
-  <label>Adaptive sensitivity (higher = fewer cuts detected):</label>
-  <input type=number name=adaptive_threshold value=3.0 min=1 max=10 step=0.5 style="width:100px">
-  <p style="margin-top:-4px;margin-bottom:8px;font-size:12px;opacity:.75">Used when Cut detector is Adaptive. This is a ratio against the local average, not the 0-100 scale above — 3.0 is a reasonable starting point; raise it if motion is still triggering false cuts, lower it if real cuts are getting missed.</p>
-  </div>
-  <label>Minimum scene length (s):</label>
-  <input type=number name=min_scene_len value=0.5 min=0.1 max=5 step=0.1 style="width:100px">
-  <p style="margin-top:-4px;margin-bottom:8px;font-size:12px;opacity:.75">Scene changes shorter than this are merged into the surrounding scene instead of becoming their own tiny fragment (avoids flicker cuts from whip-pans/motion blur).</p>
+  <p style="margin-bottom:8px;font-size:12px;opacity:.6">Cut detector, sensitivity, and minimum scene length are set once for this deployment in <strong>Config &gt; Production</strong> — they're tuning values that should stay consistent across every promo, not per-job choices.</p>
   </div>
   <label>Genre (presets transition, music, sfx):</label>
   <select name=genre>
@@ -898,19 +882,9 @@ document.addEventListener("DOMContentLoaded", function(){
   <div class="adv-only" style="display:none">
   <label>Transition duration (s):</label>
   <input type=number name=xfade_dur value=0.3 min=0.1 max=2 step=0.1 style="width:100px">
-  <label>Audio normalisation:</label>
+  <label>Audio &amp; beat sync:</label>
   <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0">
-    <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Target&nbsp;LUFS:</span>
-    <input type=number name=target_loudness value=-14 min=-30 max=-10 step=0.5 style="width:70px"></span>
-    <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">True&nbsp;peak&nbsp;(dB):</span>
-    <input type=number name=true_peak value=-1.5 min=-6 max=0 step=0.5 style="width:70px"></span>
-    <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Music&nbsp;baseline&nbsp;(dB&nbsp;under&nbsp;target):</span>
-    <input type=number name=music_duck_db value=-3 min=-24 max=0 step=0.5 style="width:70px"></span>
-    <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Duck&nbsp;depth&nbsp;while&nbsp;talking&nbsp;(dB):</span>
-    <input type=number name=duck_depth_db value=-15 min=-30 max=-3 step=0.5 style="width:70px"></span>
-    <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Min.&nbsp;silence&nbsp;before&nbsp;music&nbsp;swells&nbsp;back&nbsp;(s):</span>
-    <input type=number name=duck_release_hold value=0.4 min=0.1 max=5 step=0.1 style="width:70px"></span>
-    <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0 0 0 12px;cursor:pointer">
+    <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
       <input type=checkbox name=beat_match checked> Beat match (librosa)
     </label>
     <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0 0 0 12px;cursor:pointer">
@@ -918,12 +892,7 @@ document.addEventListener("DOMContentLoaded", function(){
     </label>
   </div>
   <p style="margin-top:-4px;margin-bottom:8px;font-size:12px;opacity:.75">Dialogue is transcribed locally to boost ratings for scenes with quotable lines, and to place cut points on phrase/word boundaries instead of mid-sentence. Uses the large-v2 Whisper model by default (needed for reliable Tagalog — smaller models are noticeably worse at it), so the first run may take a bit to load.</p>
-  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0">
-    <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
-      <input type=checkbox name=broadcast_stereo> Broadcast dual-mono (force all audio identical in L/R)
-    </label>
-  </div>
-  <p style="margin-top:-4px;margin-bottom:8px;font-size:12px;opacity:.75">Applied last, after all ducking and level normalization — collapses the stereo image so every element (SOT, music, voiceover) is heard equally in both channels, per broadcast delivery requirements. Levels and ducking are unaffected.</p>
+  <p style="margin-bottom:8px;font-size:12px;opacity:.6">Loudness target, true peak, music level, ducking, and broadcast dual-mono are set once for this deployment in <strong>Config &gt; Production</strong> — they're delivery-spec values that should be identical on every promo, not per-job choices.</p>
   </div>
   <div class="adv-only">
   <label>AI Vision model:</label>
@@ -4384,6 +4353,7 @@ This is [emphasis] the one you cannot miss.
 <h2>Config</h2>
 <div class="sub-tabs">
   <div class="sub-tab active" onclick="switchSubTab('p-config-services',this)" role="button" tabindex="0">Services</div>
+  <div class="sub-tab" onclick="switchSubTab('p-config-production',this)" role="button" tabindex="0">Production</div>
   <div class="sub-tab" onclick="switchSubTab('p-config-network',this)" role="button" tabindex="0">Network</div>
   <div class="sub-tab" onclick="switchSubTab('p-config-branding',this)" role="button" tabindex="0">Branding</div>
   <div class="sub-tab" onclick="switchSubTab('p-config-users',this)" role="button" tabindex="0">Users</div>
@@ -4398,6 +4368,17 @@ This is [emphasis] the one you cannot miss.
 <div style="margin-top:18px;display:flex;gap:10px;align-items:center">
   <button type=button class=btn id=config-save-btn onclick="saveConfigTab()">Save all</button>
   <span id="config-save-status" style="font-size:13px"></span>
+</div>
+</div>
+
+<div id="p-config-production" class="sub-panel">
+<p style="margin-top:-4px;color:var(--ink-dim)">Delivery-spec and tuning values that should be identical on every promo this deployment renders — broadcast loudness compliance, the house mix standard, and scene-detection tuning. Moved off the generator form so operators aren't asked about them on every job. Takes effect on the next render; no restart needed.</p>
+<div id="config-production-rows" style="display:flex;flex-direction:column;gap:14px;margin-top:16px">
+  <!-- rows injected by loadProductionTab() -->
+</div>
+<div style="margin-top:18px;display:flex;gap:10px;align-items:center">
+  <button type=button class=btn id=config-production-save-btn onclick="saveProductionTab()">Save all</button>
+  <span id="config-production-save-status" style="font-size:13px"></span>
 </div>
 </div>
 
@@ -4603,6 +4584,88 @@ async function saveConfigTab(){
   }
 }
 window.saveConfigTab = saveConfigTab
+
+var productionTabLoaded = false
+async function loadProductionTab(){
+  var container = document.getElementById('config-production-rows')
+  container.innerHTML = '<p style="opacity:.7">Loading\u2026</p>'
+  try{
+    var r = await fetch('/api/production')
+    var d = await r.json()
+    if(!d.ok){ container.innerHTML = '<p style="color:var(--amber)">Could not load production defaults.</p>'; return }
+    container.innerHTML = ''
+    // Rendered from the server's own spec (label/help/type/choices) rather
+    // than a second hardcoded field list here, so adding or changing a
+    // setting in PRODUCTION_DEFAULT_SPEC shows up correctly without a
+    // matching edit in this file that could silently drift out of sync.
+    d.order.forEach(function(key){
+      var spec = d.spec[key] || {}
+      var val = d.values[key]
+      var row = document.createElement('div')
+      row.style.cssText = 'display:flex;flex-direction:column;gap:4px'
+      var labelEl = document.createElement('label')
+      labelEl.style.cssText = 'font-size:13px;text-transform:none;letter-spacing:0'
+      labelEl.textContent = spec.label || key
+      row.appendChild(labelEl)
+      var input
+      if(spec.type === 'bool'){
+        input = document.createElement('input')
+        input.type = 'checkbox'
+        input.checked = !!val
+      }else if(spec.type === 'choice'){
+        input = document.createElement('select')
+        ;(spec.choices || []).forEach(function(c){
+          var o = document.createElement('option')
+          o.value = c; o.textContent = c
+          if(c === val) o.selected = true
+          input.appendChild(o)
+        })
+      }else{
+        input = document.createElement('input')
+        input.type = 'number'
+        input.step = 'any'
+        input.value = val
+        input.style.maxWidth = '160px'
+      }
+      input.id = 'prod-' + key
+      row.appendChild(input)
+      if(spec.help){
+        var help = document.createElement('span')
+        help.style.cssText = 'font-size:11px;opacity:.65'
+        help.textContent = spec.help
+        row.appendChild(help)
+      }
+      container.appendChild(row)
+    })
+    productionTabLoaded = true
+  }catch(e){
+    container.innerHTML = '<p style="color:var(--amber)">Error loading production defaults: '+e+'</p>'
+  }
+}
+async function saveProductionTab(){
+  var btn = document.getElementById('config-production-save-btn')
+  var status = document.getElementById('config-production-save-status')
+  var payload = {}
+  try{
+    var r0 = await fetch('/api/production')
+    var d0 = await r0.json()
+    d0.order.forEach(function(key){
+      var el = document.getElementById('prod-' + key)
+      if(!el) return
+      var spec = d0.spec[key] || {}
+      payload[key] = (spec.type === 'bool') ? el.checked : el.value
+    })
+  }catch(e){ status.textContent = 'Could not read current settings: ' + e; status.style.color = 'var(--amber)'; return }
+  btn.disabled = true; status.textContent = 'Saving\u2026'; status.style.color = 'var(--ink-dim)'
+  try{
+    var r = await fetch('/api/production', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)})
+    var d = await r.json()
+    if(d.ok){ status.textContent = 'Saved \u2014 applies to the next render.'; status.style.color = 'var(--phosphor)' }
+    else{ status.textContent = 'Save failed: '+(d.error||'unknown error'); status.style.color = 'var(--amber)' }
+  }catch(e){ status.textContent = 'Save failed: '+e; status.style.color = 'var(--amber)' }
+  btn.disabled = false
+}
+window.saveProductionTab = saveProductionTab
 
 var NETWORK_CATEGORY_LABELS = {hires: 'Video (HIRES)', tcard: 'Title card', endcard: 'End card', music: 'Music', vo: 'VO', sfx: 'SFX'}
 var networkFoldersLoaded = false

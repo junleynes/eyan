@@ -11,3 +11,4 @@ service_overrides.json
 network_shares.json
 network_folders.json
 .env
+production_defaults.json
