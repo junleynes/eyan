@@ -3388,22 +3388,28 @@ def api_trailer():
     except ValueError:
         adaptive_threshold = float(_prod['adaptive_threshold'])
 
-    # Scene priority: how the selector decides which moments matter.
-    #   'auto'   -- top automatic score wins (the behaviour before this option existed)
-    #   'prompt' -- free-text description of what to prioritise, matched by AI vision
-    #   'script' -- uploaded script/rundown with timecodes, parsed into cues
+    # Scene priority guidance -- both optional and INDEPENDENT of each other,
+    # no mode to pick first:
+    #   * priority_prompt: free-text description of what this promo should
+    #     feature, folded into the AI vision scoring prompt so it steers which
+    #     scenes win.
+    #   * script_file: a rundown with timecodes, parsed into cues that strongly
+    #     boost whichever detected scene each cue falls inside.
+    # Supply neither and selection is purely automatic (top score wins), which
+    # is the behaviour that existed before any of this. Supply both and they
+    # compose rather than conflict: script cues pin the specific moments that
+    # were explicitly called for, and the prompt influences which of the
+    # REMAINING scenes fill the rest of the promo. This replaced a three-way
+    # dropdown where the options were mutually exclusive -- there was never a
+    # real reason a script and a description couldn't both apply, and making
+    # the user declare a mode first was an extra decision that bought nothing.
+    #
     # Parsed here (in the request, where the upload exists) rather than in the
     # job thread, which has no access to request.files.
-    scene_priority = request.form.get('scene_priority', 'auto')
-    if scene_priority not in ('auto', 'prompt', 'script'):
-        scene_priority = 'auto'
     priority_prompt = (request.form.get('priority_prompt') or '').strip()
     script_cues = []
-    script_error = None
-    if scene_priority == 'script':
-        script_file = request.files.get('script_file')
-        if not script_file or not script_file.filename:
-            return jsonify(error='Scene priority is set to "from script", but no script file was uploaded.'), 400
+    script_file = request.files.get('script_file')
+    if script_file and script_file.filename:
         text, err = extract_script_text(script_file)
         if err:
             return jsonify(error=err), 400
@@ -3412,9 +3418,6 @@ def api_trailer():
             return jsonify(error='No timecodes were found in that script. Each cue line needs a '
                                  'timecode like 00:01:30:12, 00:01:30, or 1:30 -- lines without '
                                  'one are ignored.'), 400
-    elif scene_priority == 'prompt' and not priority_prompt:
-        return jsonify(error='Scene priority is set to "describe what to prioritise", but the '
-                             'description is empty.'), 400
 
     transition = request.form.get('transition', 'fade')
     transition_matte_path = None
@@ -3753,7 +3756,7 @@ def api_trailer():
                   trailer_length=trailer_length, max_scene_dur=max_scene_dur,
                   scene_threshold=scene_threshold, min_scene_len_sec=min_scene_len_sec,
                   detector=detector, adaptive_threshold=adaptive_threshold,
-                  scene_priority=scene_priority, priority_prompt=priority_prompt,
+                  priority_prompt=priority_prompt,
                   script_cues=script_cues,
                   transition=transition, xfade_dur=xfade_dur, transition_matte_path=transition_matte_path,
                   target_loudness=target_loudness, true_peak=true_peak, music_duck_db=music_duck_db, duck_depth_db=duck_depth_db, duck_release_hold=duck_release_hold, beat_match=beat_match, broadcast_stereo=broadcast_stereo, model=model,
@@ -5544,14 +5547,15 @@ def _run_trailer_job(jid, params):
             if genre in GENRE_PRESETS and 'DESC:' in prompt:
                 ai_prompt = prompt.replace('for a movie trailer',
                                            f'for a {genre} promo trailer', 1)
-            # Scene-priority 'prompt' mode: the user described what this
-            # particular promo should favour ("the confrontation in the
-            # kitchen", "anything with the red car"). Appended to the scoring
-            # prompt so it steers the 1-5 vision score itself, rather than
-            # being applied as a separate boost afterwards -- the model is
-            # the only component that can actually tell whether a frame
-            # matches a description, so this is where that judgement belongs.
-            if params.get('scene_priority') == 'prompt' and params.get('priority_prompt'):
+            # An optional free-text description of what this particular promo
+            # should favour ("the confrontation in the kitchen", "anything
+            # with the red car"). Appended to the scoring prompt so it steers
+            # the 1-5 vision score itself, rather than being applied as a
+            # separate boost afterwards -- the model is the only component
+            # that can actually tell whether a frame matches a description, so
+            # this is where that judgement belongs. Applies whenever it's
+            # filled in, independently of whether a script was also supplied.
+            if params.get('priority_prompt'):
                 ai_prompt = (f"{ai_prompt}\n\nPRIORITY: This promo should especially feature: "
                              f"{params['priority_prompt']}. Score scenes matching that description "
                              f"noticeably higher than scenes that don't.")
