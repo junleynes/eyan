@@ -1158,3 +1158,104 @@ def admin_groups_delete(gid):
     ok, err = group_delete(gid)
     return _admin_users_page(error=None if ok else err, notice='Group deleted. Its members are now unrestricted.' if ok else None)
 
+# ---- Admin: user management, JSON API ----
+# Same underlying functions as the form-posting routes above, but returning
+# JSON instead of a re-rendered page -- so Config > Users can be a normal
+# fetch-driven tab embedded in the main app shell (matching every other
+# Config tab: Network, Production, Security) instead of an <iframe> to a
+# separate server-rendered page. Left the HTML routes above in place rather
+# than deleting them -- no other caller depends on them, but there's no
+# reason to break a bookmark or script hitting them directly either.
+#
+# All under /admin/ so _access_control's existing admin-only gate covers
+# these automatically, same as everything else in this section.
+def _user_json(u, current_uid):
+    return {
+        'id': u['id'], 'username': u['username'], 'role': u['role'],
+        'is_active': bool(u['is_active']), 'group_id': u['group_id'],
+        'group_name': u['group_name'], 'totp_enabled': bool(u['totp_enabled']),
+        'created_at': u['created_at'], 'last_login': u['last_login'],
+        'is_you': u['id'] == current_uid,
+    }
+
+def _group_json(g):
+    return {'id': g['id'], 'name': g['name'], 'member_count': g['member_count'],
+            'permissions': sorted(g['permissions'])}
+
+@app.route('/admin/api/users')
+def admin_api_users():
+    return jsonify(ok=True,
+                    users=[_user_json(u, session.get('user_id')) for u in user_list()],
+                    groups=[_group_json(g) for g in group_list()],
+                    permissions=[{'key': k, 'label': label} for k, label in AVAILABLE_PERMISSIONS],
+                    current_user_id=session.get('user_id'))
+
+@app.route('/admin/api/users/create', methods=['POST'])
+def admin_api_users_create():
+    d = request.get_json(silent=True) or {}
+    ok, err = user_create(d.get('username', ''), d.get('password', ''), d.get('role', 'user'))
+    return jsonify(ok=ok, error=None if ok else err, notice='User created.' if ok else None)
+
+@app.route('/admin/api/users/<int:uid>/role', methods=['POST'])
+def admin_api_users_role(uid):
+    d = request.get_json(silent=True) or {}
+    ok, err = user_set_role(uid, d.get('role', 'user'))
+    return jsonify(ok=ok, error=None if ok else err, notice='Role updated.' if ok else None)
+
+@app.route('/admin/api/users/<int:uid>/toggle', methods=['POST'])
+def admin_api_users_toggle(uid):
+    target = user_get(uid)
+    if not target:
+        return jsonify(ok=False, error='User not found.')
+    ok, err = user_set_active(uid, not target['is_active'])
+    return jsonify(ok=ok, error=None if ok else err, notice='Status updated.' if ok else None)
+
+@app.route('/admin/api/users/<int:uid>/2fa/reset', methods=['POST'])
+def admin_api_users_2fa_reset(uid):
+    target = user_get(uid)
+    if not target:
+        return jsonify(ok=False, error='No such account.')
+    user_totp_disable(uid)
+    return jsonify(ok=True, notice=f"Two-factor authentication cleared for {target['username']} — "
+                                    "they can set it up again from Config > Security.")
+
+@app.route('/admin/api/users/<int:uid>/password', methods=['POST'])
+def admin_api_users_password(uid):
+    d = request.get_json(silent=True) or {}
+    ok, err = user_set_password(uid, d.get('password', ''))
+    return jsonify(ok=ok, error=None if ok else err, notice='Password updated.' if ok else None)
+
+@app.route('/admin/api/users/<int:uid>/delete', methods=['POST'])
+def admin_api_users_delete(uid):
+    if uid == session.get('user_id'):
+        return jsonify(ok=False, error="You can't delete your own account while signed in as it.")
+    ok, err = user_delete(uid)
+    return jsonify(ok=ok, error=None if ok else err, notice='User deleted.' if ok else None)
+
+@app.route('/admin/api/users/<int:uid>/group', methods=['POST'])
+def admin_api_users_group(uid):
+    d = request.get_json(silent=True) or {}
+    raw = str(d.get('group_id', '') or '').strip()
+    gid = int(raw) if raw.isdigit() else None
+    ok, err = user_set_group(uid, gid)
+    return jsonify(ok=ok, error=None if ok else err, notice='Group updated.' if ok else None)
+
+@app.route('/admin/api/groups/create', methods=['POST'])
+def admin_api_groups_create():
+    d = request.get_json(silent=True) or {}
+    ok, err, _gid = group_create(d.get('name', ''))
+    return jsonify(ok=ok, error=None if ok else err,
+                    notice='Group created -- check its permissions below, then assign accounts to it.' if ok else None)
+
+@app.route('/admin/api/groups/<int:gid>/permissions', methods=['POST'])
+def admin_api_groups_permissions(gid):
+    d = request.get_json(silent=True) or {}
+    ok, err = group_set_permissions(gid, d.get('permissions') or [])
+    return jsonify(ok=ok, error=None if ok else err, notice='Permissions saved.' if ok else None)
+
+@app.route('/admin/api/groups/<int:gid>/delete', methods=['POST'])
+def admin_api_groups_delete(gid):
+    ok, err = group_delete(gid)
+    return jsonify(ok=ok, error=None if ok else err,
+                    notice='Group deleted. Its members are now unrestricted.' if ok else None)
+

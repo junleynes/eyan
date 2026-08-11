@@ -636,7 +636,7 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
 </nav>
 <div class="container">
 
-<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadNetworkFolders==='function'&&!networkFoldersLoaded){loadNetworkFolders()}if(id==='p-config'&&typeof loadProductionTab==='function'&&!productionTabLoaded){loadProductionTab()}if(id==='p-config'&&typeof loadTwofaStatus==='function'&&!twofaLoaded){loadTwofaStatus()}if(id==='p-music'&&typeof loadAceStepModels==='function'){loadAceStepModels()}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active');if(id==='p-config-users'){var f=document.getElementById('config-users-frame');if(f&&!f.getAttribute('src'))f.setAttribute('src',f.getAttribute('data-src'))}}
+<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadNetworkFolders==='function'&&!networkFoldersLoaded){loadNetworkFolders()}if(id==='p-config'&&typeof loadProductionTab==='function'&&!productionTabLoaded){loadProductionTab()}if(id==='p-config'&&typeof loadTwofaStatus==='function'&&!twofaLoaded){loadTwofaStatus()}if(id==='p-config'&&typeof loadUsersTab==='function'&&!usersTabLoaded){loadUsersTab()}if(id==='p-music'&&typeof loadAceStepModels==='function'){loadAceStepModels()}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active')}
 
 // Shared by every "Browse library" network folder view (the main HIRES
 // panel's own copy, the standalone Player, and the generic modal used for
@@ -4596,28 +4596,10 @@ This is [emphasis] the one you cannot miss.
 </div>
 
 <div id="p-config-users" class="sub-panel">
-<p style="margin-top:-4px;color:var(--ink-dim)">Full user and group management, right here — this is the only way to reach it now.</p>
-<iframe id="config-users-frame" data-src="/admin/users?embed=1" style="width:100%;height:640px;border:1px solid var(--line);border-radius:10px;margin-top:12px;background:var(--elevated)" title="Manage users" onload="resizeUsersFrame(this)"></iframe>
+<p style="margin-top:-4px;color:var(--ink-dim)">Full user and group management, right here.</p>
+<div id="config-users-status"></div>
+<div id="config-users-rows"><p style="opacity:.7">Loading&hellip;</p></div>
 </div>
-<script>
-// The users/groups page is same-origin (it's served by this app), so we can
-// read its rendered height and grow the iframe to match -- instead of it
-// sitting at a fixed height with its OWN inner scrollbar nested inside the
-// outer page's scrollbar, which is what a plain min-height iframe gives you.
-// Every action in there (role change, delete, permission save, etc.) is a
-// normal form POST that re-navigates the iframe, which re-fires 'load', so
-// this keeps re-measuring as the table grows/shrinks -- no polling needed.
-function resizeUsersFrame(frame){
-  try{
-    var doc = frame.contentWindow && frame.contentWindow.document
-    if(!doc) return
-    var h = Math.max(doc.documentElement.scrollHeight, doc.body ? doc.body.scrollHeight : 0, 640)
-    frame.style.height = (h + 24) + 'px'  // small buffer so nothing clips at the bottom
-  }catch(e){
-    // Cross-origin or not-yet-loaded -- fall back to the fixed height already set.
-  }
-}
-</script>
 
 </div>
 
@@ -5004,6 +4986,182 @@ async function saveNetworkFolder(cat){
   }
 }
 window.saveNetworkFolder = saveNetworkFolder
+
+// ---- Users & groups (Config > Users) ----
+// Was an <iframe src="/admin/users?embed=1"> to a separate server-rendered
+// page. Moved to the same fetch-and-render pattern every other Config tab
+// uses (see loadNetworkFolders/loadProductionTab above) against the JSON
+// endpoints under /admin/api/* -- same admin-only access control (still
+// gated by the /admin/ prefix check), just rendered into this page's own
+// DOM instead of a nested document, so there's no separate scrollbar/height
+// to manage and no page-shell duplication to keep in sync.
+var usersTabLoaded = false
+var USERS_TAB_DATA = null  // last-fetched users/groups/permissions, reused by action handlers below without a re-fetch
+function usersStatus(msg, isError){
+  var el = document.getElementById('config-users-status')
+  if(!el) return
+  if(!msg){ el.innerHTML = ''; return }
+  el.innerHTML = '<div class="card" style="margin-top:0;padding:10px 12px;border-color:' +
+    (isError ? 'var(--tally)' : 'var(--phosphor)') + ';color:' + (isError ? 'var(--tally)' : 'var(--phosphor)') +
+    ';font-size:12px">' + escapeHtmlLite(msg) + '</div>'
+}
+async function loadUsersTab(){
+  var container = document.getElementById('config-users-rows')
+  usersStatus('')
+  try{
+    var r = await fetch('/admin/api/users')
+    var d = await r.json()
+    if(!d.ok){ container.innerHTML = '<p style="color:var(--amber)">Could not load users.</p>'; return }
+    USERS_TAB_DATA = d
+    renderUsersTab(d)
+    usersTabLoaded = true
+  }catch(e){
+    container.innerHTML = '<p style="color:var(--amber)">Error loading users: '+e+'</p>'
+  }
+}
+function renderUsersTab(d){
+  var container = document.getElementById('config-users-rows')
+  var groupOptions = '<option value="">\u2014 none (unrestricted) \u2014</option>' +
+    d.groups.map(function(g){ return '<option value="'+g.id+'">'+escapeHtmlLite(g.name)+'</option>' }).join('')
+  var rows = d.users.map(function(u){
+    var created = u.created_at ? new Date(u.created_at*1000).toISOString().slice(0,10) : '\u2014'
+    var lastLogin = u.last_login ? new Date(u.last_login*1000).toISOString().slice(0,16).replace('T',' ') : 'never'
+    var thisGroupOptions = '<option value="">\u2014 none (unrestricted) \u2014</option>' + d.groups.map(function(g){
+      return '<option value="'+g.id+'"'+(u.group_id===g.id?' selected':'')+'>'+escapeHtmlLite(g.name)+'</option>'
+    }).join('')
+    var twofaCell = !u.totp_enabled
+      ? '<span style="opacity:.5;font-size:11px">off</span>'
+      : '<span style="color:var(--phosphor);font-size:11px">on</span> ' +
+        '<button type=button class=btn-sm data-action="2fa-reset" data-uid="'+u.id+'" data-username="'+escapeHtmlLite(u.username)+'" style="padding:3px 7px;font-size:10px">Reset</button>'
+    return '<tr>' +
+      '<td>'+escapeHtmlLite(u.username)+(u.is_you?' <span style="color:var(--phosphor);font-size:11px">(you)</span>':'')+'</td>' +
+      '<td><select data-role-select data-uid="'+u.id+'"'+(u.is_you?' disabled':'')+'>' +
+        '<option value=user'+(u.role==='user'?' selected':'')+'>user</option>' +
+        '<option value=admin'+(u.role==='admin'?' selected':'')+'>admin</option></select></td>' +
+      '<td><select data-group-select data-uid="'+u.id+'">'+thisGroupOptions+'</select></td>' +
+      '<td>'+(u.is_active?'active':'disabled')+'</td>' +
+      '<td>'+twofaCell+'</td>' +
+      '<td>'+created+'</td>' +
+      '<td>'+lastLogin+'</td>' +
+      '<td style="display:flex;flex-wrap:wrap;gap:4px;align-items:center">' +
+        '<button type=button class=btn-sm data-action="toggle" data-uid="'+u.id+'"'+(u.is_you?' disabled':'')+'>'+(u.is_active?'Disable':'Enable')+'</button>' +
+        '<input type=password data-pw-input data-uid="'+u.id+'" placeholder="New password" minlength=12 style="width:110px">' +
+        '<button type=button class=btn-sm data-action="set-password" data-uid="'+u.id+'">Set</button>' +
+        '<button type=button class="btn-sm" style="color:var(--tally);border-color:var(--tally)" data-action="delete-user" data-uid="'+u.id+'" data-username="'+escapeHtmlLite(u.username)+'"'+(u.is_you?' disabled':'')+'>Delete</button>' +
+      '</td></tr>'
+  }).join('')
+  var groupCards = d.groups.map(function(g){
+    var checks = d.permissions.map(function(p){
+      return '<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">' +
+        '<input type=checkbox data-group-perm data-gid="'+g.id+'" value="'+p.key+'"'+(g.permissions.indexOf(p.key)!==-1?' checked':'')+'> '+escapeHtmlLite(p.label)+'</label>'
+    }).join('')
+    return '<div class=card style="margin-top:12px">' +
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">' +
+        '<strong>'+escapeHtmlLite(g.name)+'</strong>' +
+        '<span style="color:var(--ink-dim);font-size:11px;flex:1">'+g.member_count+' member'+(g.member_count!==1?'s':'')+'</span>' +
+        '<button type=button class="btn-sm" style="color:var(--phosphor);border-color:var(--phosphor);font-weight:600" data-action="save-group-perms" data-gid="'+g.id+'">Save</button>' +
+        '<button type=button class="btn-sm" style="color:var(--tally);border-color:var(--tally)" data-action="delete-group" data-gid="'+g.id+'" data-name="'+escapeHtmlLite(g.name)+'">Delete</button>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px 14px">'+checks+'</div>' +
+    '</div>'
+  }).join('') || '<p style="font-size:12px;opacity:.7;margin:4px 0 0">No groups yet. Accounts with no group assigned have unrestricted access to every tab.</p>'
+
+  container.innerHTML =
+    '<div class=card style="overflow-x:auto">' +
+      '<table style="width:100%;border-collapse:collapse;font-size:13px">' +
+      '<tr style="text-align:left"><th style="padding:9px 10px;border-bottom:1px solid var(--line);font-size:10px;text-transform:uppercase;color:var(--ink-dim)">Username</th>' +
+      '<th style="padding:9px 10px;border-bottom:1px solid var(--line);font-size:10px;text-transform:uppercase;color:var(--ink-dim)">Role</th>' +
+      '<th style="padding:9px 10px;border-bottom:1px solid var(--line);font-size:10px;text-transform:uppercase;color:var(--ink-dim)">Group</th>' +
+      '<th style="padding:9px 10px;border-bottom:1px solid var(--line);font-size:10px;text-transform:uppercase;color:var(--ink-dim)">Status</th>' +
+      '<th style="padding:9px 10px;border-bottom:1px solid var(--line);font-size:10px;text-transform:uppercase;color:var(--ink-dim)">2FA</th>' +
+      '<th style="padding:9px 10px;border-bottom:1px solid var(--line);font-size:10px;text-transform:uppercase;color:var(--ink-dim)">Created</th>' +
+      '<th style="padding:9px 10px;border-bottom:1px solid var(--line);font-size:10px;text-transform:uppercase;color:var(--ink-dim)">Last login</th>' +
+      '<th style="padding:9px 10px;border-bottom:1px solid var(--line);font-size:10px;text-transform:uppercase;color:var(--ink-dim)">Actions</th></tr>' +
+      rows +
+      '</table>' +
+    '</div>' +
+    '<div class=card>' +
+      '<h3 style="margin:0 0 10px;font-size:13px">Add user</h3>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+        '<input type=text id=cu-username placeholder="Username" style="flex:1;min-width:140px">' +
+        '<input type=password id=cu-password placeholder="Password (min 12 chars)" minlength=12 style="flex:1;min-width:140px">' +
+        '<select id=cu-role><option value=user selected>user</option><option value=admin>admin</option></select>' +
+        '<button type=button class=btn id=cu-submit>Create</button>' +
+      '</div>' +
+    '</div>' +
+    '<div class=card>' +
+      '<h3 style="margin:0 0 4px;font-size:13px">Groups</h3>' +
+      '<p style="font-size:12px;opacity:.7;margin:8px 0 0">A group grants access to only the checked tabs. An account with no group assigned (the default) is unrestricted \u2014 creating and assigning a group is an opt-in way to narrow access, not something that happens automatically. Admins always have full access regardless of group.</p>' +
+      groupCards +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:14px">' +
+        '<input type=text id=cg-name placeholder="New group name (e.g. Editors)" style="flex:1;min-width:160px">' +
+        '<button type=button class=btn id=cg-submit>Create group</button>' +
+      '</div>' +
+    '</div>'
+
+  document.getElementById('cu-submit').addEventListener('click', createUser)
+  document.getElementById('cg-submit').addEventListener('click', createGroup)
+}
+// One delegated listener for every button/select in the rendered tab,
+// rather than rebinding per-row on every re-render.
+document.addEventListener('click', function(e){
+  var btn = e.target.closest('[data-action]')
+  if(!btn || !document.getElementById('config-users-rows').contains(btn)) return
+  var action = btn.getAttribute('data-action')
+  var uid = btn.getAttribute('data-uid')
+  var gid = btn.getAttribute('data-gid')
+  if(action === 'toggle') return usersAction('/admin/api/users/'+uid+'/toggle', {})
+  if(action === '2fa-reset'){
+    if(!confirm('Clear 2FA for '+btn.getAttribute('data-username')+'? They will sign in with just their password until they set it up again.')) return
+    return usersAction('/admin/api/users/'+uid+'/2fa/reset', {})
+  }
+  if(action === 'set-password'){
+    var pwInput = document.querySelector('[data-pw-input][data-uid="'+uid+'"]')
+    var pw = pwInput ? pwInput.value : ''
+    if(!pw || pw.length < 12){ usersStatus('Password must be at least 12 characters.', true); return }
+    return usersAction('/admin/api/users/'+uid+'/password', {password: pw})
+  }
+  if(action === 'delete-user'){
+    if(!confirm('Delete user '+btn.getAttribute('data-username')+'? This cannot be undone.')) return
+    return usersAction('/admin/api/users/'+uid+'/delete', {})
+  }
+  if(action === 'save-group-perms'){
+    var perms = Array.prototype.map.call(
+      document.querySelectorAll('[data-group-perm][data-gid="'+gid+'"]:checked'), function(c){ return c.value })
+    return usersAction('/admin/api/groups/'+gid+'/permissions', {permissions: perms})
+  }
+  if(action === 'delete-group'){
+    if(!confirm('Delete group '+btn.getAttribute('data-name')+'? Members fall back to unrestricted access, not locked out.')) return
+    return usersAction('/admin/api/groups/'+gid+'/delete', {})
+  }
+})
+document.addEventListener('change', function(e){
+  var container = document.getElementById('config-users-rows')
+  if(!container || !container.contains(e.target)) return
+  if(e.target.matches('[data-role-select]')){
+    usersAction('/admin/api/users/'+e.target.getAttribute('data-uid')+'/role', {role: e.target.value})
+  }else if(e.target.matches('[data-group-select]')){
+    usersAction('/admin/api/users/'+e.target.getAttribute('data-uid')+'/group', {group_id: e.target.value})
+  }
+})
+async function usersAction(url, body){
+  try{
+    var r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
+    var d = await r.json()
+    if(d.ok){ usersStatus(d.notice || '', false); loadUsersTab() }
+    else{ usersStatus(d.error || 'Action failed.', true) }
+  }catch(e){ usersStatus('Action failed: ' + e, true) }
+}
+async function createUser(){
+  var username = document.getElementById('cu-username').value
+  var password = document.getElementById('cu-password').value
+  var role = document.getElementById('cu-role').value
+  await usersAction('/admin/api/users/create', {username: username, password: password, role: role})
+}
+async function createGroup(){
+  var name = document.getElementById('cg-name').value
+  await usersAction('/admin/api/groups/create', {name: name})
+}
 
 // ---- Branding (Config > Branding) ----
 var brandingTabLoaded = false
