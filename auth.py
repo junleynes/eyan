@@ -7,7 +7,7 @@ import os, time, sqlite3, functools, secrets
 from flask import request, session, redirect, jsonify
 from markupsafe import escape
 from werkzeug.security import generate_password_hash, check_password_hash
-from core import app, _client_ip, _login_limiter, _DUMMY_PW_HASH, DEFAULT_ADMIN_PASSWORD
+from core import app, _client_ip, _login_limiter, _DUMMY_PW_HASH, DEFAULT_ADMIN_PASSWORD, ensure_csrf_token
 from library_db import LIBRARY_DIR, _sqlite_connect, load_branding
 
 def _safe_next(dest):
@@ -29,6 +29,10 @@ def _establish_session(user):
     session['user_id'] = user['id']
     session['username'] = user['username']
     session['role'] = user['role']
+    # Fresh CSRF token per sign-in, and only after every factor has passed --
+    # so a token handed out during the half-authenticated 2FA step can't be
+    # reused against the fully-authenticated session.
+    session['csrf_token'] = secrets.token_urlsafe(32)
     user_touch_login(user['id'])
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -864,6 +868,11 @@ def _twofa_cell(u):
             f'<button type=submit class="btn-sm btn-danger" style="padding:3px 7px;font-size:10px">Reset</button></form>')
 
 def _admin_users_page(error=None, notice=None):
+    # This page's forms post to state-changing routes, so they need the
+    # session's CSRF token (see _csrf_protect in core.py). ensure_csrf_token
+    # rather than reading session directly, so a session predating the CSRF
+    # feature gets one here instead of being unable to submit anything.
+    csrf_js = ensure_csrf_token()
     users = user_list()
     groups = group_list()
     brand = load_branding()
@@ -1053,6 +1062,21 @@ select,input{{background:var(--panel); border:1px solid var(--line); color:var(-
 </form>
 </div>
 </div></div>
+<script>
+// Every form on this page posts to a state-changing route, so each needs the
+// session's CSRF token. Tagging them once here rather than adding a hidden
+// input to ~10 separate form templates -- and, more usefully, a form added
+// later is covered automatically instead of silently 403ing.
+(function(){{
+  var token = {csrf_js!r};
+  if(!token) return;
+  document.querySelectorAll('form').forEach(function(f){{
+    var i = document.createElement('input');
+    i.type = 'hidden'; i.name = '_csrf'; i.value = token;
+    f.appendChild(i);
+  }});
+}})()
+</script>
 </body></html>'''
 
 @app.route('/admin/users')

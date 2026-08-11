@@ -23,7 +23,7 @@ from flask import request, jsonify, redirect, url_for, Response, send_from_direc
 from werkzeug.utils import secure_filename
 import smbclient  # pip install smbprotocol -- lets the upload panels browse a Windows/SMB network share directly
 
-from core import app, ALLOWED_EXTENSIONS
+from core import app, ALLOWED_EXTENSIONS, _job_submit_limiter, _client_ip
 from library_db import (LIBRARY_DIR, _sqlite_connect, library_add, library_list, library_get_row, library_delete,
     load_branding, save_branding_text, save_branding_color, save_branding_logo, save_branding_favicon,
     clear_branding_logo, clear_branding_favicon, clear_branding_color, BRANDING_DIR,
@@ -3385,6 +3385,13 @@ def api_chat_clear():
 @app.route('/api/trailer/generate', methods=['POST'])
 @require_permission('promo_generation')
 def api_trailer():
+    # Checked before load_video() so a rate-limited request doesn't first
+    # write the uploaded/staged file to disk and then get rejected -- that
+    # would leave the expensive part (I/O, disk consumption) unthrottled while
+    # only the cheap part was limited. Keyed per-client, so one runaway script
+    # or stolen session can't queue unbounded ffmpeg work for everyone else.
+    if not _job_submit_limiter.allow(_client_ip()):
+        return jsonify(error='Too many render requests. Wait a few minutes and try again.'), 429
     path, orig_name = load_video(request)
     if not path:
         return jsonify(error=orig_name), 400

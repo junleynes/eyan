@@ -29,6 +29,24 @@ except ImportError:
     pass
 
 app = Flask(__name__)
+
+# ---- Reverse-proxy awareness ----
+# This deployment terminates TLS at a reverse proxy, so from Flask's own point
+# of view every request arrives as plain HTTP. Without this, request.is_secure
+# is always False (so HSTS would never be sent) and _client_ip() sees the
+# proxy's address for every request -- which would quietly collapse the
+# per-IP rate limiters into one shared bucket for the whole internet.
+#
+# Only enabled when TRUST_PROXY_HEADERS is set, because X-Forwarded-* headers
+# are trivially forged by a client talking to the app DIRECTLY. Trusting them
+# unconditionally would let anyone spoof their source IP and sidestep rate
+# limiting entirely. Turn this on only when the app is genuinely reachable
+# solely through a proxy that overwrites those headers.
+if os.environ.get('TRUST_PROXY_HEADERS', '').lower() in ('1', 'true', 'yes'):
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    _proxy_hops = int(os.environ.get('TRUST_PROXY_HOPS', 1))
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=_proxy_hops, x_proto=_proxy_hops,
+                             x_host=_proxy_hops, x_prefix=_proxy_hops)
 app.config['UPLOAD_FOLDER'] = tempfile.mkdtemp()
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024 * 1024  # 5GB
 
@@ -118,6 +136,13 @@ class _RateLimiter:
 # unauthenticated deployment still shouldn't let one client rip through
 # sequential library IDs or guessed upload filenames at full speed.
 _file_route_limiter = _RateLimiter(limit=int(os.environ.get('FILE_ROUTE_RATE_LIMIT', 40)), window=60)
+
+# Render jobs are expensive (ffmpeg, AI scoring, potentially minutes of CPU
+# each), so an authenticated client -- or a stolen session -- queueing them in
+# a loop is a cheap self-inflicted denial of service. This is separate from
+# MAX_CONCURRENT_JOBS, which caps how many run AT ONCE but happily accepts an
+# unbounded queue behind it.
+_job_submit_limiter = _RateLimiter(limit=int(os.environ.get('JOB_SUBMIT_RATE_LIMIT', 12)), window=300)
 _login_limiter = _RateLimiter(limit=int(os.environ.get('LOGIN_RATE_LIMIT', 8)), window=300)
 # Fixed dummy hash checked when a username doesn't exist, so a login attempt
 # against a bad username costs the same CPU time as one against a real user
@@ -131,6 +156,102 @@ _DUMMY_PW_HASH = generate_password_hash(secrets.token_hex(16))
 # ADMIN_PASSWORD in the environment instead where possible, and change this
 # account's password from Admin > Users right after first login either way.
 DEFAULT_ADMIN_PASSWORD = 'Aimp#Admin2026!'
+
+@app.after_request
+def _security_headers(resp):
+    """Defence-in-depth response headers. None of these fix a vulnerability on
+    their own -- they limit what an attacker can do with one that exists.
+
+    A note on the CSP, so nobody reads it as stronger than it is: this app
+    uses ~98 inline onclick handlers and extensive inline styles, so
+    'unsafe-inline' is required for script-src and style-src. That
+    significantly weakens CSP's XSS protection -- a genuinely strict policy
+    would need those refactored into addEventListener bindings and CSS
+    classes first, which is a large change and not one to make quietly
+    alongside security headers. What this policy still buys: default-src
+    'self' blocks loading scripts/objects from arbitrary external origins,
+    frame-ancestors blocks clickjacking, and form-action stops a injected
+    form posting credentials off-site.
+
+    frame-ancestors/X-Frame-Options are SAMEORIGIN rather than DENY because
+    Config > Users legitimately embeds /admin/users in an iframe."""
+    resp.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    resp.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
+    resp.headers.setdefault('Referrer-Policy', 'same-origin')
+    # Nothing here needs a camera, mic, or geolocation -- deny them outright so
+    # an injected script can't prompt for them.
+    resp.headers.setdefault('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), payment=()')
+    resp.headers.setdefault('Content-Security-Policy', '; '.join([
+        "default-src 'self'",
+        # data: covers the 2FA QR code and the inline SVG favicon; blob: covers
+        # locally-previewed media before upload.
+        "img-src 'self' data: blob:",
+        "media-src 'self' blob:",
+        "script-src 'self' 'unsafe-inline'",
+        # Google Fonts serves the stylesheet from googleapis and the actual
+        # font files from gstatic -- both are needed or the UI falls back to
+        # system fonts.
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src 'self' https://fonts.gstatic.com data:",
+        "connect-src 'self'",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "frame-ancestors 'self'",
+    ]))
+    # HSTS only when the request actually arrived over HTTPS. Sending it on a
+    # plain-HTTP LAN deployment would tell browsers to force HTTPS against a
+    # server that may not speak it, locking users out. request.is_secure
+    # honours X-Forwarded-Proto when running behind a reverse proxy that sets
+    # it, which is this deployment's setup.
+    if request.is_secure:
+        resp.headers.setdefault('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+    return resp
+
+def ensure_csrf_token():
+    """Returns this session's CSRF token, creating one if it doesn't have a
+    token yet. Called when rendering any page that will make state-changing
+    requests, so sessions established before this feature existed pick one up
+    on their next page load rather than being locked out of every POST until
+    they sign in again."""
+    tok = session.get('csrf_token')
+    if not tok:
+        tok = secrets.token_urlsafe(32)
+        session['csrf_token'] = tok
+    return tok
+
+@app.before_request
+def _csrf_protect():
+    """Rejects state-changing requests that don't carry this session's CSRF
+    token. SameSite=Lax already blocks the classic cross-site form POST, but
+    it isn't complete coverage -- it doesn't help against an attack originating
+    from the same site (a subdomain, or any injected content), and older
+    browsers vary in how they enforce it. This is the actual control.
+
+    The token is bound to the session, so it's only obtainable by someone who
+    already has the session -- which is the point.
+
+    Accepted from either the X-CSRF-Token header (used by the app's fetch()
+    calls, added centrally in the page's JS) or a _csrf form field (used by the
+    plain HTML forms on the admin users page). GET/HEAD/OPTIONS are exempt as
+    they shouldn't change state; /login is exempt because there's no session
+    to carry a token yet at that point, and it has its own rate limiting and
+    lockout."""
+    if request.method in ('GET', 'HEAD', 'OPTIONS'):
+        return None
+    if request.path in ('/login', '/logout'):
+        return None
+    if not session.get('authed'):
+        # Unauthenticated POSTs are already rejected by _access_control below;
+        # no session means no token to compare against anyway.
+        return None
+    sent = request.headers.get('X-CSRF-Token') or request.form.get('_csrf') or ''
+    expected = session.get('csrf_token') or ''
+    # compare_digest rather than == so a token isn't recoverable a character at
+    # a time by timing the comparison.
+    if not expected or not hmac.compare_digest(str(sent), str(expected)):
+        return jsonify(ok=False, error='Your session token was missing or stale. Reload the page and try again.'), 403
+    return None
 
 @app.before_request
 def _access_control():

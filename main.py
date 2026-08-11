@@ -7,7 +7,7 @@ Run this file instead of any of the individual modules: `python3 main.py`.
 import os, subprocess, threading
 from flask import request, jsonify, session, send_from_directory, render_template
 
-from core import app
+from core import app, ensure_csrf_token
 import library_db      # noqa: F401 -- imported for its module-level init side effect
 import auth             # noqa: F401 -- registers /login, /logout, /admin/users
 from auth import require_permission, user_permissions
@@ -53,7 +53,8 @@ def index():
                                    brand_accent=brand['theme_colors']['accent'],
                                    brand_theme=brand['theme_colors'],
                                    brand_footer=brand['footer'],
-                                   allow_local_upload=ALLOW_LOCAL_MEDIA_UPLOAD)
+                                   allow_local_upload=ALLOW_LOCAL_MEDIA_UPLOAD,
+                                   csrf_token=ensure_csrf_token())
 
 @app.route('/uploads/<filename>')
 def uploaded(filename):

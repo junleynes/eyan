@@ -3,10 +3,41 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ csrf_token }}">
 <title>{{ brand_name }} - {{ brand_tagline }}</title>
 <link rel="icon" href="/branding/favicon">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script>
+// ---- CSRF: attach this session's token to every state-changing fetch ----
+// Wrapping window.fetch once here, before any other script runs, means the
+// ~50 existing fetch() call sites didn't each need editing -- and, more
+// importantly, that a call site added later can't silently forget the token
+// and start failing with a 403 nobody expects. GET/HEAD are left alone since
+// the server exempts them.
+(function(){
+  var meta = document.querySelector('meta[name="csrf-token"]')
+  var token = meta ? meta.getAttribute('content') : ''
+  if(!token) return
+  var origFetch = window.fetch
+  window.fetch = function(input, init){
+    init = init || {}
+    var method = (init.method || (typeof input === 'object' && input && input.method) || 'GET').toUpperCase()
+    if(method !== 'GET' && method !== 'HEAD'){
+      // Only add the header for same-origin requests -- sending our session
+      // token to a third-party URL would be handing it out for no reason.
+      var url = (typeof input === 'string') ? input : (input && input.url) || ''
+      var sameOrigin = !/^https?:\/\//i.test(url) || url.indexOf(window.location.origin) === 0
+      if(sameOrigin){
+        var headers = new Headers(init.headers || (typeof input === 'object' && input && input.headers) || {})
+        headers.set('X-CSRF-Token', token)
+        init.headers = headers
+      }
+    }
+    return origFetch.call(this, input, init)
+  }
+})()
+</script>
 <script>
 // Resolves and applies the theme BEFORE the stylesheet below is parsed, so
 // there's no flash of the wrong theme on load. 'auto' (no stored preference)
