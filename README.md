@@ -206,6 +206,100 @@ giving it a real value.
 - **pip install fails partway through** — usually a flaky network blip on a large package (`opencv-python`, `numpy`). Just re-run the install script; it reuses the existing `venv/` and only needs to finish installing what's missing.
 - **Windows: `venv\Scripts\Activate.ps1` still blocked after `Set-ExecutionPolicy`** — you can skip activation entirely and run `venv\Scripts\python.exe main.py` directly; same effect, no execution policy involved.
 
+## Deploying beyond a trusted LAN
+
+The app assumes it's reachable only by people who should already be able to
+reach it. Exposing it more widely changes the threat model in a specific way
+worth naming: **every media file supplied here is eventually handed to
+ffmpeg**, and the app **holds credentials to your network shares**. A
+compromise doesn't stop at "someone made a bad promo" — it reaches the
+storage those credentials unlock. Treat the AIMP host as having the same
+trust level as the shares it can read.
+
+### The single most valuable thing: authenticate before the app
+
+Put an authenticating layer *in front*, so AIMP's own login is a second line
+rather than the only one. Two common routes:
+
+- **Cloudflare Access** (free up to 50 users) — SSO/email-OTP/device checks
+  before traffic ever reaches your origin. Roughly 10 minutes to configure on
+  a tunnel you're already running.
+- **nginx with HTTP Basic auth or client certificates** in front of the app.
+
+One distinction that's easy to miss: **a Cloudflare Tunnel (`cloudflared`) is
+not an auth layer.** It gets traffic to you without opening a port — the app
+is still publicly reachable, and your login page is still the only thing in
+the way. Access is the part that authenticates. Likewise, **nginx terminating
+TLS is not authentication** either; it's encryption in transit and nothing
+more.
+
+### Required settings behind any reverse proxy
+
+```bash
+TRUST_PROXY_HEADERS=1   # see below -- important, not optional
+TRUST_PROXY_HOPS=1      # 2 if you chain cloudflared -> nginx -> app
+FORCE_HTTPS=1           # marks the session cookie Secure (TLS at the proxy)
+```
+
+`TRUST_PROXY_HEADERS` matters more than it looks. Without it, Flask sees the
+*proxy's* address as the client IP for every single request — which silently
+collapses every per-IP rate limiter (login attempts, file routes, render
+submissions) into one shared bucket for the entire internet. It's opt-in
+rather than automatic because `X-Forwarded-*` headers are trivially forged by
+anyone who can reach the app directly, so it's only safe once the app is
+genuinely reachable *only* through the proxy.
+
+### nginx specifics
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:5000;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;   # HSTS + Secure cookie depend on this
+
+    client_max_body_size 0;      # HIRES episodes are large; nginx's 1MB default rejects them
+    proxy_read_timeout   3600s;  # renders run for minutes; the 60s default kills them mid-job
+    proxy_send_timeout   3600s;
+    proxy_request_buffering off; # stream uploads rather than buffering whole files first
+}
+```
+
+The three non-obvious ones (`client_max_body_size`, the timeouts,
+`proxy_request_buffering`) all produce confusing failures rather than clear
+errors if you skip them — a large episode rejected with a generic 413, or a
+render dying partway through with no message.
+
+### Checklist before exposing it
+
+- [ ] **Change the default admin password.** `DEFAULT_ADMIN_PASSWORD` is
+      hardcoded and visible in this public repo — any account still using it
+      is an open door, and 2FA doesn't help if it was never enabled there.
+- [ ] Enable 2FA on every admin account (Config &gt; Security).
+- [ ] Leave `ALLOW_LOCAL_MEDIA_UPLOAD` **off** (the default) so arbitrary
+      media never reaches ffmpeg — files come only from the configured
+      network shares or AI generation.
+- [ ] Set `TRUST_PROXY_HEADERS=1` and `FORCE_HTTPS=1`.
+- [ ] Put an authenticating layer in front (see above).
+- [ ] Give the app's network-share account the **minimum** rights it needs —
+      read-only wherever it doesn't write. This is what actually bounds the
+      damage if something does go wrong.
+
+### Known limitations, stated plainly
+
+- **The CSP includes `'unsafe-inline'`.** The UI relies on ~98 inline
+  `onclick` handlers and inline styles, so a strict policy would break it.
+  The header still blocks external script loading, clickjacking, and
+  off-site form posts, but it is **not** full XSS protection. Fixing this
+  properly means refactoring those handlers to `addEventListener`.
+- **Share credentials and API keys are stored in plaintext JSON** next to the
+  app. File-read access to the host is equivalent to having those
+  credentials.
+- **No audit trail** beyond each account's last-login timestamp — renders,
+  deletions and config changes aren't attributed to a user, so after an
+  incident there's limited ability to reconstruct what happened.
+
 ## Layout
 
 Split out of the original single `main_app_57_1_.py` (~9,500 lines) into
