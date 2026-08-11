@@ -801,6 +801,21 @@ document.addEventListener("DOMContentLoaded", function(){
   <p style="margin-top:-4px;margin-bottom:10px;font-size:12px;opacity:.75">A template carries its whole setup — genre, transition, lengths, audio targets, voice — plus its music bed, SFX, VO and cards. Picking one fills the form in below; change anything you like afterwards and it applies to this job only.</p>
   <div id=template-summary style="font-size:12px;opacity:.85;margin:0 0 14px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;display:none"></div>
 
+  <!-- Everything from here to the Preview/Generate buttons is the full
+       settings surface. It stays in the DOM and keeps submitting normally
+       either way -- this only collapses it visually, so a saved template's
+       values still post exactly as before. Collapsed by default when a
+       template is loaded (the daily path: pick show, drop file, generate),
+       expanded when building a one-off with no template to start from. -->
+  <div id=settings-toggle-row style="display:flex;align-items:center;gap:10px;margin:0 0 12px">
+    <button type=button class=btn id=settings-toggle-btn onclick="toggleGeneratorSettings()"
+            style="background:transparent;border:1px solid var(--line);color:var(--ink-dim);padding:6px 12px;font-size:12px">
+      <span id=settings-toggle-chevron>&#9656;</span> <span id=settings-toggle-label>Show all settings</span>
+    </button>
+    <span id=settings-toggle-note style="font-size:12px;opacity:.6"></span>
+  </div>
+
+  <div id=generator-settings>
   <label>Scene priority:</label>
   <select name=scene_priority id=scene-priority-select onchange="updateScenePriorityVisibility()">
     <option value=auto selected>Automatic — highest scoring scenes win</option>
@@ -1376,10 +1391,37 @@ document.addEventListener("DOMContentLoaded", function(){
     return v + (TPL_SETTING_UNITS[key] || '')
   }
 
+  function setGeneratorSettingsOpen(open){
+    var panel = document.getElementById('generator-settings')
+    var chevron = document.getElementById('settings-toggle-chevron')
+    var label = document.getElementById('settings-toggle-label')
+    var note = document.getElementById('settings-toggle-note')
+    if(!panel) return
+    panel.style.display = open ? '' : 'none'
+    if(chevron) chevron.innerHTML = open ? '&#9662;' : '&#9656;'
+    if(label) label.textContent = open ? 'Hide settings' : 'Show all settings'
+    if(note){
+      // Only explain WHY it's collapsed when it actually is -- a permanent
+      // note next to an expanded panel is just noise.
+      note.textContent = open ? '' : 'Using the selected template\u2019s saved settings.'
+    }
+  }
+  function toggleGeneratorSettings(){
+    var panel = document.getElementById('generator-settings')
+    setGeneratorSettingsOpen(panel && panel.style.display === 'none')
+  }
+  window.toggleGeneratorSettings = toggleGeneratorSettings
+
   function onTemplateSelected(){
     var sel = document.getElementById('template-select')
     var box = document.getElementById('template-summary')
     var tpl = templatesById[sel.value]
+    // A loaded template already carries the whole configuration, so the daily
+    // path (pick show, drop file, generate) shouldn't have to scroll past
+    // every setting to reach the buttons. Collapse when one is loaded, expand
+    // when there isn't one -- someone building a one-off from scratch needs
+    // the settings visible, since there's nothing else supplying them.
+    setGeneratorSettingsOpen(!tpl)
     if(!tpl){ box.style.display = 'none'; box.innerHTML = ''; return }
 
     function row(label, value, dim){
@@ -1747,6 +1789,7 @@ document.addEventListener("DOMContentLoaded", function(){
     note.textContent = (which === 'start' ? 'In' : 'Out') + ' point set to ' + t + 's from the player.'
   }
   </script>
+  </div><!-- /#generator-settings -->
   <div style="display:flex;gap:10px;align-items:center;margin-top:22px;flex-wrap:wrap">
     <button class=btn type=button id=trailer-preview-btn onclick="submitTrailer(true)" style="background:transparent;border:1px solid var(--accent,#4f8cff);color:var(--accent,#4f8cff)">Preview the cut first</button>
     <button class=btn type=submit id=trailer-submit-btn>Generate Episodic Promo Plug</button>
