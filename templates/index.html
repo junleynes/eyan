@@ -638,6 +638,42 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
 
 <script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadNetworkFolders==='function'&&!networkFoldersLoaded){loadNetworkFolders()}if(id==='p-config'&&typeof loadProductionTab==='function'&&!productionTabLoaded){loadProductionTab()}if(id==='p-config'&&typeof loadTwofaStatus==='function'&&!twofaLoaded){loadTwofaStatus()}if(id==='p-music'&&typeof loadAceStepModels==='function'){loadAceStepModels()}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active');if(id==='p-config-users'){var f=document.getElementById('config-users-frame');if(f&&!f.getAttribute('src'))f.setAttribute('src',f.getAttribute('data-src'))}}
 
+// Shared by every "Browse library" network folder view (the main HIRES
+// panel's own copy, the standalone Player, and the generic modal used for
+// title/end card, BGM, SFX, and VO). Turns the folder path into a row of
+// clickable links -- root, then one per subfolder you've navigated into --
+// so getting back to an ancestor folder is a single click instead of
+// clicking ".." repeatedly one level at a time. `subpath` uses '\\' as the
+// separator (matching what /api/network/list already returns/accepts).
+function buildNetworkBreadcrumb(el, root, subpath, onNavigate){
+  el.innerHTML = ''
+  el.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:2px'
+  var rootLink = document.createElement('span')
+  rootLink.textContent = root || '(root)'
+  rootLink.style.cssText = subpath ? 'cursor:pointer;text-decoration:underline' : ''
+  if(subpath) rootLink.addEventListener('click', function(){ onNavigate('') })
+  el.appendChild(rootLink)
+  var parts = subpath ? subpath.split('\\') : []
+  var acc = ''
+  parts.forEach(function(part, i){
+    var sep = document.createElement('span')
+    sep.textContent = ' \u203a '
+    sep.style.opacity = '.5'
+    el.appendChild(sep)
+    acc = acc ? acc + '\\' + part : part
+    var seg = document.createElement('span')
+    seg.textContent = part
+    if(i === parts.length - 1){
+      seg.style.fontWeight = '600'  // current folder -- not a link
+    }else{
+      var target = acc
+      seg.style.cssText = 'cursor:pointer;text-decoration:underline'
+      seg.addEventListener('click', function(){ onNavigate(target) })
+    }
+    el.appendChild(seg)
+  })
+}
+
 // ---- Theme (light / dark / auto) ----
 // The <head> script (see near the top of the page) already resolved and
 // applied a theme before this ever ran, purely to avoid a flash of the wrong
@@ -939,6 +975,7 @@ document.addEventListener("DOMContentLoaded", function(){
       <input type=checkbox name=sync_beats checked> Sync cuts to beat
     </label>
   </div>
+  <p style="margin-top:-4px;margin-bottom:8px;font-size:12px;color:var(--amber)">These are independent, not sequential — "Sync cuts to beat" snaps cut points to the music's original beat grid; "Beat match" separately time-stretches that same music afterward to match the video's tempo, which shifts where its beats actually land. Using both together can pull cuts slightly off the beat they were synced to. If exact sync matters most, leave Beat match off.</p>
   <p style="margin-top:-4px;margin-bottom:8px;font-size:12px;opacity:.75">Dialogue is transcribed locally to boost ratings for scenes with quotable lines, and to place cut points on phrase/word boundaries instead of mid-sentence. Uses the large-v2 Whisper model by default (needed for reliable Tagalog — smaller models are noticeably worse at it), so the first run may take a bit to load.</p>
   <p style="margin-bottom:8px;font-size:12px;opacity:.6">Loudness target, true peak, music level, ducking, and broadcast dual-mono are set once for this deployment in <strong>Config &gt; Production</strong> — they're delivery-spec values that should be identical on every promo, not per-job choices.</p>
   </div>
@@ -950,7 +987,7 @@ document.addEventListener("DOMContentLoaded", function(){
     </div>
     <div class="asset-section-body">
   <div class="browse-row">
-    <input type=file name=end_card_video accept=video/* data-net-field="end_card_video">
+    {% if allow_local_upload %}<input type=file name=end_card_video accept=video/* data-net-field="end_card_video">{% endif %}
     <button type=button class="browse-btn" onclick="openNetworkBrowser('end_card_video','tcard','Title card (TCARD)')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
   </div>
   <input type=hidden id=end_card_video_network name=end_card_video_network value="">
@@ -959,7 +996,7 @@ document.addEventListener("DOMContentLoaded", function(){
   <div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0 4px">
     <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">VO for this card (optional, replaces its audio):</span>
-    <input type=file name=title_card_vo accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" style="width:auto" data-net-field="title_card_vo" onchange="cardVoFileChosen(this,'title_card_vo')"></span>
+    {% if allow_local_upload %}<input type=file name=title_card_vo accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" style="width:auto" data-net-field="title_card_vo" onchange="cardVoFileChosen(this,'title_card_vo')">{% endif %}</span>
     <button type=button class="browse-btn" onclick="openNetworkBrowser('title_card_vo','vo','VO')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
   </div>
   <input type=hidden id=title_card_vo_network name=title_card_vo_network value="">
@@ -987,7 +1024,7 @@ document.addEventListener("DOMContentLoaded", function(){
     </div>
     <div class="asset-section-body">
   <div class="browse-row">
-    <input type=file name=schedule_video accept=video/* data-net-field="schedule_video">
+    {% if allow_local_upload %}<input type=file name=schedule_video accept=video/* data-net-field="schedule_video">{% endif %}
     <button type=button class="browse-btn" onclick="openNetworkBrowser('schedule_video','endcard','End card (ENDCARD)')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
   </div>
   <input type=hidden id=schedule_video_network name=schedule_video_network value="">
@@ -996,7 +1033,7 @@ document.addEventListener("DOMContentLoaded", function(){
   <div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0 4px">
     <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">VO for this card (optional, replaces its audio):</span>
-    <input type=file name=end_card_vo accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" style="width:auto" data-net-field="end_card_vo" onchange="cardVoFileChosen(this,'end_card_vo')"></span>
+    {% if allow_local_upload %}<input type=file name=end_card_vo accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" style="width:auto" data-net-field="end_card_vo" onchange="cardVoFileChosen(this,'end_card_vo')">{% endif %}</span>
     <button type=button class="browse-btn" onclick="openNetworkBrowser('end_card_vo','vo','VO')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
   </div>
   <input type=hidden id=end_card_vo_network name=end_card_vo_network value="">
@@ -1038,7 +1075,7 @@ document.addEventListener("DOMContentLoaded", function(){
   <p id=bgm-gating-note style="display:none;margin-top:-4px;margin-bottom:8px;font-size:12px;color:var(--amber)">"Generate music" is unavailable — ACE-Step isn't reachable.</p>
   <div id=scoring-upload-area style="display:none">
     <div class="browse-row">
-      <input type=file name=scoring_audio accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" data-net-field="scoring_audio">
+      {% if allow_local_upload %}<input type=file name=scoring_audio accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" data-net-field="scoring_audio">{% endif %}
       <button type=button class="browse-btn" onclick="openNetworkBrowser('scoring_audio','music','Music')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
     </div>
     <input type=hidden id=scoring_audio_network name=scoring_audio_network value="">
@@ -1070,7 +1107,7 @@ document.addEventListener("DOMContentLoaded", function(){
   <p id=sfx-gating-note style="display:none;margin-top:-4px;margin-bottom:8px;font-size:12px;color:var(--amber)">"From genre" is unavailable — Woosh isn't reachable.</p>
   <div id=sfx-upload-area style="display:none">
     <div class="browse-row">
-      <input type=file name=sfx_upload accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" data-net-field="sfx_upload">
+      {% if allow_local_upload %}<input type=file name=sfx_upload accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" data-net-field="sfx_upload">{% endif %}
       <button type=button class="browse-btn" onclick="openNetworkBrowser('sfx_upload','sfx','SFX')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
     </div>
     <input type=hidden id=sfx_upload_network name=sfx_upload_network value="">
@@ -1102,7 +1139,7 @@ document.addEventListener("DOMContentLoaded", function(){
   <p id=vo-gating-note style="display:none;margin-top:-4px;margin-bottom:8px;font-size:12px;color:var(--amber)">"Narration (AI voice)" is unavailable — the Fish Audio server is not reachable.</p>
   <div id=vo-upload-area style="display:none">
     <div class="browse-row">
-      <input type=file name=vo_upload accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" data-net-field="vo_upload">
+      {% if allow_local_upload %}<input type=file name=vo_upload accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" data-net-field="vo_upload">{% endif %}
       <button type=button class="browse-btn" onclick="openNetworkBrowser('vo_upload','vo','VO')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
     </div>
     <input type=hidden id=vo_upload_network name=vo_upload_network value="">
@@ -2103,7 +2140,7 @@ document.addEventListener("DOMContentLoaded", function(){
       if(!d.ok){ networkList.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + d.error + '</div>'; return }
       trNetworkSubpath = d.subpath || ''
       var pathEl = document.getElementById('tr-network-path')
-      if(pathEl) pathEl.textContent = d.root
+      if(pathEl) buildNetworkBreadcrumb(pathEl, d.root, trNetworkSubpath, loadNetworkList)
       trNetworkLoadedFolders = d.folders || []
       trNetworkLoadedFiles = d.files || []
       renderTrNetworkList(trNetworkLoadedFolders, trNetworkLoadedFiles, trNetworkSubpath)
@@ -4085,7 +4122,7 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <h2>Speech to Text &mdash; Whisper</h2>
 <p style="font-size:12px;opacity:.75;margin-top:-6px">Transcribes dialogue with word-level timing, using the same service the promo pipeline uses for dialogue-aware cuts — so this shows you exactly what the rating stage sees. Audio is extracted to 16&nbsp;kHz mono before upload, so a multi-GB episode only sends a few MB.</p>
 <label>Video or audio file:</label>
-<input type=file id=stt-file name=stt_file accept="video/*,audio/*" data-net-field="stt_file">
+{% if allow_local_upload %}<input type=file id=stt-file name=stt_file accept="video/*,audio/*" data-net-field="stt_file">{% endif %}
 <input type=hidden id=stt_file_network name=stt_file_network value="">
 <div class="browse-row" style="margin-top:8px">
   <span class="net-file-chip" id=stt_file_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('stt_file')">&#10005;</span></span>
@@ -4560,8 +4597,27 @@ This is [emphasis] the one you cannot miss.
 
 <div id="p-config-users" class="sub-panel">
 <p style="margin-top:-4px;color:var(--ink-dim)">Full user and group management, right here — this is the only way to reach it now.</p>
-<iframe id="config-users-frame" data-src="/admin/users?embed=1" style="width:100%;min-height:640px;border:1px solid var(--line);border-radius:10px;margin-top:12px;background:var(--elevated)" title="Manage users"></iframe>
+<iframe id="config-users-frame" data-src="/admin/users?embed=1" style="width:100%;height:640px;border:1px solid var(--line);border-radius:10px;margin-top:12px;background:var(--elevated)" title="Manage users" onload="resizeUsersFrame(this)"></iframe>
 </div>
+<script>
+// The users/groups page is same-origin (it's served by this app), so we can
+// read its rendered height and grow the iframe to match -- instead of it
+// sitting at a fixed height with its OWN inner scrollbar nested inside the
+// outer page's scrollbar, which is what a plain min-height iframe gives you.
+// Every action in there (role change, delete, permission save, etc.) is a
+// normal form POST that re-navigates the iframe, which re-fires 'load', so
+// this keeps re-measuring as the table grows/shrinks -- no polling needed.
+function resizeUsersFrame(frame){
+  try{
+    var doc = frame.contentWindow && frame.contentWindow.document
+    if(!doc) return
+    var h = Math.max(doc.documentElement.scrollHeight, doc.body ? doc.body.scrollHeight : 0, 640)
+    frame.style.height = (h + 24) + 'px'  // small buffer so nothing clips at the bottom
+  }catch(e){
+    // Cross-origin or not-yet-loaded -- fall back to the fixed height already set.
+  }
+}
+</script>
 
 </div>
 
@@ -4782,6 +4838,19 @@ async function loadProductionTab(){
     var d = await r.json()
     if(!d.ok){ container.innerHTML = '<p style="color:var(--amber)">Could not load production defaults.</p>'; return }
     container.innerHTML = ''
+    // Vision model is stored as a plain 'text' field server-side (it's just a
+    // string in production_defaults.json), but it shouldn't be free-typed in
+    // the UI -- it has to name a model actually pulled on the Ollama server,
+    // same as the Scene Detection tab's own picker. Fetch that same list here
+    // (best-effort; a failure just falls back to a text input below) so this
+    // field renders as a select instead of inviting a typo that silently
+    // fails every scoring call.
+    var visionModels = []
+    try{
+      var vr = await fetch('/api/vision/models')
+      var vd = await vr.json()
+      visionModels = vd.models || []
+    }catch(e){ /* fall back to text input for this field below */ }
     // Rendered from the server's own spec (label/help/type/choices) rather
     // than a second hardcoded field list here, so adding or changing a
     // setting in PRODUCTION_DEFAULT_SPEC shows up correctly without a
@@ -4796,7 +4865,21 @@ async function loadProductionTab(){
       labelEl.textContent = spec.label || key
       row.appendChild(labelEl)
       var input
-      if(spec.type === 'bool'){
+      if(key === 'vision_model' && visionModels.length){
+        input = document.createElement('select')
+        // The saved value might be a model that's since been removed from
+        // Ollama -- keep it selectable (and selected) even if it's not in
+        // the freshly-fetched list, rather than silently swapping the saved
+        // config to whatever happens to be first alphabetically.
+        var opts = visionModels.slice()
+        if(val && opts.indexOf(val) === -1) opts.unshift(val)
+        opts.forEach(function(m){
+          var o = document.createElement('option')
+          o.value = m; o.textContent = m
+          if(m === val) o.selected = true
+          input.appendChild(o)
+        })
+      }else if(spec.type === 'bool'){
         input = document.createElement('input')
         input.type = 'checkbox'
         input.checked = !!val
@@ -5569,7 +5652,7 @@ document.addEventListener('DOMContentLoaded', function(){
           '&subpath=' + encodeURIComponent(active.subpath))
       .then(function(r){ return r.json() }).then(function(d){
         if(!d.ok){ listEl.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + d.error + '</div>'; return }
-        pathEl.textContent = d.root
+        buildNetworkBreadcrumb(pathEl, d.root, d.subpath || active.subpath, loadFolder)
         active.loadedFolders = d.folders || []
         active.loadedFiles = d.files || []
         renderList(d.folders, d.files, d.subpath)

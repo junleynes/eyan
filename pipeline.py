@@ -6543,6 +6543,15 @@ def _run_trailer_job(jid, params):
         else:
             prepared_bgm, bgm_source = prepare_bgm_track(genre, scoring_mode, scoring_audio_path, scenes_dur, base_ts)
 
+        # NOTE: independent of sync_beats above, not sequential to it. When
+        # sync_beats is also on, cut points were already snapped (during scene
+        # selection, before this point) to early_bgm_path's ORIGINAL beat grid.
+        # time-stretching it here for tempo matching shifts where those beats
+        # actually fall in the final mix, so combining both can leave cuts
+        # slightly off the beat they were synced to. Not fixed automatically
+        # (re-detecting/re-snapping post-stretch would mean redoing scene
+        # selection here) -- surfaced to the user instead, in the form's help
+        # text next to these two checkboxes.
         if prepared_bgm and beat_match:
             job_set(jid, step='Beat-matching music to video tempo')
             matched = os.path.join(app.config['UPLOAD_FOLDER'], f'matched_{base_ts}.wav')
