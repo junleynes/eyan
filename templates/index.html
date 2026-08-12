@@ -2291,6 +2291,15 @@ async function submitTrailer(previewOnly){
     startData = await new Promise(function(resolve, reject){
       var xhr = new XMLHttpRequest()
       xhr.open('POST', '/api/trailer/generate')
+      // This request is built with raw XMLHttpRequest (for xhr.upload.onprogress,
+      // which fetch() can't give us) rather than the app's usual fetch() calls --
+      // and window.fetch is where the CSRF header gets attached centrally (see
+      // the wrapper at the top of this page), so it never reaches THIS request.
+      // Without this, generate always fails CSRF validation, on every attempt,
+      // regardless of session freshness -- reading the meta tag directly here
+      // rather than relying on a variable scoped to that other IIFE.
+      var csrfMeta = document.querySelector('meta[name="csrf-token"]')
+      if(csrfMeta) xhr.setRequestHeader('X-CSRF-Token', csrfMeta.getAttribute('content'))
       xhr.upload.onprogress = function(ev){
         if(!ev.lengthComputable) return
         var pct = Math.round(ev.loaded / ev.total * 100)
