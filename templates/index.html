@@ -2151,8 +2151,15 @@ document.addEventListener("DOMContentLoaded", function(){
     if(fileInput.files && fileInput.files[0]) showPreview(fileInput.files[0])
   })
   clearBtn.addEventListener('click', clearPreview)
-  browseLink.addEventListener('click', function(e){ e.stopPropagation(); fileInput.click() })
-  dropzone.addEventListener('click', function(){ fileInput.click() })
+  // browseLink (and the dropzone's own click-to-browse-local behavior) only
+  // exist in the DOM when this deployment allows local uploads -- guarded
+  // here rather than assumed present, since an unconditional .addEventListener
+  // on a null browseLink used to throw and silently abort this entire IIFE
+  // before it reached the networkLink wiring below, breaking "Browse
+  // library" (the network browse button) too on any deployment with local
+  // uploads turned off.
+  if(browseLink) browseLink.addEventListener('click', function(e){ e.stopPropagation(); fileInput.click() })
+  if(browseLink) dropzone.addEventListener('click', function(){ fileInput.click() })
   networkLink.addEventListener('click', function(e){
     e.stopPropagation()
     dropzone.style.display = 'none'
