@@ -53,8 +53,6 @@ app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FORCE_HTTPS', '').lower() in ('1', 'true', 'yes')
 
-# Public routes are deliberately limited to the landing page, authentication,
-# and branding assets. Everything containing application data remains gated.
 _PUBLIC_PATHS = {'/', '/login', '/logout', '/branding/logo', '/branding/favicon', '/branding/logo-mark'}
 _API_PREFIXES = ('/api/', '/uploads/', '/library/', '/download/')
 _ADMIN_PREFIX = '/admin/'
@@ -92,6 +90,17 @@ DEFAULT_ADMIN_PASSWORD = 'Aimp#Admin2026!'
 
 @app.after_request
 def _security_headers(resp):
+    # Inject one shared, versioned stylesheet into every HTML page. Keeping
+    # this at the app layer lets the login page and studio shell share the
+    # same visual language without duplicating large CSS blocks in templates.
+    if resp.content_type and resp.content_type.startswith('text/html'):
+        try:
+            body = resp.get_data(as_text=True)
+            if '</head>' in body and '/static/ui-modern.css' not in body:
+                body = body.replace('</head>', '<link rel="stylesheet" href="/static/ui-modern.css?v=1">\n</head>', 1)
+                resp.set_data(body)
+        except Exception:
+            pass
     resp.headers.setdefault('X-Content-Type-Options', 'nosniff')
     resp.headers.setdefault('X-Frame-Options', 'SAMEORIGIN')
     resp.headers.setdefault('Referrer-Policy', 'same-origin')
