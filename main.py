@@ -5,32 +5,33 @@ shell, upload/download passthroughs), and starts the server.
 Run this file instead of any of the individual modules: `python3 main.py`.
 """
 import os, subprocess, threading
-from flask import request, jsonify, session, send_from_directory, render_template
+from flask import request, jsonify, session, send_from_directory, render_template, redirect
 
 from core import app, ensure_csrf_token
-import library_db      # noqa: F401 -- imported for its module-level init side effect
+import library_db      # noqa: F401
 import auth             # noqa: F401 -- registers /login, /logout, /admin/users
 from auth import require_permission, user_permissions
-from pipeline import (   # noqa: F401 -- registers every /api/, trailer-generation,
+from pipeline import (
     GENRE_DOCS_ROWS, EXPORT_FORMATS, build_export_cmd,
     _sweeper_loop, sweep_upload_folder, free_disk_mb, load_config_overrides, load_branding,
     ALLOW_LOCAL_MEDIA_UPLOAD,
 )
-import pipeline          # noqa: F401 -- import the module itself too, for its
-                          # own @app.route registrations beyond the names above
+import pipeline
 
 
 @app.route('/')
 def index():
+    # Public visitors see the branded landing page. Existing authenticated
+    # sessions go straight into the production workspace.
+    if not session.get('authed'):
+        brand = load_branding()
+        return render_template('landing.html',
+                               brand_name=brand['name'],
+                               brand_tagline=brand['tagline'],
+                               brand_theme=brand['theme_colors'])
+
     perms = user_permissions(session.get('user_id'), session.get('role'))
     role = session.get('role')
-    # Whichever nav tab is marked active server-side determines which panel
-    # shows on load. If that were hardcoded to Generate Promo Plug (as it was
-    # before groups existed) and a restricted account can't reach it, they'd
-    # land on a hidden tab's panel -- visible content with no way to submit
-    # it, since the routes underneath are gated too. Picks the first tab (in
-    # the same order they appear in the sidebar) this session can actually
-    # use; Docs is the final fallback since it's never gated.
     tab_order = [
         ('p-trailer', 'promo_generation'), ('p-music', 'music_generation'),
         ('p-sfx', 'text_to_sfx'), ('p-fish', 'text_to_speech'),
@@ -44,30 +45,21 @@ def index():
             break
     brand = load_branding()
     return render_template('index.html', genre_rows=GENRE_DOCS_ROWS,
-                                   current_username=session.get('username'),
-                                   current_role=role,
-                                   current_permissions=perms,
-                                   default_tab=default_tab,
-                                   brand_name=brand['name'],
-                                   brand_tagline=brand['tagline'],
-                                   brand_accent=brand['theme_colors']['accent'],
-                                   brand_theme=brand['theme_colors'],
-                                   brand_footer=brand['footer'],
-                                   allow_local_upload=ALLOW_LOCAL_MEDIA_UPLOAD,
-                                   csrf_token=ensure_csrf_token())
+                           current_username=session.get('username'),
+                           current_role=role,
+                           current_permissions=perms,
+                           default_tab=default_tab,
+                           brand_name=brand['name'],
+                           brand_tagline=brand['tagline'],
+                           brand_accent=brand['theme_colors']['accent'],
+                           brand_theme=brand['theme_colors'],
+                           brand_footer=brand['footer'],
+                           allow_local_upload=ALLOW_LOCAL_MEDIA_UPLOAD,
+                           csrf_token=ensure_csrf_token())
 
 @app.route('/uploads/<filename>')
 def uploaded(filename):
-    resp = send_from_directory(app.config['UPLOAD_FOLDER'], filename,
-                               conditional=True)
-    # Everything under UPLOAD_FOLDER is written once under a name that already
-    # embeds a job/preview id or timestamp and is never rewritten in place, so
-    # it's safe to mark immutable. Matters most for preview thumbnails: a
-    # preview shows ~20 of them, and without this the browser re-requests
-    # every one on each re-render of that panel. Over a high-latency link
-    # (VPN) the round-trips, not the bytes, are what makes it feel slow.
-    # conditional=True above also enables Range requests, so a video can be
-    # scrubbed without refetching from the start.
+    resp = send_from_directory(app.config['UPLOAD_FOLDER'], filename, conditional=True)
     resp.headers['Cache-Control'] = 'private, max-age=86400, immutable'
     return resp
 
@@ -77,14 +69,11 @@ def download_file(filename):
     orig = request.args.get('name', filename)
     fmt_key = request.args.get('format', 'mp4_high')
     base_name, _ = os.path.splitext(orig)
-
     if fmt_key not in EXPORT_FORMATS:
         return jsonify(error=f'Unknown export format: {fmt_key}'), 400
-
     src_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     if not os.path.exists(src_path):
         return jsonify(error='File not found'), 404
-
     ext = EXPORT_FORMATS[fmt_key]['ext']
     cache_name = f'{os.path.splitext(filename)[0]}_{fmt_key}.{ext}'
     cache_path = os.path.join(app.config['UPLOAD_FOLDER'], cache_name)
@@ -93,53 +82,30 @@ def download_file(filename):
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         if not (os.path.exists(cache_path) and os.path.getsize(cache_path) > 0):
             return jsonify(error=f'Export to {fmt_key} failed: {r.stderr[-800:]}'), 500
-
     resp = send_from_directory(app.config['UPLOAD_FOLDER'], cache_name)
     resp.headers['Content-Disposition'] = f'attachment; filename="{base_name}.{ext}"'
     return resp
 
-load_config_overrides()  # apply any saved Config-tab overrides on top of the env-var defaults
+load_config_overrides()
 
 if __name__ == '__main__':
     print(' * Server starting...')
     threading.Thread(target=_sweeper_loop, daemon=True).start()
-    sweep_upload_folder()  # reclaim anything left over from a previous run
+    sweep_upload_folder()
     _free = free_disk_mb()
     if _free is not None:
-        print(f' * Disk free on work volume: {_free:,.0f} MB'
-              + ('   ** LOW — renders may fail **' if _free < 2048 else ''))
+        print(f' * Disk free on work volume: {_free:,.0f} MB' + ('   ** LOW — renders may fail **' if _free < 2048 else ''))
     print(' * HTTP:  http://0.0.0.0:5000/')
     print(' * Access from local machine: http://localhost:5000/')
     print(' * Access from other devices: http://YOUR_IP:5000/')
-
-    # Werkzeug's dev server (what app.run() below starts) prints its own
-    # warning not to use it in production, and it's right -- it isn't
-    # hardened for that. waitress is a real production WSGI server, pure
-    # Python (no C build step, so it installs the same way on Windows as
-    # Linux) and, importantly for this app specifically: single *process*,
-    # multiple *threads*. That distinction matters here because job/preview
-    # state (JOBS, PREVIEWS in pipeline.py) lives in plain in-memory dicts,
-    # not a shared store like Redis -- a multi-process server (e.g. gunicorn
-    # with -w 4) would give each worker its own separate copy, so a job
-    # started on one worker could silently vanish from progress-polling
-    # requests that happen to land on a different one. waitress's threading
-    # model doesn't have that failure mode, so it's the default here rather
-    # than something to opt into.
-    #
-    # DEV_SERVER=1 falls back to Werkzeug's dev server -- e.g. if you want
-    # its interactive debugger for troubleshooting (which needs debug=True
-    # to actually engage; this app runs with debug=False either way).
     if os.environ.get('DEV_SERVER', '').strip().lower() in ('1', 'true', 'yes'):
-        print(' * DEV_SERVER=1 -- using Werkzeug\'s development server, not waitress.')
-        print(' * Do not use this for anything but local troubleshooting.')
+        print(" * DEV_SERVER=1 -- using Werkzeug's development server, not waitress.")
         app.run(debug=False, host='0.0.0.0', port=5000, threaded=True, use_reloader=False)
     else:
         try:
             from waitress import serve
         except ImportError:
-            print(' * waitress is not installed (pip install waitress) -- falling back to')
-            print(' * the development server. Fine for local use; install waitress before')
-            print(' * running this anywhere production traffic can reach it.')
+            print(' * waitress is not installed (pip install waitress) -- falling back to the development server.')
             app.run(debug=False, host='0.0.0.0', port=5000, threaded=True, use_reloader=False)
         else:
             threads = int(os.environ.get('WAITRESS_THREADS', 8))
