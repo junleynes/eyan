@@ -423,3 +423,37 @@ img[src*="aimp-logo"],img[src*="logo-mark"],img[src*="branding/logo"]{
 @media(max-width:700px){
   .promo-essentials{grid-template-columns:1fr}
 }
+
+/* ---- Delivery package + job errors ---- */
+.delivery-pack{
+  margin-top:14px;padding:14px 16px;border-radius:14px;
+  border:1px solid var(--line);
+  background:color-mix(in srgb,var(--sunken) 70%,transparent)
+}
+.delivery-title{
+  font:600 11px 'JetBrains Mono',monospace;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--phosphor);margin-bottom:6px
+}
+.delivery-name{font-size:12px;color:var(--ink-dim);margin-bottom:10px}
+.delivery-name code{color:var(--ink);font-size:11px}
+.delivery-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.qa-gates{margin:10px 0 0;padding-left:18px;font-size:12px;color:var(--ink-dim);line-height:1.55}
+.qa-warn{
+  margin-top:8px;padding:8px 10px;border-radius:8px;font-size:12px;
+  border:1px solid color-mix(in srgb,var(--amber) 40%,transparent);
+  background:color-mix(in srgb,var(--amber) 10%,transparent);color:var(--amber)
+}
+.result-head{font-size:13px;line-height:1.5}
+.job-error{padding:4px 2px}
+.job-error-title{
+  font:700 13px 'JetBrains Mono',monospace;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--tally);margin-bottom:6px
+}
+.job-error-step{font-size:12px;color:var(--ink-dim);margin-bottom:6px}
+.job-error-msg{font-size:13px;line-height:1.5;margin-bottom:8px}
+.job-error-tip{
+  font-size:12px;padding:8px 10px;border-radius:8px;margin-bottom:12px;
+  border:1px solid color-mix(in srgb,var(--phosphor) 25%,transparent);
+  background:color-mix(in srgb,var(--phosphor) 8%,transparent);color:var(--ink)
+}
+.job-error-actions{display:flex;flex-wrap:wrap;gap:8px}

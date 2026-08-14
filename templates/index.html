@@ -1929,7 +1929,7 @@ document.addEventListener("DOMContentLoaded", function(){
       <strong style="font-size:14px">Proposed cut</strong>
       <span id=tr-preview-stats style="font-size:12px;opacity:.8"></span>
     </div>
-    <p style="margin:6px 0 10px;font-size:12px;opacity:.75">Untick scenes to drop them, add alternates below, then render. Analysis is reused — no re-detect.</p>
+    <p style="margin:6px 0 10px;font-size:12px;opacity:.75">Untick scenes to drop them, add alternates below, then <strong>Lock cut &amp; render</strong>. Picture analysis is reused — only extract → mix → export runs.</p>
     <div id=tr-cut-timeline class="cut-timeline" aria-label="Cut timeline"></div>
     <div id=tr-preview-grid style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-top:14px"></div>
     <div id=tr-alt-wrap style="display:none;margin-top:16px;border-top:1px solid var(--line);padding-top:14px">
@@ -1941,7 +1941,7 @@ document.addEventListener("DOMContentLoaded", function(){
       </div>
     </div>
     <div style="display:flex;gap:10px;align-items:center;margin-top:16px;flex-wrap:wrap">
-      <button type=button class=btn id=tr-render-btn onclick="renderApprovedCut()">Render this cut</button>
+      <button type=button class=btn id=tr-render-btn onclick="renderApprovedCut()">Lock cut &amp; render</button>
       <button type=button class=btn id=tr-preview-all-btn onclick="togglePreviewAll()" style="background:transparent;border:1px solid var(--line);color:var(--ink)">Deselect all</button>
       <span id=tr-preview-kept style="font-size:12px;opacity:.75"></span>
     </div>
@@ -2268,7 +2268,7 @@ function pollJob(jobId, isCancelled){
       try{ r = await fetch('/api/trailer/progress/'+jobId) }
       catch(err){ setTimeout(poll, 1200); return }
       var j = await r.json()
-      if(j.error){ resolve({error: j.error}); return }
+      if(j.error){ resolve({error: j.error, step: j.step, percent: j.percent}); return }
       if(j.stages) TR_STAGES = j.stages
       var pct = j.percent || 0
       progBar.style.width = pct+'%'; progPct.textContent = pct+'%'
@@ -3751,37 +3751,132 @@ document.addEventListener('DOMContentLoaded', function(){
   loadVoiceManageList()   // no-op for non-admins -- #voice-manage-list isn't rendered for them
 })
 
+function showJobError(d){
+  var msg = (d && d.error) ? d.error : 'Unknown error'
+  var step = d && d.step ? d.step : null
+  var tip = ''
+  var low = String(msg).toLowerCase()
+  if(low.indexOf('ollama') >= 0 || low.indexOf('vision') >= 0)
+    tip = 'Check that Ollama is running, then use API \u2192 Check services.'
+  else if(low.indexOf('woosh') >= 0)
+    tip = 'SFX service is down \u2014 switch SFX to Upload or None in Advanced, then retry.'
+  else if(low.indexOf('ace-step') >= 0 || low.indexOf('ace step') >= 0 || low.indexOf('music') >= 0 && low.indexOf('unavailable') >= 0)
+    tip = 'Music service may be down \u2014 set Background music to Upload or None, then retry.'
+  else if(low.indexOf('fish') >= 0 || low.indexOf('tts') >= 0 || low.indexOf('voiceover') >= 0)
+    tip = 'TTS may be down \u2014 use an uploaded VO or set narration to None.'
+  else if(low.indexOf('scene') >= 0 && low.indexOf('cut') >= 0)
+    tip = 'Try different footage, or lower cut sensitivity in Config \u2192 Production.'
+  else if(low.indexOf('too many') >= 0 || low.indexOf('rate') >= 0)
+    tip = 'Wait a minute, then try again.'
+  var esc = (typeof escapeHtmlLite === 'function') ? escapeHtmlLite : function(s){ return String(s) }
+  var html = '<div class="job-error">' +
+    '<div class="job-error-title">Generation failed</div>' +
+    (step ? '<div class="job-error-step">Stopped at: <strong>'+esc(step)+'</strong></div>' : '') +
+    '<div class="job-error-msg">'+esc(msg)+'</div>' +
+    (tip ? '<div class="job-error-tip">'+esc(tip)+'</div>' : '') +
+    '<div class="job-error-actions">' +
+    '<button type="button" class="btn btn-primary-promo" onclick="submitTrailer(true)">Retry preview</button>' +
+    '<button type="button" class="btn btn-secondary-promo" onclick="submitTrailer(false)">Retry full generate</button>' +
+    '</div></div>'
+  document.getElementById('tr-stats').innerHTML = html
+  document.getElementById('tr-video').innerHTML = ''
+  document.getElementById('tr-table').innerHTML = ''
+  document.getElementById('tr-area').style.display = 'block'
+  document.getElementById('tr-area').scrollIntoView({behavior:'smooth', block:'nearest'})
+}
+
+function downloadSceneListCsv(d){
+  var rows = [['#','Start_s','End_s','Used_s','Score','Description']]
+  ;(d.scenes || []).forEach(function(s){
+    rows.push([s.scene, s.start, s.end, s.duration, s.quality, String(s.description||'').replace(/"/g,'""')])
+  })
+  var csv = rows.map(function(r){
+    return r.map(function(c,i){ return i===5 ? '"'+c+'"' : c }).join(',')
+  }).join('\n')
+  var blob = new Blob([csv], {type:'text/csv;charset=utf-8'})
+  var a = document.createElement('a')
+  var base = (d.orig_name || 'promo').replace(/\.[^.]+$/,'')
+  a.href = URL.createObjectURL(blob)
+  a.download = base + '_scenes.csv'
+  a.click()
+  setTimeout(function(){ URL.revokeObjectURL(a.href) }, 2000)
+}
+
 function renderTrailerResult(d){
-  if(d.error){document.getElementById('tr-stats').innerHTML='<b>Error:</b> '+d.error; document.getElementById('tr-area').style.display='block'; return}
+  if(d.error){ showJobError(d); return }
   var srcLabel=function(s){return {woosh:'AI-generated (Woosh)',ai_generated:'AI-generated (ACE-Step)',uploaded:'uploaded',synth_fallback:'placeholder synth (Woosh/ACE-Step unavailable)',tts:'text-to-speech',none:'none'}[s]||s}
   var audioNote=''
-  if(d.bgm_source && d.bgm_source!=='none') audioNote+=' | Music: '+srcLabel(d.bgm_source)+(d.sync_beats?' (beat-synced cuts)':'')
-  if(d.sfx_source && d.sfx_source!=='none') audioNote+=' | SFX: '+srcLabel(d.sfx_source)
-  if(d.vo_source && d.vo_source!=='none') audioNote+=' | VO: '+srcLabel(d.vo_source)
-  if(d.whisper_enhance) audioNote+=' | Scene selection: dialogue-enhanced'
+  if(d.bgm_source && d.bgm_source!=='none') audioNote+=' \u00b7 Music: '+srcLabel(d.bgm_source)+(d.sync_beats?' (beat-synced)':'')
+  if(d.sfx_source && d.sfx_source!=='none') audioNote+=' \u00b7 SFX: '+srcLabel(d.sfx_source)
+  if(d.vo_source && d.vo_source!=='none') audioNote+=' \u00b7 VO: '+srcLabel(d.vo_source)
+  if(d.whisper_enhance) audioNote+=' \u00b7 Dialogue-enhanced selection'
   var fallbackUsed=(d.bgm_source==='synth_fallback'||d.sfx_source==='synth_fallback')
-  document.getElementById('tr-stats').innerHTML='Trailer: '+d.trailer_duration+'s (target '+d.trailer_length+'s) from '+d.selected_scenes+'/'+d.total_scenes+' scenes | Raw video: '+d.video_duration+'s'+audioNote+(fallbackUsed?'<br><small style="color:var(--amber)">Note: AI music/SFX service was unavailable, so a lower-fidelity generated placeholder was used instead.</small>':'')+(d.vo_error?'<br><small style="color:var(--amber)">Voiceover note: '+d.vo_error+'</small>':'')
+  var esc = (typeof escapeHtmlLite === 'function') ? escapeHtmlLite : function(s){ return String(s) }
+
+  var gates = []
+  var dur = parseFloat(d.trailer_duration), target = parseFloat(d.trailer_length)
+  if(isFinite(dur) && isFinite(target)){
+    var delta = Math.abs(dur - target)
+    if(delta > 0.8) gates.push('Duration is '+dur+'s vs target '+target+'s (\u0394 '+delta.toFixed(1)+'s).')
+    else gates.push('Duration is close to target ('+dur+'s / '+target+'s).')
+  }
+  if(fallbackUsed) gates.push('AI music/SFX used a placeholder \u2014 replace before air if possible.')
+  if(d.vo_error) gates.push('Voiceover note: '+d.vo_error)
+
+  var gatesHtml = gates.length
+    ? '<ul class="qa-gates">'+gates.map(function(g){ return '<li>'+esc(g)+'</li>' }).join('')+'</ul>'
+    : ''
+
+  document.getElementById('tr-stats').innerHTML =
+    '<div class="result-head"><strong>Promo ready</strong> \u00b7 '+d.trailer_duration+'s (target '+d.trailer_length+'s) \u00b7 '+
+    d.selected_scenes+'/'+d.total_scenes+' scenes \u00b7 source '+d.video_duration+'s'+audioNote+'</div>'+
+    gatesHtml +
+    (fallbackUsed?'<div class="qa-warn">AI music/SFX service was unavailable; a lower-fidelity placeholder was used.</div>':'')
+
   var dlFilename = d.trailer_url.split('/').pop()
   var dlName = d.orig_name
   var dlUrl = function(fmt){
     if(d.library_id) return '/library/'+d.library_id+'/download?format='+fmt
     return '/download/'+dlFilename+'?name='+encodeURIComponent(dlName)+'&format='+fmt
   }
-  document.getElementById('tr-video').innerHTML='<video controls style=max-width:100%;border-radius:8px><source src="'+d.trailer_url+'" type="video/mp4"></video>'+
-    '<div style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap">'+
-    '<select id=tr-export-format style="width:auto">'+
-    '<option value=mp4_high selected>MP4 (H.264 High Profile)</option>'+
-    '<option value=prores_hq_2997>Apple ProRes 422 HQ — 29.97fps</option>'+
-    '<option value=prores_hq_2398>Apple ProRes 422 HQ — 23.976fps</option>'+
-    '<option value=avci100i>AVC-Intra 100i (approximation)</option>'+
-    '</select>'+
-    '<a href="'+dlUrl('mp4_high')+'" id=tr-download-link class="btn" style="display:inline-block;text-decoration:none">Download</a>'+
+  var baseName = (d.orig_name || 'promo').replace(/\.[^.]+$/,'')
+  var stamp = new Date().toISOString().slice(0,10)
+  var suggest = baseName + '_promo_' + (d.trailer_length||'') + 's_' + stamp
+
+  document.getElementById('tr-video').innerHTML =
+    '<video controls style="max-width:100%;border-radius:10px;background:#000"><source src="'+d.trailer_url+'" type="video/mp4"></video>'+
+    '<div class="delivery-pack">'+
+      '<div class="delivery-title">Delivery package</div>'+
+      '<div class="delivery-name">Suggested name: <code>'+esc(suggest)+'</code></div>'+
+      '<div class="delivery-row">'+
+        '<a class="btn btn-primary-promo" style="text-decoration:none" href="'+dlUrl('mp4_high')+'">MP4 master</a>'+
+        '<a class="btn btn-secondary-promo" style="text-decoration:none" href="'+dlUrl('prores_hq_2997')+'">ProRes 29.97</a>'+
+        '<a class="btn btn-secondary-promo" style="text-decoration:none" href="'+dlUrl('prores_hq_2398')+'">ProRes 23.976</a>'+
+        '<a class="btn btn-secondary-promo" style="text-decoration:none" href="'+dlUrl('avci100i')+'">AVC-Intra ~</a>'+
+        '<button type="button" class="btn btn-secondary-promo" id="tr-scene-csv-btn">Scene list CSV</button>'+
+      '</div>'+
+      '<div class="delivery-row" style="margin-top:8px">'+
+        '<select id=tr-export-format style="width:auto">'+
+          '<option value=mp4_high selected>MP4 (H.264 High Profile)</option>'+
+          '<option value=prores_hq_2997>Apple ProRes 422 HQ \u2014 29.97fps</option>'+
+          '<option value=prores_hq_2398>Apple ProRes 422 HQ \u2014 23.976fps</option>'+
+          '<option value=avci100i>AVC-Intra 100i (approximation)</option>'+
+        '</select>'+
+        '<a href="'+dlUrl('mp4_high')+'" id=tr-download-link class="btn" style="display:inline-block;text-decoration:none">Download selected format</a>'+
+        '<button type="button" class="btn btn-secondary-promo" onclick="submitTrailer(true)">Re-preview same setup</button>'+
+      '</div>'+
     '</div>'
-  document.getElementById('tr-export-format').addEventListener('change', function(){
+  var fmtEl = document.getElementById('tr-export-format')
+  if(fmtEl) fmtEl.addEventListener('change', function(){
     document.getElementById('tr-download-link').href = dlUrl(this.value)
   })
-  let rows=''
-  d.scenes.forEach(s=>{rows+='<tr><td>'+s.scene+'</td><td>'+s.start+'s</td><td>'+s.end+'s</td><td>'+s.quality+'</td><td>'+s.duration+'</td><td>'+s.description+'</td></tr>'})
+  var csvBtn = document.getElementById('tr-scene-csv-btn')
+  if(csvBtn) csvBtn.addEventListener('click', function(){ downloadSceneListCsv(d) })
+
+  var rows=''
+  ;(d.scenes||[]).forEach(function(s){
+    rows+='<tr><td>'+s.scene+'</td><td>'+s.start+'s</td><td>'+s.end+'s</td><td>'+s.quality+'</td><td>'+s.duration+'</td><td>'+esc(s.description||'')+'</td></tr>'
+  })
   document.getElementById('tr-table').innerHTML='<tr><th>#</th><th>Start</th><th>End</th><th>Score</th><th>Used</th><th>Description</th></tr>'+rows
   document.getElementById('tr-area').style.display='block'
 }
