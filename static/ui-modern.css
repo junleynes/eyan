@@ -237,7 +237,6 @@ body:has(.login-panel){overflow:hidden;background:radial-gradient(900px 600px at
 
 /* Responsive: keep icon-only and horizontal rail usable */
 @media(max-width:900px){
-  .rail-brand-text,
   .rail-section,
   .rail .tab-text,
   .rail .hdr-engines,
@@ -271,3 +270,88 @@ img[src*="aimp-logo"],img[src*="logo-mark"],img[src*="branding/logo"]{
 
 /* Bump cache so inject picks up new rules */
 /* v=2 sidebar modern */
+
+/* ---- Rail logo = same wordmark as landing ---- */
+.rail-brand{padding:6px 4px 14px!important}
+.rail-brand-link{display:block;line-height:0}
+.rail-logo{
+  width:auto!important;height:42px!important;max-width:168px!important;
+  border-radius:12px!important;object-fit:contain;object-position:left center;
+  background:transparent!important;border:none!important;box-shadow:none!important;
+  filter:drop-shadow(0 0 14px color-mix(in srgb,var(--phosphor) 18%,transparent))!important
+}
+.rail-brand .brand-tagline{
+  margin:8px 4px 0!important;font-size:9px!important;opacity:.7;line-height:1.35!important
+}
+
+/* Modern stroke icons */
+.rail .tab-icon{
+  display:grid!important;place-items:center!important;
+  width:30px;height:30px;flex:0 0 30px!important;
+  border-radius:9px;padding:0;margin:0!important;
+  background:color-mix(in srgb,var(--wash-3) 90%,transparent);
+  border:1px solid var(--line);
+  color:var(--ink-dim);
+  transition:background .16s,border-color .16s,color .16s,box-shadow .16s
+}
+.rail .tab-icon svg{width:16px;height:16px;display:block}
+.rail .tab:hover .tab-icon{
+  color:var(--ink);
+  border-color:color-mix(in srgb,var(--phosphor) 28%,transparent);
+  background:color-mix(in srgb,var(--phosphor) 10%,transparent)
+}
+.rail .tab.active .tab-icon{
+  color:var(--phosphor);
+  background:color-mix(in srgb,var(--phosphor) 16%,transparent);
+  border-color:color-mix(in srgb,var(--phosphor) 32%,transparent);
+  box-shadow:0 0 16px color-mix(in srgb,var(--phosphor) 18%,transparent)
+}
+
+/* ---- Docs organized layout ---- */
+.docs-layout{
+  display:grid;grid-template-columns:200px minmax(0,1fr);gap:22px;align-items:start;min-height:420px
+}
+.docs-nav{
+  position:sticky;top:18px;display:flex;flex-direction:column;gap:4px;
+  padding:10px;border:1px solid var(--line);border-radius:14px;
+  background:color-mix(in srgb,var(--sunken) 55%,transparent)
+}
+.docs-nav-item{
+  text-align:left;border:1px solid transparent;background:transparent;color:var(--ink-dim);
+  font:600 11px 'JetBrains Mono',monospace;letter-spacing:.04em;text-transform:uppercase;
+  padding:10px 12px;border-radius:10px;cursor:pointer;transition:background .15s,color .15s,border-color .15s
+}
+.docs-nav-item:hover{color:var(--ink);background:var(--wash-3)}
+.docs-nav-item.active{
+  color:var(--phosphor);
+  background:color-mix(in srgb,var(--phosphor) 10%,transparent);
+  border-color:color-mix(in srgb,var(--phosphor) 22%,transparent)
+}
+.docs-body{min-width:0}
+.docs-pane{display:none}
+.docs-pane.active{display:block;animation:fade-in .2s ease}
+.docs-lead{color:var(--ink-dim);max-width:52rem;margin:0 0 18px}
+.docs-cards{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px
+}
+.docs-card{
+  text-align:left;padding:16px;border-radius:14px;border:1px solid var(--line);
+  background:color-mix(in srgb,var(--elevated) 80%,transparent);cursor:pointer;
+  color:var(--ink);transition:transform .15s,border-color .15s,background .15s
+}
+.docs-card:hover{
+  transform:translateY(-2px);
+  border-color:color-mix(in srgb,var(--phosphor) 28%,transparent);
+  background:color-mix(in srgb,var(--phosphor) 6%,transparent)
+}
+.docs-card strong{display:block;font:600 12px 'JetBrains Mono',monospace;letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px;color:var(--phosphor)}
+.docs-card span{font-size:13px;color:var(--ink-dim);line-height:1.45}
+.docs-table-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px}
+.docs-table-wrap table{margin:0}
+.docs-pane h3{margin-top:22px}
+@media(max-width:900px){
+  .docs-layout{grid-template-columns:1fr}
+  .docs-nav{position:static;flex-direction:row;flex-wrap:wrap;gap:6px}
+  .docs-nav-item{padding:8px 10px;font-size:10px}
+  .rail-logo{height:36px!important;max-width:140px!important}
+}

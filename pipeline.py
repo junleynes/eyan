@@ -4924,7 +4924,8 @@ def branding_logo():
     cfg = load_branding()
     if cfg['logo_filename'] and os.path.exists(os.path.join(BRANDING_DIR, cfg['logo_filename'])):
         return send_from_directory(BRANDING_DIR, cfg['logo_filename'])
-    return redirect('/static/logo-mark.svg')
+    # Prefer the same modern wordmark the landing page uses, not the legacy segment mark.
+    return redirect('/static/aimp-logo.svg')
 
 @app.route('/branding/favicon')
 def branding_favicon():

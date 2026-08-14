@@ -97,7 +97,7 @@ def _security_headers(resp):
         try:
             body = resp.get_data(as_text=True)
             if '</head>' in body and '/static/ui-modern.css' not in body:
-                body = body.replace('</head>', '<link rel="stylesheet" href="/static/ui-modern.css?v=2">\n</head>', 1)
+                body = body.replace('</head>', '<link rel="stylesheet" href="/static/ui-modern.css?v=3">\n</head>', 1)
                 resp.set_data(body)
         except Exception:
             pass
