@@ -1,17 +1,396 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ brand_name }} — {{ brand_tagline }}</title>
 <link rel="icon" type="image/svg+xml" href="/static/aimp-logo.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
 <style>
-*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:#070b14;color:#eef3fa;font-family:'IBM Plex Sans',system-ui,sans-serif;-webkit-font-smoothing:antialiased}a{text-decoration:none;color:inherit}:root{--teal:{{ brand_theme.phosphor }};--amber:{{ brand_theme.amber }};--blue:{{ brand_theme.accent }};--muted:#8995a9;--line:rgba(255,255,255,.10)}.page{min-height:100vh;overflow:hidden;background:radial-gradient(900px 600px at 8% 0%,color-mix(in srgb,var(--teal) 12%,transparent),transparent 65%),radial-gradient(800px 500px at 100% 8%,color-mix(in srgb,var(--blue) 12%,transparent),transparent 65%),#070b14}.grid{position:fixed;inset:0;pointer-events:none;opacity:.2;background-image:linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px);background-size:64px 64px;mask-image:linear-gradient(to bottom,black,transparent 72%)}.nav{position:relative;z-index:2;max-width:1180px;margin:auto;padding:26px 28px;display:flex;align-items:center;justify-content:space-between}.brand{display:flex;align-items:center;gap:12px}.brand img{width:150px;height:45px;object-fit:contain;object-position:left center;filter:drop-shadow(0 0 18px color-mix(in srgb,var(--teal) 22%,transparent))}.signin{font:600 11px 'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.08em;padding:11px 17px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.04);transition:.2s}.signin:hover{border-color:color-mix(in srgb,var(--teal) 55%,white 10%);background:rgba(255,255,255,.08);transform:translateY(-1px)}.hero{position:relative;z-index:1;max-width:1180px;margin:auto;padding:82px 28px 70px;display:grid;grid-template-columns:1.05fr .95fr;gap:70px;align-items:center}.eyebrow{display:inline-flex;align-items:center;gap:8px;color:var(--teal);font:600 10px 'JetBrains Mono',monospace;letter-spacing:.12em;text-transform:uppercase;padding:7px 10px;border:1px solid color-mix(in srgb,var(--teal) 25%,transparent);border-radius:999px;background:color-mix(in srgb,var(--teal) 6%,transparent)}.dot{width:6px;height:6px;border-radius:50%;background:var(--teal);box-shadow:0 0 14px var(--teal)}h1{font-size:clamp(46px,6vw,76px);line-height:.98;letter-spacing:-.055em;margin:22px 0;max-width:720px}h1 span{background:linear-gradient(100deg,#fff 25%,color-mix(in srgb,var(--teal) 90%,white 10%) 70%,#fff);-webkit-background-clip:text;background-clip:text;color:transparent}.lead{font-size:18px;line-height:1.65;color:#aeb8c8;max-width:610px;margin:0}.actions{display:flex;gap:12px;align-items:center;margin-top:32px;flex-wrap:wrap}.primary{display:inline-flex;align-items:center;gap:9px;padding:14px 20px;border-radius:11px;background:linear-gradient(135deg,var(--teal),color-mix(in srgb,var(--blue) 65%,var(--teal)));color:#061014;font:700 11px 'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.07em;box-shadow:0 14px 40px color-mix(in srgb,var(--teal) 18%,transparent);transition:.2s}.primary:hover{transform:translateY(-2px);box-shadow:0 18px 50px color-mix(in srgb,var(--teal) 26%,transparent)}.secondary{padding:14px 18px;border:1px solid var(--line);border-radius:11px;color:#c5cfdd;font:600 11px 'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.07em}.secondary:hover{background:rgba(255,255,255,.05)}.stage{position:relative}.window{position:relative;border:1px solid rgba(255,255,255,.13);border-radius:18px;background:linear-gradient(145deg,rgba(24,34,54,.92),rgba(9,14,25,.94));box-shadow:0 35px 90px rgba(0,0,0,.52),0 0 80px color-mix(in srgb,var(--teal) 7%,transparent);overflow:hidden;transform:perspective(1200px) rotateY(-4deg) rotateX(2deg)}.windowbar{height:42px;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 14px;gap:6px}.windowbar i{width:7px;height:7px;border-radius:50%;background:#566174}.windowbar .title{margin-left:8px;font:500 9px 'JetBrains Mono',monospace;color:#77849a;letter-spacing:.08em}.screen{padding:17px}.video{height:235px;border-radius:11px;position:relative;overflow:hidden;background:linear-gradient(130deg,#16273b,#3d2530 47%,#0c1624)}.video:before{content:'';position:absolute;inset:0;background:radial-gradient(circle at 66% 38%,rgba(255,190,115,.55),transparent 18%),linear-gradient(125deg,transparent 30%,rgba(0,0,0,.35) 30% 45%,transparent 45%)}.scan{position:absolute;left:0;right:0;top:52%;height:1px;background:linear-gradient(90deg,transparent,var(--teal),transparent);box-shadow:0 0 18px var(--teal)}.play{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:54px;height:54px;border-radius:50%;border:1px solid rgba(255,255,255,.3);background:rgba(4,8,15,.45);display:grid;place-items:center;backdrop-filter:blur(8px)}.play:after{content:'';margin-left:4px;border-left:12px solid white;border-top:7px solid transparent;border-bottom:7px solid transparent}.timeline{height:9px;margin:15px 0 12px;background:#111a29;border-radius:999px;overflow:hidden}.timeline:after{content:'';display:block;width:62%;height:100%;background:linear-gradient(90deg,var(--teal),var(--blue));border-radius:999px}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.stat{padding:12px;border:1px solid var(--line);background:rgba(255,255,255,.025);border-radius:9px}.stat b{display:block;font:700 14px 'JetBrains Mono',monospace;color:#eef3fa}.stat span{font-size:9px;color:#758196}.float{position:absolute;right:-24px;bottom:24px;width:180px;padding:14px;border:1px solid rgba(255,255,255,.12);background:rgba(11,17,29,.88);backdrop-filter:blur(16px);border-radius:13px;box-shadow:0 20px 45px rgba(0,0,0,.4)}.float-label{font:600 8px 'JetBrains Mono',monospace;color:var(--teal);text-transform:uppercase;letter-spacing:.1em}.float b{display:block;margin-top:8px;font-size:12px}.bars{display:flex;gap:3px;align-items:end;height:28px;margin-top:9px}.bars i{display:block;flex:1;background:linear-gradient(to top,var(--blue),var(--teal));border-radius:2px 2px 0 0;opacity:.8}.bars i:nth-child(1){height:35%}.bars i:nth-child(2){height:65%}.bars i:nth-child(3){height:45%}.bars i:nth-child(4){height:85%}.bars i:nth-child(5){height:58%}.bars i:nth-child(6){height:100%}.bars i:nth-child(7){height:72%}.bars i:nth-child(8){height:48%}.section{position:relative;z-index:1;max-width:1180px;margin:auto;padding:80px 28px}.section-head{max-width:680px}.kicker{font:600 10px 'JetBrains Mono',monospace;color:var(--amber);letter-spacing:.12em;text-transform:uppercase}.section h2{font-size:40px;letter-spacing:-.035em;margin:12px 0 14px}.section p{color:var(--muted);line-height:1.7}.features{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:36px}.feature{padding:25px;border:1px solid var(--line);background:linear-gradient(145deg,rgba(255,255,255,.045),rgba(255,255,255,.015));border-radius:14px;min-height:190px;transition:.2s}.feature:hover{transform:translateY(-3px);border-color:color-mix(in srgb,var(--teal) 28%,transparent)}.icon{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;background:color-mix(in srgb,var(--teal) 9%,transparent);color:var(--teal);font:700 14px 'JetBrains Mono',monospace;margin-bottom:18px}.feature h3{font-size:16px;margin:0 0 8px}.feature p{font-size:13px;margin:0}.strip{margin-top:26px;padding:22px 24px;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.025);display:flex;align-items:center;justify-content:space-between;gap:20px}.strip strong{font-size:15px}.strip span{font-size:12px;color:var(--muted)}footer{max-width:1180px;margin:auto;padding:30px 28px 42px;border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:20px;color:#667287;font:10px 'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.06em}@media(max-width:850px){.hero{grid-template-columns:1fr;gap:55px;padding-top:55px}.stage{max-width:650px}.window{transform:none}.features{grid-template-columns:1fr 1fr}.float{right:-8px}}@media(max-width:560px){.nav{padding:20px}.brand img{width:130px;height:40px}.hero,.section{padding-left:20px;padding-right:20px}.hero{padding-top:45px}h1{font-size:48px}.lead{font-size:16px}.features{grid-template-columns:1fr}.float{position:relative;right:auto;bottom:auto;width:auto;margin-top:12px}.strip,footer{flex-direction:column;align-items:flex-start}.secondary{display:none}}
-</style></head>
-<body><div class="page"><div class="grid"></div>
-<header class="nav"><a class="brand" href="/"><img src="/static/aimp-logo.svg" alt="AIMP — AI Media Platform"></a><a class="signin" href="/login">Sign in →</a></header>
-<main><section class="hero"><div><div class="eyebrow"><i class="dot"></i> Broadcast-ready AI workflow</div><h1>Turn raw footage into <span>compelling promos.</span></h1><p class="lead">{{ brand_tagline }}. Analyze scenes, generate music and sound, create narration, and assemble polished episodic promos in one self-hosted creative workspace.</p><div class="actions"><a class="primary" href="/login">Enter the studio <span>↗</span></a><a class="secondary" href="#features">Explore capabilities</a></div></div>
-<div class="stage"><div class="window"><div class="windowbar"><i></i><i></i><i></i><span class="title">{{ brand_name }} / PROMO STUDIO</span></div><div class="screen"><div class="video"><div class="scan"></div><div class="play"></div></div><div class="timeline"></div><div class="stats"><div class="stat"><b>24</b><span>SCENES ANALYZED</span></div><div class="stat"><b>00:30</b><span>TARGET DURATION</span></div><div class="stat"><b>4K</b><span>MASTER READY</span></div></div></div></div><div class="float"><div class="float-label">AI analysis</div><b>Scene quality + vision score</b><div class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div></div></div></section>
-<section class="section" id="features"><div class="section-head"><div class="kicker">One workflow. Multiple AI tools.</div><h2>Everything your promo needs, in one place.</h2><p>Built around the real broadcast workflow: discover the best moments, shape the story, build the sound, then render the final plug.</p></div><div class="features"><article class="feature"><div class="icon">01</div><h3>Intelligent scene selection</h3><p>Detect cuts, score visual quality, inspect scenes, and choose the strongest moments before rendering.</p></article><article class="feature"><div class="icon">02</div><h3>Music, SFX & voice</h3><p>Generate original music, whooshes and narration with dedicated AI tools.</p></article><article class="feature"><div class="icon">03</div><h3>Preview before you commit</h3><p>Review selected scenes and swap alternates before the final render.</p></article><article class="feature"><div class="icon">04</div><h3>Show-ready templates</h3><p>Save per-show creative settings so the next episode starts from a proven configuration.</p></article><article class="feature"><div class="icon">05</div><h3>Self-hosted by design</h3><p>Keep media, credentials and AI services inside your own controlled environment.</p></article><article class="feature"><div class="icon">06</div><h3>Built for episodic volume</h3><p>Keep rendered promos in a searchable library and repeat the process episode after episode.</p></article></div><div class="strip"><div><strong>Ready to make the next promo?</strong><br><span>Sign in and open the production workspace.</span></div><a class="primary" href="/login">Launch {{ brand_name }} →</a></div></section></main>
-<footer><span>{{ brand_name }} · {{ brand_tagline }}</span><span>Self-hosted AI media platform</span></footer></div></body></html>
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;background:#070b14;color:#eef3fa;
+  font-family:'IBM Plex Sans',system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased
+}
+a{text-decoration:none;color:inherit}
+:root{
+  --teal:{{ brand_theme.phosphor }};
+  --amber:{{ brand_theme.amber }};
+  --blue:{{ brand_theme.accent }};
+  --tally:{{ brand_theme.tally }};
+  --muted:#8995a9;
+  --line:rgba(255,255,255,.10);
+  --panel:#121a2b;
+  --sunken:#0b1220;
+}
+.page{
+  min-height:100vh;overflow-x:hidden;
+  background:
+    radial-gradient(900px 600px at 8% 0%,color-mix(in srgb,var(--teal) 12%,transparent),transparent 65%),
+    radial-gradient(800px 500px at 100% 8%,color-mix(in srgb,var(--blue) 12%,transparent),transparent 65%),
+    #070b14
+}
+.grid{
+  position:fixed;inset:0;pointer-events:none;opacity:.2;
+  background-image:
+    linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,.035) 1px,transparent 1px);
+  background-size:64px 64px;
+  mask-image:linear-gradient(to bottom,black,transparent 72%)
+}
+
+/* ---- Nav ---- */
+.nav{
+  position:relative;z-index:2;max-width:1180px;margin:auto;
+  padding:26px 28px;display:flex;align-items:center;justify-content:space-between
+}
+.brand{display:flex;align-items:center;gap:12px}
+.brand img{
+  width:150px;height:45px;object-fit:contain;object-position:left center;
+  filter:drop-shadow(0 0 18px color-mix(in srgb,var(--teal) 22%,transparent))
+}
+.nav-actions{display:flex;align-items:center;gap:10px}
+.nav-link{
+  font:600 11px 'JetBrains Mono',monospace;text-transform:uppercase;
+  letter-spacing:.08em;padding:11px 14px;color:#aeb8c8;transition:.2s
+}
+.nav-link:hover{color:#eef3fa}
+.signin-pill{
+  font:600 11px 'JetBrains Mono',monospace;text-transform:uppercase;
+  letter-spacing:.08em;padding:11px 17px;border:1px solid var(--line);
+  border-radius:10px;background:rgba(255,255,255,.04);transition:.2s
+}
+.signin-pill:hover{
+  border-color:color-mix(in srgb,var(--teal) 55%,white 10%);
+  background:rgba(255,255,255,.08);transform:translateY(-1px)
+}
+
+/* ---- Hero ---- */
+.hero{
+  position:relative;z-index:1;max-width:1180px;margin:auto;
+  padding:64px 28px 70px;display:grid;grid-template-columns:1.05fr .95fr;
+  gap:56px;align-items:center
+}
+.eyebrow{
+  display:inline-flex;align-items:center;gap:8px;color:var(--teal);
+  font:600 10px 'JetBrains Mono',monospace;letter-spacing:.12em;text-transform:uppercase;
+  padding:7px 10px;border:1px solid color-mix(in srgb,var(--teal) 25%,transparent);
+  border-radius:999px;background:color-mix(in srgb,var(--teal) 6%,transparent)
+}
+.dot{
+  width:6px;height:6px;border-radius:50%;background:var(--teal);
+  box-shadow:0 0 14px var(--teal)
+}
+h1{
+  font-size:clamp(42px,5.6vw,72px);line-height:.98;letter-spacing:-.055em;
+  margin:22px 0;max-width:720px
+}
+h1 span{
+  background:linear-gradient(100deg,#fff 25%,color-mix(in srgb,var(--teal) 90%,white 10%) 70%,#fff);
+  -webkit-background-clip:text;background-clip:text;color:transparent
+}
+.lead{font-size:17px;line-height:1.65;color:#aeb8c8;max-width:560px;margin:0}
+.actions{display:flex;gap:12px;align-items:center;margin-top:28px;flex-wrap:wrap}
+.primary{
+  display:inline-flex;align-items:center;gap:9px;padding:14px 20px;border-radius:11px;
+  background:linear-gradient(135deg,var(--teal),color-mix(in srgb,var(--blue) 65%,var(--teal)));
+  color:#061014;font:700 11px 'JetBrains Mono',monospace;text-transform:uppercase;
+  letter-spacing:.07em;box-shadow:0 14px 40px color-mix(in srgb,var(--teal) 18%,transparent);
+  transition:.2s;border:none;cursor:pointer
+}
+.primary:hover{transform:translateY(-2px);box-shadow:0 18px 50px color-mix(in srgb,var(--teal) 26%,transparent)}
+.secondary{
+  padding:14px 18px;border:1px solid var(--line);border-radius:11px;color:#c5cfdd;
+  font:600 11px 'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.07em;transition:.2s
+}
+.secondary:hover{background:rgba(255,255,255,.05)}
+.trust{
+  display:flex;flex-wrap:wrap;gap:18px;margin-top:36px;padding-top:28px;
+  border-top:1px solid var(--line)
+}
+.trust-item{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+.trust-item b{color:#c5cfdd;font-weight:600}
+.trust-dot{width:6px;height:6px;border-radius:50%;background:var(--teal);opacity:.7}
+
+/* ---- Login card (hero right) ---- */
+.login-stage{position:relative}
+.login-card{
+  position:relative;border:1px solid rgba(255,255,255,.13);border-radius:18px;
+  background:linear-gradient(145deg,rgba(24,34,54,.94),rgba(9,14,25,.96));
+  box-shadow:0 35px 90px rgba(0,0,0,.52),0 0 80px color-mix(in srgb,var(--teal) 7%,transparent);
+  overflow:hidden;padding:28px 28px 26px
+}
+.login-card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:3px;
+  background:linear-gradient(90deg,var(--teal),var(--blue),var(--amber));
+  box-shadow:0 0 18px color-mix(in srgb,var(--teal) 35%,transparent)
+}
+.login-card-head{
+  display:flex;align-items:center;justify-content:space-between;margin-bottom:22px
+}
+.login-card-head h2{
+  font:600 11px 'JetBrains Mono',monospace;text-transform:uppercase;
+  letter-spacing:.1em;color:var(--muted);margin:0;display:flex;align-items:center;gap:8px
+}
+.login-card-head h2::before{content:'✦';color:var(--teal);font-size:12px}
+.login-badge{
+  font:600 9px 'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.08em;
+  padding:5px 9px;border-radius:999px;border:1px solid color-mix(in srgb,var(--teal) 30%,transparent);
+  color:var(--teal);background:color-mix(in srgb,var(--teal) 8%,transparent)
+}
+.login-card label{
+  display:block;font:600 10px 'JetBrains Mono',monospace;text-transform:uppercase;
+  letter-spacing:.06em;color:var(--muted);margin:0 0 7px
+}
+.login-card input[type=text],
+.login-card input[type=password]{
+  width:100%;padding:0 14px;height:48px;margin-bottom:16px;border-radius:12px;
+  border:1px solid var(--line);background:rgba(0,0,0,.28);color:#eef3fa;
+  font:400 14px 'IBM Plex Sans',sans-serif;transition:border-color .15s,box-shadow .15s
+}
+.login-card input:focus{
+  outline:none;border-color:var(--teal);
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--teal) 10%,transparent),
+             0 0 22px color-mix(in srgb,var(--teal) 8%,transparent)
+}
+.login-card input::placeholder{color:#5a677c}
+.login-hint{
+  font-size:12px;color:var(--muted);line-height:1.5;margin:0 0 14px
+}
+.err{
+  background:color-mix(in srgb,var(--tally) 14%,transparent);
+  border:1px solid color-mix(in srgb,var(--tally) 40%,transparent);
+  color:var(--tally);font-size:12px;padding:10px 12px;border-radius:10px;margin-bottom:16px
+}
+.login-submit{
+  width:100%;height:48px;border:none;border-radius:12px;cursor:pointer;
+  background:linear-gradient(135deg,var(--teal),var(--blue));
+  color:#061014;font:700 12px 'JetBrains Mono',monospace;text-transform:uppercase;
+  letter-spacing:.07em;box-shadow:0 12px 30px color-mix(in srgb,var(--teal) 15%,transparent);
+  transition:transform .18s,box-shadow .18s,filter .18s;margin-top:4px
+}
+.login-submit:hover{
+  transform:translateY(-1px);filter:saturate(1.08);
+  box-shadow:0 16px 36px color-mix(in srgb,var(--teal) 22%,transparent)
+}
+.login-submit:active{transform:translateY(1px)}
+.login-meta{
+  margin-top:18px;text-align:center;font:500 10px 'JetBrains Mono',monospace;
+  color:#667287;letter-spacing:.04em;text-transform:uppercase
+}
+
+/* Product mock under login on larger screens (optional depth) */
+.login-float{
+  position:absolute;right:-18px;bottom:-18px;width:160px;padding:12px;
+  border:1px solid rgba(255,255,255,.12);background:rgba(11,17,29,.9);
+  backdrop-filter:blur(16px);border-radius:12px;
+  box-shadow:0 16px 40px rgba(0,0,0,.4);pointer-events:none;z-index:-1;opacity:.85
+}
+.login-float .float-label{
+  font:600 8px 'JetBrains Mono',monospace;color:var(--teal);
+  text-transform:uppercase;letter-spacing:.1em
+}
+.login-float b{display:block;margin-top:6px;font-size:11px}
+.bars{display:flex;gap:3px;align-items:end;height:22px;margin-top:8px}
+.bars i{display:block;flex:1;background:linear-gradient(to top,var(--blue),var(--teal));border-radius:2px 2px 0 0;opacity:.8}
+.bars i:nth-child(1){height:35%}.bars i:nth-child(2){height:65%}.bars i:nth-child(3){height:45%}
+.bars i:nth-child(4){height:85%}.bars i:nth-child(5){height:58%}.bars i:nth-child(6){height:100%}
+.bars i:nth-child(7){height:72%}.bars i:nth-child(8){height:48%}
+
+/* ---- Features ---- */
+.section{position:relative;z-index:1;max-width:1180px;margin:auto;padding:72px 28px}
+.section-head{max-width:680px}
+.kicker{
+  font:600 10px 'JetBrains Mono',monospace;color:var(--amber);
+  letter-spacing:.12em;text-transform:uppercase
+}
+.section h2{font-size:38px;letter-spacing:-.035em;margin:12px 0 14px}
+.section p{color:var(--muted);line-height:1.7}
+.features{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:36px}
+.feature{
+  padding:25px;border:1px solid var(--line);
+  background:linear-gradient(145deg,rgba(255,255,255,.045),rgba(255,255,255,.015));
+  border-radius:14px;min-height:180px;transition:.2s
+}
+.feature:hover{transform:translateY(-3px);border-color:color-mix(in srgb,var(--teal) 28%,transparent)}
+.icon{
+  width:38px;height:38px;border-radius:10px;display:grid;place-items:center;
+  background:color-mix(in srgb,var(--teal) 9%,transparent);color:var(--teal);
+  font:700 14px 'JetBrains Mono',monospace;margin-bottom:18px
+}
+.feature h3{font-size:16px;margin:0 0 8px}
+.feature p{font-size:13px;margin:0}
+.strip{
+  margin-top:28px;padding:22px 24px;border:1px solid var(--line);border-radius:14px;
+  background:rgba(255,255,255,.025);display:flex;align-items:center;
+  justify-content:space-between;gap:20px
+}
+.strip strong{font-size:15px}
+.strip span{font-size:12px;color:var(--muted)}
+
+/* ---- Footer ---- */
+footer{
+  max-width:1180px;margin:auto;padding:30px 28px 42px;border-top:1px solid var(--line);
+  display:flex;justify-content:space-between;gap:20px;color:#667287;
+  font:10px 'JetBrains Mono',monospace;text-transform:uppercase;letter-spacing:.06em
+}
+
+/* ---- Responsive ---- */
+@media(max-width:900px){
+  .hero{grid-template-columns:1fr;gap:40px;padding-top:48px}
+  .login-float{display:none}
+  .features{grid-template-columns:1fr 1fr}
+}
+@media(max-width:560px){
+  .nav{padding:18px 20px}
+  .brand img{width:130px;height:40px}
+  .nav-link{display:none}
+  .hero,.section{padding-left:20px;padding-right:20px}
+  .hero{padding-top:36px}
+  h1{font-size:40px}
+  .lead{font-size:15px}
+  .features{grid-template-columns:1fr}
+  .strip,footer{flex-direction:column;align-items:flex-start}
+  .login-card{padding:22px 20px}
+}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="grid" aria-hidden="true"></div>
+
+  <header class="nav">
+    <a class="brand" href="/"><img src="/static/aimp-logo.svg" alt="{{ brand_name }} — AI Media Platform"></a>
+    <div class="nav-actions">
+      <a class="nav-link" href="#features">Features</a>
+      <a class="signin-pill" href="#signin">Sign in</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div>
+        <div class="eyebrow"><i class="dot"></i> Broadcast-ready AI workflow</div>
+        <h1>Turn raw footage into <span>compelling promos.</span></h1>
+        <p class="lead">{{ brand_tagline }}. Analyze scenes, generate music and sound, create narration, and assemble polished episodic promos in one self-hosted creative workspace.</p>
+        <div class="actions">
+          <a class="primary" href="#signin">Enter the studio <span>↗</span></a>
+          <a class="secondary" href="#features">Explore capabilities</a>
+        </div>
+        <div class="trust">
+          <div class="trust-item"><span class="trust-dot"></span><b>Self-hosted</b> · your media stays local</div>
+          <div class="trust-item"><span class="trust-dot"></span><b>2FA ready</b> · TOTP + backup codes</div>
+          <div class="trust-item"><span class="trust-dot"></span><b>Episodic</b> · templates &amp; library</div>
+        </div>
+      </div>
+
+      <div class="login-stage" id="signin">
+        <div class="login-card">
+          <div class="login-card-head">
+            <h2>{% if pending_2fa %}Two-factor code{% else %}Sign in{% endif %}</h2>
+            <span class="login-badge">Studio access</span>
+          </div>
+
+          <form method="post" action="/login" autocomplete="on">
+            {% if login_error %}
+            <div class="err" role="alert">{{ login_error }}</div>
+            {% endif %}
+            <input type="hidden" name="next" value="{{ next_url or '/' }}">
+
+            {% if pending_2fa %}
+            <p class="login-hint">Enter the 6-digit code from your authenticator app, or one of your backup codes.</p>
+            <label for="totp_code">Authentication code</label>
+            <input type="text" id="totp_code" name="totp_code" autofocus
+                   autocomplete="one-time-code" inputmode="numeric" pattern="[0-9A-Za-z]*"
+                   placeholder="123456">
+            {% else %}
+            <label for="username">Username</label>
+            <input type="text" id="username" name="username" autofocus
+                   autocomplete="username" placeholder="your username" required>
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password"
+                   autocomplete="current-password" placeholder="••••••••••••" required>
+            {% endif %}
+
+            <button type="submit" class="login-submit">Continue</button>
+          </form>
+          <div class="login-meta">Secure session · rate-limited</div>
+        </div>
+        <div class="login-float" aria-hidden="true">
+          <div class="float-label">AI analysis</div>
+          <b>Scene quality + vision</b>
+          <div class="bars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="features">
+      <div class="section-head">
+        <div class="kicker">One workflow. Multiple AI tools.</div>
+        <h2>Everything your promo needs, in one place.</h2>
+        <p>Built around the real broadcast workflow: discover the best moments, shape the story, build the sound, then render the final plug.</p>
+      </div>
+      <div class="features">
+        <article class="feature">
+          <div class="icon">01</div>
+          <h3>Intelligent scene selection</h3>
+          <p>Detect cuts, score visual quality, inspect scenes, and choose the strongest moments before rendering.</p>
+        </article>
+        <article class="feature">
+          <div class="icon">02</div>
+          <h3>Music, SFX &amp; voice</h3>
+          <p>Generate original music, whooshes and narration with dedicated AI tools.</p>
+        </article>
+        <article class="feature">
+          <div class="icon">03</div>
+          <h3>Preview before you commit</h3>
+          <p>Review selected scenes and swap alternates before the final render.</p>
+        </article>
+        <article class="feature">
+          <div class="icon">04</div>
+          <h3>Show-ready templates</h3>
+          <p>Save per-show creative settings so the next episode starts from a proven configuration.</p>
+        </article>
+        <article class="feature">
+          <div class="icon">05</div>
+          <h3>Self-hosted by design</h3>
+          <p>Keep media, credentials and AI services inside your own controlled environment.</p>
+        </article>
+        <article class="feature">
+          <div class="icon">06</div>
+          <h3>Built for episodic volume</h3>
+          <p>Keep rendered promos in a searchable library and repeat the process episode after episode.</p>
+        </article>
+      </div>
+      <div class="strip">
+        <div>
+          <strong>Ready to make the next promo?</strong><br>
+          <span>Sign in above and open the production workspace.</span>
+        </div>
+        <a class="primary" href="#signin">Launch {{ brand_name }} →</a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>{{ brand_name }} · {{ brand_tagline }}</span>
+    <span>Self-hosted AI media platform</span>
+  </footer>
+</div>
+
+<script>
+  // Focus the login form when arriving via #signin or after an error/2FA step
+  (function(){
+    if(location.hash === '#signin' || document.querySelector('.err') || document.getElementById('totp_code')){
+      var el = document.getElementById('totp_code') || document.getElementById('username');
+      if(el) setTimeout(function(){ el.focus(); }, 60);
+      var card = document.getElementById('signin');
+      if(card) card.scrollIntoView({behavior:'smooth', block:'center'});
+    }
+  })();
+</script>
+</body>
+</html>

@@ -4,7 +4,7 @@ Depends on: core (app, rate limiter, dummy-hash, default password) and
 library_db (LIBRARY_DIR, _sqlite_connect) for where users.db lives.
 """
 import os, time, sqlite3, functools, secrets
-from flask import request, session, redirect, jsonify
+from flask import request, session, redirect, jsonify, render_template
 from markupsafe import escape
 from werkzeug.security import generate_password_hash, check_password_hash
 from core import app, _client_ip, _login_limiter, _DUMMY_PW_HASH, DEFAULT_ADMIN_PASSWORD, ensure_csrf_token
@@ -95,130 +95,30 @@ def login():
                 if user:
                     user_note_failed_login(user['id'])
                 error = 'Incorrect username or password.'
-    nxt = request.args.get('next', '/')
-    # 'next' and any error text land inside HTML attribute/element content
-    # below -- escape both. 'next' is attacker-controlled (it's a query
-    # param), so leaving it raw would be a reflected-XSS hole via a crafted
-    # login link; error is currently always one of this function's own fixed
-    # strings, but escaping costs nothing and keeps that true by construction
-    # rather than by convention.
-    nxt = escape(nxt)
-    error = escape(error) if error else None
+    # GET /login → send people to the landing page (login lives there now).
+    # POST failures and the 2FA step re-render the landing with the form state
+    # so the user never leaves the marketing + sign-in experience.
+    if request.method == 'GET' and not pending_uid and not error:
+        nxt = request.args.get('next', '/')
+        if nxt and nxt != '/':
+            return redirect('/?next=' + nxt + '#signin')
+        return redirect('/#signin')
+
+    nxt = request.form.get('next') or request.args.get('next', '/')
+    nxt = _safe_next(nxt)
     brand = load_branding()
-    brand_name = escape(brand['name'])
-    brand_tagline = escape(brand['tagline'])
-    theme = brand['theme_colors']
-    brand_footer = escape(brand['footer']) if brand['footer'] else None
-    # /branding/logo always resolves to something displayable (falls back to
-    # the built-in mark itself when no custom logo is configured -- see
-    # branding_logo() in pipeline.py), so this <img> never needs an
-    # onerror/placeholder fallback of its own.
-    #
-    # This used to be a generic centered card in system-ui with no relation
-    # to the rest of the app's look -- plain flat borders, placeholder-only
-    # inputs, a stock blue button. Rebuilt to actually use the same visual
-    # language as the main app: JetBrains Mono for headers/labels (tracked,
-    # uppercase, matching h1/label there), the same rounded --panel input
-    # style, the same ambient corner-glow body background, and the full
-    # theme (not just accent) -- phosphor/amber now show up here too, via
-    # the top rule on the card and the "sign in" bullet glyph, the same
-    # touches the sidebar uses.
-    return f'''<!doctype html><html><head><meta charset="utf-8">
-<title>{brand_name} &mdash; {brand_tagline}</title>
-<link rel="icon" href="/branding/favicon">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-:root{{
-  --bg:#0b1220; --panel:#121a2b; --elevated:#1a2436; --line:#263149;
-  --ink:#e7edf6; --ink-dim:#8b98ad;
-  --phosphor:{theme['phosphor']}; --amber:{theme['amber']}; --tally:{theme['tally']}; --accent:{theme['accent']};
-}}
-*{{box-sizing:border-box}}
-body{{
-  font-family:'IBM Plex Sans',system-ui,-apple-system,sans-serif;
-  background:
-    radial-gradient(ellipse 900px 480px at 12% -12%, color-mix(in srgb, var(--phosphor) 9%, transparent), transparent 60%),
-    radial-gradient(ellipse 700px 420px at 100% 100%, color-mix(in srgb, var(--amber) 6%, transparent), transparent 55%),
-    var(--bg);
-  color:var(--ink); margin:0; min-height:100vh;
-  display:flex; flex-direction:column; align-items:center; justify-content:center;
-  -webkit-font-smoothing:antialiased;
-}}
-.login-brand{{display:flex; flex-direction:column; align-items:center; margin-bottom:30px}}
-.login-logo{{width:56px; height:56px; border-radius:13px; margin-bottom:16px; object-fit:contain;
-  filter:drop-shadow(0 0 26px color-mix(in srgb, var(--phosphor) 35%, transparent))}}
-.login-name{{font-family:'JetBrains Mono',monospace; font-size:22px; font-weight:700;
-  letter-spacing:.05em; text-transform:uppercase; margin:0; color:var(--ink); text-align:center}}
-.login-tagline{{font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--ink-dim);
-  letter-spacing:.08em; text-transform:uppercase; margin:7px 0 0; text-align:center}}
-.login-panel{{
-  background:var(--elevated); border:1px solid var(--line); border-radius:14px;
-  padding:30px; width:320px; box-sizing:border-box;
-  box-shadow:0 24px 60px -24px rgba(0,0,0,.6);
-  position:relative; overflow:hidden;
-}}
-.login-panel::before{{
-  content:''; position:absolute; top:0; left:0; right:0; height:2px;
-  background:linear-gradient(90deg, var(--phosphor), var(--amber));
-}}
-.login-panel h1{{
-  font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:600;
-  text-transform:uppercase; letter-spacing:.08em; color:var(--ink-dim);
-  margin:0 0 22px; display:flex; align-items:center; gap:8px;
-}}
-.login-panel h1::before{{content:'\u25b6'; color:var(--phosphor); font-size:10px}}
-label{{display:block; font-family:'JetBrains Mono',monospace; font-size:10px;
-  text-transform:uppercase; letter-spacing:.06em; color:var(--ink-dim); margin:0 0 6px}}
-input[type=text], input[type=password]{{
-  width:100%; box-sizing:border-box; padding:11px 14px; margin-bottom:16px;
-  border-radius:10px; border:1px solid var(--line); background:var(--panel);
-  color:var(--ink); font-family:'IBM Plex Sans',sans-serif; font-size:14px;
-  transition:border-color .15s;
-}}
-input[type=text]:focus, input[type=password]:focus{{outline:none; border-color:var(--accent)}}
-button{{
-  width:100%; padding:12px; border-radius:10px; border:none;
-  background:var(--accent); color:#fff; font-family:'JetBrains Mono',monospace;
-  font-size:12px; font-weight:600; letter-spacing:.06em; text-transform:uppercase;
-  cursor:pointer; transition:opacity .15s; margin-top:4px;
-}}
-button:hover{{opacity:.9}}
-button:active{{transform:translateY(1px)}}
-.err{{
-  background:color-mix(in srgb, var(--tally) 14%, transparent);
-  border:1px solid color-mix(in srgb, var(--tally) 40%, transparent);
-  color:var(--tally); font-size:12px; padding:10px 12px; border-radius:8px; margin-bottom:18px;
-}}
-.login-footer{{margin-top:26px; font-family:'JetBrains Mono',monospace; font-size:10px;
-  color:var(--ink-dim); text-align:center; max-width:340px; letter-spacing:.02em; line-height:1.6}}
-</style></head><body>
-<div class="login-brand">
-<img class="login-logo" src="/branding/logo" alt="{brand_name} logo">
-<p class="login-name">{brand_name}</p>
-<p class="login-tagline">{brand_tagline}</p>
-</div>
-<div class="login-panel">
-<form method=post>
-<h1>{'Two-factor code' if pending_uid else 'Sign in'}</h1>
-{f'<div class="err">{error}</div>' if error else ''}
-<input type=hidden name=next value="{nxt}">
-{'''<p style="font-size:12px;color:var(--ink-dim);margin:0 0 14px;line-height:1.5">Enter the 6-digit code from your authenticator app, or one of your backup codes.</p>
-<label>Authentication code</label>
-<input type=text name=totp_code autofocus autocomplete="one-time-code" inputmode="numeric" pattern="[0-9A-Za-z]*">''' if pending_uid else '''<label>Username</label>
-<input type=text name=username autofocus autocomplete="username">
-<label>Password</label>
-<input type=password name=password autocomplete="current-password">'''}
-<button type=submit>Continue</button>
-</form>
-</div>
-{f'<div class="login-footer">{brand_footer}</div>' if brand_footer else ''}
-</body></html>'''
+    return render_template('landing.html',
+                           brand_name=brand['name'],
+                           brand_tagline=brand['tagline'],
+                           brand_theme=brand['theme_colors'],
+                           login_error=error,
+                           pending_2fa=bool(pending_uid),
+                           next_url=nxt)
 
 @app.route('/logout')
 def logout():
     session.clear()
-    return redirect('/login')
+    return redirect('/#signin')
 
 # ---- Two-factor enrolment (self-service, any signed-in account) ----
 # Deliberately not admin-gated: 2FA protects the individual account, so every

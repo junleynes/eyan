@@ -21,14 +21,18 @@ import pipeline
 
 @app.route('/')
 def index():
-    # Public visitors see the branded landing page. Existing authenticated
-    # sessions go straight into the production workspace.
+    # Public visitors see the branded landing page (with integrated sign-in).
+    # Existing authenticated sessions go straight into the production workspace.
     if not session.get('authed'):
         brand = load_branding()
+        pending_2fa = bool(session.get('pending_2fa_uid'))
         return render_template('landing.html',
                                brand_name=brand['name'],
                                brand_tagline=brand['tagline'],
-                               brand_theme=brand['theme_colors'])
+                               brand_theme=brand['theme_colors'],
+                               login_error=None,
+                               pending_2fa=pending_2fa,
+                               next_url=request.args.get('next', '/'))
 
     perms = user_permissions(session.get('user_id'), session.get('role'))
     role = session.get('role')
