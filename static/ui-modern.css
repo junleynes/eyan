@@ -355,3 +355,71 @@ img[src*="aimp-logo"],img[src*="logo-mark"],img[src*="branding/logo"]{
   .docs-nav-item{padding:8px 10px;font-size:10px}
   .rail-logo{height:36px!important;max-width:140px!important}
 }
+
+/* ---- Promo generation UX ---- */
+.promo-mode-bar{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 14px
+}
+.promo-mode-btn{
+  font:600 11px 'JetBrains Mono',monospace;letter-spacing:.06em;text-transform:uppercase;
+  padding:8px 14px;border-radius:999px;border:1px solid var(--line);
+  background:transparent;color:var(--ink-dim);cursor:pointer;transition:.15s
+}
+.promo-mode-btn:hover{color:var(--ink);border-color:color-mix(in srgb,var(--phosphor) 30%,transparent)}
+.promo-mode-btn.active{
+  color:var(--phosphor);border-color:color-mix(in srgb,var(--phosphor) 35%,transparent);
+  background:color-mix(in srgb,var(--phosphor) 10%,transparent)
+}
+.promo-mode-hint{font-size:12px;color:var(--ink-dim);opacity:.8}
+.promo-essentials{
+  display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;margin:0 0 12px
+}
+.promo-essentials label{margin-top:0}
+.job-summary{
+  display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  padding:12px 14px;margin:0 0 14px;border-radius:12px;
+  border:1px solid color-mix(in srgb,var(--phosphor) 22%,transparent);
+  background:color-mix(in srgb,var(--phosphor) 6%,transparent)
+}
+.job-summary-label{
+  font:600 9px 'JetBrains Mono',monospace;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--phosphor)
+}
+#job-summary-text{font-size:13px;color:var(--ink)}
+.promo-actions{display:flex;gap:10px;align-items:center;margin-top:22px;flex-wrap:wrap}
+.btn-primary-promo{
+  background:linear-gradient(135deg,var(--phosphor),var(--accent,#4f8cff))!important;
+  color:#061014!important;border:none!important;font-weight:700!important;
+  padding:11px 18px!important
+}
+.btn-secondary-promo{
+  background:transparent!important;border:1px solid var(--line)!important;
+  color:var(--ink-dim)!important;padding:10px 14px!important
+}
+.btn-secondary-promo:hover{color:var(--ink)!important;border-color:var(--phosphor)!important}
+.promo-actions-hint{margin-top:8px;font-size:12px;opacity:.75;max-width:40rem}
+.score-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.score-chip{
+  font:600 9px 'JetBrains Mono',monospace;letter-spacing:.04em;
+  padding:2px 6px;border-radius:999px;border:1px solid var(--line);
+  color:var(--ink-dim);background:var(--sunken)
+}
+.score-chip.total{color:var(--phosphor);border-color:color-mix(in srgb,var(--phosphor) 35%,transparent)}
+.score-chip.speech{color:var(--amber)}
+.score-chip.face{color:var(--accent,#4f8cff)}
+.cut-timeline{margin:0 0 4px}
+.cut-track{
+  display:flex;gap:3px;height:28px;padding:3px;border-radius:10px;
+  background:var(--sunken);border:1px solid var(--line);overflow:hidden
+}
+.cut-seg{
+  min-width:18px;border-radius:6px;display:grid;place-items:center;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--phosphor) 35%,transparent),color-mix(in srgb,var(--accent,#4f8cff) 25%,transparent));
+  color:#061014;font:700 9px 'JetBrains Mono',monospace;cursor:default;
+  transition:opacity .15s,filter .15s
+}
+.cut-seg.dropped{opacity:.25;filter:grayscale(.8)}
+.cut-meta{font-size:11px;color:var(--ink-dim);margin-top:6px}
+@media(max-width:700px){
+  .promo-essentials{grid-template-columns:1fr}
+}

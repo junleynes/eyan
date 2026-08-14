@@ -5758,9 +5758,11 @@ def _run_trailer_job(jid, params):
                               f'{AI_NEUTRAL_SCORE}. done_reason={data.get("done_reason")!r} '
                               f'raw={txt[:300]!r}')
                     s['ai_desc'] = desc
-                    s['total_score'] = s['quality_score'] + (score if score is not None else AI_NEUTRAL_SCORE)
+                    s['vision_score'] = score if score is not None else AI_NEUTRAL_SCORE
+                    s['total_score'] = s['quality_score'] + s['vision_score']
                 except Exception as e:
                     print(f'AI vision request failed for scene {ai_i+1}, defaulting to {AI_NEUTRAL_SCORE}: {e}')
+                    s['vision_score'] = AI_NEUTRAL_SCORE
                     s['total_score'] = s['quality_score'] + AI_NEUTRAL_SCORE
                 with _ai_progress_lock:
                     _ai_progress['done'] += 1
@@ -6096,6 +6098,7 @@ def _run_trailer_job(jid, params):
             return [{'start': s['start'], 'end': s['end'], 'duration': s['duration'],
                      'selected_dur': s['selected_dur'], 'trim_start': s.get('trim_start', s['start']),
                      'total_score': s['total_score'], 'quality_score': s.get('quality_score', 0),
+                     'vision_score': s.get('vision_score'), 'speech_score': s.get('speech_score', 0),
                      'ai_desc': s.get('ai_desc', ''), 'has_face': s.get('has_face', False),
                      'edge_ratio': s.get('edge_ratio', 0), 'mean_hue': s.get('mean_hue', 0)}
                     for s in rows]
@@ -6119,10 +6122,18 @@ def _run_trailer_job(jid, params):
             video_filename=video_filename,
             scenes=[{'scene': i + 1, 'start': round(s['start'], 1), 'end': round(s['end'], 1),
                      'quality': s['total_score'], 'duration': round(s['selected_dur'], 1),
+                     'quality_score': s.get('quality_score', 0),
+                     'vision_score': s.get('vision_score'),
+                     'speech_score': s.get('speech_score', 0),
+                     'has_face': bool(s.get('has_face')),
                      'description': _scene_desc(s), 'thumb': thumbs[i]}
                     for i, s in enumerate(selected)],
             alternates=[{'alt': i + 1, 'start': round(s['start'], 1), 'end': round(s['end'], 1),
                          'quality': s['total_score'], 'duration': round(s['selected_dur'], 1),
+                         'quality_score': s.get('quality_score', 0),
+                         'vision_score': s.get('vision_score'),
+                         'speech_score': s.get('speech_score', 0),
+                         'has_face': bool(s.get('has_face')),
                          'description': _scene_desc(s), 'thumb': alt_thumbs[i]}
                         for i, s in enumerate(alternates)])
         job_set(jid, percent=100, step='Preview ready', done=True, result=result)

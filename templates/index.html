@@ -877,50 +877,39 @@ document.addEventListener("DOMContentLoaded", function(){
   <p style="margin-top:-4px;margin-bottom:10px;font-size:12px;opacity:.75">A template carries its whole setup — genre, transition, lengths, audio targets, voice — plus its music bed, SFX, VO and cards. Picking one fills the form in below; change anything you like afterwards and it applies to this job only.</p>
   <div id=template-summary style="font-size:12px;opacity:.85;margin:0 0 14px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;display:none"></div>
 
-  <!-- Everything from here to the Preview/Generate buttons is the full
-       settings surface. It stays in the DOM and keeps submitting normally
-       either way -- this only collapses it visually, so a saved template's
-       values still post exactly as before. Collapsed by default when a
-       template is loaded (the daily path: pick show, drop file, generate),
-       expanded when building a one-off with no template to start from. -->
-  <div id=settings-toggle-row style="display:flex;align-items:center;gap:10px;margin:0 0 12px">
-    <button type=button class=btn id=settings-toggle-btn onclick="toggleGeneratorSettings()"
-            style="background:transparent;border:1px solid var(--line);color:var(--ink-dim);padding:6px 12px;font-size:12px">
-      <span id=settings-toggle-chevron>&#9656;</span> <span id=settings-toggle-label>Show all settings</span>
-    </button>
-    <span id=settings-toggle-note style="font-size:12px;opacity:.6"></span>
+  <div class="promo-mode-bar" role="group" aria-label="Form mode">
+    <button type="button" class="promo-mode-btn active" id="promo-mode-quick" onclick="setPromoMode('quick')">Quick promo</button>
+    <button type="button" class="promo-mode-btn" id="promo-mode-advanced" onclick="setPromoMode('advanced')">Advanced</button>
+    <span class="promo-mode-hint" id="promo-mode-hint">Template + episode + length → Preview cut → Render</span>
   </div>
 
-  <label>What should this promo feature? <span style="text-transform:none;letter-spacing:0;opacity:.6;font-weight:400">(optional)</span></label>
-  <textarea name=priority_prompt id=priority-prompt class=input-box rows=2
-            placeholder="e.g. the confrontation in the kitchen, the reveal at the hospital &mdash; leave blank to let scoring decide"></textarea>
-  <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0 4px">
-    <button type=button class="browse-btn" onclick="document.getElementById('script-file-input').click()">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>Attach script
-    </button>
-    <input type=file name=script_file id=script-file-input data-skip-clear-ui="1"
-           accept=".pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.txt,.md,.csv" style="display:none"
-           onchange="scriptFileChosen(this)">
-    <span class="net-file-chip" id=script-file-chip style="display:none"><span class=chip-name></span><span class=chip-x onclick="clearScriptFile()">&#10005;</span></span>
+  <div class="promo-steer card" style="padding:14px 16px;margin:0 0 14px">
+    <div style="font:600 11px 'JetBrains Mono',monospace;letter-spacing:.06em;text-transform:uppercase;color:var(--phosphor);margin-bottom:8px">Creative steering</div>
+    <label style="margin-top:0">What should this promo feature? <span style="text-transform:none;letter-spacing:0;opacity:.6;font-weight:400">(optional)</span></label>
+    <textarea name=priority_prompt id=priority-prompt class=input-box rows=2
+              placeholder="e.g. the confrontation in the kitchen, the reveal at the hospital — leave blank to let scoring decide"></textarea>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0 4px">
+      <button type=button class="browse-btn" onclick="document.getElementById('script-file-input').click()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>Attach script
+      </button>
+      <input type=file name=script_file id=script-file-input data-skip-clear-ui="1"
+             accept=".pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.txt,.md,.csv" style="display:none"
+             onchange="scriptFileChosen(this); updateJobSummary()">
+      <span class="net-file-chip" id=script-file-chip style="display:none"><span class=chip-name></span><span class=chip-x onclick="clearScriptFile(); updateJobSummary()">&#10005;</span></span>
+    </div>
+    <p style="font-size:12px;opacity:.7;margin:4px 0 0">Description steers AI Vision ratings. A rundown with timecodes (<code>00:01:30</code> or <code>1:30</code>) pins those moments. Both can be used together.</p>
   </div>
-  <p style="font-size:12px;opacity:.7;margin-top:-2px">Both optional and independent &mdash; leave both empty and the highest-scoring scenes win automatically. The description steers AI Vision's scene ratings; an attached rundown strongly prioritises whatever its timecodes point at (<code>00:01:30:12</code>, <code>00:01:30</code>, or <code>1:30</code> all work). Use both together and the script pins the moments it calls for while the description influences everything else.</p>
 
-  <div id=generator-settings>
-  <label>Episodic Promo Plug length:</label>
-  <select name=trailer_length>
-    <option value=15 selected>15 sec (needs 22.5s raw video)</option>
-    <option value=30>30 sec (needs 45s raw video)</option>
-    <option value=45>45 sec (needs 67.5s raw video)</option>
-    <option value=60>60 sec (needs 90s raw video)</option>
-  </select>
-  <div class="adv-only">
-  <label>Max clip length (s):</label>
-  <input type=number name=max_scene_dur value=3 placeholder="no limit" min=0.5 step=0.5 style="width:100px">
-  <p style="margin-top:-4px;margin-bottom:8px;font-size:12px;opacity:.75">Caps how long any single selected scene can run, even if the duration budget would allow more. Defaults to 3s, which keeps the cut moving; clear it for no limit.</p>
-  <p style="margin-bottom:8px;font-size:12px;opacity:.6">Cut detector, sensitivity, and minimum scene length are set once for this deployment in <strong>Config &gt; Production</strong> — they're tuning values that should stay consistent across every promo, not per-job choices.</p>
-  </div>
-  <label>Genre (presets transition, music, sfx):</label>
-  <select name=genre>
+  <div class="promo-essentials">
+    <label>Promo length</label>
+    <select name=trailer_length id=trailer-length-select onchange="updateJobSummary()">
+      <option value=15 selected>15 sec</option>
+      <option value=30>30 sec</option>
+      <option value=45>45 sec</option>
+      <option value=60>60 sec</option>
+    </select>
+    <label>Genre</label>
+    <select name=genre id=genre-select onchange="updateJobSummary(); if(typeof updateGenreManualVisibility==='function') updateGenreManualVisibility()">
     <option value="">Custom (manual settings below)</option>
     <option value=action>Action</option>
     <option value=adventure>Adventure</option>
@@ -938,6 +927,28 @@ document.addEventListener("DOMContentLoaded", function(){
     <option value=war>War</option>
     <option value=western>Western</option>
   </select>
+  </div><!-- /.promo-essentials -->
+
+  <div id=job-summary class="job-summary" aria-live="polite">
+    <span class="job-summary-label">Job summary</span>
+    <span id=job-summary-text>Pick a video to begin</span>
+  </div>
+
+  <div id=settings-toggle-row style="display:flex;align-items:center;gap:10px;margin:0 0 12px">
+    <button type=button class=btn id=settings-toggle-btn onclick="toggleGeneratorSettings()"
+            style="background:transparent;border:1px solid var(--line);color:var(--ink-dim);padding:6px 12px;font-size:12px">
+      <span id=settings-toggle-chevron>&#9656;</span> <span id=settings-toggle-label>Show all settings</span>
+    </button>
+    <span id=settings-toggle-note style="font-size:12px;opacity:.6"></span>
+  </div>
+
+  <div id=generator-settings>
+  <div class="adv-only">
+  <label>Max clip length (s):</label>
+  <input type=number name=max_scene_dur value=3 placeholder="no limit" min=0.5 step=0.5 style="width:100px">
+  <p style="margin-top:-4px;margin-bottom:8px;font-size:12px;opacity:.75">Caps how long any single selected scene can run. Defaults to 3s; clear for no limit.</p>
+  <p style="margin-bottom:8px;font-size:12px;opacity:.6">Cut detector settings live in <strong>Config &gt; Production</strong>.</p>
+  </div>
   <div class="genre-manual-transition" style="display:none">
   <label>Transition:</label>
   <select name=transition>
@@ -1483,6 +1494,7 @@ document.addEventListener("DOMContentLoaded", function(){
     setGeneratorSettingsOpen(panel && panel.style.display === 'none')
   }
   window.toggleGeneratorSettings = toggleGeneratorSettings
+  window.setGeneratorSettingsOpen = setGeneratorSettingsOpen
 
   function onTemplateSelected(){
     var sel = document.getElementById('template-select')
@@ -1493,7 +1505,8 @@ document.addEventListener("DOMContentLoaded", function(){
     // every setting to reach the buttons. Collapse when one is loaded, expand
     // when there isn't one -- someone building a one-off from scratch needs
     // the settings visible, since there's nothing else supplying them.
-    setGeneratorSettingsOpen(!tpl)
+    setGeneratorSettingsOpen((typeof _promoMode !== 'undefined' && _promoMode === 'advanced') ? true : !tpl)
+    if(typeof updateJobSummary === 'function') updateJobSummary()
     if(!tpl){ box.style.display = 'none'; box.innerHTML = ''; return }
 
     function row(label, value, dim){
@@ -1872,12 +1885,12 @@ document.addEventListener("DOMContentLoaded", function(){
   }
   </script>
   </div><!-- /#generator-settings -->
-  <div style="display:flex;gap:10px;align-items:center;margin-top:22px;flex-wrap:wrap">
-    <button class=btn type=button id=trailer-preview-btn onclick="submitTrailer(true)" style="background:transparent;border:1px solid var(--accent,#4f8cff);color:var(--accent,#4f8cff)">Preview the cut first</button>
-    <button class=btn type=submit id=trailer-submit-btn>Generate Episodic Promo Plug</button>
+  <div class="promo-actions">
+    <button class="btn btn-primary-promo" type=button id=trailer-preview-btn onclick="submitTrailer(true)">Preview the cut</button>
+    <button class="btn btn-secondary-promo" type=submit id=trailer-submit-btn>Generate without preview</button>
     <button type=button id=tr-cancel-btn class=btn style="display:none;background:var(--danger,#c94f4f)">Cancel</button>
   </div>
-  <p style="margin-top:8px;font-size:12px;opacity:.75"><strong>Preview</strong> runs only the analysis half (cut detection, rating, scene selection) and shows you the chosen scenes with thumbnails — usually well under a minute. You can then drop any you don't want and render, and the render reuses that analysis instead of repeating it.</p>
+  <p class="promo-actions-hint"><strong>Recommended:</strong> Preview runs analysis only (detect → score → select), usually under a minute. Review scenes, then <em>Render this cut</em> — it reuses that analysis. Full generate skips the review step.</p>
 </form>
 </div><!-- /.work-in -->
 <div class="work-out">
@@ -1916,8 +1929,9 @@ document.addEventListener("DOMContentLoaded", function(){
       <strong style="font-size:14px">Proposed cut</strong>
       <span id=tr-preview-stats style="font-size:12px;opacity:.8"></span>
     </div>
-    <p style="margin:6px 0 12px;font-size:12px;opacity:.75">Untick any scene you don't want, then render. Nothing has been encoded yet — rendering reuses this analysis, so it starts from the extraction step.</p>
-    <div id=tr-preview-grid style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px"></div>
+    <p style="margin:6px 0 10px;font-size:12px;opacity:.75">Untick scenes to drop them, add alternates below, then render. Analysis is reused — no re-detect.</p>
+    <div id=tr-cut-timeline class="cut-timeline" aria-label="Cut timeline"></div>
+    <div id=tr-preview-grid style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-top:14px"></div>
     <div id=tr-alt-wrap style="display:none;margin-top:16px;border-top:1px solid var(--line);padding-top:14px">
       <button type=button class=btn id=tr-alt-toggle onclick="toggleAlternates()" style="background:transparent;border:1px solid var(--line);color:var(--ink)">Show more clips</button>
       <span id=tr-alt-hint style="font-size:12px;opacity:.7;margin-left:10px"></span>
@@ -1982,6 +1996,7 @@ document.addEventListener("DOMContentLoaded", function(){
     currentObjectUrl = URL.createObjectURL(file)
     previewVideo.src = currentObjectUrl
     previewName.textContent = file.name
+    if(typeof updateJobSummary==='function') updateJobSummary()
     previewMeta.textContent = humanSize(file.size) + ' — reading video info…'
     previewVideo.onloadedmetadata = function(){
       previewMeta.textContent = humanSize(file.size) + ' · ' + humanDuration(previewVideo.duration) +
@@ -2438,7 +2453,78 @@ async function resumeActiveJobIfAny(){
   if(window.refreshTrailerHistory) refreshTrailerHistory()
   if(window.refreshMonitor) refreshMonitor()
 }
-document.addEventListener('DOMContentLoaded', resumeActiveJobIfAny)
+document.addEventListener('DOMContentLoaded', function(){
+  resumeActiveJobIfAny()
+  var tpl = document.getElementById('template-select')
+  if(tpl) tpl.addEventListener('change', function(){ updateJobSummary() })
+  var pp = document.getElementById('priority-prompt')
+  if(pp) pp.addEventListener('input', updateJobSummary)
+  setPromoMode('quick')
+  updateJobSummary()
+})
+
+// ---- Promo form mode + job summary ----
+var _promoMode = 'quick'
+function setPromoMode(mode){
+  _promoMode = mode === 'advanced' ? 'advanced' : 'quick'
+  var q = document.getElementById('promo-mode-quick')
+  var a = document.getElementById('promo-mode-advanced')
+  if(q) q.classList.toggle('active', _promoMode === 'quick')
+  if(a) a.classList.toggle('active', _promoMode === 'advanced')
+  var hint = document.getElementById('promo-mode-hint')
+  if(hint) hint.textContent = _promoMode === 'quick'
+    ? 'Template + episode + length → Preview cut → Render'
+    : 'Full control over music, SFX, VO, cards, and transitions'
+  // Advanced forces settings open; Quick collapses when a template is loaded
+  if(_promoMode === 'advanced'){
+    if(typeof setGeneratorSettingsOpen === 'function') setGeneratorSettingsOpen(true)
+  } else {
+    var tplSel = document.getElementById('template-select')
+    var hasTpl = tplSel && tplSel.value
+    if(typeof setGeneratorSettingsOpen === 'function') setGeneratorSettingsOpen(!hasTpl)
+  }
+  updateJobSummary()
+}
+window.setPromoMode = setPromoMode
+
+function updateJobSummary(){
+  var el = document.getElementById('job-summary-text')
+  if(!el) return
+  var parts = []
+  var len = document.getElementById('trailer-length-select')
+  if(len && len.value) parts.push(len.value + 's')
+  var genre = document.getElementById('genre-select')
+  if(genre && genre.value) parts.push(genre.options[genre.selectedIndex].text)
+  else if(genre) parts.push('Custom')
+  var tpl = document.getElementById('template-select')
+  if(tpl && tpl.value && tpl.selectedIndex >= 0)
+    parts.push(tpl.options[tpl.selectedIndex].text.replace(/^\s+|\s+$/g,''))
+  var prompt = document.getElementById('priority-prompt')
+  if(prompt && prompt.value.trim()) parts.push('steered')
+  var scriptChip = document.getElementById('script-file-chip')
+  if(scriptChip && scriptChip.style.display !== 'none') parts.push('script')
+  var fileName = document.getElementById('tr-file-preview-name')
+  var net = document.getElementById('tr-network-file')
+  if(fileName && fileName.textContent) parts.unshift(fileName.textContent.length > 28 ? fileName.textContent.slice(0,26)+'…' : fileName.textContent)
+  else if(net && net.value) parts.unshift('Library clip')
+  el.textContent = parts.length ? parts.join(' · ') : 'Pick a video to begin'
+}
+window.updateJobSummary = updateJobSummary
+
+function renderCutTimeline(scenes, estimated, target){
+  var el = document.getElementById('tr-cut-timeline')
+  if(!el) return
+  if(!scenes || !scenes.length){ el.innerHTML = ''; return }
+  var total = scenes.reduce(function(a,s){ return a + (parseFloat(s.duration)||0) }, 0) || 1
+  var segs = scenes.map(function(s,i){
+    var w = Math.max(3, (parseFloat(s.duration)||0) / total * 100)
+    return '<div class="cut-seg" style="flex:'+(parseFloat(s.duration)||0.1)+'" title="#'+(s.scene||i+1)+' · '+s.duration+'s · score '+s.quality+'">' +
+      '<span>#'+(s.scene||i+1)+'</span></div>'
+  }).join('')
+  var meta = 'Picture ~'+(estimated != null ? estimated : '?')+'s'
+  if(target != null) meta += ' / target '+target+'s'
+  el.innerHTML = '<div class="cut-track">'+segs+'</div><div class="cut-meta">'+meta+'</div>'
+}
 
 // ---- Preview cut review ----
 var _previewId = null
@@ -2484,6 +2570,13 @@ function buildSceneCard(s, cls, num, checked, badge, overlayPlay){
     ? '<button type=button class=btn style="padding:3px 8px;font-size:10px;margin-left:auto" onclick="'+playAttr+'">&#9654; Play</button>'
     : ''
 
+  var chips = []
+  chips.push('<span class="score-chip total" title="Total score">'+s.quality+'</span>')
+  if(s.quality_score != null) chips.push('<span class="score-chip" title="Visual quality (OpenCV)">V '+s.quality_score+'</span>')
+  if(s.vision_score != null) chips.push('<span class="score-chip" title="AI vision">AI '+s.vision_score+'</span>')
+  if(s.speech_score) chips.push('<span class="score-chip speech" title="Dialogue">Dlg '+s.speech_score+'</span>')
+  if(s.has_face) chips.push('<span class="score-chip face" title="Face detected">Face</span>')
+
   card.innerHTML =
     thumbHtml +
     '<div style="padding:8px 10px;font-size:11px;line-height:1.5">' +
@@ -2493,8 +2586,9 @@ function buildSceneCard(s, cls, num, checked, badge, overlayPlay){
     '<strong>'+escapeHtmlLite(badge)+'</strong> <span style="opacity:.7">'+s.start+'s \u2192 '+s.end+'s</span></label>' +
     inlineBtn +
     '</div>' +
-    '<div style="opacity:.7;margin-top:4px">uses '+s.duration+'s \u00b7 score '+s.quality+'</div>' +
-    '<div style="opacity:.6;margin-top:2px">'+escapeHtmlLite(s.description||'')+'</div>' +
+    '<div style="opacity:.7;margin-top:4px">uses '+s.duration+'s</div>' +
+    '<div class="score-chips">'+chips.join('')+'</div>' +
+    '<div style="opacity:.6;margin-top:4px">'+escapeHtmlLite(s.description||'')+'</div>' +
     '</div>'
   return card
 }
@@ -2525,6 +2619,7 @@ function renderPreviewCut(d){
   grid.querySelectorAll('.tr-preview-pick').forEach(function(cb){
     cb.addEventListener('change', updatePreviewKept)
   })
+  renderCutTimeline(d.scenes, d.estimated_duration, d.trailer_length)
 
   // Runner-ups for swapping out a clip you don't like.
   var alts = d.alternates || []
@@ -2565,6 +2660,11 @@ function updatePreviewKept(){
     (extra.length ? ' + ' + extra.length + ' added' : '')
   document.getElementById('tr-render-btn').disabled = (kept.length + extra.length) === 0
   document.getElementById('tr-preview-all-btn').textContent = kept.length ? 'Deselect all' : 'Select all'
+  // Dim unchecked segments on the timeline
+  var segs = document.querySelectorAll('#tr-cut-timeline .cut-seg')
+  all.forEach(function(cb, i){
+    if(segs[i]) segs[i].classList.toggle('dropped', !cb.checked)
+  })
 }
 function togglePreviewAll(){
   var all = previewPicks()
