@@ -3,12 +3,271 @@
 body:has(.login-panel){overflow:hidden;background:radial-gradient(900px 600px at 8% 0%,color-mix(in srgb,var(--phosphor) 10%,transparent),transparent 62%),radial-gradient(800px 600px at 100% 100%,color-mix(in srgb,var(--accent) 10%,transparent),transparent 60%),var(--bg)!important}
 .login-brand{position:relative;z-index:1;margin-bottom:28px!important}.login-brand:after{content:'✦';position:absolute;right:-30px;top:-8px;color:var(--amber);font-size:14px;text-shadow:0 0 16px color-mix(in srgb,var(--amber) 65%,transparent);animation:aimp-twinkle 2.8s ease-in-out infinite}.login-logo{width:78px!important;height:78px!important;border-radius:22px!important;padding:12px;background:linear-gradient(145deg,var(--wash-4),var(--wash-1));border:1px solid var(--line);box-shadow:0 22px 55px color-mix(in srgb,var(--sunken) 70%,transparent),0 0 50px color-mix(in srgb,var(--phosphor) 16%,transparent);filter:none!important}.login-name{font-size:20px!important;letter-spacing:.16em!important}.login-tagline{font-size:9px!important;opacity:.72}.login-panel{width:390px!important;padding:34px!important;border-radius:20px!important;background:color-mix(in srgb,var(--panel) 88%,transparent)!important;border:1px solid var(--line)!important;box-shadow:0 30px 100px color-mix(in srgb,var(--sunken) 48%,transparent),0 0 60px color-mix(in srgb,var(--phosphor) 6%,transparent)!important;backdrop-filter:blur(18px)}.login-panel:before{height:3px!important;background:linear-gradient(90deg,var(--phosphor),var(--accent),var(--amber))!important;box-shadow:0 0 18px color-mix(in srgb,var(--phosphor) 35%,transparent)}.login-panel h1{font-size:11px!important;color:var(--ink-dim)!important;margin-bottom:24px!important}.login-panel h1:before{content:'✦'!important;color:var(--phosphor)!important;font-size:12px!important}.login-panel input[type=text],.login-panel input[type=password]{height:48px!important;padding:0 15px!important;border-radius:12px!important;background:var(--sunken)!important;border-color:var(--line)!important;margin-bottom:18px!important;color:var(--ink)!important}.login-panel input:focus{border-color:var(--phosphor)!important;box-shadow:0 0 0 3px color-mix(in srgb,var(--phosphor) 8%,transparent),0 0 22px color-mix(in srgb,var(--phosphor) 8%,transparent)}.login-panel button{height:48px!important;border-radius:12px!important;background:linear-gradient(135deg,var(--phosphor),var(--accent))!important;color:var(--sunken)!important;box-shadow:0 12px 30px color-mix(in srgb,var(--phosphor) 15%,transparent);transition:transform .18s,box-shadow .18s,filter .18s}.login-panel button:hover{opacity:1!important;transform:translateY(-1px);filter:saturate(1.08);box-shadow:0 16px 36px color-mix(in srgb,var(--phosphor) 22%,transparent)}.login-footer{opacity:.65}
 
-/* Modern sidebar / navigation: use the same semantic theme variables as the
-   main application. Do not hard-code dark RGBA surfaces here; that was why the
-   sidebar stayed dark when data-theme="light" was selected. */
-.rail,.sidebar,[class*="sidebar"],[class*="rail"]{background:var(--rail-bg)!important;border-right:1px solid var(--line)!important;box-shadow:12px 0 45px color-mix(in srgb,var(--sunken) 18%,transparent)!important;backdrop-filter:blur(18px)}
-.rail a,.rail button,.sidebar a,.sidebar button,[class*="sidebar"] a,[class*="sidebar"] button{border-radius:11px!important;transition:background .16s,border-color .16s,color .16s,transform .16s!important;color:var(--ink-dim)}
-.rail a:hover,.rail button:hover,.sidebar a:hover,.sidebar button:hover,[class*="sidebar"] a:hover,[class*="sidebar"] button:hover{background:var(--wash-3)!important;color:var(--ink)!important}
-.rail a.active,.rail button.active,.sidebar a.active,.sidebar button.active,[class*="sidebar"] .active{background:linear-gradient(90deg,color-mix(in srgb,var(--phosphor) 13%,transparent),color-mix(in srgb,var(--accent) 7%,transparent))!important;border:1px solid color-mix(in srgb,var(--phosphor) 18%,transparent)!important;color:var(--phosphor)!important;box-shadow:inset 3px 0 var(--phosphor),0 8px 25px color-mix(in srgb,var(--sunken) 12%,transparent)!important}.rail-sep{background:linear-gradient(90deg,transparent,var(--line),transparent)!important;margin:12px 8px!important}
-#p-trailer,#p-music,#p-sfx,#p-fish,#p-stt,#p-vision,#p-chat,#p-tools,#p-docs{position:relative!important;border:1px solid transparent!important}#p-trailer:hover,#p-music:hover,#p-sfx:hover,#p-fish:hover,#p-stt:hover,#p-vision:hover,#p-chat:hover,#p-tools:hover,#p-docs:hover{transform:translateX(2px)}
-img[src*="aimp-logo"],img[src*="logo-mark"],img[src*="branding/logo"]{filter:drop-shadow(0 0 14px color-mix(in srgb,var(--phosphor) 22%,transparent))!important}@keyframes aimp-twinkle{0%,100%{opacity:.35;transform:scale(.85) rotate(0)}50%{opacity:1;transform:scale(1.15) rotate(15deg)}}@media(max-width:600px){.login-panel{width:min(390px,calc(100vw - 32px))!important;padding:28px!important}.login-brand{margin-bottom:22px!important}.login-brand:after{right:-18px}.login-logo{width:68px!important;height:68px!important}}
+/* ==========================================================================
+   Modern sidebar / rail
+   Uses semantic theme variables so light + dark both look correct.
+   ========================================================================== */
+.rail{
+  background:var(--rail-bg)!important;
+  border-right:1px solid var(--line)!important;
+  box-shadow:12px 0 40px color-mix(in srgb,var(--sunken) 16%,transparent)!important;
+  backdrop-filter:blur(18px)!important;
+  -webkit-backdrop-filter:blur(18px)!important;
+  padding:16px 12px!important;
+  gap:12px!important;
+}
+
+/* Brand block */
+.rail-brand{
+  padding:4px 6px 14px!important;
+  border-bottom:1px solid var(--line)!important;
+  margin-bottom:2px;
+}
+.rail-brand-row{
+  display:flex;
+  align-items:center;
+  gap:11px;
+}
+.rail-logo{
+  width:32px!important;
+  height:32px!important;
+  border-radius:10px!important;
+  flex-shrink:0;
+  object-fit:contain;
+  background:linear-gradient(145deg,color-mix(in srgb,var(--phosphor) 12%,transparent),color-mix(in srgb,var(--accent) 8%,transparent));
+  border:1px solid color-mix(in srgb,var(--phosphor) 18%,transparent);
+  box-shadow:0 8px 20px color-mix(in srgb,var(--sunken) 25%,transparent),0 0 24px color-mix(in srgb,var(--phosphor) 12%,transparent);
+  filter:drop-shadow(0 0 10px color-mix(in srgb,var(--phosphor) 18%,transparent));
+}
+.rail-brand-text{min-width:0;flex:1}
+.rail-brand h1{
+  margin:0!important;
+  font-size:13px!important;
+  letter-spacing:.08em!important;
+  line-height:1.25!important;
+}
+.rail-brand h1::before{display:none!important} /* logo mark already present */
+.rail-brand .brand-tagline{
+  margin:3px 0 0!important;
+  font-size:9px!important;
+  opacity:.78;
+  line-height:1.35!important;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+/* Theme segmented control */
+.rail .theme-toggle{
+  margin-top:12px!important;
+  background:var(--sunken)!important;
+  border:1px solid var(--line)!important;
+  border-radius:10px!important;
+  padding:3px!important;
+  gap:2px!important;
+}
+.rail .theme-btn{
+  border-radius:8px!important;
+  padding:6px 0!important;
+  font-size:12px!important;
+  transition:background .16s,color .16s,transform .16s!important;
+}
+.rail .theme-btn:hover{
+  color:var(--ink)!important;
+  background:color-mix(in srgb,var(--wash-3) 80%,transparent)!important;
+}
+.rail .theme-btn.active{
+  background:color-mix(in srgb,var(--elevated) 90%,var(--phosphor) 4%)!important;
+  color:var(--phosphor)!important;
+  box-shadow:0 2px 8px color-mix(in srgb,var(--sunken) 30%,transparent);
+}
+
+/* Section labels */
+.rail-section{
+  font:600 9px 'JetBrains Mono',monospace;
+  letter-spacing:.14em;
+  text-transform:uppercase;
+  color:var(--ink-dim);
+  opacity:.72;
+  padding:10px 10px 4px;
+  user-select:none;
+}
+
+/* Nav items */
+.rail .tabs{
+  gap:3px!important;
+}
+.rail .tab{
+  display:flex!important;
+  align-items:flex-start!important;
+  gap:10px!important;
+  padding:9px 10px!important;
+  border-radius:11px!important;
+  border:1px solid transparent!important;
+  color:var(--ink-dim)!important;
+  transition:background .16s,border-color .16s,color .16s,transform .16s,box-shadow .16s!important;
+}
+.rail .tab:hover{
+  background:var(--wash-3)!important;
+  color:var(--ink)!important;
+  transform:translateX(2px);
+}
+.rail .tab.active{
+  background:linear-gradient(90deg,color-mix(in srgb,var(--phosphor) 13%,transparent),color-mix(in srgb,var(--accent) 7%,transparent))!important;
+  border-color:color-mix(in srgb,var(--phosphor) 20%,transparent)!important;
+  color:var(--phosphor)!important;
+  box-shadow:inset 3px 0 0 var(--phosphor),0 8px 22px color-mix(in srgb,var(--sunken) 12%,transparent)!important;
+}
+.rail .tab.active:hover{transform:none}
+
+/* Icon chips */
+.rail .tab-icon{
+  display:grid!important;
+  place-items:center!important;
+  width:28px;
+  height:28px;
+  flex:0 0 28px!important;
+  border-radius:8px;
+  font-size:13px!important;
+  line-height:1!important;
+  margin:0!important;
+  background:color-mix(in srgb,var(--wash-3) 90%,transparent);
+  border:1px solid var(--line);
+  transition:background .16s,border-color .16s,color .16s,box-shadow .16s;
+}
+.rail .tab:hover .tab-icon{
+  border-color:color-mix(in srgb,var(--phosphor) 22%,transparent);
+  background:color-mix(in srgb,var(--phosphor) 8%,transparent);
+}
+.rail .tab.active .tab-icon{
+  background:color-mix(in srgb,var(--phosphor) 14%,transparent);
+  border-color:color-mix(in srgb,var(--phosphor) 28%,transparent);
+  color:var(--phosphor);
+  box-shadow:0 0 16px color-mix(in srgb,var(--phosphor) 18%,transparent);
+}
+.rail .tab-text{
+  padding-top:2px;
+  line-height:1.25;
+}
+.rail .tab-sub{
+  margin-top:2px!important;
+  opacity:.75;
+}
+
+/* Separator */
+.rail-sep,
+.rail .rail-sep{
+  height:1px!important;
+  background:linear-gradient(90deg,transparent,var(--line),transparent)!important;
+  margin:10px 6px!important;
+  opacity:1!important;
+  border:none!important;
+}
+
+/* Engine strip */
+.rail .hdr-engines{
+  margin-top:auto!important;
+  padding:12px 8px 4px!important;
+  border-top:1px solid var(--line)!important;
+  font-size:8px!important;
+  letter-spacing:.1em!important;
+  opacity:.7;
+  line-height:1.6!important;
+}
+
+/* User card */
+.rail-user{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin:4px 2px 2px;
+  padding:10px 12px;
+  border-radius:12px;
+  border:1px solid var(--line);
+  background:color-mix(in srgb,var(--sunken) 70%,transparent);
+}
+.rail-user-meta{min-width:0;display:flex;flex-direction:column;gap:2px}
+.rail-user-label{
+  font:600 8px 'JetBrains Mono',monospace;
+  letter-spacing:.1em;
+  text-transform:uppercase;
+  color:var(--ink-dim);
+  opacity:.75;
+}
+.rail-user-name{
+  font-size:12px;
+  color:var(--ink);
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-weight:600;
+}
+.rail-signout{
+  flex-shrink:0;
+  font:600 9px 'JetBrains Mono',monospace;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+  color:var(--ink-dim);
+  padding:6px 9px;
+  border-radius:8px;
+  border:1px solid var(--line);
+  transition:color .15s,border-color .15s,background .15s;
+}
+.rail-signout:hover{
+  color:var(--tally);
+  border-color:color-mix(in srgb,var(--tally) 40%,transparent);
+  background:color-mix(in srgb,var(--tally) 8%,transparent);
+}
+
+.rail-footer{
+  text-align:center;
+  font-size:10px;
+  padding:4px 10px 8px;
+  color:var(--ink-dim);
+  opacity:.65;
+  line-height:1.5;
+}
+
+/* Panel hover polish (main content) */
+#p-trailer,#p-music,#p-sfx,#p-fish,#p-stt,#p-vision,#p-chat,#p-tools,#p-docs,#p-api,#p-config{
+  position:relative!important;
+  border:1px solid transparent!important;
+}
+
+/* Responsive: keep icon-only and horizontal rail usable */
+@media(max-width:900px){
+  .rail-brand-text,
+  .rail-section,
+  .rail .tab-text,
+  .rail .hdr-engines,
+  .rail-user-meta,
+  .rail-footer{display:none!important}
+  .rail-brand-row{justify-content:center}
+  .rail .tab{justify-content:center!important;padding:8px 6px!important}
+  .rail .tab:hover{transform:none}
+  .rail-user{justify-content:center;padding:8px}
+  .rail-logo{width:28px!important;height:28px!important}
+}
+@media(max-width:640px){
+  .rail{
+    box-shadow:none!important;
+    backdrop-filter:none!important;
+  }
+  .rail-section{display:none!important}
+  .rail .tabs{flex-direction:row!important}
+}
+
+img[src*="aimp-logo"],img[src*="logo-mark"],img[src*="branding/logo"]{
+  filter:drop-shadow(0 0 12px color-mix(in srgb,var(--phosphor) 20%,transparent))!important
+}
+@keyframes aimp-twinkle{0%,100%{opacity:.35;transform:scale(.85) rotate(0)}50%{opacity:1;transform:scale(1.15) rotate(15deg)}}
+@media(max-width:600px){
+  .login-panel{width:min(390px,calc(100vw - 32px))!important;padding:28px!important}
+  .login-brand{margin-bottom:22px!important}
+  .login-brand:after{right:-18px}
+  .login-logo{width:68px!important;height:68px!important}
+}
+
+/* Bump cache so inject picks up new rules */
+/* v=2 sidebar modern */

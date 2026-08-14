@@ -580,11 +580,13 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
 </script>
 <nav class="rail">
   <div class="rail-brand">
-    <div style="display:flex;align-items:center;gap:10px">
-      <img src="/branding/logo" alt="" width="28" height="28" style="border-radius:6px;flex-shrink:0" aria-hidden="true">
-      <h1 style="margin:0">{{ brand_name }}</h1>
+    <div class="rail-brand-row">
+      <img class="rail-logo" src="/branding/logo" alt="" width="32" height="32" aria-hidden="true">
+      <div class="rail-brand-text">
+        <h1>{{ brand_name }}</h1>
+        <p class="brand-tagline">{{ brand_tagline }}</p>
+      </div>
     </div>
-    <p class=brand-tagline>{{ brand_tagline }}</p>
     <div class="theme-toggle" role="group" aria-label="Theme">
       <button type=button class="theme-btn" data-theme-choice="light" onclick="setTheme('light')" title="Light theme">&#9728;</button>
       <button type=button class="theme-btn" data-theme-choice="dark" onclick="setTheme('dark')" title="Dark theme">&#9789;</button>
@@ -592,46 +594,53 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
     </div>
   </div>
   <div class="tabs">
+    <div class="rail-section">Create</div>
     {% if current_role == 'admin' or 'promo_generation' in current_permissions %}
-    <div class="tab{{ ' active' if default_tab == 'p-trailer' else '' }}" onclick="switchTab('p-trailer',this)" role="button" tabindex="0"><span class=tab-icon>&#9636;</span><span class=tab-text>Generate Promo Plug<div class=tab-sub>ai+ffmpeg</div></span></div>
+    <div class="tab{{ ' active' if default_tab == 'p-trailer' else '' }}" onclick="switchTab('p-trailer',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true">&#9636;</span><span class=tab-text>Generate Promo Plug<div class=tab-sub>ai+ffmpeg</div></span></div>
     {% endif %}
     {% if current_role == 'admin' or 'music_generation' in current_permissions %}
-    <div class="tab{{ ' active' if default_tab == 'p-music' else '' }}" onclick="switchTab('p-music',this)" role="button" tabindex="0"><span class=tab-icon>&#9835;</span><span class=tab-text>Music Generation<div class=tab-sub>ace-step</div></span></div>
+    <div class="tab{{ ' active' if default_tab == 'p-music' else '' }}" onclick="switchTab('p-music',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true">&#9835;</span><span class=tab-text>Music Generation<div class=tab-sub>ace-step</div></span></div>
     {% endif %}
     {% if current_role == 'admin' or 'text_to_sfx' in current_permissions %}
-    <div class="tab{{ ' active' if default_tab == 'p-sfx' else '' }}" onclick="switchTab('p-sfx',this)" role="button" tabindex="0"><span class=tab-icon>&#9889;</span><span class=tab-text>Text to SFX<div class=tab-sub>woosh</div></span></div>
+    <div class="tab{{ ' active' if default_tab == 'p-sfx' else '' }}" onclick="switchTab('p-sfx',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true">&#9889;</span><span class=tab-text>Text to SFX<div class=tab-sub>woosh</div></span></div>
     {% endif %}
     {% if current_role == 'admin' or 'text_to_speech' in current_permissions %}
-    <div class="tab{{ ' active' if default_tab == 'p-fish' else '' }}" onclick="switchTab('p-fish',this)" role="button" tabindex="0"><span class=tab-icon>&#9679;</span><span class=tab-text>Text to Speech<div class=tab-sub>fish audio</div></span></div>
+    <div class="tab{{ ' active' if default_tab == 'p-fish' else '' }}" onclick="switchTab('p-fish',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true">&#9679;</span><span class=tab-text>Text to Speech<div class=tab-sub>fish audio</div></span></div>
     {% endif %}
     {% if current_role == 'admin' or 'speech_to_text' in current_permissions %}
-    <div class="tab{{ ' active' if default_tab == 'p-stt' else '' }}" onclick="switchTab('p-stt',this)" role="button" tabindex="0"><span class=tab-icon>&#9834;</span><span class=tab-text>Speech to Text<div class=tab-sub>whisper</div></span></div>
+    <div class="tab{{ ' active' if default_tab == 'p-stt' else '' }}" onclick="switchTab('p-stt',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true">&#9834;</span><span class=tab-text>Speech to Text<div class=tab-sub>whisper</div></span></div>
     {% endif %}
     {% if current_role == 'admin' or 'scene_detection' in current_permissions %}
-    <div class="tab{{ ' active' if default_tab == 'p-vision' else '' }}" onclick="switchTab('p-vision',this)" role="button" tabindex="0"><span class=tab-icon>&#9673;</span><span class=tab-text>Scene Detection<div class=tab-sub>vision + pyscenedetect</div></span></div>
+    <div class="tab{{ ' active' if default_tab == 'p-vision' else '' }}" onclick="switchTab('p-vision',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true">&#9673;</span><span class=tab-text>Scene Detection<div class=tab-sub>vision + pyscenedetect</div></span></div>
     {% endif %}
     {% if current_role == 'admin' or 'ai_chat' in current_permissions %}
-    <div class="tab{{ ' active' if default_tab == 'p-chat' else '' }}" onclick="switchTab('p-chat',this)" role="button" tabindex="0"><span class=tab-icon>&#128172;</span><span class=tab-text>AI Assistant<div class=tab-sub>llm assistant</div></span></div>
+    <div class="tab{{ ' active' if default_tab == 'p-chat' else '' }}" onclick="switchTab('p-chat',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true">&#128172;</span><span class=tab-text>AI Assistant<div class=tab-sub>llm assistant</div></span></div>
     {% endif %}
     <div class="rail-sep"></div>
+    <div class="rail-section">Library</div>
     {% if current_role == 'admin' or 'player' in current_permissions %}
-    <div class="tab{{ ' active' if default_tab == 'p-tools' else '' }}" onclick="switchTab('p-tools',this)" role="button" tabindex="0"><span class=tab-icon>&#9881;</span><span class=tab-text>Player<div class=tab-sub>shared library</div></span></div>
+    <div class="tab{{ ' active' if default_tab == 'p-tools' else '' }}" onclick="switchTab('p-tools',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true">&#9881;</span><span class=tab-text>Player<div class=tab-sub>shared library</div></span></div>
     {% endif %}
+    <div class="rail-sep"></div>
+    <div class="rail-section">System</div>
     {% if current_role == 'admin' %}
-    <div class="tab{{ ' active' if default_tab == 'p-api' else '' }}" onclick="switchTab('p-api',this)" role="button" tabindex="0"><span class=tab-icon>{ }</span><span class=tab-text>API<div class=tab-sub>reference</div></span></div>
+    <div class="tab{{ ' active' if default_tab == 'p-api' else '' }}" onclick="switchTab('p-api',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true">{ }</span><span class=tab-text>API<div class=tab-sub>reference</div></span></div>
     {% endif %}
-    <div class="tab{{ ' active' if default_tab == 'p-docs' else '' }}" onclick="switchTab('p-docs',this)" role="button" tabindex="0"><span class=tab-icon>&#9776;</span><span class=tab-text>Docs<div class=tab-sub>workflow+genres</div></span></div>
+    <div class="tab{{ ' active' if default_tab == 'p-docs' else '' }}" onclick="switchTab('p-docs',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true">&#9776;</span><span class=tab-text>Docs<div class=tab-sub>workflow+genres</div></span></div>
     {% if current_role == 'admin' %}
-    <div class="tab{{ ' active' if default_tab == 'p-config' else '' }}" onclick="switchTab('p-config',this)" role="button" tabindex="0"><span class=tab-icon>&#128295;</span><span class=tab-text>Config<div class=tab-sub>api urls</div></span></div>
+    <div class="tab{{ ' active' if default_tab == 'p-config' else '' }}" onclick="switchTab('p-config',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true">&#128295;</span><span class=tab-text>Config<div class=tab-sub>api urls</div></span></div>
     {% endif %}
   </div>
-  <div class="hdr-engines">scene detection &middot; ai vision &middot; ffmpeg &middot; ai music &middot; tts &middot; stt</div>
-  <div style="text-align:center;font-size:11px;padding:8px 8px 2px;color:var(--ink-dim)">
-    Signed in as <strong>{{ current_username }}</strong>
-    &middot; <a href="/logout" style="color:var(--ink-dim)">Sign out</a>
+  <div class="hdr-engines">scene · vision · ffmpeg · music · tts · stt</div>
+  <div class="rail-user">
+    <div class="rail-user-meta">
+      <span class="rail-user-label">Signed in</span>
+      <strong class="rail-user-name">{{ current_username }}</strong>
+    </div>
+    <a class="rail-signout" href="/logout">Sign out</a>
   </div>
   {% if brand_footer %}
-  <div style="text-align:center;font-size:10px;padding:6px 12px 10px;color:var(--ink-dim);opacity:.7;line-height:1.5">{{ brand_footer }}</div>
+  <div class="rail-footer">{{ brand_footer }}</div>
   {% endif %}
 </nav>
 <div class="container">
