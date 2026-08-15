@@ -898,6 +898,23 @@ document.addEventListener("DOMContentLoaded", function(){
       <span class="net-file-chip" id=script-file-chip style="display:none"><span class=chip-name></span><span class=chip-x onclick="clearScriptFile(); updateJobSummary()">&#10005;</span></span>
     </div>
     <p style="font-size:12px;opacity:.7;margin:4px 0 0">Description steers AI Vision ratings. A rundown with timecodes (<code>00:01:30</code> or <code>1:30</code>) pins those moments. Both can be used together.</p>
+
+    <label style="margin-top:14px">Scene selection driven by</label>
+    <div class="selection-driver-row" role="group" aria-label="Scene selection driver">
+      <label class="selection-driver-opt">
+        <input type="radio" name="selection_driver" value="score" checked onchange="updateJobSummary()">
+        <span><strong>Best scenes</strong><small>Quality + AI + dialogue scores</small></span>
+      </label>
+      <label class="selection-driver-opt">
+        <input type="radio" name="selection_driver" value="vo" onchange="updateJobSummary()">
+        <span><strong>Voiceover</strong><small>Match clips to VO script lines (needs TTS script)</small></span>
+      </label>
+      <label class="selection-driver-opt">
+        <input type="radio" name="selection_driver" value="music" onchange="updateJobSummary()">
+        <span><strong>Music</strong><small>Energetic clips; beat-sync when BGM is on</small></span>
+      </label>
+    </div>
+    <p style="font-size:12px;opacity:.7;margin:6px 0 0">VO mode uses the narration script under Advanced → Narration (TTS text). Without a script it falls back to best scenes. Music mode works best with background music + “sync cuts to beat”.</p>
   </div>
 
   <div class="promo-essentials">
@@ -2501,6 +2518,9 @@ function updateJobSummary(){
     parts.push(tpl.options[tpl.selectedIndex].text.replace(/^\s+|\s+$/g,''))
   var prompt = document.getElementById('priority-prompt')
   if(prompt && prompt.value.trim()) parts.push('steered')
+  var drv = document.querySelector('input[name=selection_driver]:checked')
+  if(drv && drv.value === 'vo') parts.push('VO-led')
+  else if(drv && drv.value === 'music') parts.push('music-led')
   var scriptChip = document.getElementById('script-file-chip')
   if(scriptChip && scriptChip.style.display !== 'none') parts.push('script')
   var fileName = document.getElementById('tr-file-preview-name')
@@ -2588,6 +2608,7 @@ function buildSceneCard(s, cls, num, checked, badge, overlayPlay){
     '</div>' +
     '<div style="opacity:.7;margin-top:4px">uses '+s.duration+'s</div>' +
     '<div class="score-chips">'+chips.join('')+'</div>' +
+    (s.vo_beat ? '<div class="vo-beat-line" title="VO beat this clip was matched to">VO: '+escapeHtmlLite(s.vo_beat)+'</div>' : '') +
     '<div style="opacity:.6;margin-top:4px">'+escapeHtmlLite(s.description||'')+'</div>' +
     '</div>'
   return card

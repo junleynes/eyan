@@ -3600,6 +3600,10 @@ def api_trailer():
     # music track is actually used). Requires prepping the BGM before scene
     # selection instead of after, so cut points can be nudged onto beats.
     sync_beats = request.form.get('sync_beats') == 'on' and scoring_mode != 'none'
+    selection_driver = (request.form.get('selection_driver') or 'score').strip().lower()
+    if selection_driver not in ('score', 'vo', 'music'):
+        selection_driver = 'score'
+    # VO-led needs a script; music-led benefits from BGM — fall back gracefully later in the job.
     whisper_enhance = mode_includes_stt
 
     end_card_path = None
@@ -3823,6 +3827,7 @@ def api_trailer():
                   vo_mode=vo_mode, vo_upload_path=vo_upload_path, vo_text=vo_text, vo_voice=vo_voice,
                   vo_language=vo_language, vo_engine=vo_engine, vo_ref_upload_path=vo_ref_upload_path,
                   vo_rate=vo_rate, vo_start=vo_start, vo_volume=vo_volume, sync_beats=sync_beats, whisper_enhance=whisper_enhance,
+                  selection_driver=selection_driver,
                   vo_trim_start=vo_trim_start, vo_trim_end=vo_trim_end,
                   end_card_path=end_card_path, schedule_card_path=schedule_card_path,
                   title_card_vo_path=title_card_vo_path, title_card_vo_start=title_card_vo_start, title_card_vo_end=title_card_vo_end,
@@ -5340,6 +5345,215 @@ def run_trailer_job(jid, params):
         if not holding:
             _cleanup_job_temp(jid, params, keep_basename=keep)
 
+
+def _vo_beats_from_text(text):
+    """Split promo VO into selection beats (sentences / lines)."""
+    import re
+    if not text or not str(text).strip():
+        return []
+    raw = str(text).replace('\r\n', '\n').replace('\r', '\n')
+    parts = []
+    for line in raw.split('\n'):
+        line = line.strip()
+        if not line:
+            continue
+        # Strip simple delivery tags like [happy] for matching
+        line = re.sub(r'\[[^\]]+\]', ' ', line)
+        line = re.sub(r'\([^)]+\)', ' ', line)
+        line = re.sub(r'\s+', ' ', line).strip()
+        if not line:
+            continue
+        # Further split long lines on sentence ends
+        chunks = re.split(r'(?<=[.!?])\s+', line)
+        for c in chunks:
+            c = c.strip()
+            if c:
+                parts.append(c)
+    if not parts:
+        parts = [str(text).strip()]
+    beats = []
+    for c in parts:
+        words = re.findall(r"[A-Za-z0-9']+", c.lower())
+        if not words:
+            continue
+        beats.append({'text': c, 'words': words, 'word_count': len(words)})
+    return beats
+
+
+def _token_overlap_score(beat_words, scene):
+    """How well a scene's description/dialogue matches a VO beat."""
+    if not beat_words:
+        return 0.0
+    blob = ' '.join([
+        str(scene.get('ai_desc') or ''),
+        str(scene.get('dialogue') or ''),
+        str(scene.get('description') or ''),
+    ]).lower()
+    if not blob.strip():
+        return 0.0
+    import re
+    scene_words = set(re.findall(r"[A-Za-z0-9']+", blob))
+    if not scene_words:
+        return 0.0
+    hit = sum(1 for w in beat_words if w in scene_words and len(w) > 2)
+    return hit / max(1, len([w for w in beat_words if len(w) > 2]))
+
+
+def select_scenes_vo_led(scenes_data, vo_text, trailer_duration, max_scene_dur, min_seg_dur,
+                         min_gap, transcribe_for_cuts=False, word_starts=None,
+                         phrase_ends=None, word_ends=None, sync_beats=False, beat_times=None):
+    """Pick one scene per VO beat, sized to that beat's share of the target duration."""
+    beats = _vo_beats_from_text(vo_text)
+    if not beats or not scenes_data:
+        return None, 0.0  # signal caller to fall back
+    total_words = sum(b['word_count'] for b in beats) or 1
+    used = set()
+    selected = []
+    total_sel = 0.0
+    for bi, beat in enumerate(beats):
+        remaining_beats = len(beats) - bi
+        remaining_budget = max(min_seg_dur, trailer_duration - total_sel)
+        # Proportional share, but leave room for later beats
+        share = trailer_duration * (beat['word_count'] / total_words)
+        if remaining_beats > 1:
+            share = min(share, remaining_budget - min_seg_dur * (remaining_beats - 1) * 0.5)
+        share = max(min_seg_dur, min(share, remaining_budget))
+        if max_scene_dur:
+            share = min(share, max_scene_dur)
+
+        best = None
+        best_key = None
+        for i, s in enumerate(scenes_data):
+            if i in used:
+                continue
+            if any(abs(s['start'] - c['start']) < min_gap for c in selected):
+                continue
+            if s['duration'] < min_seg_dur * 0.6:
+                continue
+            match = _token_overlap_score(beat['words'], s)
+            # Prefer match, then total_score, then duration fit
+            dur_fit = 1.0 - min(1.0, abs(s['duration'] - share) / max(share, 1.0))
+            key = (match, s.get('total_score', 0), dur_fit, 1 if s.get('has_face') else 0)
+            if best_key is None or key > best_key:
+                best_key = key
+                best = (i, s, match)
+        if best is None:
+            # Relax gap and try again
+            for i, s in enumerate(scenes_data):
+                if i in used:
+                    continue
+                if s['duration'] < min_seg_dur * 0.5:
+                    continue
+                match = _token_overlap_score(beat['words'], s)
+                key = (match, s.get('total_score', 0))
+                if best_key is None or key > best_key:
+                    best_key = key
+                    best = (i, s, match)
+        if best is None:
+            continue
+        i, s, match = best
+        used.add(i)
+        seg_dur = min(s['duration'], share, remaining_budget)
+        if max_scene_dur:
+            seg_dur = min(seg_dur, max_scene_dur)
+        seg_dur = max(0.3, seg_dur)
+        seg_start = s['start']
+        if transcribe_for_cuts and word_starts:
+            snapped_start = nearest_word_boundary(seg_start, word_starts, max_snap=0.35)
+            if seg_start < snapped_start < seg_start + seg_dur:
+                drift = snapped_start - seg_start
+                seg_start = snapped_start
+                seg_dur = max(0.3, seg_dur - drift)
+        scene_end = s['start'] + s['duration']
+        if sync_beats and beat_times:
+            target_cut = total_sel + seg_dur
+            snapped_cut = nearest_beat(target_cut, beat_times, total_sel + 0.3, total_sel + (scene_end - seg_start))
+            seg_dur = max(0.3, min(scene_end - seg_start, snapped_cut - total_sel))
+        if transcribe_for_cuts and (phrase_ends or word_ends) and seg_dur < (scene_end - seg_start):
+            target_end = seg_start + seg_dur
+            snapped_end = nearest_speech_out(target_end, phrase_ends, word_ends)
+            if seg_start < snapped_end <= scene_end:
+                seg_dur = max(0.3, snapped_end - seg_start)
+        s = dict(s)
+        s['trim_start'] = seg_start
+        s['selected_dur'] = seg_dur
+        s['vo_beat'] = beat['text'][:120]
+        s['vo_match'] = round(match, 3)
+        selected.append(s)
+        total_sel += seg_dur
+        if trailer_duration - total_sel < min_seg_dur * 0.5:
+            break
+    if not selected:
+        return None, 0.0
+    selected.sort(key=lambda x: x['start'])
+    return selected, total_sel
+
+
+def select_scenes_music_led(scenes_data, trailer_duration, max_scene_dur, min_seg_dur, min_gap,
+                            beat_times, transcribe_for_cuts=False, word_starts=None,
+                            phrase_ends=None, word_ends=None):
+    """Prefer energetic scenes and size cuts toward beat spacing when available."""
+    if not scenes_data:
+        return None, 0.0
+    # Average inter-beat interval as preferred clip length
+    pref = 2.5
+    if beat_times and len(beat_times) >= 2:
+        gaps = [beat_times[i + 1] - beat_times[i] for i in range(len(beat_times) - 1)]
+        gaps = [g for g in gaps if 0.25 < g < 4.0]
+        if gaps:
+            pref = sorted(gaps)[len(gaps) // 2]
+    pref = max(min_seg_dur, min(pref * 2, max_scene_dur or 4.0))
+
+    ranked = sorted(
+        scenes_data,
+        key=lambda s: (
+            float(s.get('edge_ratio') or 0) * 2.0
+            + float(s.get('total_score') or 0)
+            + (1.5 if s.get('has_face') else 0),
+        ),
+        reverse=True,
+    )
+    selected = []
+    total_sel = 0.0
+    for s in ranked:
+        remaining = trailer_duration - total_sel
+        if remaining < min_seg_dur:
+            break
+        if any(abs(s['start'] - c['start']) < min_gap for c in selected):
+            continue
+        seg_dur = min(s['duration'], remaining, pref)
+        if max_scene_dur:
+            seg_dur = min(seg_dur, max_scene_dur)
+        if seg_dur < min_seg_dur * 0.6:
+            continue
+        seg_start = s['start']
+        if transcribe_for_cuts and word_starts:
+            snapped_start = nearest_word_boundary(seg_start, word_starts, max_snap=0.35)
+            if seg_start < snapped_start < seg_start + seg_dur:
+                drift = snapped_start - seg_start
+                seg_start = snapped_start
+                seg_dur = max(0.3, seg_dur - drift)
+        scene_end = s['start'] + s['duration']
+        if beat_times:
+            target_cut = total_sel + seg_dur
+            snapped_cut = nearest_beat(target_cut, beat_times, total_sel + 0.3, total_sel + (scene_end - seg_start))
+            seg_dur = max(0.3, min(scene_end - seg_start, snapped_cut - total_sel))
+        if transcribe_for_cuts and (phrase_ends or word_ends) and seg_dur < (scene_end - seg_start):
+            target_end = seg_start + seg_dur
+            snapped_end = nearest_speech_out(target_end, phrase_ends, word_ends)
+            if seg_start < snapped_end <= scene_end:
+                seg_dur = max(0.3, snapped_end - seg_start)
+        s = dict(s)
+        s['trim_start'] = seg_start
+        s['selected_dur'] = seg_dur
+        selected.append(s)
+        total_sel += seg_dur
+    if not selected:
+        return None, 0.0
+    selected.sort(key=lambda x: x['start'])
+    return selected, total_sel
+
+
 def _run_trailer_job(jid, params):
     path = params['path']; orig_name = params['orig_name']; mode = params['mode']
     genre = params['genre']; scoring_mode = params['scoring_mode']; trailer_length = params['trailer_length']
@@ -5850,7 +6064,7 @@ def _run_trailer_job(jid, params):
             else:
                 sync_beats = False
 
-        job_set(jid, percent=28, step='Selecting best scenes')
+        job_set(jid, percent=28, step='Selecting scenes')
         # Pick top scenes by score to fill target, then sort by timecode
         # Iterative: xfade transitions shorten output, so compensate
         # Apply script-driven priority (if a script/rundown was uploaded)
@@ -5885,7 +6099,58 @@ def _run_trailer_job(jid, params):
         # so it's meaningful on both short and long videos.
         base_min_gap = max(2.0, min(8.0, video_duration * 0.03))
         trailer_duration = base_target
+        selection_driver = (params.get('selection_driver') or 'score').lower()
+        if selection_driver not in ('score', 'vo', 'music'):
+            selection_driver = 'score'
+
+        # --- VO-led or music-led selection (falls back to score if it can't run) ---
+        selected = []
+        total_sel = 0
+        min_gap = base_min_gap
+        used_driver = 'score'
+        if selection_driver == 'vo':
+            vo_for_sel = (params.get('vo_text') or '').strip()
+            if not vo_for_sel and params.get('vo_mode') == 'upload':
+                job_set(jid, step='VO-led selection needs text (TTS script) — using score selection')
+            elif vo_for_sel:
+                job_set(jid, percent=28, step='Selecting scenes from VO script')
+                vo_sel, vo_total = select_scenes_vo_led(
+                    scenes_data, vo_for_sel, trailer_duration, max_scene_dur, min_seg_dur,
+                    base_min_gap, transcribe_for_cuts=transcribe_for_cuts, word_starts=word_starts,
+                    phrase_ends=phrase_ends, word_ends=word_ends,
+                    sync_beats=sync_beats, beat_times=beat_times)
+                if vo_sel:
+                    selected, total_sel = vo_sel, vo_total
+                    used_driver = 'vo'
+                    job_set(jid, step=f'VO-led selection: {len(selected)} beats matched')
+                else:
+                    job_set(jid, step='VO-led selection found no matches — using score selection')
+            else:
+                job_set(jid, step='No VO script — using score selection')
+        elif selection_driver == 'music':
+            job_set(jid, percent=28, step='Selecting scenes to music')
+            mus_sel, mus_total = select_scenes_music_led(
+                scenes_data, trailer_duration, max_scene_dur, min_seg_dur, base_min_gap,
+                beat_times if sync_beats else [],
+                transcribe_for_cuts=transcribe_for_cuts, word_starts=word_starts,
+                phrase_ends=phrase_ends, word_ends=word_ends)
+            if mus_sel:
+                selected, total_sel = mus_sel, mus_total
+                used_driver = 'music'
+                job_set(jid, step=f'Music-led selection: {len(selected)} clips')
+            else:
+                job_set(jid, step='Music-led selection empty — using score selection')
+
+        shortfall = 0.0
         for pass_attempt in range(4):
+            if used_driver != 'score' and selected:
+                # VO/music already filled the cut — compute shortfall once, then
+                # fall through to the shared length-correction steps below.
+                n_seg = len(selected) + len(card_files)
+                xfade_loss = max(0, (n_seg - 1)) * xfade_dur
+                expected_total = total_sel + total_card_dur - xfade_loss
+                shortfall = trailer_length - expected_total
+                break
             # Relax the gap requirement on later passes: if spacing is preventing
             # us from filling the duration budget, it's better to allow some
             # clustering than to ship a trailer that's noticeably short.
@@ -6100,6 +6365,7 @@ def _run_trailer_job(jid, params):
                      'total_score': s['total_score'], 'quality_score': s.get('quality_score', 0),
                      'vision_score': s.get('vision_score'), 'speech_score': s.get('speech_score', 0),
                      'ai_desc': s.get('ai_desc', ''), 'has_face': s.get('has_face', False),
+                     'vo_beat': s.get('vo_beat'), 'vo_match': s.get('vo_match'),
                      'edge_ratio': s.get('edge_ratio', 0), 'mean_hue': s.get('mean_hue', 0)}
                     for s in rows]
 
@@ -6126,6 +6392,8 @@ def _run_trailer_job(jid, params):
                      'vision_score': s.get('vision_score'),
                      'speech_score': s.get('speech_score', 0),
                      'has_face': bool(s.get('has_face')),
+                     'vo_beat': s.get('vo_beat'),
+                     'vo_match': s.get('vo_match'),
                      'description': _scene_desc(s), 'thumb': thumbs[i]}
                     for i, s in enumerate(selected)],
             alternates=[{'alt': i + 1, 'start': round(s['start'], 1), 'end': round(s['end'], 1),

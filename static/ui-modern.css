@@ -485,3 +485,23 @@ img[src*="aimp-logo"],img[src*="logo-mark"],img[src*="branding/logo"]{
   white-space:nowrap
 }
 .docs-body{min-width:0;width:100%}
+
+.selection-driver-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:8px}
+.selection-driver-opt{
+  display:flex;gap:8px;align-items:flex-start;padding:10px 12px;border-radius:12px;
+  border:1px solid var(--line);cursor:pointer;background:color-mix(in srgb,var(--sunken) 50%,transparent)
+}
+.selection-driver-opt:has(input:checked){
+  border-color:color-mix(in srgb,var(--phosphor) 40%,transparent);
+  background:color-mix(in srgb,var(--phosphor) 10%,transparent)
+}
+.selection-driver-opt input{margin-top:3px;flex-shrink:0}
+.selection-driver-opt strong{display:block;font-size:12px;margin-bottom:2px}
+.selection-driver-opt small{display:block;font-size:11px;color:var(--ink-dim);line-height:1.35}
+.vo-beat-line{
+  margin-top:6px;font-size:11px;color:var(--amber);line-height:1.35;
+  border-left:2px solid color-mix(in srgb,var(--amber) 50%,transparent);padding-left:8px
+}
+@media(max-width:800px){
+  .selection-driver-row{grid-template-columns:1fr}
+}
