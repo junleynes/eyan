@@ -457,3 +457,31 @@ img[src*="aimp-logo"],img[src*="logo-mark"],img[src*="branding/logo"]{
   background:color-mix(in srgb,var(--phosphor) 8%,transparent);color:var(--ink)
 }
 .job-error-actions{display:flex;flex-wrap:wrap;gap:8px}
+
+
+/* Docs: top tabs (no second sidebar — keeps content full width) */
+.docs-layout,
+.docs-layout-top{
+  display:block!important;
+  grid-template-columns:unset!important;
+  min-height:0!important
+}
+.docs-nav,
+.docs-nav-top{
+  position:static!important;
+  display:flex!important;
+  flex-direction:row!important;
+  flex-wrap:wrap!important;
+  gap:6px!important;
+  margin:0 0 18px!important;
+  padding:8px!important;
+  border:1px solid var(--line)!important;
+  border-radius:12px!important;
+  background:color-mix(in srgb,var(--sunken) 55%,transparent)!important
+}
+.docs-nav-item{
+  padding:8px 12px!important;
+  font-size:10px!important;
+  white-space:nowrap
+}
+.docs-body{min-width:0;width:100%}

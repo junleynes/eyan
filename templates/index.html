@@ -581,7 +581,7 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
 <nav class="rail">
   <div class="rail-brand">
     <a class="rail-brand-link" href="/" title="{{ brand_name }}">
-      <img class="rail-logo" src="/branding/logo" alt="{{ brand_name }}" width="160" height="48">
+      <img class="rail-logo" src="/static/aimp-logo.svg" alt="{{ brand_name }}" width="160" height="48">
     </a>
     <p class="brand-tagline">{{ brand_tagline }}</p>
     <div class="theme-toggle" role="group" aria-label="Theme">
@@ -4490,8 +4490,8 @@ job. Configured via env vars:
 </div>
 
 <div id="p-docs" class="panel{{ ' active' if default_tab == 'p-docs' else '' }}">
-<div class="docs-layout">
-  <aside class="docs-nav" aria-label="Documentation sections">
+<div class="docs-layout docs-layout-top">
+  <nav class="docs-nav docs-nav-top" aria-label="Documentation sections">
     <button type="button" class="docs-nav-item active" data-docs="docs-overview" onclick="switchDocs(this)">Overview</button>
     <button type="button" class="docs-nav-item" data-docs="docs-workflow" onclick="switchDocs(this)">Workflow</button>
     <button type="button" class="docs-nav-item" data-docs="docs-media" onclick="switchDocs(this)">Media &amp; library</button>
@@ -4500,7 +4500,7 @@ job. Configured via env vars:
     <button type="button" class="docs-nav-item" data-docs="docs-genres" onclick="switchDocs(this)">Genre presets</button>
     <button type="button" class="docs-nav-item" data-docs="docs-music" onclick="switchDocs(this)">Music &amp; VO tips</button>
     <button type="button" class="docs-nav-item" data-docs="docs-access" onclick="switchDocs(this)">Access &amp; theme</button>
-  </aside>
+  </nav>
   <div class="docs-body">
     <div class="docs-pane active" id="docs-overview">
       <h2>Docs</h2>
