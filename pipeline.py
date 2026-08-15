@@ -2363,6 +2363,96 @@ def transcribe_video(path):
             except OSError:
                 pass
 
+
+def transcribe_audio_file(path, trim_start=0.0, trim_end=None):
+    """Transcribe a standalone audio file (e.g. uploaded promo VO) via Whisper.
+
+    Optional trim_* match the VO upload trim controls so selection uses the same
+    span that will be mixed into the promo. Returns (words, segments) in the same
+    shape as transcribe_video().
+    """
+    if not path or not os.path.exists(path):
+        return [], []
+    audio_path = None
+    try:
+        # Normalize to wav; apply trim when requested so text matches the mix.
+        audio_path = os.path.join(app.config['UPLOAD_FOLDER'], f'vo_stt_{int(time.time()*1000)}.wav')
+        cmd = [FFMPEG, '-y', '-i', path]
+        if trim_start and trim_start > 0:
+            cmd += ['-ss', f'{float(trim_start):.3f}']
+        if trim_end is not None and float(trim_end) > float(trim_start or 0):
+            cmd += ['-to', f'{float(trim_end):.3f}']
+        cmd += ['-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', audio_path]
+        try:
+            run_media(cmd, timeout=FFMPEG_TIMEOUT, label='VO STT extract')
+        except Exception as e:
+            print(f'Whisper VO: extract failed ({e}); skipping uploaded-VO transcription.')
+            return [], []
+        if not (os.path.exists(audio_path) and os.path.getsize(audio_path) > 0):
+            return [], []
+        upload_name = os.path.splitext(os.path.basename(path))[0] + '.wav'
+        with open(audio_path, 'rb') as f:
+            r = requests.post(
+                f'{WHISPER_URL}/v1/audio/transcriptions',
+                files={'file': (upload_name, f, 'audio/wav')},
+                data={
+                    'model': WHISPER_MODEL,
+                    'response_format': 'verbose_json',
+                    'timestamp_granularities[]': 'word',
+                },
+                timeout=600,
+            )
+        r.raise_for_status()
+        data = r.json()
+        words, segments = [], []
+        for seg in data.get('segments', []):
+            text = (seg.get('text') or '').strip()
+            if text:
+                segments.append({'start': float(seg['start']), 'end': float(seg['end']), 'text': text})
+        for w in data.get('words', []) or []:
+            word = (w.get('word') or '').strip()
+            if word:
+                words.append({'start': float(w['start']), 'end': float(w['end']), 'word': word})
+        # Some servers only return text without segments
+        if not segments:
+            full = (data.get('text') or '').strip()
+            if full:
+                segments.append({'start': 0.0, 'end': 0.0, 'text': full})
+        return words, segments
+    except Exception as e:
+        print(f'Whisper VO transcription error (service at {WHISPER_URL}): {e}')
+        return [], []
+    finally:
+        if audio_path and os.path.exists(audio_path):
+            try:
+                os.remove(audio_path)
+            except OSError:
+                pass
+
+
+def _vo_beats_from_segments(segments):
+    """Build VO beats from Whisper segments (uploaded VO), with real durations."""
+    import re
+    beats = []
+    for seg in segments or []:
+        text = (seg.get('text') or '').strip()
+        if not text:
+            continue
+        words = re.findall(r"[A-Za-z0-9']+", text.lower())
+        if not words:
+            continue
+        dur = max(0.0, float(seg.get('end') or 0) - float(seg.get('start') or 0))
+        beats.append({
+            'text': text,
+            'words': words,
+            'word_count': len(words),
+            'duration': dur if dur > 0.05 else None,
+            'start': float(seg.get('start') or 0),
+            'end': float(seg.get('end') or 0),
+        })
+    return beats
+
+
 def nearest_word_boundary(target, boundaries, max_snap=0.35):
     """Nearest timestamp in `boundaries` to `target`, but only if within
     `max_snap` seconds — otherwise returns `target` unchanged (no nearby word
@@ -5401,20 +5491,30 @@ def _token_overlap_score(beat_words, scene):
 
 def select_scenes_vo_led(scenes_data, vo_text, trailer_duration, max_scene_dur, min_seg_dur,
                          min_gap, transcribe_for_cuts=False, word_starts=None,
-                         phrase_ends=None, word_ends=None, sync_beats=False, beat_times=None):
-    """Pick one scene per VO beat, sized to that beat's share of the target duration."""
-    beats = _vo_beats_from_text(vo_text)
+                         phrase_ends=None, word_ends=None, sync_beats=False, beat_times=None,
+                         vo_beats=None):
+    """Pick one scene per VO beat, sized to that beat's share of the target duration.
+
+    `vo_beats` may be pre-built (e.g. from Whisper on an uploaded VO) with optional
+    per-beat `duration`. Otherwise beats are parsed from `vo_text`.
+    """
+    beats = list(vo_beats) if vo_beats else _vo_beats_from_text(vo_text)
     if not beats or not scenes_data:
         return None, 0.0  # signal caller to fall back
     total_words = sum(b['word_count'] for b in beats) or 1
+    timed = [b for b in beats if b.get('duration')]
+    total_timed = sum(b['duration'] for b in timed) or 0.0
     used = set()
     selected = []
     total_sel = 0.0
     for bi, beat in enumerate(beats):
         remaining_beats = len(beats) - bi
         remaining_budget = max(min_seg_dur, trailer_duration - total_sel)
-        # Proportional share, but leave room for later beats
-        share = trailer_duration * (beat['word_count'] / total_words)
+        # Prefer real VO segment duration when we transcribed an upload; else word share
+        if beat.get('duration') and total_timed > 0:
+            share = trailer_duration * (beat['duration'] / total_timed)
+        else:
+            share = trailer_duration * (beat['word_count'] / total_words)
         if remaining_beats > 1:
             share = min(share, remaining_budget - min_seg_dur * (remaining_beats - 1) * 0.5)
         share = max(min_seg_dur, min(share, remaining_budget))
@@ -6110,15 +6210,29 @@ def _run_trailer_job(jid, params):
         used_driver = 'score'
         if selection_driver == 'vo':
             vo_for_sel = (params.get('vo_text') or '').strip()
-            if not vo_for_sel and params.get('vo_mode') == 'upload':
-                job_set(jid, step='VO-led selection needs text (TTS script) — using score selection')
-            elif vo_for_sel:
-                job_set(jid, percent=28, step='Selecting scenes from VO script')
+            vo_beats = None
+            # Uploaded VO: transcribe with Whisper so selection can follow the spoken lines
+            if not vo_for_sel and params.get('vo_mode') == 'upload' and params.get('vo_upload_path'):
+                job_set(jid, percent=27, step='Transcribing uploaded VO for selection')
+                _vo_words, _vo_segs = transcribe_audio_file(
+                    params.get('vo_upload_path'),
+                    trim_start=params.get('vo_trim_start') or 0.0,
+                    trim_end=params.get('vo_trim_end'),
+                )
+                vo_beats = _vo_beats_from_segments(_vo_segs)
+                if vo_beats:
+                    vo_for_sel = ' '.join(b['text'] for b in vo_beats)
+                    job_set(jid, step=f'Uploaded VO transcribed ({len(vo_beats)} segments)')
+                else:
+                    job_set(jid, step='Could not transcribe uploaded VO — using score selection')
+            if vo_for_sel or vo_beats:
+                job_set(jid, percent=28, step='Selecting scenes from VO')
                 vo_sel, vo_total = select_scenes_vo_led(
                     scenes_data, vo_for_sel, trailer_duration, max_scene_dur, min_seg_dur,
                     base_min_gap, transcribe_for_cuts=transcribe_for_cuts, word_starts=word_starts,
                     phrase_ends=phrase_ends, word_ends=word_ends,
-                    sync_beats=sync_beats, beat_times=beat_times)
+                    sync_beats=sync_beats, beat_times=beat_times,
+                    vo_beats=vo_beats)
                 if vo_sel:
                     selected, total_sel = vo_sel, vo_total
                     used_driver = 'vo'
@@ -6126,7 +6240,7 @@ def _run_trailer_job(jid, params):
                 else:
                     job_set(jid, step='VO-led selection found no matches — using score selection')
             else:
-                job_set(jid, step='No VO script — using score selection')
+                job_set(jid, step='No VO script or upload transcript — using score selection')
         elif selection_driver == 'music':
             job_set(jid, percent=28, step='Selecting scenes to music')
             mus_sel, mus_total = select_scenes_music_led(

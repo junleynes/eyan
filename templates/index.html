@@ -907,14 +907,14 @@ document.addEventListener("DOMContentLoaded", function(){
       </label>
       <label class="selection-driver-opt">
         <input type="radio" name="selection_driver" value="vo" onchange="updateJobSummary()">
-        <span><strong>Voiceover</strong><small>Match clips to VO script lines (needs TTS script)</small></span>
+        <span><strong>Voiceover</strong><small>Match clips to TTS script or uploaded VO (transcribed)</small></span>
       </label>
       <label class="selection-driver-opt">
         <input type="radio" name="selection_driver" value="music" onchange="updateJobSummary()">
         <span><strong>Music</strong><small>Energetic clips; beat-sync when BGM is on</small></span>
       </label>
     </div>
-    <p style="font-size:12px;opacity:.7;margin:6px 0 0">VO mode uses the narration script under Advanced → Narration (TTS text). Without a script it falls back to best scenes. Music mode works best with background music + “sync cuts to beat”.</p>
+    <p style="font-size:12px;opacity:.7;margin:6px 0 0">VO mode uses TTS script text, or transcribes an <em>uploaded</em> VO via Whisper and matches clips to those lines. Without usable VO text it falls back to best scenes. Music mode works best with background music + “sync cuts to beat”.</p>
   </div>
 
   <div class="promo-essentials">
