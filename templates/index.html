@@ -867,21 +867,6 @@ document.addEventListener("DOMContentLoaded", function(){
       </div>
     </div>
   </div>
-  <label>Template:</label>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">
-    <select name=template_id id=template-select style="max-width:100%;flex:1;min-width:220px"><option value="">Loading templates…</option></select>
-    <button type=button class=btn style="padding:6px 12px;font-size:12px" onclick="loadTemplates()">Refresh</button>
-    <button type=button class=btn id=template-delete-btn style="padding:6px 12px;font-size:12px;background:var(--danger,#c94f4f)" onclick="deleteSelectedTemplate()">Delete</button>
-  </div>
-  <p style="margin-top:-4px;margin-bottom:10px;font-size:12px;opacity:.75">A template carries its whole setup — genre, transition, lengths, audio targets, voice — plus its music bed, SFX, VO and cards. Picking one fills the form in below; change anything you like afterwards and it applies to this job only.</p>
-  <div id=template-summary style="font-size:12px;opacity:.85;margin:0 0 14px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;display:none"></div>
-
-  <div class="promo-mode-bar" role="group" aria-label="Form mode">
-    <button type="button" class="promo-mode-btn active" id="promo-mode-quick" onclick="setPromoMode('quick')">Quick promo</button>
-    <button type="button" class="promo-mode-btn" id="promo-mode-advanced" onclick="setPromoMode('advanced')">Advanced</button>
-    <span class="promo-mode-hint" id="promo-mode-hint">Template + episode + length → Preview cut → Render</span>
-  </div>
-
   <div class="promo-steer card" style="padding:14px 16px;margin:0 0 14px">
     <div style="font:600 11px 'JetBrains Mono',monospace;letter-spacing:.06em;text-transform:uppercase;color:var(--phosphor);margin-bottom:8px">Creative steering</div>
     <label style="margin-top:0">What should this promo feature? <span style="text-transform:none;letter-spacing:0;opacity:.6;font-weight:400">(optional)</span></label>
@@ -914,6 +899,22 @@ document.addEventListener("DOMContentLoaded", function(){
       </label>
     </div>
     <p style="font-size:12px;opacity:.7;margin:6px 0 0">VO mode uses TTS script text, or transcribes an <em>uploaded</em> VO via Whisper and matches clips to those lines. Without usable VO text it falls back to best scenes. Music mode works best with background music + “sync cuts to beat”.</p>
+  </div>
+
+
+  <label>Template:</label>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">
+    <select name=template_id id=template-select style="max-width:100%;flex:1;min-width:220px"><option value="">Loading templates…</option></select>
+    <button type=button class=btn style="padding:6px 12px;font-size:12px" onclick="loadTemplates()">Refresh</button>
+    <button type=button class=btn id=template-delete-btn style="padding:6px 12px;font-size:12px;background:var(--danger,#c94f4f)" onclick="deleteSelectedTemplate()">Delete</button>
+  </div>
+  <p style="margin-top:-4px;margin-bottom:10px;font-size:12px;opacity:.75">A template carries its whole setup — genre, transition, lengths, audio targets, voice — plus its music bed, SFX, VO and cards. Picking one fills the form in below; change anything you like afterwards and it applies to this job only.</p>
+  <div id=template-summary style="font-size:12px;opacity:.85;margin:0 0 14px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;display:none"></div>
+
+  <div class="promo-mode-bar" role="group" aria-label="Form mode">
+    <button type="button" class="promo-mode-btn active" id="promo-mode-quick" onclick="setPromoMode('quick')">Quick promo</button>
+    <button type="button" class="promo-mode-btn" id="promo-mode-advanced" onclick="setPromoMode('advanced')">Advanced</button>
+    <span class="promo-mode-hint" id="promo-mode-hint">Template + episode + length → Preview cut → Render</span>
   </div>
 
   <div class="promo-essentials">
