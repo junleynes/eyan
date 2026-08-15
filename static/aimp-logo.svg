@@ -22,8 +22,6 @@
   <g fill="#f3f7fb" font-family="Arial,Helvetica,sans-serif" font-weight="700" letter-spacing="5">
     <text x="103" y="82" font-size="55">IMP</text>
   </g>
-  <text x="106" y="101" fill="#8290a6" font-family="Arial,Helvetica,sans-serif" font-size="9" letter-spacing="2.8">AI MEDIA PLATFORM</text>
-
   <!-- AI sparkle -->
   <g fill="url(#spark)" filter="url(#glow)">
     <path d="M365 17l5 15 15 5-15 5-5 15-5-15-15-5 15-5z"/>
