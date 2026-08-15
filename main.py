@@ -31,8 +31,11 @@ def index():
                                brand_tagline=brand['tagline'],
                                brand_theme=brand['theme_colors'],
                                login_error=None,
+                               register_error=None,
+                               register_success=None,
                                pending_2fa=pending_2fa,
-                               next_url=request.args.get('next', '/'))
+                               next_url=request.args.get('next', '/'),
+                               auth_panel='signin' if pending_2fa else None)
 
     perms = user_permissions(session.get('user_id'), session.get('role'))
     role = session.get('role')

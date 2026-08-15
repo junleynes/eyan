@@ -90,7 +90,7 @@ def login():
                     _establish_session(user)
                     return redirect(_safe_next(request.form.get('next')))
             elif user and not user['is_active']:
-                error = 'This account has been disabled.'
+                error = 'This account is disabled or waiting for admin approval.'
             else:
                 if user:
                     user_note_failed_login(user['id'])
@@ -112,8 +112,48 @@ def login():
                            brand_tagline=brand['tagline'],
                            brand_theme=brand['theme_colors'],
                            login_error=error,
+                           register_error=None,
+                           register_success=None,
                            pending_2fa=bool(pending_uid),
-                           next_url=nxt)
+                           next_url=nxt,
+                           auth_panel='signin' if (error or pending_uid) else None)
+
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    """Self-service registration. Accounts are created inactive until an admin enables them."""
+    from pipeline import load_branding
+    brand = load_branding()
+    if request.method == 'GET':
+        return redirect('/#register')
+
+    username = (request.form.get('username') or '').strip()
+    password = request.form.get('password') or ''
+    password2 = request.form.get('password2') or ''
+    error = None
+    success = None
+    if password != password2:
+        error = 'Passwords do not match.'
+    else:
+        ok, err = user_create(username, password, role='user', active=False)
+        if ok:
+            success = ('Account requested. An administrator must approve it before you can sign in.')
+        else:
+            error = err
+
+    return render_template(
+        'landing.html',
+        brand_name=brand['name'],
+        brand_tagline=brand['tagline'],
+        brand_theme=brand['theme_colors'],
+        login_error=error if not success else None,
+        register_error=error if not success else None,
+        register_success=success,
+        pending_2fa=False,
+        next_url='/',
+        auth_panel='register' if not success else 'register-done',
+    )
+
 
 @app.route('/logout')
 def logout():
@@ -358,10 +398,15 @@ def _password_policy_error(password):
         return False, 'That password is too common -- pick something less guessable.'
     return True, None
 
-def user_create(username, password, role='user'):
+def user_create(username, password, role='user', active=True):
+    """Create an account. `active=False` is used for self-registration (pending admin approval)."""
     username = (username or '').strip()
     if not username:
         return False, 'Username is required.'
+    if len(username) < 3:
+        return False, 'Username must be at least 3 characters.'
+    if len(username) > 64:
+        return False, 'Username is too long.'
     ok, why = _password_policy_error(password)
     if not ok:
         return False, why
@@ -370,8 +415,8 @@ def user_create(username, password, role='user'):
     conn = _users_db()
     try:
         conn.execute(
-            'INSERT INTO users (username, password_hash, role, is_active, created_at) VALUES (?,?,?,1,?)',
-            (username, generate_password_hash(password), role, time.time()))
+            'INSERT INTO users (username, password_hash, role, is_active, created_at) VALUES (?,?,?,?,?)',
+            (username, generate_password_hash(password), role, 1 if active else 0, time.time()))
         conn.commit()
         return True, None
     except sqlite3.IntegrityError:
@@ -802,7 +847,7 @@ def _admin_users_page(error=None, notice=None):
     <select name=group_id onchange="this.form.submit()">{this_group_options}</select>
   </form>
 </td>
-<td>{'active' if u['is_active'] else 'disabled'}</td>
+<td>{'active' if u['is_active'] else 'pending / disabled'}</td>
 <td>{_twofa_cell(u)}</td>
 <td>{created}</td>
 <td>{last_login}</td>
