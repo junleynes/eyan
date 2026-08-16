@@ -6134,29 +6134,35 @@ def _run_trailer_job(jid, params):
         # so it's meaningful on both short and long videos.
         base_min_gap = max(2.0, min(8.0, video_duration * 0.03))
         trailer_duration = base_target
-        selection_driver = (params.get('selection_driver') or 'score').lower()
-        if selection_driver not in ('score', 'vo'):
-            selection_driver = 'score'
+        # Narration/script presence now decides how selection works
+        # AUTOMATICALLY -- no manual mode to pick. If narration (a TTS script
+        # or an uploaded VO track) is supplied, it drives selection for
+        # whatever portion of the trailer it naturally covers; best-scenes
+        # ALWAYS fills whatever remains, rather than narration replacing
+        # best-scenes outright the way the old "Voiceover" mode used to.
+        # Script cues need no separate branch here at all -- apply_script_priority
+        # already boosted total_score unconditionally above, before this point,
+        # so cue-matched scenes are already strongly preferred by best-scenes'
+        # own greedy ranking (and, when narration also runs, by its matching
+        # tiebreak too, since that reads the same boosted score). "Script
+        # alone" and "script + narration" both already compose correctly
+        # through that one shared signal -- no separate script-selection
+        # algorithm was ever needed.
+        has_narration = bool((params.get('vo_text') or '').strip()) or \
+                        (params.get('vo_mode') == 'upload' and params.get('vo_upload_path'))
 
-        # --- VO-led selection (falls back to score if it can't run) ---
-        # Music is deliberately NOT a selection driver here -- beat-synced cut
-        # TIMING already works regardless of driver via sync_beats/beat_match
-        # (applied unconditionally above, before this branch), so a separate
-        # "Music" mode would only have duplicated that with a second, less
-        # complete implementation. Selection driver answers "which scenes and
-        # how are they matched to content"; beat sync answers "where do cuts
-        # land in time" -- conflating the two into one radio choice was the
-        # actual problem, not a missing third option.
+        # --- Narration-led selection (only ever covers what narration actually
+        # supplies -- best-scenes below fills whatever budget is left over) ---
         selected = []
         total_sel = 0
         min_gap = base_min_gap
         used_driver = 'score'
-        if selection_driver == 'vo':
+        if has_narration:
             vo_for_sel = (params.get('vo_text') or '').strip()
             vo_beats = None
-            # Uploaded VO: transcribe with Whisper so selection can follow the spoken lines
+            # Uploaded narration: transcribe with Whisper so selection can follow the spoken lines
             if not vo_for_sel and params.get('vo_mode') == 'upload' and params.get('vo_upload_path'):
-                job_set(jid, percent=27, step='Transcribing uploaded VO for selection')
+                job_set(jid, percent=27, step='Transcribing uploaded narration for selection')
                 _vo_words, _vo_segs = transcribe_audio_file(
                     params.get('vo_upload_path'),
                     trim_start=params.get('vo_trim_start') or 0.0,
@@ -6165,11 +6171,11 @@ def _run_trailer_job(jid, params):
                 vo_beats = _vo_beats_from_segments(_vo_segs)
                 if vo_beats:
                     vo_for_sel = ' '.join(b['text'] for b in vo_beats)
-                    job_set(jid, step=f'Uploaded VO transcribed ({len(vo_beats)} segments)')
+                    job_set(jid, step=f'Uploaded narration transcribed ({len(vo_beats)} segments)')
                 else:
-                    job_set(jid, step='Could not transcribe uploaded VO — using score selection')
+                    job_set(jid, step='Could not transcribe uploaded narration — using best scenes only')
             if vo_for_sel or vo_beats:
-                job_set(jid, percent=28, step='Selecting scenes from VO')
+                job_set(jid, percent=28, step='Selecting scenes from narration')
                 vo_sel, vo_total = select_scenes_vo_led(
                     scenes_data, vo_for_sel, trailer_duration, max_scene_dur, min_seg_dur,
                     base_min_gap, transcribe_for_cuts=transcribe_for_cuts, word_starts=word_starts,
@@ -6179,29 +6185,36 @@ def _run_trailer_job(jid, params):
                 if vo_sel:
                     selected, total_sel = vo_sel, vo_total
                     used_driver = 'vo'
-                    job_set(jid, step=f'VO-led selection: {len(selected)} beats matched')
+                    job_set(jid, step=f'Narration-led selection: {len(selected)} beats matched, '
+                                       f'filling remaining budget with best scenes')
                 else:
-                    job_set(jid, step='VO-led selection found no matches — using score selection')
+                    job_set(jid, step='Narration-led selection found no matches — using best scenes only')
             else:
-                job_set(jid, step='No VO script or upload transcript — using score selection')
+                job_set(jid, step='No narration script or transcript — using best scenes only')
 
         shortfall = 0.0
+        # Whatever narration-led selection above produced (empty if there was
+        # no narration, or none of it matched) is preserved across every pass
+        # below rather than being thrown away and re-decided from scratch --
+        # narration-pinned scenes stay pinned; only the REMAINING budget gets
+        # filled by best-scenes on top of them.
+        narration_selected = list(selected)
+        narration_total = total_sel
+
         for pass_attempt in range(4):
-            if used_driver != 'score' and selected:
-                # VO/music already filled the cut — compute shortfall once, then
-                # fall through to the shared length-correction steps below.
-                n_seg = len(selected) + len(card_files)
-                xfade_loss = max(0, (n_seg - 1)) * xfade_dur
-                expected_total = total_sel + total_card_dur - xfade_loss
-                shortfall = trailer_length - expected_total
-                break
             # Relax the gap requirement on later passes: if spacing is preventing
             # us from filling the duration budget, it's better to allow some
             # clustering than to ship a trailer that's noticeably short.
             min_gap = max(1.0, base_min_gap - pass_attempt * (base_min_gap / 4))
             scenes_data.sort(key=lambda x: x['total_score'], reverse=True)
-            selected = []
-            total_sel = 0
+            # Start from narration's picks (if any), not from empty -- the
+            # min_gap check below against every scene already in `selected`
+            # naturally excludes both those exact scenes (distance 0 from
+            # themselves) and anything too close to them, so no separate
+            # exclusion list is needed to avoid double-picking or crowding a
+            # narration-covered stretch of the timeline.
+            selected = list(narration_selected)
+            total_sel = narration_total
             for s in scenes_data:
                 remaining = trailer_duration - total_sel
                 if remaining < min_seg_dur:

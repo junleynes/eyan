@@ -881,20 +881,8 @@ document.addEventListener("DOMContentLoaded", function(){
              onchange="scriptFileChosen(this); updateJobSummary()">
       <span class="net-file-chip" id=script-file-chip style="display:none"><span class=chip-name></span><span class=chip-x onclick="clearScriptFile(); updateJobSummary()">&#10005;</span></span>
     </div>
-    <p style="font-size:12px;opacity:.7;margin:4px 0 0">Description steers AI Vision ratings. A rundown with timecodes (<code>00:01:30</code> or <code>1:30</code>) pins those moments. Both can be used together.</p>
-
-    <label style="margin-top:14px">Scene selection driven by</label>
-    <div class="selection-driver-row" role="group" aria-label="Scene selection driver">
-      <label class="selection-driver-opt">
-        <input type="radio" name="selection_driver" value="score" checked onchange="updateJobSummary()">
-        <span><strong>Automatic</strong><small>Quality + AI + dialogue scores</small></span>
-      </label>
-      <label class="selection-driver-opt">
-        <input type="radio" name="selection_driver" value="vo" onchange="updateJobSummary()">
-        <span><strong>Voiceover</strong><small>Match clips to TTS script or uploaded VO (transcribed)</small></span>
-      </label>
-    </div>
-    <p style="font-size:12px;opacity:.7;margin:6px 0 0">VO mode uses TTS script text, or transcribes an <em>uploaded</em> VO via Whisper and matches clips to those lines. Without usable VO text it falls back to Automatic. Beat-synced cuts (below, under Audio &amp; beat sync) work with either mode &mdash; music doesn't need its own selection mode for that.</p>
+    <p style="font-size:12px;opacity:.7;margin:4px 0 0">Description steers AI Vision ratings. A rundown with timecodes (<code>00:01:30</code> or <code>1:30</code>) pins those moments &mdash; matched scenes score high enough to be picked automatically, no separate mode needed. Both can be used together.</p>
+    <p style="font-size:12px;opacity:.7;margin:8px 0 0">There's no scene-selection mode to pick either &mdash; it's automatic based on what you've supplied. No narration below and no script above: best-scoring scenes fill the whole promo. A script and/or narration: those pin the specific moments they call for, and best-scoring scenes fill whatever's left over. Nothing is ever replaced outright by uploading something &mdash; it's always layered on top.</p>
   </div>
 
 
@@ -1160,7 +1148,7 @@ document.addEventListener("DOMContentLoaded", function(){
       <input type=radio name=vo_mode value=none checked> None
     </label>
     <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
-      <input type=radio name=vo_mode value=upload> Upload audio
+      <input type=radio name=vo_mode value=upload> Upload narration
     </label>
     <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
       <input type=radio name=vo_mode value=tts data-requires="fish_audio"> Narration (AI voice)
@@ -2514,8 +2502,20 @@ function updateJobSummary(){
     parts.push(tpl.options[tpl.selectedIndex].text.replace(/^\s+|\s+$/g,''))
   var prompt = document.getElementById('priority-prompt')
   if(prompt && prompt.value.trim()) parts.push('steered')
-  var drv = document.querySelector('input[name=selection_driver]:checked')
-  if(drv && drv.value === 'vo') parts.push('VO-led')
+  // Narration is auto-detected the same way the backend does: a typed TTS
+  // script, or an uploaded/library VO track -- no selection-mode radio to
+  // read anymore, since narration always LAYERS onto best scenes rather
+  // than being an alternate mode someone picks. Chip visibility (not
+  // input.files) is the reliable signal for an attached upload, same
+  // pattern the script chip right below already uses -- a local upload
+  // input doesn't even exist in the DOM when direct uploads are disabled.
+  var voModeUpload = document.querySelector('input[name=vo_mode][value=upload]:checked')
+  var voModeTts = document.querySelector('input[name=vo_mode][value=tts]:checked')
+  var voTextEl = document.getElementById('vo-text-input')
+  var voChip = document.getElementById('vo_upload_chip')
+  var hasNarration = (voModeTts && voTextEl && voTextEl.value.trim()) ||
+                      (voModeUpload && voChip && getComputedStyle(voChip).display !== 'none')
+  if(hasNarration) parts.push('narration-led')
   var scriptChip = document.getElementById('script-file-chip')
   if(scriptChip && scriptChip.style.display !== 'none') parts.push('script')
   var fileName = document.getElementById('tr-file-preview-name')
