@@ -104,9 +104,6 @@ button,input{font:inherit}
   margin:0 auto 28px;max-width:34rem;
   font-size:1.05rem;color:var(--ink-soft);line-height:1.65
 }
-.hero-ctas{
-  display:flex;justify-content:center;flex-wrap:wrap;gap:10px;margin-bottom:12px
-}
 .btn{
   display:inline-flex;align-items:center;justify-content:center;gap:8px;
   border-radius:999px;padding:12px 22px;font-weight:600;font-size:14px;
@@ -218,14 +215,6 @@ button,input{font:inherit}
 .feature h3{margin:0 0 6px;font-size:15px}
 .feature p{margin:0;font-size:13px;color:var(--ink-soft);line-height:1.5}
 
-.cta-band{
-  margin:24px 0 0;padding:28px;border-radius:18px;border:1px solid var(--line);
-  background:linear-gradient(135deg,color-mix(in srgb,var(--teal) 10%,transparent),color-mix(in srgb,var(--blue) 8%,transparent));
-  display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap
-}
-.cta-band strong{display:block;font-size:1.05rem;margin-bottom:4px}
-.cta-band span{font-size:13px;color:var(--ink-soft)}
-
 footer{
   border-top:1px solid var(--line);padding:28px 0;margin-top:40px;
   display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;
@@ -258,11 +247,6 @@ footer{
     <div class="hero-kicker">Broadcast-ready AI workflow</div>
     <h1>Create promo plugs that <span>actually ship.</span></h1>
     <p class="hero-lead">{{ brand_tagline }}. Score scenes, shape the cut, add music and narration, then export a polished episodic promo — all self-hosted.</p>
-
-    <div class="hero-ctas" id="authTriggers">
-      <button type="button" class="btn btn-primary" id="btnSignIn" data-auth="signin">Sign in</button>
-      <button type="button" class="btn btn-ghost" id="btnRegister" data-auth="register">Request access</button>
-    </div>
     <p class="hero-note">Self-hosted · No cloud upload of your masters · Admin-approved accounts</p>
 
     {# ---- Sign in (hidden until CTA) ---- #}
@@ -367,13 +351,6 @@ footer{
       <article class="feature"><div class="num">05</div><h3>Self-hosted by design</h3><p>Media and models stay in your environment.</p></article>
       <article class="feature"><div class="num">06</div><h3>Delivery packages</h3><p>MP4, ProRes, scene lists, and library history.</p></article>
     </div>
-    <div class="cta-band">
-      <div>
-        <strong>Ready for the next episode?</strong>
-        <span>Sign in when approved, or request access if you’re new.</span>
-      </div>
-      <button type="button" class="btn btn-primary" data-auth="signin">Sign in</button>
-    </div>
   </section>
 
   <footer>
@@ -402,8 +379,8 @@ footer{
   function openAuth(which){
     var sign = document.getElementById('dock-signin');
     var reg = document.getElementById('dock-register');
-    var btnS = document.getElementById('btnSignIn');
-    var btnR = document.getElementById('btnRegister');
+    var btnS = document.getElementById('navBtnSignIn');
+    var btnR = document.getElementById('navBtnRegister');
     if(sign) sign.classList.toggle('open', which === 'signin');
     if(reg) reg.classList.toggle('open', which === 'register');
     if(btnS) btnS.classList.toggle('active', which === 'signin');
