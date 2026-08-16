@@ -268,6 +268,11 @@ textarea.input-box:focus, input.input-box:focus{outline:none;border-color:var(--
 .rail{position:sticky;top:0;flex:0 0 224px;height:100vh;display:flex;flex-direction:column;
   gap:10px;padding:18px 14px;background:var(--rail-bg);border-right:1px solid var(--line);overflow-y:auto}
 .rail-brand{padding:2px 8px 12px;border-bottom:1px solid var(--line)}
+/* object-fit:contain so the logo always scales to fit this fixed box without
+   stretching, regardless of its own aspect ratio -- a custom-uploaded logo
+   (Config > Branding) or a differently-shaped default one otherwise gets
+   distorted to fill a fixed width/height exactly. */
+.rail-logo{width:160px;height:48px;object-fit:contain;object-position:left center}
 .theme-toggle{display:flex;gap:2px;margin-top:10px;background:var(--sunken);border:1px solid var(--line);border-radius:7px;padding:2px}
 .theme-btn{flex:1;background:transparent;border:none;border-radius:5px;padding:5px 0;font-size:13px;line-height:1;color:var(--ink-dim);cursor:pointer;transition:background .15s,color .15s}
 .theme-btn:hover{color:var(--ink)}
