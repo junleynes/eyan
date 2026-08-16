@@ -4411,14 +4411,14 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 
 <div id="p-chat" class="panel{{ ' active' if default_tab == 'p-chat' else '' }}">
 <h2>AI Assistant</h2>
-<p style="font-size:12px;opacity:.75;margin-top:-6px">Chat with any model your Ollama server has installed — for testing how a model behaves, drafting text, or asking how AIMP itself works (features, limitations, workflow). Separate from the vision/rating pipeline the promo generator uses; nothing here feeds into a job.</p>
+<p style="font-size:12px;opacity:.75;margin-top:-6px">Chat with any model your Ollama server has installed — for testing how a model behaves, drafting text, or asking how {{ brand_name }} itself works (features, limitations, workflow). Separate from the vision/rating pipeline the promo generator uses; nothing here feeds into a job.</p>
 <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;margin-bottom:10px">
-  <input type=checkbox id=chat-app-help checked> Answer questions about AIMP's own features, limitations, and workflow
+  <input type=checkbox id=chat-app-help checked> Answer questions about {{ brand_name }}'s own features, limitations, and workflow
 </label>
 <details style="margin-bottom:10px">
   <summary style="cursor:pointer;font-size:12px;opacity:.75">System prompt (optional)</summary>
   <textarea id=chat-system class=input-box rows=2 placeholder="e.g. Be concise. Answer only in Tagalog." style="margin-top:6px"></textarea>
-  <p style="font-size:11px;opacity:.6;margin-top:4px">Added on top of the AIMP app-knowledge above (if that's checked), not instead of it — use this for style/language preferences, not to describe the app itself.</p>
+  <p style="font-size:11px;opacity:.6;margin-top:4px">Added on top of the {{ brand_name }} app-knowledge above (if that's checked), not instead of it — use this for style/language preferences, not to describe the app itself.</p>
 </details>
 <div style="display:flex;justify-content:flex-end;margin-bottom:6px">
   <button type=button class="chat-icon-btn" id=chat-clear-btn onclick="clearChat()" title="Clear chat">
@@ -4776,7 +4776,7 @@ function switchDocs(btn){
 <p style="margin-top:-4px;color:var(--ink-dim)">Changes the name, tagline, footer, color theme, logo, and favicon everyone signed in (and the sign-in page itself) sees — saved to <code>branding_config.json</code> next to the script (text) and a <code>branding/</code> folder in the trailer library (logo/favicon files), so both persist across restarts. Takes effect immediately; existing sessions pick it up on their next page load.</p>
 
 <label>Brand name:</label>
-<input type=text id=brand-name-input class=input-box placeholder="AIMP">
+<input type=text id=brand-name-input class=input-box placeholder="PRISM">
 <label>Tagline:</label>
 <input type=text id=brand-tagline-input class=input-box placeholder="AI Media Provider">
 <label>Footer (optional):</label>

@@ -3210,7 +3210,7 @@ chat_memory_db_init()
 # The chat tab is otherwise a fully generic Ollama front-end with no idea
 # what app it's running inside -- this gives it accurate, current
 # information to actually answer "how do I..." / "why did X happen" /
-# "what are the limits of..." questions about AIMP itself, rather than
+# "what are the limits of..." questions about PRISM itself, rather than
 # guessing or (worse) confidently making something up. Kept as a single
 # server-side constant rather than embedded in the page template, so
 # there's one place to keep it accurate as the app changes, and it doesn't
@@ -3222,15 +3222,15 @@ chat_memory_db_init()
 # has typed in their own System prompt box (see /api/chat below), never
 # replacing it, so "be concise" or "answer in Tagalog" still work exactly
 # as before this existed.
-APP_KNOWLEDGE_PROMPT = """You are the built-in AI Assistant inside AIMP (AI Media Provider), a broadcast promo/trailer generation tool. When the user asks how the app works, why something behaved a certain way, or what its limits are, answer from the information below rather than guessing. For anything genuinely outside this scope (general knowledge, writing help, etc.) just help normally -- this context only needs to shape answers about the app itself.
+APP_KNOWLEDGE_PROMPT = """You are the built-in AI Assistant inside PRISM (AI Media Provider), a broadcast promo/trailer generation tool. When the user asks how the app works, why something behaved a certain way, or what its limits are, answer from the information below rather than guessing. For anything genuinely outside this scope (general knowledge, writing help, etc.) just help normally -- this context only needs to shape answers about the app itself.
 
-WHAT AIMP DOES
+WHAT PRISM DOES
 Generates episodic promo plugs ("trailers") from raw broadcast footage: detects scenes, scores/selects the best ones, assembles them with transitions, and can add title/end cards, background music, sound effects, and narration (VO) -- either fully automatically or with manual control at every step.
 
 MAIN WORKFLOW (Generate Promo Plug tab)
-1. Supply source video: local upload, drag-and-drop, or Browse Library (a configured network/SMB share).
-2. Rating mode: VISION (OpenCV heuristics + AI vision scoring via Ollama) or VISION + STT (adds dialogue transcription via faster-whisper). Both need the underlying AI service reachable, or generation is disabled with a clear warning.
-3. Scene priority (how selection decides what matters): Automatic (highest combined score wins), Describe what to prioritise (a free-text description steers the AI vision score), or From a script with timecodes (upload a PDF/image/text rundown; detected scenes near a cue's timecode get strongly boosted).
+1. Supply source video: Browse Library (a configured network/SMB share) by default, or direct upload if the deployment has that enabled.
+2. Scene rating always combines OpenCV heuristics, AI vision scoring (Ollama), and dialogue transcription (faster-whisper) -- there's no mode to pick; this runs the same way for every job so cuts are never placed mid-word regardless of anything else selected.
+3. Scene selection is automatic based on what's supplied, not a mode to choose: a "What should this promo feature?" description and/or an attached script (timecoded cues) each pin the specific moments they call for, and best-scoring scenes fill in whatever's left over. Supply neither and it's best-scoring scenes for the whole thing.
 4. Pick a trailer length (15/30/45/60s), a Genre (a lightweight style preset: transition + crossfade duration + whether SFX-at-cuts is on) or a saved Template (a full named per-show configuration -- everything Genre sets plus title/end cards, music/SFX/VO, audio levels, and more; Genre is really a subset of what a Template stores).
 5. Configure transition style, optional title/end cards, background music, SFX, and narration.
 6. "Preview the cut first" runs only scene detection + scoring + selection (no render) and shows the chosen scenes as thumbnails with a play button -- you can untick any you don't want and swap in an alternate before committing to a full render, which reuses that same analysis instead of repeating it.

@@ -537,7 +537,7 @@ def user_totp_begin_enrolment(uid):
     try:
         issuer = load_branding()['name']
     except Exception:
-        issuer = 'AIMP'
+        issuer = 'PRISM'
     uri = pyotp.totp.TOTP(secret).provisioning_uri(name=username, issuer_name=issuer)
     return secret, uri
 

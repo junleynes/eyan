@@ -154,7 +154,7 @@ def library_delete(tid):
 BRANDING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'branding_config.json')
 BRANDING_DIR = os.path.join(LIBRARY_DIR, 'branding')
 os.makedirs(BRANDING_DIR, exist_ok=True)
-DEFAULT_BRAND_NAME = 'AIMP'
+DEFAULT_BRAND_NAME = 'PRISM'
 DEFAULT_BRAND_TAGLINE = 'AI Media Provider'
 # Matches the dark-theme --accent default baked into templates/index.html, so
 # an unconfigured install renders identically to before this existed.
@@ -245,7 +245,7 @@ def resolve_theme_colors(theme_name, custom_accent):
 
 def load_branding():
     """Current brand name/tagline/footer/theme/logo/favicon. Falls back to
-    the built-in AIMP defaults for anything never configured -- footer's
+    the built-in PRISM defaults for anything never configured -- footer's
     default is an empty string (no footer shown at all) rather than built-in
     text, since unlike name/tagline there's no sensible non-empty default to
     fall back to. This always returns a complete dict, never partial, so
