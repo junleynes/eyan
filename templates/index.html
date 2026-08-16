@@ -887,18 +887,14 @@ document.addEventListener("DOMContentLoaded", function(){
     <div class="selection-driver-row" role="group" aria-label="Scene selection driver">
       <label class="selection-driver-opt">
         <input type="radio" name="selection_driver" value="score" checked onchange="updateJobSummary()">
-        <span><strong>Best scenes</strong><small>Quality + AI + dialogue scores</small></span>
+        <span><strong>Automatic</strong><small>Quality + AI + dialogue scores</small></span>
       </label>
       <label class="selection-driver-opt">
         <input type="radio" name="selection_driver" value="vo" onchange="updateJobSummary()">
         <span><strong>Voiceover</strong><small>Match clips to TTS script or uploaded VO (transcribed)</small></span>
       </label>
-      <label class="selection-driver-opt">
-        <input type="radio" name="selection_driver" value="music" onchange="updateJobSummary()">
-        <span><strong>Music</strong><small>Energetic clips; beat-sync when BGM is on</small></span>
-      </label>
     </div>
-    <p style="font-size:12px;opacity:.7;margin:6px 0 0">VO mode uses TTS script text, or transcribes an <em>uploaded</em> VO via Whisper and matches clips to those lines. Without usable VO text it falls back to best scenes. Music mode works best with background music + “sync cuts to beat”.</p>
+    <p style="font-size:12px;opacity:.7;margin:6px 0 0">VO mode uses TTS script text, or transcribes an <em>uploaded</em> VO via Whisper and matches clips to those lines. Without usable VO text it falls back to Automatic. Beat-synced cuts (below, under Audio &amp; beat sync) work with either mode &mdash; music doesn't need its own selection mode for that.</p>
   </div>
 
 
@@ -2520,7 +2516,6 @@ function updateJobSummary(){
   if(prompt && prompt.value.trim()) parts.push('steered')
   var drv = document.querySelector('input[name=selection_driver]:checked')
   if(drv && drv.value === 'vo') parts.push('VO-led')
-  else if(drv && drv.value === 'music') parts.push('music-led')
   var scriptChip = document.getElementById('script-file-chip')
   if(scriptChip && scriptChip.style.display !== 'none') parts.push('script')
   var fileName = document.getElementById('tr-file-preview-name')

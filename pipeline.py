@@ -3691,9 +3691,9 @@ def api_trailer():
     # selection instead of after, so cut points can be nudged onto beats.
     sync_beats = request.form.get('sync_beats') == 'on' and scoring_mode != 'none'
     selection_driver = (request.form.get('selection_driver') or 'score').strip().lower()
-    if selection_driver not in ('score', 'vo', 'music'):
+    if selection_driver not in ('score', 'vo'):
         selection_driver = 'score'
-    # VO-led needs a script; music-led benefits from BGM — fall back gracefully later in the job.
+    # VO-led needs a script; falls back gracefully later in the job if there isn't one.
     whisper_enhance = mode_includes_stt
 
     end_card_path = None
@@ -5589,71 +5589,6 @@ def select_scenes_vo_led(scenes_data, vo_text, trailer_duration, max_scene_dur, 
     return selected, total_sel
 
 
-def select_scenes_music_led(scenes_data, trailer_duration, max_scene_dur, min_seg_dur, min_gap,
-                            beat_times, transcribe_for_cuts=False, word_starts=None,
-                            phrase_ends=None, word_ends=None):
-    """Prefer energetic scenes and size cuts toward beat spacing when available."""
-    if not scenes_data:
-        return None, 0.0
-    # Average inter-beat interval as preferred clip length
-    pref = 2.5
-    if beat_times and len(beat_times) >= 2:
-        gaps = [beat_times[i + 1] - beat_times[i] for i in range(len(beat_times) - 1)]
-        gaps = [g for g in gaps if 0.25 < g < 4.0]
-        if gaps:
-            pref = sorted(gaps)[len(gaps) // 2]
-    pref = max(min_seg_dur, min(pref * 2, max_scene_dur or 4.0))
-
-    ranked = sorted(
-        scenes_data,
-        key=lambda s: (
-            float(s.get('edge_ratio') or 0) * 2.0
-            + float(s.get('total_score') or 0)
-            + (1.5 if s.get('has_face') else 0),
-        ),
-        reverse=True,
-    )
-    selected = []
-    total_sel = 0.0
-    for s in ranked:
-        remaining = trailer_duration - total_sel
-        if remaining < min_seg_dur:
-            break
-        if any(abs(s['start'] - c['start']) < min_gap for c in selected):
-            continue
-        seg_dur = min(s['duration'], remaining, pref)
-        if max_scene_dur:
-            seg_dur = min(seg_dur, max_scene_dur)
-        if seg_dur < min_seg_dur * 0.6:
-            continue
-        seg_start = s['start']
-        if transcribe_for_cuts and word_starts:
-            snapped_start = nearest_word_boundary(seg_start, word_starts, max_snap=0.35)
-            if seg_start < snapped_start < seg_start + seg_dur:
-                drift = snapped_start - seg_start
-                seg_start = snapped_start
-                seg_dur = max(0.3, seg_dur - drift)
-        scene_end = s['start'] + s['duration']
-        if beat_times:
-            target_cut = total_sel + seg_dur
-            snapped_cut = nearest_beat(target_cut, beat_times, total_sel + 0.3, total_sel + (scene_end - seg_start))
-            seg_dur = max(0.3, min(scene_end - seg_start, snapped_cut - total_sel))
-        if transcribe_for_cuts and (phrase_ends or word_ends) and seg_dur < (scene_end - seg_start):
-            target_end = seg_start + seg_dur
-            snapped_end = nearest_speech_out(target_end, phrase_ends, word_ends)
-            if seg_start < snapped_end <= scene_end:
-                seg_dur = max(0.3, snapped_end - seg_start)
-        s = dict(s)
-        s['trim_start'] = seg_start
-        s['selected_dur'] = seg_dur
-        selected.append(s)
-        total_sel += seg_dur
-    if not selected:
-        return None, 0.0
-    selected.sort(key=lambda x: x['start'])
-    return selected, total_sel
-
-
 def _run_trailer_job(jid, params):
     path = params['path']; orig_name = params['orig_name']; mode = params['mode']
     genre = params['genre']; scoring_mode = params['scoring_mode']; trailer_length = params['trailer_length']
@@ -6200,10 +6135,18 @@ def _run_trailer_job(jid, params):
         base_min_gap = max(2.0, min(8.0, video_duration * 0.03))
         trailer_duration = base_target
         selection_driver = (params.get('selection_driver') or 'score').lower()
-        if selection_driver not in ('score', 'vo', 'music'):
+        if selection_driver not in ('score', 'vo'):
             selection_driver = 'score'
 
-        # --- VO-led or music-led selection (falls back to score if it can't run) ---
+        # --- VO-led selection (falls back to score if it can't run) ---
+        # Music is deliberately NOT a selection driver here -- beat-synced cut
+        # TIMING already works regardless of driver via sync_beats/beat_match
+        # (applied unconditionally above, before this branch), so a separate
+        # "Music" mode would only have duplicated that with a second, less
+        # complete implementation. Selection driver answers "which scenes and
+        # how are they matched to content"; beat sync answers "where do cuts
+        # land in time" -- conflating the two into one radio choice was the
+        # actual problem, not a missing third option.
         selected = []
         total_sel = 0
         min_gap = base_min_gap
@@ -6241,19 +6184,6 @@ def _run_trailer_job(jid, params):
                     job_set(jid, step='VO-led selection found no matches — using score selection')
             else:
                 job_set(jid, step='No VO script or upload transcript — using score selection')
-        elif selection_driver == 'music':
-            job_set(jid, percent=28, step='Selecting scenes to music')
-            mus_sel, mus_total = select_scenes_music_led(
-                scenes_data, trailer_duration, max_scene_dur, min_seg_dur, base_min_gap,
-                beat_times if sync_beats else [],
-                transcribe_for_cuts=transcribe_for_cuts, word_starts=word_starts,
-                phrase_ends=phrase_ends, word_ends=word_ends)
-            if mus_sel:
-                selected, total_sel = mus_sel, mus_total
-                used_driver = 'music'
-                job_set(jid, step=f'Music-led selection: {len(selected)} clips')
-            else:
-                job_set(jid, step='Music-led selection empty — using score selection')
 
         shortfall = 0.0
         for pass_attempt in range(4):
