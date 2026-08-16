@@ -178,7 +178,7 @@ DEFAULT_BRAND_ACCENT = '#4f8cff'
 # original single-accent behavior (default phosphor/tally/amber, custom
 # accent only) rather than removing that option.
 THEME_PRESETS = {
-    'teal_amber': {'label': 'Teal & Amber (default)',
+    'teal_amber': {'label': 'Teal & Amber',
                    'phosphor': '#34e6c5', 'phosphor_dim': '#1d8f7c',
                    'tally': '#ff5470', 'amber': '#ffb545', 'accent': '#4f8cff',
                    # Unchanged from the app's original neutral navy/white --
@@ -209,7 +209,7 @@ THEME_PRESETS = {
               'elevated_dark': '#1c2d3a', 'sunken_dark': '#071213',
               'bg_light': '#ebf4f3', 'panel_light': '#fbfefc', 'panel_2_light': '#e6f0f0',
               'elevated_light': '#fbfefc', 'sunken_light': '#dce8ea', 'rail_bg_dark': 'rgba(14,28,37,.72)', 'rail_bg_light': 'rgba(235,244,243,.75)'},
-    'crimson': {'label': 'Crimson',
+    'crimson': {'label': 'Crimson (default)',
                'phosphor': '#f87171', 'phosphor_dim': '#b91c1c',
                'tally': '#fb7185', 'amber': '#fbbf24', 'accent': '#ef4444',
                'bg_dark': '#171724', 'panel_dark': '#1e1e2e', 'panel_2_dark': '#252636',
@@ -224,7 +224,7 @@ THEME_PRESETS = {
               'bg_light': '#eff0f9', 'panel_light': '#fdfdff', 'panel_2_light': '#eaecf6',
               'elevated_light': '#fdfdff', 'sunken_light': '#e1e3f0', 'rail_bg_dark': 'rgba(19,24,43,.72)', 'rail_bg_light': 'rgba(239,240,249,.75)'},
 }
-DEFAULT_THEME_NAME = 'teal_amber'
+DEFAULT_THEME_NAME = 'crimson'
 _BRANDING_IMAGE_EXTS = {'.svg', '.png', '.jpg', '.jpeg', '.webp', '.gif'}
 _BRANDING_FAVICON_EXTS = {'.ico', '.svg', '.png'}
 _HEX_COLOR_RE = re.compile(r'^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$')

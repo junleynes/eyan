@@ -5027,7 +5027,7 @@ def branding_favicon():
     cfg = load_branding()
     if cfg['favicon_filename'] and os.path.exists(os.path.join(BRANDING_DIR, cfg['favicon_filename'])):
         return send_from_directory(BRANDING_DIR, cfg['favicon_filename'])
-    return redirect('/static/logo-mark.svg')
+    return redirect('/static/favicon.ico')
 
 @app.route('/api/branding', methods=['GET'])
 def api_branding_get():
