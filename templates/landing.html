@@ -6,7 +6,7 @@
 <title>{{ brand_name }} — {{ brand_tagline }}</title>
 <link rel="icon" type="image/svg+xml" href="/branding/favicon">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
 <script>
 (function(){
   try{
@@ -23,7 +23,7 @@
 html{scroll-behavior:smooth}
 body{
   margin:0;
-  font-family:Inter,system-ui,-apple-system,sans-serif;
+  font-family:'IBM Plex Sans',system-ui,-apple-system,sans-serif;
   -webkit-font-smoothing:antialiased;
   color:var(--ink);
   background:var(--page);
@@ -36,25 +36,25 @@ button,input{font:inherit}
   --teal:{{ brand_theme.phosphor }};
   --amber:{{ brand_theme.amber }};
   --blue:{{ brand_theme.accent }};
-  --ink:#f4f7fb;
-  --ink-soft:#b8c2d1;
-  --muted:#8490a3;
-  --line:rgba(255,255,255,.10);
-  --page:#070b12;
-  --surface:#0e1522;
-  --card:#121a28;
+  --ink:#e7edf6;
+  --ink-soft:#8b98ad;
+  --muted:#8b98ad;
+  --line:#263149;
+  --page:#0b1220;
+  --surface:#121a2b;
+  --card:#1a2233;
   --soft:rgba(255,255,255,.04);
   --shadow:0 24px 60px rgba(0,0,0,.4);
   --hero-spot:radial-gradient(ellipse 80% 55% at 50% -10%, color-mix(in srgb,var(--teal) 18%,transparent), transparent 60%);
 }
 [data-theme="light"]{
-  --ink:#0b1220;
-  --ink-soft:#334155;
-  --muted:#64748b;
-  --line:rgba(15,23,42,.10);
-  --page:#fafbfc;
+  --ink:#161b26;
+  --ink-soft:#5b6478;
+  --muted:#5b6478;
+  --line:#d8dee8;
+  --page:#f3f5f9;
   --surface:#ffffff;
-  --card:#ffffff;
+  --card:#eef1f6;
   --soft:rgba(15,23,42,.03);
   --shadow:0 20px 50px rgba(15,23,42,.08);
   --hero-spot:radial-gradient(ellipse 80% 55% at 50% -10%, color-mix(in srgb,var(--teal) 12%,transparent), transparent 60%);
@@ -94,7 +94,7 @@ button,input{font:inherit}
 }
 .hero h1{
   margin:0 auto 16px;max-width:18ch;
-  font-size:clamp(2.4rem,6vw,3.75rem);font-weight:800;letter-spacing:-.04em;line-height:1.05
+  font-size:clamp(2.4rem,6vw,3.75rem);font-weight:700;letter-spacing:-.02em;line-height:1.05
 }
 .hero h1 span{
   background:linear-gradient(120deg,var(--teal),var(--blue));
@@ -186,7 +186,7 @@ button,input{font:inherit}
 .section{padding:72px 0}
 .section-title{
   text-align:center;margin:0 0 12px;
-  font-size:clamp(1.6rem,3.5vw,2.2rem);font-weight:800;letter-spacing:-.03em
+  font-size:clamp(1.6rem,3.5vw,2.2rem);font-weight:700;letter-spacing:-.02em
 }
 .section-sub{
   text-align:center;max-width:36rem;margin:0 auto 40px;color:var(--ink-soft);font-size:1rem
@@ -375,7 +375,7 @@ footer{
 
   <footer>
     <span>{{ brand_name }} · {{ brand_tagline }}</span>
-    <span>Self-hosted AI media platform</span>
+    <span>Self-hosted AI media provider</span>
   </footer>
 </div>
 
