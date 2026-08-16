@@ -155,7 +155,7 @@ BRANDING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'brandi
 BRANDING_DIR = os.path.join(LIBRARY_DIR, 'branding')
 os.makedirs(BRANDING_DIR, exist_ok=True)
 DEFAULT_BRAND_NAME = 'PRISM'
-DEFAULT_BRAND_TAGLINE = 'AI Media Provider'
+DEFAULT_BRAND_TAGLINE = 'AI-Powered Media Creation'
 # Matches the dark-theme --accent default baked into templates/index.html, so
 # an unconfigured install renders identically to before this existed.
 DEFAULT_BRAND_ACCENT = '#4f8cff'
