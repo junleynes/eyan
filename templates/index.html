@@ -220,6 +220,12 @@ textarea.input-box:focus, input.input-box:focus{outline:none;border-color:var(--
 .chat-icon-btn-round{width:30px;height:30px;padding:0;border-radius:50%}
 .chat-send-btn{background:var(--accent);color:#fff}
 .chat-send-btn:hover{background:var(--accent);opacity:.85}
+.chat-faq-chip{
+  border:1px solid var(--line);background:var(--panel);color:var(--ink-dim);cursor:pointer;
+  padding:6px 12px;border-radius:999px;font-size:12px;text-transform:none;letter-spacing:0;
+  transition:border-color .15s,color .15s,background .15s
+}
+.chat-faq-chip:hover{border-color:var(--accent,#4f8cff);color:var(--ink);background:var(--soft,var(--wash-3))}
 .chat-send-btn.dim{opacity:.4;pointer-events:none}
 .chat-reasoning-toggle{display:inline-flex;align-items:center;gap:5px;font-size:11px;
   text-transform:none;letter-spacing:0;color:var(--ink-dim);cursor:pointer;padding:5px 9px;
@@ -3519,6 +3525,19 @@ document.addEventListener('DOMContentLoaded', function(){
   input.addEventListener('input', function(){ autoGrow(); updateSendState() })
   updateSendState()
 
+  // FAQ chips: fill the input with the full question (not send it outright)
+  // so the person can still edit or add to it before actually sending --
+  // "type" is the operative word, not "ask". Each chip's visible label is a
+  // short version; data-q carries the real, full question that gets typed in.
+  document.querySelectorAll('.chat-faq-chip').forEach(function(chip){
+    chip.addEventListener('click', function(){
+      input.value = chip.getAttribute('data-q') || chip.textContent
+      autoGrow()
+      updateSendState()
+      input.focus()
+    })
+  })
+
   var reasoningBox = document.getElementById('chat-thinking')
   if(reasoningBox){
     reasoningBox.addEventListener('change', function(){
@@ -4499,6 +4518,15 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <div id=chat-messages style="border:1px solid var(--line);border-radius:8px;padding:12px;height:420px;overflow-y:auto;display:flex;flex-direction:column;gap:10px"></div>
 <div id=chat-status style="font-size:12px;opacity:.75;min-height:16px;margin:6px 2px"></div>
 <div id=chat-attachments style="display:none;flex-wrap:wrap;gap:6px;margin:0 0 8px"></div>
+
+<div id=chat-faq-row style="display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px">
+  <button type=button class="chat-faq-chip" data-q="What can this app do, in a nutshell?">What can this app do?</button>
+  <button type=button class="chat-faq-chip" data-q="How does automatic scene selection actually work?">How does scene selection work?</button>
+  <button type=button class="chat-faq-chip" data-q="What's the difference between Quick promo and Advanced mode?">Quick vs Advanced?</button>
+  <button type=button class="chat-faq-chip" data-q="How do the prompt, script, and narration options work together when picking scenes?">Prompt vs script vs narration?</button>
+  <button type=button class="chat-faq-chip" data-q="How do I set up two-factor authentication on my account?">Set up two-factor?</button>
+  <button type=button class="chat-faq-chip" data-q="Why does the app say AI Vision is unreachable, and how do I fix it?">Why is AI Vision unreachable?</button>
+</div>
 
 <div class="chat-input-box">
   <input type=file id=chat-attach-input multiple data-skip-clear-ui="1" accept="image/*,.pdf,.txt,.md,.markdown,.csv,.tsv,.json,.log,.yaml,.yml,.ini,.cfg,.conf,.xml,.html,.htm,.css,.py,.js,.ts,.jsx,.tsx,.java,.c,.h,.cpp,.hpp,.go,.rs,.rb,.php,.sh,.sql,.srt,.vtt" style="display:none">
