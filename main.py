@@ -40,12 +40,12 @@ def index():
     perms = user_permissions(session.get('user_id'), session.get('role'))
     role = session.get('role')
     tab_order = [
-        ('p-trailer', 'promo_generation'), ('p-music', 'music_generation'),
+        ('p-dashboard', None), ('p-trailer', 'promo_generation'), ('p-music', 'music_generation'),
         ('p-sfx', 'text_to_sfx'), ('p-fish', 'text_to_speech'),
         ('p-stt', 'speech_to_text'), ('p-vision', 'scene_detection'),
         ('p-chat', 'ai_chat'), ('p-tools', 'player'), ('p-docs', None),
     ]
-    default_tab = 'p-docs'
+    default_tab = 'p-dashboard'
     for tab_id, perm in tab_order:
         if perm is None or role == 'admin' or perm in perms:
             default_tab = tab_id

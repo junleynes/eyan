@@ -595,13 +595,10 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
       <img class="rail-logo rail-logo-light" src="/branding/logo" alt="{{ brand_name }}" width="160" height="48">
       <img class="rail-logo rail-logo-dark" src="/branding/logo-dark" alt="{{ brand_name }}" width="160" height="48">
     </a>
-    <div class="theme-toggle" role="group" aria-label="Theme">
-      <button type=button class="theme-btn" data-theme-choice="light" onclick="setTheme('light')" title="Light theme">&#9728;</button>
-      <button type=button class="theme-btn" data-theme-choice="dark" onclick="setTheme('dark')" title="Dark theme">&#9789;</button>
-      <button type=button class="theme-btn" data-theme-choice="auto" onclick="setTheme('auto')" title="Match system">&#9881;</button>
-    </div>
   </div>
   <div class="tabs">
+    <div class="rail-section">Overview</div>
+    <div class="tab{{ ' active' if default_tab == 'p-dashboard' else '' }}" onclick="switchTab('p-dashboard',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg></span><span class=tab-text>Dashboard</span></div>
     <div class="rail-section">Create</div>
     {% if current_role == 'admin' or 'promo_generation' in current_permissions %}
     <div class="tab{{ ' active' if default_tab == 'p-trailer' else '' }}" onclick="switchTab('p-trailer',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9.5v5l4.5-2.5L10 9.5z"/></svg></span><span class=tab-text>Generate Promo Plug</span></div>
@@ -653,7 +650,7 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
 </nav>
 <div class="container">
 
-<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadNetworkFolders==='function'&&!networkFoldersLoaded){loadNetworkFolders()}if(id==='p-config'&&typeof loadProductionTab==='function'&&!productionTabLoaded){loadProductionTab()}if(id==='p-config'&&typeof loadTwofaStatus==='function'&&!twofaLoaded){loadTwofaStatus()}if(id==='p-config'&&typeof loadUsersTab==='function'&&!usersTabLoaded){loadUsersTab()}if(id==='p-music'&&typeof loadAceStepModels==='function'){loadAceStepModels()}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active')}
+<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadNetworkFolders==='function'&&!networkFoldersLoaded){loadNetworkFolders()}if(id==='p-config'&&typeof loadProductionTab==='function'&&!productionTabLoaded){loadProductionTab()}if(id==='p-config'&&typeof loadTwofaStatus==='function'&&!twofaLoaded){loadTwofaStatus()}if(id==='p-config'&&typeof loadUsersTab==='function'&&!usersTabLoaded){loadUsersTab()}if(id==='p-music'&&typeof loadAceStepModels==='function'){loadAceStepModels()}if(id==='p-dashboard'&&typeof loadDashboard==='function'){loadDashboard()}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active')}
 
 // Shared by every "Browse library" network folder view (the main HIRES
 // panel's own copy, the standalone Player, and the generic modal used for
@@ -828,6 +825,56 @@ document.addEventListener("DOMContentLoaded", function(){
   </div>
 </div>
 <div id=pl-prompt class=no-data style="margin-top:14px">Pick a file from the list (or double-click it), or choose one from your own machine, to play it.</div>
+</div>
+
+<!-- Dashboard -->
+<div id="p-dashboard" class="panel{{ ' active' if default_tab == 'p-dashboard' else '' }}">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:4px">
+    <div>
+      <h2 style="margin-bottom:2px">Welcome back, {{ current_username }}</h2>
+      <p style="font-size:13px;opacity:.7;margin:0">{{ brand_name }} — {{ brand_tagline }}</p>
+    </div>
+    <div class="theme-toggle" role="group" aria-label="Theme">
+      <button type=button class="theme-btn" data-theme-choice="light" onclick="setTheme('light')" title="Light theme">&#9728;</button>
+      <button type=button class="theme-btn" data-theme-choice="dark" onclick="setTheme('dark')" title="Dark theme">&#9789;</button>
+      <button type=button class="theme-btn" data-theme-choice="auto" onclick="setTheme('auto')" title="Match system">&#9881;</button>
+    </div>
+  </div>
+
+  <div class="dash-actions" style="display:flex;gap:10px;flex-wrap:wrap;margin:18px 0 24px">
+    {% if current_role == 'admin' or 'promo_generation' in current_permissions %}
+    <button type=button class="btn" onclick="switchTab('p-trailer', document.querySelector('.tab[onclick*=p-trailer]'))">
+      <span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9.5v5l4.5-2.5L10 9.5z"/></svg></span>
+      Generate a promo
+    </button>
+    {% endif %}
+    {% if current_role == 'admin' or 'player' in current_permissions %}
+    <button type=button class="btn" style="background:transparent;border:1px solid var(--line);color:var(--ink)" onclick="switchTab('p-tools', document.querySelector('.tab[onclick*=p-tools]'))">Browse saved trailers</button>
+    {% endif %}
+  </div>
+
+  <div class="dash-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px">
+    <div class=card>
+      <strong style="font-size:13px">Service health</strong>
+      <div id=dash-health style="margin-top:10px;display:flex;flex-direction:column;gap:6px;font-size:13px">
+        <p style="opacity:.6;margin:0">Checking…</p>
+      </div>
+    </div>
+
+    <div class=card>
+      <strong style="font-size:13px">Jobs</strong>
+      <div id=dash-jobs style="margin-top:10px;font-size:13px">
+        <p style="opacity:.6;margin:0">Checking…</p>
+      </div>
+    </div>
+
+    <div class=card style="grid-column:span 2">
+      <strong style="font-size:13px">Recent renders</strong>
+      <div id=dash-recent style="margin-top:10px;font-size:13px">
+        <p style="opacity:.6;margin:0">Loading…</p>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- Episodic Promo Plug -->
@@ -6088,6 +6135,94 @@ document.addEventListener('DOMContentLoaded', function(){
     })
   })
 })()
+</script>
+<script>
+// ---- Dashboard ----
+// Three independent cards, each loaded and rendered on its own -- one
+// endpoint failing (or being unavailable to this account) shouldn't blank
+// out the other two.
+var _dashboardLoaded = false
+function loadDashboard(){
+  _dashboardLoaded = true
+  _dashLoadHealth()
+  _dashLoadJobs()
+  _dashLoadRecent()
+}
+window.loadDashboard = loadDashboard
+
+function _dashLoadHealth(){
+  var el = document.getElementById('dash-health')
+  if(!el) return
+  fetch('/api/health').then(function(r){ return r.json() }).then(function(d){
+    var rows = (d.services || []).map(function(s){
+      var color = s.status === 'up' ? 'var(--phosphor)' : (s.status === 'disabled' ? 'var(--ink-dim)' : 'var(--tally)')
+      var label = s.status === 'up' ? 'Up' : (s.status === 'disabled' ? 'Disabled' : 'Down')
+      return '<div style="display:flex;justify-content:space-between;align-items:center">' +
+             '<span style="text-transform:capitalize">' + s.name.replace('_',' ') + '</span>' +
+             '<span style="color:' + color + ';font-size:12px">&#9679; ' + label + '</span></div>'
+    })
+    el.innerHTML = rows.length ? rows.join('') : '<p style="opacity:.6;margin:0">No services configured.</p>'
+  }).catch(function(){
+    el.innerHTML = '<p style="opacity:.6;margin:0">Could not check service health.</p>'
+  })
+}
+
+function _dashLoadJobs(){
+  var el = document.getElementById('dash-jobs')
+  if(!el) return
+  fetch('/api/monitor').then(function(r){
+    // 403 here means this account has no promo_generation permission --
+    // a real, expected case now that Dashboard is everyone's landing page,
+    // not just an error to surface as one.
+    if(r.status === 403) return {_forbidden: true}
+    return r.json()
+  }).then(function(d){
+    if(d._forbidden){
+      el.innerHTML = '<p style="opacity:.6;margin:0">Not available for this account.</p>'
+      return
+    }
+    var active = d.active || [], queued = d.queued || []
+    if(!active.length && !queued.length){
+      el.innerHTML = '<p style="opacity:.6;margin:0">No active jobs.</p>'
+      return
+    }
+    var parts = []
+    if(active.length) parts.push('<p style="margin:0 0 4px"><strong>' + active.length + '</strong> running</p>')
+    if(queued.length) parts.push('<p style="margin:0;opacity:.75">' + queued.length + ' queued</p>')
+    el.innerHTML = parts.join('')
+  }).catch(function(){
+    el.innerHTML = '<p style="opacity:.6;margin:0">Could not load job status.</p>'
+  })
+}
+
+function _dashLoadRecent(){
+  var el = document.getElementById('dash-recent')
+  if(!el) return
+  fetch('/api/trailer/library').then(function(r){
+    if(r.status === 403) return {_forbidden: true}
+    return r.json()
+  }).then(function(d){
+    if(d._forbidden){
+      el.innerHTML = '<p style="opacity:.6;margin:0">Not available for this account.</p>'
+      return
+    }
+    var items = (d.items || []).slice(0, 5)
+    if(!items.length){
+      el.innerHTML = '<p style="opacity:.6;margin:0">No saved trailers yet.</p>'
+      return
+    }
+    el.innerHTML = items.map(function(it){
+      var when = it.created ? new Date(it.created * 1000).toLocaleDateString() : ''
+      return '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-bottom:1px solid var(--line)">' +
+             '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (it.orig_name || 'Untitled') + '</span>' +
+             '<span style="opacity:.6;font-size:12px;white-space:nowrap">' + when + '</span></div>'
+    }).join('')
+  }).catch(function(){
+    el.innerHTML = '<p style="opacity:.6;margin:0">Could not load recent renders.</p>'
+  })
+}
+
+document.addEventListener('DOMContentLoaded', loadDashboard)
 </script>
 </div><!-- /.shell -->
 </body>
