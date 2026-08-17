@@ -994,8 +994,86 @@ document.addEventListener("DOMContentLoaded", function(){
              onchange="scriptFileChosen(this); updateJobSummary()">
       <span class="net-file-chip" id=script-file-chip style="display:none"><span class=chip-name></span><span class=chip-x onclick="clearScriptFile(); updateJobSummary()">&#10005;</span></span>
     </div>
+  <div class="asset-section" id=asset-narration style="margin-top:10px">
+    <div class="asset-section-header" onclick="toggleAssetSection(this)">
+      <span class="asset-section-title">Narration</span>
+      <span class="asset-section-summary" id=summary-narration>None</span>
+      <span class="asset-section-chevron">&#9656;</span>
+    </div>
+    <div class="asset-section-body">
+  <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:8px 0">
+    <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
+      <input type=radio name=vo_mode value=none checked> None
+    </label>
+    <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
+      <input type=radio name=vo_mode value=upload> Upload narration
+    </label>
+    <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
+      <input type=radio name=vo_mode value=tts data-requires="fish_audio"> Narration (AI voice)
+    </label>
+  </div>
+  <p id=vo-gating-note style="display:none;margin-top:-4px;margin-bottom:8px;font-size:12px;color:var(--amber)">"Narration (AI voice)" is unavailable — the Fish Audio server is not reachable.</p>
+  <div id=vo-upload-area style="display:none">
+    <div class="browse-row">
+      {% if allow_local_upload %}<input type=file name=vo_upload accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" data-net-field="vo_upload">{% endif %}
+      <button type=button class="browse-btn" onclick="openNetworkBrowser('vo_upload','vo','VO')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
+    </div>
+    <input type=hidden id=vo_upload_network name=vo_upload_network value="">
+  <input type=hidden id=vo_upload_skip_template name=vo_upload_skip_template value="">
+    <span class="net-file-chip" id=vo_upload_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('vo_upload')">&#10005;</span></span>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0">
+      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Trim uploaded audio — start (s):</span>
+      <input type=number name=vo_trim_start value=0 min=0 step=0.5 style="width:80px"></span>
+      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">end (s, blank=to end):</span>
+      <input type=number name=vo_trim_end min=0 step=0.5 style="width:80px"></span>
+    </div>
+    <p style="margin-top:-2px;margin-bottom:8px;font-size:12px;opacity:.75">Selects which portion of the uploaded file to use as narration. This is separate from "Start at" below, which places the (already-trimmed) narration on the trailer's own timeline.</p>
+  </div>
+  <div id=vo-tts-area style="display:none">
+    <textarea name=vo_text id=vo-text-input class=input-box rows=3 placeholder="Type the narration script here..."></textarea>
+    <div id=vo-tags-gen class=tagbar data-target=vo-text-input style="display:none"></div>
+
+    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:8px 0 4px">
+      <span style="font-size:13px">Engine:</span>
+      <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
+        <input type=radio name=vo_engine value=fish_audio checked> Fish Audio S2
+      </label>
+      <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
+      </label>
+    </div>
+
+    <div id=vo-registered-voice-area style="margin-bottom:6px">
+      <label style="font-size:13px;text-transform:none;letter-spacing:0;display:block;margin-bottom:4px">Voice:</label>
+      <select name=vo_voice id=vo-voice-select style="max-width:100%"><option value="">Loading voices…</option></select>
+      <span id=vo-voice-note style="font-size:12px;opacity:.75;margin-left:6px"></span>
+    </div>
+
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0">
+      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Language:</span>
+      <select name=vo_language id=vo-language-select style="max-width:220px"><option value="auto">Auto-detect (recommended)</option></select></span>
+      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Rate (wpm):</span>
+      <input type=number name=vo_rate id=vo-rate-input value=175 min=80 max=300 step=5 style="width:80px"></span>
+    </div>
+    <p style="margin-top:4px;font-size:12px;opacity:.75">There's no built-in default voice — the list is fetched live from your Fish Audio server (<code>/api/voices?engine=fish_audio</code>). A self-hosted server's voices come from <code>/v1/references/list</code>; the cloud API is used instead when <code>FISH_AUDIO_API_KEY</code> is set. Fish Audio S2 auto-detects the script's language (including Tagalog) unless you override it above.</p>
+
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:10px 0 4px">
+      <button type=button class=btn id=vo-preview-btn onclick="previewVoiceover()">Generate &amp; preview</button>
+      <span id=vo-preview-status style="font-size:12px;opacity:.75"></span>
+    </div>
+    <audio id=vo-preview-audio controls style="display:none;width:100%;margin-top:4px"></audio>
+    <p style="margin-top:4px;font-size:12px;opacity:.75">Renders just this script through the settings above so you can check the voice, rate, and language before running the full trailer job.</p>
+  </div>
+  <div id=vo-common-area style="display:none;margin:8px 0">
+    <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Start at (s into promo plug):</span>
+    <input type=number name=vo_start value=0 min=0 step=0.5 style="width:80px"></span>
+    <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Audio level:</span>
+    <input type=number name=vo_volume value=1.15 min=0.3 max=3.0 step=0.05 style="width:80px"></span>
+    <p style="margin-top:4px;font-size:12px;opacity:.75">Music, SFX, and original dialogue automatically duck under the voiceover wherever it plays. Audio level is a gain multiplier applied to the voiceover track before mixing (1.0 = unchanged, higher = louder).</p>
+  </div>
+    </div>
+  </div>
     <p style="font-size:12px;opacity:.7;margin:4px 0 0">Description steers AI Vision ratings. A rundown with timecodes (<code>00:01:30</code> or <code>1:30</code>) pins those moments &mdash; matched scenes score high enough to be picked automatically, no separate mode needed. Both can be used together.</p>
-    <p style="font-size:12px;opacity:.7;margin:8px 0 0">There's no scene-selection mode to pick either &mdash; it's automatic based on what you've supplied. No narration below and no script above: best-scoring scenes fill the whole promo. A script and/or narration: those pin the specific moments they call for, and best-scoring scenes fill whatever's left over. Nothing is ever replaced outright by uploading something &mdash; it's always layered on top.</p>
+    <p style="font-size:12px;opacity:.7;margin:8px 0 0">There's no scene-selection mode to pick either &mdash; it's automatic based on what you've supplied. Neither one set: best-scoring scenes fill the whole promo. A script and/or narration: those pin the specific moments they call for, and best-scoring scenes fill whatever's left over. Nothing is ever replaced outright by uploading something &mdash; it's always layered on top.</p>
   </div>
 
 
@@ -1236,84 +1314,6 @@ document.addEventListener("DOMContentLoaded", function(){
     </div>
   </div>
 
-  <div class="asset-section adv-only" id=asset-narration>
-    <div class="asset-section-header" onclick="toggleAssetSection(this)">
-      <span class="asset-section-title">Narration</span>
-      <span class="asset-section-summary" id=summary-narration>None</span>
-      <span class="asset-section-chevron">&#9656;</span>
-    </div>
-    <div class="asset-section-body">
-  <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:8px 0">
-    <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
-      <input type=radio name=vo_mode value=none checked> None
-    </label>
-    <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
-      <input type=radio name=vo_mode value=upload> Upload narration
-    </label>
-    <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
-      <input type=radio name=vo_mode value=tts data-requires="fish_audio"> Narration (AI voice)
-    </label>
-  </div>
-  <p id=vo-gating-note style="display:none;margin-top:-4px;margin-bottom:8px;font-size:12px;color:var(--amber)">"Narration (AI voice)" is unavailable — the Fish Audio server is not reachable.</p>
-  <div id=vo-upload-area style="display:none">
-    <div class="browse-row">
-      {% if allow_local_upload %}<input type=file name=vo_upload accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" data-net-field="vo_upload">{% endif %}
-      <button type=button class="browse-btn" onclick="openNetworkBrowser('vo_upload','vo','VO')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
-    </div>
-    <input type=hidden id=vo_upload_network name=vo_upload_network value="">
-  <input type=hidden id=vo_upload_skip_template name=vo_upload_skip_template value="">
-    <span class="net-file-chip" id=vo_upload_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('vo_upload')">&#10005;</span></span>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0">
-      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Trim uploaded audio — start (s):</span>
-      <input type=number name=vo_trim_start value=0 min=0 step=0.5 style="width:80px"></span>
-      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">end (s, blank=to end):</span>
-      <input type=number name=vo_trim_end min=0 step=0.5 style="width:80px"></span>
-    </div>
-    <p style="margin-top:-2px;margin-bottom:8px;font-size:12px;opacity:.75">Selects which portion of the uploaded file to use as narration. This is separate from "Start at" below, which places the (already-trimmed) narration on the trailer's own timeline.</p>
-  </div>
-  <div id=vo-tts-area style="display:none">
-    <textarea name=vo_text id=vo-text-input class=input-box rows=3 placeholder="Type the narration script here..."></textarea>
-    <div id=vo-tags-gen class=tagbar data-target=vo-text-input style="display:none"></div>
-
-    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:8px 0 4px">
-      <span style="font-size:13px">Engine:</span>
-      <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
-        <input type=radio name=vo_engine value=fish_audio checked> Fish Audio S2
-      </label>
-      <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
-      </label>
-    </div>
-
-    <div id=vo-registered-voice-area style="margin-bottom:6px">
-      <label style="font-size:13px;text-transform:none;letter-spacing:0;display:block;margin-bottom:4px">Voice:</label>
-      <select name=vo_voice id=vo-voice-select style="max-width:100%"><option value="">Loading voices…</option></select>
-      <span id=vo-voice-note style="font-size:12px;opacity:.75;margin-left:6px"></span>
-    </div>
-
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0">
-      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Language:</span>
-      <select name=vo_language id=vo-language-select style="max-width:220px"><option value="auto">Auto-detect (recommended)</option></select></span>
-      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Rate (wpm):</span>
-      <input type=number name=vo_rate id=vo-rate-input value=175 min=80 max=300 step=5 style="width:80px"></span>
-    </div>
-    <p style="margin-top:4px;font-size:12px;opacity:.75">There's no built-in default voice — the list is fetched live from your Fish Audio server (<code>/api/voices?engine=fish_audio</code>). A self-hosted server's voices come from <code>/v1/references/list</code>; the cloud API is used instead when <code>FISH_AUDIO_API_KEY</code> is set. Fish Audio S2 auto-detects the script's language (including Tagalog) unless you override it above.</p>
-
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:10px 0 4px">
-      <button type=button class=btn id=vo-preview-btn onclick="previewVoiceover()">Generate &amp; preview</button>
-      <span id=vo-preview-status style="font-size:12px;opacity:.75"></span>
-    </div>
-    <audio id=vo-preview-audio controls style="display:none;width:100%;margin-top:4px"></audio>
-    <p style="margin-top:4px;font-size:12px;opacity:.75">Renders just this script through the settings above so you can check the voice, rate, and language before running the full trailer job.</p>
-  </div>
-  <div id=vo-common-area style="display:none;margin:8px 0">
-    <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Start at (s into promo plug):</span>
-    <input type=number name=vo_start value=0 min=0 step=0.5 style="width:80px"></span>
-    <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Audio level:</span>
-    <input type=number name=vo_volume value=1.15 min=0.3 max=3.0 step=0.05 style="width:80px"></span>
-    <p style="margin-top:4px;font-size:12px;opacity:.75">Music, SFX, and original dialogue automatically duck under the voiceover wherever it plays. Audio level is a gain multiplier applied to the voiceover track before mixing (1.0 = unchanged, higher = louder).</p>
-  </div>
-    </div>
-  </div>
 
   <div class=card style="padding:12px 14px;margin:18px 0 0;border:1px dashed var(--line)">
     <label style="margin-top:0">Save as template</label>
