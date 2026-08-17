@@ -933,19 +933,6 @@ document.addEventListener("DOMContentLoaded", function(){
   </select>
   </div><!-- /.promo-essentials -->
 
-  <div id=job-summary class="job-summary" aria-live="polite">
-    <span class="job-summary-label">Job summary</span>
-    <span id=job-summary-text>Pick a video to begin</span>
-  </div>
-
-  <div id=settings-toggle-row style="display:flex;align-items:center;gap:10px;margin:0 0 12px">
-    <button type=button class=btn id=settings-toggle-btn onclick="toggleGeneratorSettings()"
-            style="background:transparent;border:1px solid var(--line);color:var(--ink-dim);padding:6px 12px;font-size:12px">
-      <span id=settings-toggle-chevron>&#9656;</span> <span id=settings-toggle-label>Show all settings</span>
-    </button>
-    <span id=settings-toggle-note style="font-size:12px;opacity:.6"></span>
-  </div>
-
   <div id=generator-settings>
   <div class="adv-only">
   <label>Max clip length (s):</label>
@@ -1037,7 +1024,7 @@ document.addEventListener("DOMContentLoaded", function(){
     </div>
   </div>
 
-  <div class="asset-section" id=asset-end-card>
+  <div class="asset-section adv-only" id=asset-end-card>
     <div class="asset-section-header" onclick="toggleAssetSection(this)">
       <span class="asset-section-title">End card (optional)</span>
       <span class="asset-section-summary" id=summary-end-card>Not set</span>
@@ -1106,7 +1093,7 @@ document.addEventListener("DOMContentLoaded", function(){
     </div>
   </div>
 
-  <div class="asset-section" id=asset-sfx>
+  <div class="asset-section adv-only" id=asset-sfx>
     <div class="asset-section-header" onclick="toggleAssetSection(this)">
       <span class="asset-section-title">Sound effects</span>
       <span class="asset-section-summary" id=summary-sfx>None</span>
@@ -1139,7 +1126,7 @@ document.addEventListener("DOMContentLoaded", function(){
     </div>
   </div>
 
-  <div class="asset-section" id=asset-narration>
+  <div class="asset-section adv-only" id=asset-narration>
     <div class="asset-section-header" onclick="toggleAssetSection(this)">
       <span class="asset-section-title">Narration</span>
       <span class="asset-section-summary" id=summary-narration>None</span>
@@ -1480,24 +1467,9 @@ document.addEventListener("DOMContentLoaded", function(){
 
   function setGeneratorSettingsOpen(open){
     var panel = document.getElementById('generator-settings')
-    var chevron = document.getElementById('settings-toggle-chevron')
-    var label = document.getElementById('settings-toggle-label')
-    var note = document.getElementById('settings-toggle-note')
     if(!panel) return
     panel.style.display = open ? '' : 'none'
-    if(chevron) chevron.innerHTML = open ? '&#9662;' : '&#9656;'
-    if(label) label.textContent = open ? 'Hide settings' : 'Show all settings'
-    if(note){
-      // Only explain WHY it's collapsed when it actually is -- a permanent
-      // note next to an expanded panel is just noise.
-      note.textContent = open ? '' : 'Using the selected template\u2019s saved settings.'
-    }
   }
-  function toggleGeneratorSettings(){
-    var panel = document.getElementById('generator-settings')
-    setGeneratorSettingsOpen(panel && panel.style.display === 'none')
-  }
-  window.toggleGeneratorSettings = toggleGeneratorSettings
   window.setGeneratorSettingsOpen = setGeneratorSettingsOpen
 
   function onTemplateSelected(){
@@ -2479,7 +2451,16 @@ function setPromoMode(mode){
   if(hint) hint.textContent = _promoMode === 'quick'
     ? 'Template + episode + length → Preview cut → Render'
     : 'Full control over music, SFX, VO, cards, and transitions'
-  // Advanced forces settings open; Quick collapses when a template is loaded
+  // .adv-only marks SFX, narration, end card, max clip length, and
+  // crossfade/beat-sync -- genuinely secondary controls for a daily promo,
+  // not needed to just pick a show and go. Quick hides them outright rather
+  // than just collapsing the whole settings panel; Advanced always shows
+  // everything, unconditionally, with no manual override left to toggle
+  // either state (the old "Show all settings" button is gone -- the mode
+  // switch above is the only control now).
+  document.querySelectorAll('.adv-only').forEach(function(el){
+    el.style.display = (_promoMode === 'advanced') ? '' : 'none'
+  })
   if(_promoMode === 'advanced'){
     if(typeof setGeneratorSettingsOpen === 'function') setGeneratorSettingsOpen(true)
   } else {
