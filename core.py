@@ -53,7 +53,7 @@ app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FORCE_HTTPS', '').lower() in ('1', 'true', 'yes')
 
-_PUBLIC_PATHS = {'/', '/login', '/logout', '/register', '/branding/logo', '/branding/favicon', '/branding/logo-mark'}
+_PUBLIC_PATHS = {'/', '/login', '/logout', '/register', '/branding/logo', '/branding/logo-dark', '/branding/favicon', '/branding/logo-mark'}
 _API_PREFIXES = ('/api/', '/uploads/', '/library/', '/download/')
 _ADMIN_PREFIX = '/admin/'
 

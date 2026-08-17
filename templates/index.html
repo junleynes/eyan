@@ -273,6 +273,14 @@ textarea.input-box:focus, input.input-box:focus{outline:none;border-color:var(--
    (Config > Branding) or a differently-shaped default one otherwise gets
    distorted to fill a fixed width/height exactly. */
 .rail-logo{width:160px;height:48px;object-fit:contain;object-position:left center}
+/* Two stacked images, not one -- an <img>-embedded SVG is an isolated
+   document that can't see the parent page's data-theme attribute or its
+   stylesheet, so the light/dark switch has to happen out here via plain
+   CSS show/hide rather than inside the logo asset itself. Both share the
+   same position so swapping between them doesn't reflow anything. */
+.rail-logo-dark{display:none}
+[data-theme="dark"] .rail-logo-light{display:none}
+[data-theme="dark"] .rail-logo-dark{display:block}
 .theme-toggle{display:flex;gap:2px;margin-top:10px;background:var(--sunken);border:1px solid var(--line);border-radius:7px;padding:2px}
 .theme-btn{flex:1;background:transparent;border:none;border-radius:5px;padding:5px 0;font-size:13px;line-height:1;color:var(--ink-dim);cursor:pointer;transition:background .15s,color .15s}
 .theme-btn:hover{color:var(--ink)}
@@ -584,7 +592,8 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
 <nav class="rail">
   <div class="rail-brand">
     <a class="rail-brand-link" href="/" title="{{ brand_name }}">
-      <img class="rail-logo" src="/branding/logo" alt="{{ brand_name }}" width="160" height="48">
+      <img class="rail-logo rail-logo-light" src="/branding/logo" alt="{{ brand_name }}" width="160" height="48">
+      <img class="rail-logo rail-logo-dark" src="/branding/logo-dark" alt="{{ brand_name }}" width="160" height="48">
     </a>
     <div class="theme-toggle" role="group" aria-label="Theme">
       <button type=button class="theme-btn" data-theme-choice="light" onclick="setTheme('light')" title="Light theme">&#9728;</button>

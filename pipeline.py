@@ -5022,6 +5022,27 @@ def branding_logo():
     # Prefer the same modern wordmark the landing page uses, not the legacy segment mark.
     return redirect('/static/aimp-logo.svg')
 
+@app.route('/branding/logo-dark')
+def branding_logo_dark():
+    """Same logo as /branding/logo, but the variant meant for a dark
+    background. The DEFAULT PRISM wordmark specifically needs this -- its
+    letters are solid near-black, correctly readable on the light default
+    background but effectively invisible on a dark one, so the default has
+    two pre-made variants (see static/aimp-logo-dark.svg) switched via CSS
+    based on data-theme, not a single image stretched to cover both.
+
+    A custom admin-uploaded logo has no separate dark variant to switch
+    to -- Config > Branding only has one upload slot -- so this
+    deliberately falls back to that SAME custom file, not the dark
+    default. Getting a custom logo's own contrast right on both themes is
+    the uploader's call, same as it already was before this route
+    existed; this only fixes the shipped default, not a general
+    dual-variant upload feature nobody asked for."""
+    cfg = load_branding()
+    if cfg['logo_filename'] and os.path.exists(os.path.join(BRANDING_DIR, cfg['logo_filename'])):
+        return send_from_directory(BRANDING_DIR, cfg['logo_filename'])
+    return redirect('/static/aimp-logo-dark.svg')
+
 @app.route('/branding/favicon')
 def branding_favicon():
     cfg = load_branding()

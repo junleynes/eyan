@@ -69,6 +69,9 @@ button,input{font:inherit}
 }
 .nav.scrolled{border-bottom-color:var(--line)}
 .brand img{height:36px;width:auto;display:block;border-radius:8px}
+.brand .logo-dark{display:none}
+[data-theme="dark"] .brand .logo-light{display:none}
+[data-theme="dark"] .brand .logo-dark{display:block}
 .nav-right{display:flex;align-items:center;gap:8px}
 .nav-link{
   font-size:13px;font-weight:500;color:var(--muted);padding:8px 12px;border-radius:8px
@@ -230,7 +233,7 @@ footer{
 <body>
 <div class="wrap">
   <header class="nav" id="topNav">
-    <a class="brand" href="/"><img src="/branding/logo" alt="{{ brand_name }}"></a>
+    <a class="brand" href="/"><img class="logo-light" src="/branding/logo" alt="{{ brand_name }}"><img class="logo-dark" src="/branding/logo-dark" alt="{{ brand_name }}"></a>
     <div class="nav-right">
       <a class="nav-link" href="#how">How it works</a>
       <a class="nav-link" href="#features">Features</a>
