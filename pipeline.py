@@ -1124,9 +1124,53 @@ def fish_audio_delete_reference(voice_id, timeout=15):
     return True, None
 
 # ---- Background job tracking (progress reporting for long-running trailer jobs) ----
-JOBS = {}
+# Backed by SQLite (a dedicated jobs.db, not shared with the trailers/branding
+# library.db, so job churn never risks contending with or corrupting that
+# file) rather than an in-memory dict. The in-memory version lost every
+# running job's entire history on any restart -- crash, deploy, OOM -- with
+# no trace it had ever existed; the frontend's progress poll would just start
+# 404ing with no explanation. Every function here keeps its EXACT original
+# name and signature so none of the ~10 call sites elsewhere in this file
+# needed to change, only what happens inside these functions did.
+JOBS_DB_PATH = os.path.join(LIBRARY_DIR, 'jobs.db')
 JOBS_LOCK = threading.Lock()
-JOB_TTL = 60 * 60  # drop finished jobs after an hour so JOBS doesn't grow forever
+JOB_TTL = 60 * 60  # drop finished jobs after an hour so the table doesn't grow forever
+
+def _jobs_db():
+    return _sqlite_connect(JOBS_DB_PATH)
+
+def jobs_db_init():
+    conn = _jobs_db()
+    conn.execute('''CREATE TABLE IF NOT EXISTS jobs (
+        id TEXT PRIMARY KEY,
+        percent INTEGER NOT NULL DEFAULT 0,
+        step TEXT,
+        done INTEGER NOT NULL DEFAULT 0,
+        error TEXT,
+        status TEXT,
+        result_json TEXT,
+        cancel_requested INTEGER NOT NULL DEFAULT 0,
+        created REAL NOT NULL,
+        user_id INTEGER,
+        username TEXT,
+        orig_name TEXT
+    )''')
+    # Anything still marked "not done" at startup was, by definition, being
+    # rendered by a process that no longer exists -- the whole point of
+    # persisting this at all is to tell the truth about that instead of
+    # leaving it looking like a job that's still quietly running at 45%
+    # forever. Marked interrupted rather than silently deleted, so it's
+    # still visible in history as "this didn't finish" rather than vanishing
+    # without a trace, which is exactly what the in-memory version did.
+    cur = conn.execute("UPDATE jobs SET done=1, status='error', "
+                       "error='Interrupted by a server restart before it finished.' "
+                       "WHERE done=0")
+    if cur.rowcount:
+        print(f'{cur.rowcount} job(s) were still running at last shutdown -- marked interrupted.')
+    conn.commit()
+    conn.close()
+
+jobs_db_init()
 
 class JobCancelled(Exception):
     pass
@@ -1134,38 +1178,57 @@ class JobCancelled(Exception):
 def job_new(user_id=None, username=None):
     jid = f'{int(time.time()*1000)}_{threading.get_ident()}'
     with JOBS_LOCK:
-        JOBS[jid] = {'percent': 0, 'step': 'Queued', 'done': False, 'error': None,
-                     'result': None, 'created': time.time(), 'cancel_requested': False,
-                     'status': 'queued', 'user_id': user_id, 'username': username}
-        stale = [k for k, v in JOBS.items() if v.get('done') and time.time() - v.get('created', 0) > JOB_TTL]
-        for k in stale:
-            JOBS.pop(k, None)
+        conn = _jobs_db()
+        conn.execute(
+            'INSERT INTO jobs (id, percent, step, done, error, status, result_json, '
+            'cancel_requested, created, user_id, username, orig_name) '
+            'VALUES (?,0,?,0,NULL,?,NULL,0,?,?,?,NULL)',
+            (jid, 'Queued', 'queued', time.time(), user_id, username))
+        # Same TTL cleanup the in-memory version did, just as a DELETE instead
+        # of a dict-pop loop.
+        conn.execute('DELETE FROM jobs WHERE done=1 AND created < ?', (time.time() - JOB_TTL,))
+        conn.commit()
+        conn.close()
     return jid
 
 def job_set(jid, percent=None, step=None, error=None, done=None, result=None, status=None):
     cancel_now = False
     with JOBS_LOCK:
-        j = JOBS.get(jid)
-        if not j:
+        conn = _jobs_db()
+        row = conn.execute('SELECT cancel_requested FROM jobs WHERE id=?', (jid,)).fetchone()
+        if not row:
+            conn.close()
             return
+        updates, args = [], []
         if percent is not None:
-            j['percent'] = percent
+            updates.append('percent=?'); args.append(percent)
         if step is not None:
-            j['step'] = step
+            updates.append('step=?'); args.append(step)
         if status is not None:
-            j['status'] = status
+            updates.append('status=?'); args.append(status)
         if error is not None:
-            j['error'] = error
-            j['done'] = True
-            j['status'] = 'error'
+            updates.append('error=?'); args.append(error)
+            updates.append('done=1')
+            updates.append("status='error'")
         if done is not None:
-            j['done'] = done
+            updates.append('done=?'); args.append(1 if done else 0)
         if result is not None:
-            j['result'] = result
+            updates.append('result_json=?'); args.append(json.dumps(result))
+        # Deliberately never touches the cancel_requested column here -- that
+        # column belongs to job_cancel()'s own narrow UPDATE. Keeping each
+        # function's UPDATE scoped to only the columns IT manages means a
+        # cancel request arriving between this read and this write can never
+        # get silently clobbered back to 0 by an unrelated progress update,
+        # without needing an explicit cross-function transaction to prevent it.
+        if updates:
+            args.append(jid)
+            conn.execute(f'UPDATE jobs SET {", ".join(updates)} WHERE id=?', args)
+            conn.commit()
+        conn.close()
         # Any progress update after a cancellation request raises, so the running
         # job unwinds at its next checkpoint — this call itself (reporting the
         # cancellation) is exempt so it doesn't recursively raise.
-        if j.get('cancel_requested') and error is None and not done:
+        if row['cancel_requested'] and error is None and not done:
             cancel_now = True
     if cancel_now:
         raise JobCancelled(jid)
@@ -1175,10 +1238,14 @@ def job_cancel(jid):
     from the wait line immediately; running jobs unwind at their next progress
     checkpoint (best-effort — an in-flight ffmpeg/API call still finishes first)."""
     with JOBS_LOCK:
-        j = JOBS.get(jid)
-        if not j or j.get('done'):
+        conn = _jobs_db()
+        row = conn.execute('SELECT done FROM jobs WHERE id=?', (jid,)).fetchone()
+        if not row or row['done']:
+            conn.close()
             return False
-        j['cancel_requested'] = True
+        conn.execute('UPDATE jobs SET cancel_requested=1 WHERE id=?', (jid,))
+        conn.commit()
+        conn.close()
     with JOB_QUEUE_LOCK:
         if jid in JOB_QUEUE:
             JOB_QUEUE.remove(jid)
@@ -1187,8 +1254,50 @@ def job_cancel(jid):
 
 def job_get(jid):
     with JOBS_LOCK:
-        j = JOBS.get(jid)
-        return dict(j) if j else None
+        conn = _jobs_db()
+        row = conn.execute('SELECT * FROM jobs WHERE id=?', (jid,)).fetchone()
+        conn.close()
+    if not row:
+        return None
+    d = dict(row)
+    # result was a plain dict in the in-memory version; every caller expects
+    # that shape back, not a JSON string, so decode it here once rather than
+    # at every call site.
+    d['result'] = json.loads(d.pop('result_json')) if d.get('result_json') else None
+    d['done'] = bool(d['done'])
+    d['cancel_requested'] = bool(d['cancel_requested'])
+    return d
+
+def job_set_orig_name(jid, orig_name):
+    """The one place outside job_new/job_set that ever wrote directly into
+    the old JOBS dict (JOBS[jid]['orig_name'] = orig_name, right after
+    creating the job but before params are fully built). Given its own
+    function for the same reason job_set's UPDATE stays narrowly scoped --
+    a dedicated single-column write can't collide with anything else."""
+    with JOBS_LOCK:
+        conn = _jobs_db()
+        conn.execute('UPDATE jobs SET orig_name=? WHERE id=?', (orig_name, jid))
+        conn.commit()
+        conn.close()
+
+def job_list_all():
+    """Every job row, decoded the same way job_get() decodes one. Used by the
+    monitor endpoint, which does its own per-request permission filtering
+    (_owns_or_admin) over the result -- that filtering needs session access
+    this function deliberately doesn't take a dependency on, so it stays
+    exactly where it already lived rather than duplicating it in here."""
+    with JOBS_LOCK:
+        conn = _jobs_db()
+        rows = conn.execute('SELECT * FROM jobs').fetchall()
+        conn.close()
+    out = {}
+    for row in rows:
+        d = dict(row)
+        d['result'] = json.loads(d.pop('result_json')) if d.get('result_json') else None
+        d['done'] = bool(d['done'])
+        d['cancel_requested'] = bool(d['cancel_requested'])
+        out[d['id']] = d
+    return out
 
 def _owns_or_admin(owner_user_id):
     """True if the current session is the owner of a job/trailer, or an
@@ -3897,9 +4006,7 @@ def api_trailer():
         '{"score": <1-5>, "desc": "<sentence>"}')
 
     jid = job_new(user_id=session.get('user_id'), username=session.get('username'))
-    with JOBS_LOCK:
-        if jid in JOBS:
-            JOBS[jid]['orig_name'] = orig_name
+    job_set_orig_name(jid, orig_name)
     params = dict(path=path, orig_name=orig_name, mode=mode, genre=genre, scoring_mode=scoring_mode,
                   # Captured here (inside the request, where `session` exists) rather
                   # than inside the background thread that actually renders --
@@ -4611,8 +4718,7 @@ def api_monitor():
     is_admin = session.get('role') == 'admin'
     with JOB_QUEUE_LOCK:
         queued_ids = list(JOB_QUEUE)
-    with JOBS_LOCK:
-        snapshot = {jid: dict(j) for jid, j in JOBS.items() if _owns_or_admin(j.get('user_id'))}
+    snapshot = {jid: j for jid, j in job_list_all().items() if _owns_or_admin(j.get('user_id'))}
 
     queued = [{'job_id': jid, 'position': i, 'orig_name': snapshot.get(jid, {}).get('orig_name'),
                **({'username': snapshot.get(jid, {}).get('username')} if is_admin else {})}
@@ -5446,8 +5552,7 @@ def run_trailer_job(jid, params):
     keep = None
     try:
         _run_trailer_job(jid, params)
-        with JOBS_LOCK:
-            res = (JOBS.get(jid) or {}).get('result') or {}
+        res = (job_get(jid) or {}).get('result') or {}
         url = res.get('trailer_url') or ''
         if url.startswith('/uploads/'):
             keep = os.path.basename(url)
@@ -5466,7 +5571,7 @@ def run_trailer_job(jid, params):
         # successful preview, whose source video and staged assets must survive
         # until the user renders (or the preview TTL expires and the age-based
         # sweeper reclaims them).
-        holding = params.get('preview_only') and not (JOBS.get(jid) or {}).get('error')
+        holding = params.get('preview_only') and not (job_get(jid) or {}).get('error')
         if not holding:
             _cleanup_job_temp(jid, params, keep_basename=keep)
 
