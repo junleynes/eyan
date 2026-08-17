@@ -40,3 +40,7 @@ soundfile>=0.12
 #   Ollama (vision scoring), Fish Audio TTS, Whisper STT, ACE-Step (music),
 #   Woosh (SFX) -- the app degrades gracefully if any of these are
 #   unreachable, per the fixes made in this session.
+
+# ---- Dev-only: running the test suite (see tests/README.md) ----
+# Not needed to run the app itself, only to run `pytest`.
+pytest>=8.0
