@@ -281,8 +281,13 @@ textarea.input-box:focus, input.input-box:focus{outline:none;border-color:var(--
 .rail-logo-dark{display:none}
 [data-theme="dark"] .rail-logo-light{display:none}
 [data-theme="dark"] .rail-logo-dark{display:block}
-.theme-toggle{display:flex;gap:2px;margin-top:10px;background:var(--sunken);border:1px solid var(--line);border-radius:7px;padding:2px}
-.theme-btn{flex:1;background:transparent;border:none;border-radius:5px;padding:5px 0;font-size:13px;line-height:1;color:var(--ink-dim);cursor:pointer;transition:background .15s,color .15s}
+.theme-toggle{display:flex;gap:6px;background:var(--sunken);border:1px solid var(--line);border-radius:9px;padding:5px}
+.theme-btn{background:transparent;border:none;border-radius:6px;padding:8px 16px;font-size:14px;line-height:1;color:var(--ink-dim);cursor:pointer;transition:background .15s,color .15s}
+.dash-tool-card{display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:16px;border:1px solid var(--line);border-radius:10px;background:var(--panel);cursor:pointer;transition:border-color .15s,transform .15s}
+.dash-tool-card:hover{border-color:var(--accent,#4f8cff);transform:translateY(-1px)}
+.dash-tool-card .tab-icon{color:var(--ink-dim)}
+.dash-tool-card .tab-icon svg{width:22px;height:22px}
+.dash-tool-card span:last-child{font-size:13px;font-weight:600;color:var(--ink)}
 .theme-btn:hover{color:var(--ink)}
 .theme-btn.active{background:var(--elevated);color:var(--phosphor)}
 .tabs{display:flex;flex-direction:column;gap:4px;flex:1 1 auto}
@@ -853,6 +858,46 @@ document.addEventListener("DOMContentLoaded", function(){
     {% endif %}
   </div>
 
+  <strong style="font-size:13px;display:block;margin-bottom:10px">Tools</strong>
+  <div class="dash-tools" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:24px">
+    {% if current_role == 'admin' or 'music_generation' in current_permissions %}
+    <div class="dash-tool-card" onclick="switchTab('p-music', document.querySelector('.tab[onclick*=p-music]'))">
+      <span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l11-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg></span>
+      <span>Music Generation</span>
+    </div>
+    {% endif %}
+    {% if current_role == 'admin' or 'text_to_sfx' in current_permissions %}
+    <div class="dash-tool-card" onclick="switchTab('p-sfx', document.querySelector('.tab[onclick*=p-sfx]'))">
+      <span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 6a8.5 8.5 0 0 1 0 12"/></svg></span>
+      <span>Text to SFX</span>
+    </div>
+    {% endif %}
+    {% if current_role == 'admin' or 'text_to_speech' in current_permissions %}
+    <div class="dash-tool-card" onclick="switchTab('p-fish', document.querySelector('.tab[onclick*=p-fish]'))">
+      <span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a4 4 0 0 1 4 4v5a4 4 0 0 1-8 0V7a4 4 0 0 1 4-4z"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/><path d="M8 21h8"/></svg></span>
+      <span>Text to Speech</span>
+    </div>
+    {% endif %}
+    {% if current_role == 'admin' or 'speech_to_text' in current_permissions %}
+    <div class="dash-tool-card" onclick="switchTab('p-stt', document.querySelector('.tab[onclick*=p-stt]'))">
+      <span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h4l2-2h4l2 2h4v12H4z"/><circle cx="12" cy="13" r="3.5"/></svg></span>
+      <span>Speech to Text</span>
+    </div>
+    {% endif %}
+    {% if current_role == 'admin' or 'scene_detection' in current_permissions %}
+    <div class="dash-tool-card" onclick="switchTab('p-vision', document.querySelector('.tab[onclick*=p-vision]'))">
+      <span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span>
+      <span>Scene Detection</span>
+    </div>
+    {% endif %}
+    {% if current_role == 'admin' or 'ai_chat' in current_permissions %}
+    <div class="dash-tool-card" onclick="switchTab('p-chat', document.querySelector('.tab[onclick*=p-chat]'))">
+      <span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3V12a8 8 0 1 1 18 0z"/></svg></span>
+      <span>AI Assistant</span>
+    </div>
+    {% endif %}
+  </div>
+
   <div class="dash-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px">
     <div class=card>
       <strong style="font-size:13px">Service health</strong>
@@ -867,6 +912,15 @@ document.addEventListener("DOMContentLoaded", function(){
         <p style="opacity:.6;margin:0">Checking…</p>
       </div>
     </div>
+
+    {% if current_role == 'admin' or 'promo_generation' in current_permissions %}
+    <div class=card>
+      <strong style="font-size:13px">Your shows</strong>
+      <div id=dash-shows style="margin-top:10px;font-size:13px">
+        <p style="opacity:.6;margin:0">Loading…</p>
+      </div>
+    </div>
+    {% endif %}
 
     <div class=card style="grid-column:span 2">
       <strong style="font-size:13px">Recent renders</strong>
@@ -6146,6 +6200,7 @@ function loadDashboard(){
   _dashboardLoaded = true
   _dashLoadHealth()
   _dashLoadJobs()
+  _dashLoadShows()
   _dashLoadRecent()
 }
 window.loadDashboard = loadDashboard
@@ -6194,6 +6249,55 @@ function _dashLoadJobs(){
     el.innerHTML = '<p style="opacity:.6;margin:0">Could not load job status.</p>'
   })
 }
+
+function _dashLoadShows(){
+  var el = document.getElementById('dash-shows')
+  if(!el) return
+  fetch('/api/templates').then(function(r){
+    if(r.status === 403) return {_forbidden: true}
+    return r.json()
+  }).then(function(d){
+    if(d._forbidden){
+      el.innerHTML = '<p style="opacity:.6;margin:0">Not available for this account.</p>'
+      return
+    }
+    var items = (d.templates || []).slice(0, 5)
+    if(!items.length){
+      el.innerHTML = '<p style="opacity:.6;margin:0">No saved shows yet — save one from Generate Promo Plug.</p>'
+      return
+    }
+    el.innerHTML = items.map(function(t){
+      var sub = t.genre ? t.genre.charAt(0).toUpperCase() + t.genre.slice(1) : 'Custom'
+      return '<div class="dash-show-row" data-tpl-id="' + t.id + '" ' +
+             'style="display:flex;justify-content:space-between;gap:10px;padding:6px 4px;border-bottom:1px solid var(--line);cursor:pointer;border-radius:6px">' +
+             '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + t.name + '</span>' +
+             '<span style="opacity:.6;font-size:12px;white-space:nowrap">' + sub + '</span></div>'
+    }).join('')
+    el.querySelectorAll('.dash-show-row').forEach(function(row){
+      row.addEventListener('click', function(){ _dashOpenShow(row.getAttribute('data-tpl-id')) })
+      row.addEventListener('mouseenter', function(){ row.style.background = 'var(--soft, var(--sunken))' })
+      row.addEventListener('mouseleave', function(){ row.style.background = '' })
+    })
+  }).catch(function(){
+    el.innerHTML = '<p style="opacity:.6;margin:0">Could not load saved shows.</p>'
+  })
+}
+
+// Jumps to Generate Promo Plug with a specific saved show pre-selected --
+// reuses the exact same template-selection path a manual pick from that
+// tab's own dropdown goes through (set the value, dispatch a real 'change'
+// event) rather than duplicating onTemplateSelected's logic here. The
+// dropdown is already populated by the time this can run: loadTemplates()
+// is called unconditionally on page load, well before any dashboard click
+// is physically possible.
+function _dashOpenShow(id){
+  switchTab('p-trailer', document.querySelector('.tab[onclick*=p-trailer]'))
+  var sel = document.getElementById('template-select')
+  if(!sel) return
+  sel.value = id
+  sel.dispatchEvent(new Event('change'))
+}
+window._dashOpenShow = _dashOpenShow
 
 function _dashLoadRecent(){
   var el = document.getElementById('dash-recent')
