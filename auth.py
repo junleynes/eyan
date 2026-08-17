@@ -8,7 +8,7 @@ from flask import request, session, redirect, jsonify, render_template
 from markupsafe import escape
 from werkzeug.security import generate_password_hash, check_password_hash
 from core import app, _client_ip, _login_limiter, _DUMMY_PW_HASH, DEFAULT_ADMIN_PASSWORD, ensure_csrf_token
-from library_db import LIBRARY_DIR, _sqlite_connect, load_branding
+from library_db import LIBRARY_DIR, _sqlite_connect, load_branding, audit_log
 
 def _safe_next(dest):
     """Only ever redirect to a path on this app -- an absolute or
@@ -1058,13 +1058,23 @@ def admin_users():
 
 @app.route('/admin/users/create', methods=['POST'])
 def admin_users_create():
-    ok, err = user_create(request.form.get('username', ''), request.form.get('password', ''),
+    uname = request.form.get('username', '')
+    ok, err = user_create(uname, request.form.get('password', ''),
                            request.form.get('role', 'user'))
+    if ok:
+        audit_log('user_create', target=uname, detail=f"role={request.form.get('role', 'user')}",
+                   user_id=session.get('user_id'), username=session.get('username'), ip=_client_ip())
     return _admin_users_page(error=None if ok else err, notice='User created.' if ok else None)
 
 @app.route('/admin/users/<int:uid>/role', methods=['POST'])
 def admin_users_role(uid):
-    ok, err = user_set_role(uid, request.form.get('role', 'user'))
+    target = user_get(uid)
+    new_role = request.form.get('role', 'user')
+    ok, err = user_set_role(uid, new_role)
+    if ok and target:
+        audit_log('user_role_change', target=target['username'],
+                   detail=f"{target['role']} -> {new_role}",
+                   user_id=session.get('user_id'), username=session.get('username'), ip=_client_ip())
     return _admin_users_page(error=None if ok else err, notice='Role updated.' if ok else None)
 
 @app.route('/admin/users/<int:uid>/toggle', methods=['POST'])
@@ -1072,7 +1082,11 @@ def admin_users_toggle(uid):
     target = user_get(uid)
     if not target:
         return _admin_users_page(error='User not found.')
-    ok, err = user_set_active(uid, not target['is_active'])
+    new_active = not target['is_active']
+    ok, err = user_set_active(uid, new_active)
+    if ok:
+        audit_log('user_enable' if new_active else 'user_disable', target=target['username'],
+                   user_id=session.get('user_id'), username=session.get('username'), ip=_client_ip())
     return _admin_users_page(error=None if ok else err, notice='Status updated.' if ok else None)
 
 @app.route('/admin/users/<int:uid>/2fa/reset', methods=['POST'])
@@ -1085,19 +1099,31 @@ def admin_users_2fa_reset(uid):
     if not target:
         return _admin_users_page(error='No such account.')
     user_totp_disable(uid)
+    audit_log('user_2fa_reset', target=target['username'],
+               user_id=session.get('user_id'), username=session.get('username'), ip=_client_ip())
     return _admin_users_page(notice=f"Two-factor authentication cleared for {target['username']} — "
                                     "they can set it up again from Config > Security.")
 
 @app.route('/admin/users/<int:uid>/password', methods=['POST'])
 def admin_users_password(uid):
+    target = user_get(uid)
     ok, err = user_set_password(uid, request.form.get('password', ''))
+    if ok and target:
+        # Never log the password itself, obviously -- just that it happened,
+        # by whom, and to whom.
+        audit_log('user_password_reset', target=target['username'],
+                   user_id=session.get('user_id'), username=session.get('username'), ip=_client_ip())
     return _admin_users_page(error=None if ok else err, notice='Password updated.' if ok else None)
 
 @app.route('/admin/users/<int:uid>/delete', methods=['POST'])
 def admin_users_delete(uid):
     if uid == session.get('user_id'):
         return _admin_users_page(error="You can't delete your own account while signed in as it.")
+    target = user_get(uid)
     ok, err = user_delete(uid)
+    if ok and target:
+        audit_log('user_delete', target=target['username'],
+                   user_id=session.get('user_id'), username=session.get('username'), ip=_client_ip())
     return _admin_users_page(error=None if ok else err, notice='User deleted.' if ok else None)
 
 @app.route('/admin/users/<int:uid>/group', methods=['POST'])

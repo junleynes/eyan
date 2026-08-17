@@ -40,6 +40,16 @@ def _lib_db():
 
 def library_db_init():
     conn = _lib_db()
+    conn.execute('''CREATE TABLE IF NOT EXISTS audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at REAL NOT NULL,
+        user_id INTEGER,
+        username TEXT,
+        action TEXT NOT NULL,
+        target TEXT,
+        detail TEXT,
+        ip TEXT
+    )''')
     conn.execute('''CREATE TABLE IF NOT EXISTS trailers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         orig_name TEXT,
@@ -65,6 +75,35 @@ def library_db_init():
         conn.execute('ALTER TABLE trailers ADD COLUMN username TEXT')
     conn.commit()
     conn.close()
+
+# ---- Audit log ----
+# Deliberately a short, fixed set of columns rather than a free-form blob --
+# action/target/detail are plain strings so the log stays queryable and
+# readable without needing to parse anything, and so a future column can be
+# added the same ALTER TABLE way the trailers table already handles it.
+def audit_log(action, target=None, detail=None, user_id=None, username=None, ip=None):
+    """Records one audit entry. user_id/username/ip are accepted as explicit
+    params rather than this function reaching into `session`/`request`
+    itself -- library_db.py stays free of any Flask dependency (it's
+    imported by things that aren't always inside a request), and the
+    handful of call sites that DO have session/request access can supply
+    them directly."""
+    conn = _lib_db()
+    conn.execute('INSERT INTO audit_log (created_at, user_id, username, action, target, detail, ip) '
+                 'VALUES (?,?,?,?,?,?,?)',
+                 (time.time(), user_id, username, action, target, detail, ip))
+    conn.commit()
+    conn.close()
+
+def audit_log_list(limit=200):
+    """Most recent audit entries, newest first. Admin-only at the route
+    level (this function itself doesn't check permissions -- same pattern
+    as library_stats(), which the dashboard's Library card already uses the
+    same way)."""
+    conn = _lib_db()
+    rows = conn.execute('SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ?', (limit,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 def library_add(upload_filename, result, user_id=None, username=None):
     """Copies the just-finished trailer (currently sitting in the ephemeral

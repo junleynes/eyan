@@ -25,6 +25,7 @@ import smbclient  # pip install smbprotocol -- lets the upload panels browse a W
 
 from core import app, ALLOWED_EXTENSIONS, _job_submit_limiter, _client_ip
 from library_db import (LIBRARY_DIR, _sqlite_connect, library_add, library_list, library_stats, library_get_row, library_delete,
+    audit_log, audit_log_list,
     load_branding, save_branding_text, save_branding_color, save_branding_logo, save_branding_favicon,
     clear_branding_logo, clear_branding_favicon, clear_branding_color, BRANDING_DIR,
     load_disabled_services, set_service_disabled, save_branding_theme, THEME_PRESETS,
@@ -4642,6 +4643,14 @@ def api_admin_library_stats():
                    missing_files=stats['missing_files'],
                    free_mb=round(free_mb) if free_mb is not None else None)
 
+@app.route('/api/admin/audit-log')
+def api_admin_audit_log():
+    """The most recent audit entries for Config > Audit Log. Admin-only --
+    this is a record of every user's actions, not just the caller's own."""
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='Admin access required.'), 403
+    return jsonify(ok=True, items=audit_log_list(limit=200))
+
 @app.route('/api/trailer/library/<int:tid>')
 @require_permission('promo_generation')
 def api_trailer_library_get(tid):
@@ -4665,6 +4674,8 @@ def api_trailer_library_delete(tid):
     ok = library_delete(tid)
     if not ok:
         return jsonify(ok=False, error='Not found'), 404
+    audit_log('trailer_delete', target=row.get('orig_name') or f'trailer #{tid}',
+               user_id=session.get('user_id'), username=session.get('username'), ip=_client_ip())
     return jsonify(ok=True)
 
 @app.route('/library/<int:tid>/file')
@@ -5096,6 +5107,13 @@ def api_network_shares_post():
     ok, err = save_network_folder(category, fields)
     if not ok:
         return jsonify(ok=False, error=err), 400
+    # Path is safe to log; username/password are never included in the audit
+    # detail even though they're in the request -- this is a record of WHAT
+    # changed and WHO changed it, not a place credentials should ever sit in
+    # plaintext a second time.
+    audit_log('network_folder_change', target=category,
+               detail=f"path={fields.get('path', '(unchanged)')}" if 'path' in fields else None,
+               user_id=session.get('user_id'), username=session.get('username'), ip=_client_ip())
     return jsonify(ok=True, category=category)
 
 @app.route('/api/production', methods=['GET'])
@@ -5125,6 +5143,8 @@ def api_production_post():
         return jsonify(ok=False, error='Admin access required.'), 403
     data = request.get_json(silent=True) or {}
     values = save_production_defaults(data)
+    audit_log('production_defaults_change', detail=', '.join(f'{k}={v}' for k, v in data.items()) or None,
+               user_id=session.get('user_id'), username=session.get('username'), ip=_client_ip())
     return jsonify(ok=True, values=values)
 
 # ---- Branding routes ----
@@ -5230,6 +5250,12 @@ def api_branding_post():
     if request.form.get('reset_accent_color') == '1':
         clear_branding_color()
     cfg = load_branding()
+    changed = [k for k in ('name', 'tagline', 'footer', 'theme_name', 'accent_color')
+               if request.form.get(k)] + \
+              [f'{k}_upload' for k in ('logo', 'favicon') if request.files.get(k) and request.files[k].filename] + \
+              [f'reset_{k}' for k in ('logo', 'favicon', 'accent_color') if request.form.get(f'reset_{k}') == '1']
+    audit_log('branding_change', detail=', '.join(changed) or None,
+               user_id=session.get('user_id'), username=session.get('username'), ip=_client_ip())
     return jsonify(ok=True, name=cfg['name'], tagline=cfg['tagline'], footer=cfg['footer'],
                    accent_color=cfg['accent_color'], theme_name=cfg['theme_name'],
                    theme_colors=cfg['theme_colors'], themes={k: v for k, v in THEME_PRESETS.items()},
@@ -7258,4 +7284,13 @@ def _run_trailer_job(jid, params):
                                             user_id=params.get('user_id'), username=params.get('username'))
     except Exception as e:
         print(f'Trailer library save failed (job still succeeded): {e}')
+    # No ip here -- this runs in the background render thread, well past the
+    # point the original request (which had it) returned. user_id/username
+    # are available because they're already threaded through params for
+    # library_add just above; piping ip through the same way just for this
+    # one log entry wasn't worth the added surface for a lower-stakes event
+    # than the admin actions above that DO capture it.
+    audit_log('trailer_generate', target=params.get('orig_name') or filename,
+               detail=f"{result.get('trailer_duration')}s, {len(selected)} scenes",
+               user_id=params.get('user_id'), username=params.get('username'))
 
