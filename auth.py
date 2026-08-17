@@ -166,6 +166,26 @@ def logout():
 # /admin/users/<uid>/2fa/reset below) for the lost-phone case -- they can't
 # enrol on another user's behalf, since that would mean the admin holding a
 # secret that's supposed to be the user's alone.
+@app.route('/api/admin/pending-users')
+def api_admin_pending_users():
+    """Accounts waiting for admin approval, for the dashboard's Pending
+    access requests card. Admin-only, same as anything else touching the
+    account list.
+
+    There's no schema column distinguishing "self-registered, never yet
+    approved" from "an admin manually disabled a former employee" -- both
+    just end up is_active=0. Treating every disabled account as "pending"
+    would be actively misleading (a deliberately offboarded account isn't
+    something needing action), so this narrows to is_active=0 AND
+    last_login IS NULL as a reasonable proxy: an account that's never once
+    been used is far more likely still awaiting its first approval than
+    one an admin turned off after someone had already been using it."""
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='Admin access required.'), 403
+    pending = [u for u in user_list() if not u['is_active'] and not u['last_login']]
+    return jsonify(ok=True, count=len(pending),
+                   items=[{'username': u['username'], 'created_at': u['created_at']} for u in pending[:5]])
+
 @app.route('/api/2fa/status')
 def api_2fa_status():
     if not session.get('authed'):

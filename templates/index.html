@@ -283,11 +283,6 @@ textarea.input-box:focus, input.input-box:focus{outline:none;border-color:var(--
 [data-theme="dark"] .rail-logo-dark{display:block}
 .theme-toggle{display:flex;gap:6px;background:var(--sunken);border:1px solid var(--line);border-radius:9px;padding:5px}
 .theme-btn{background:transparent;border:none;border-radius:6px;padding:8px 16px;font-size:14px;line-height:1;color:var(--ink-dim);cursor:pointer;transition:background .15s,color .15s}
-.dash-tool-card{display:flex;flex-direction:column;align-items:flex-start;gap:10px;padding:16px;border:1px solid var(--line);border-radius:10px;background:var(--panel);cursor:pointer;transition:border-color .15s,transform .15s}
-.dash-tool-card:hover{border-color:var(--accent,#4f8cff);transform:translateY(-1px)}
-.dash-tool-card .tab-icon{color:var(--ink-dim)}
-.dash-tool-card .tab-icon svg{width:22px;height:22px}
-.dash-tool-card span:last-child{font-size:13px;font-weight:600;color:var(--ink)}
 .theme-btn:hover{color:var(--ink)}
 .theme-btn.active{background:var(--elevated);color:var(--phosphor)}
 .tabs{display:flex;flex-direction:column;gap:4px;flex:1 1 auto}
@@ -858,45 +853,6 @@ document.addEventListener("DOMContentLoaded", function(){
     {% endif %}
   </div>
 
-  <strong style="font-size:13px;display:block;margin-bottom:10px">Tools</strong>
-  <div class="dash-tools" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:24px">
-    {% if current_role == 'admin' or 'music_generation' in current_permissions %}
-    <div class="dash-tool-card" onclick="switchTab('p-music', document.querySelector('.tab[onclick*=p-music]'))">
-      <span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l11-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg></span>
-      <span>Music Generation</span>
-    </div>
-    {% endif %}
-    {% if current_role == 'admin' or 'text_to_sfx' in current_permissions %}
-    <div class="dash-tool-card" onclick="switchTab('p-sfx', document.querySelector('.tab[onclick*=p-sfx]'))">
-      <span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 6a8.5 8.5 0 0 1 0 12"/></svg></span>
-      <span>Text to SFX</span>
-    </div>
-    {% endif %}
-    {% if current_role == 'admin' or 'text_to_speech' in current_permissions %}
-    <div class="dash-tool-card" onclick="switchTab('p-fish', document.querySelector('.tab[onclick*=p-fish]'))">
-      <span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a4 4 0 0 1 4 4v5a4 4 0 0 1-8 0V7a4 4 0 0 1 4-4z"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/><path d="M8 21h8"/></svg></span>
-      <span>Text to Speech</span>
-    </div>
-    {% endif %}
-    {% if current_role == 'admin' or 'speech_to_text' in current_permissions %}
-    <div class="dash-tool-card" onclick="switchTab('p-stt', document.querySelector('.tab[onclick*=p-stt]'))">
-      <span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h4l2-2h4l2 2h4v12H4z"/><circle cx="12" cy="13" r="3.5"/></svg></span>
-      <span>Speech to Text</span>
-    </div>
-    {% endif %}
-    {% if current_role == 'admin' or 'scene_detection' in current_permissions %}
-    <div class="dash-tool-card" onclick="switchTab('p-vision', document.querySelector('.tab[onclick*=p-vision]'))">
-      <span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span>
-      <span>Scene Detection</span>
-    </div>
-    {% endif %}
-    {% if current_role == 'admin' or 'ai_chat' in current_permissions %}
-    <div class="dash-tool-card" onclick="switchTab('p-chat', document.querySelector('.tab[onclick*=p-chat]'))">
-      <span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3V12a8 8 0 1 1 18 0z"/></svg></span>
-      <span>AI Assistant</span>
-    </div>
-    {% endif %}
-  </div>
 
   <div class="dash-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px">
     <div class=card>
@@ -912,6 +868,22 @@ document.addEventListener("DOMContentLoaded", function(){
         <p style="opacity:.6;margin:0">Checking…</p>
       </div>
     </div>
+
+    <div class=card>
+      <strong style="font-size:13px">Security</strong>
+      <div id=dash-security style="margin-top:10px;font-size:13px">
+        <p style="opacity:.6;margin:0">Checking…</p>
+      </div>
+    </div>
+
+    {% if current_role == 'admin' %}
+    <div class=card id=dash-pending-card style="display:none">
+      <strong style="font-size:13px">Pending access requests</strong>
+      <div id=dash-pending style="margin-top:10px;font-size:13px">
+        <p style="opacity:.6;margin:0">Checking…</p>
+      </div>
+    </div>
+    {% endif %}
 
     {% if current_role == 'admin' or 'promo_generation' in current_permissions %}
     <div class=card>
@@ -6200,6 +6172,8 @@ function loadDashboard(){
   _dashboardLoaded = true
   _dashLoadHealth()
   _dashLoadJobs()
+  _dashLoadSecurity()
+  _dashLoadPending()
   _dashLoadShows()
   _dashLoadRecent()
 }
@@ -6247,6 +6221,49 @@ function _dashLoadJobs(){
     el.innerHTML = parts.join('')
   }).catch(function(){
     el.innerHTML = '<p style="opacity:.6;margin:0">Could not load job status.</p>'
+  })
+}
+
+function _dashLoadSecurity(){
+  var el = document.getElementById('dash-security')
+  if(!el) return
+  fetch('/api/2fa/status').then(function(r){ return r.json() }).then(function(d){
+    if(!d.ok){ el.innerHTML = '<p style="opacity:.6;margin:0">Could not check.</p>'; return }
+    if(!d.available){
+      el.innerHTML = '<p style="opacity:.6;margin:0">Two-factor isn\'t installed on this server.</p>'
+      return
+    }
+    if(d.enabled){
+      el.innerHTML = '<p style="margin:0"><span style="color:var(--phosphor)">&#9679;</span> Two-factor is on' +
+                      (d.backup_remaining <= 2 ? ' &mdash; <span style="color:var(--tally)">only ' + d.backup_remaining + ' backup code' + (d.backup_remaining===1?'':'s') + ' left</span>' : '') +
+                      '.</p>'
+    }else{
+      el.innerHTML = '<p style="margin:0 0 8px;opacity:.85">Two-factor is off for your account.</p>' +
+                      '<button type=button class=btn style="padding:6px 12px;font-size:12px" ' +
+                      'onclick="switchTab(\'p-config\', document.querySelector(\'.tab[onclick*=p-config]\')); switchSubTab(\'p-config-security\', document.querySelector(\'.sub-tab[onclick*=p-config-security]\'))">Set up two-factor</button>'
+    }
+  }).catch(function(){
+    el.innerHTML = '<p style="opacity:.6;margin:0">Could not check.</p>'
+  })
+}
+
+function _dashLoadPending(){
+  var card = document.getElementById('dash-pending-card')
+  var el = document.getElementById('dash-pending')
+  if(!el || !card) return  // not an admin -- card doesn't exist in the DOM at all
+  fetch('/api/admin/pending-users').then(function(r){ return r.json() }).then(function(d){
+    if(!d.ok || !d.count){ card.style.display = 'none'; return }
+    // Only takes up space on the dashboard when there's actually something
+    // to act on -- a permanent "0 pending" card is just noise every day
+    // there's nothing to review.
+    card.style.display = ''
+    var names = d.items.map(function(u){ return u.username }).join(', ')
+    el.innerHTML = '<p style="margin:0 0 8px"><strong>' + d.count + '</strong> account' + (d.count===1?'':'s') + ' waiting for approval' +
+                    (names ? ' &mdash; ' + names : '') + '</p>' +
+                    '<button type=button class=btn style="padding:6px 12px;font-size:12px" ' +
+                    'onclick="switchTab(\'p-config\', document.querySelector(\'.tab[onclick*=p-config]\')); switchSubTab(\'p-config-users\', document.querySelector(\'.sub-tab[onclick*=p-config-users]\'))">Review in Config &gt; Users</button>'
+  }).catch(function(){
+    card.style.display = 'none'
   })
 }
 
