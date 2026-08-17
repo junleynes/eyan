@@ -6332,12 +6332,36 @@ function _dashLoadRecent(){
       el.innerHTML = '<p style="opacity:.6;margin:0">No saved trailers yet.</p>'
       return
     }
-    el.innerHTML = items.map(function(it){
-      var when = it.created ? new Date(it.created * 1000).toLocaleDateString() : ''
-      return '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-bottom:1px solid var(--line)">' +
+    // created_at, not created -- the field this silently got wrong before,
+    // rendering a blank date for every row (it.created was always
+    // undefined, so the ternary below just fell through to '' with no
+    // error). Only ever tested against the empty state until now, which is
+    // exactly how this went unnoticed.
+    el.innerHTML = items.map(function(it, i){
+      var when = it.created_at ? new Date(it.created_at * 1000).toLocaleDateString() : ''
+      var dur = (it.trailer_duration != null) ? it.trailer_duration + 's' : ''
+      return '<div class="dash-recent-row" data-idx="' + i + '" style="display:flex;justify-content:space-between;gap:10px;padding:6px 4px;border-bottom:1px solid var(--line);cursor:pointer;border-radius:6px">' +
              '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (it.orig_name || 'Untitled') + '</span>' +
-             '<span style="opacity:.6;font-size:12px;white-space:nowrap">' + when + '</span></div>'
+             '<span style="opacity:.6;font-size:12px;white-space:nowrap">' + dur + (dur && when ? ' &middot; ' : '') + when + '</span></div>'
     }).join('')
+    // Clicking a row jumps to Generate Promo Plug and shows that exact saved
+    // render -- reuses the SAME fetch + renderTrailerResult() path the
+    // existing Saved Trailers history list already uses for this, rather
+    // than a second implementation of "go open a past render".
+    el.querySelectorAll('.dash-recent-row').forEach(function(row){
+      var it = items[parseInt(row.getAttribute('data-idx'), 10)]
+      row.addEventListener('click', function(){
+        switchTab('p-trailer', document.querySelector('.tab[onclick*=p-trailer]'))
+        fetch('/api/trailer/library/' + it.id).then(function(r){ return r.json() }).then(function(d2){
+          if(!d2.ok) return
+          var prompt = document.getElementById('tr-prompt')
+          if(prompt) prompt.style.display = 'none'
+          renderTrailerResult(d2.result)
+        })
+      })
+      row.addEventListener('mouseenter', function(){ row.style.background = 'var(--soft, var(--sunken))' })
+      row.addEventListener('mouseleave', function(){ row.style.background = '' })
+    })
   }).catch(function(){
     el.innerHTML = '<p style="opacity:.6;margin:0">Could not load recent renders.</p>'
   })
