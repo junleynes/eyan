@@ -92,6 +92,27 @@ def library_add(upload_filename, result, user_id=None, username=None):
     conn.close()
     return tid
 
+def library_stats():
+    """Total saved-trailer count and their combined size on disk, for the
+    dashboard's admin-only Library card. Deliberately a separate, lighter
+    query rather than reusing library_list() -- that one caps at 50 rows by
+    default and pulls every column including result_json (the full per-scene
+    breakdown, potentially large), neither of which this needs. All this
+    needs is every filename, to total their real size with os.path.getsize
+    rather than trusting a stored size that could drift from the actual file."""
+    conn = _lib_db()
+    rows = conn.execute('SELECT filename FROM trailers').fetchall()
+    conn.close()
+    total_bytes = 0
+    missing = 0
+    for r in rows:
+        p = os.path.join(LIBRARY_DIR, r['filename'])
+        try:
+            total_bytes += os.path.getsize(p)
+        except OSError:
+            missing += 1  # DB row survives its file being deleted out from under it -- don't crash the count over it
+    return {'count': len(rows), 'total_bytes': total_bytes, 'missing_files': missing}
+
 def library_list(limit=50, user_id=None, is_admin=False):
     """Most recent saved trailers. An admin sees everything; anyone else sees
     only what they own (user_id must match) -- rows with no owner at all

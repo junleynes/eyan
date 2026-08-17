@@ -883,6 +883,13 @@ document.addEventListener("DOMContentLoaded", function(){
         <p style="opacity:.6;margin:0">Checking…</p>
       </div>
     </div>
+
+    <div class=card>
+      <strong style="font-size:13px">Library</strong>
+      <div id=dash-library style="margin-top:10px;font-size:13px">
+        <p style="opacity:.6;margin:0">Checking…</p>
+      </div>
+    </div>
     {% endif %}
 
     {% if current_role == 'admin' or 'promo_generation' in current_permissions %}
@@ -6174,6 +6181,7 @@ function loadDashboard(){
   _dashLoadJobs()
   _dashLoadSecurity()
   _dashLoadPending()
+  _dashLoadLibrary()
   _dashLoadShows()
   _dashLoadRecent()
 }
@@ -6264,6 +6272,33 @@ function _dashLoadPending(){
                     'onclick="switchTab(\'p-config\', document.querySelector(\'.tab[onclick*=p-config]\')); switchSubTab(\'p-config-users\', document.querySelector(\'.sub-tab[onclick*=p-config-users]\'))">Review in Config &gt; Users</button>'
   }).catch(function(){
     card.style.display = 'none'
+  })
+}
+
+function _dashLoadLibrary(){
+  var el = document.getElementById('dash-library')
+  if(!el) return  // not an admin -- card doesn't exist in the DOM at all
+  fetch('/api/admin/library-stats').then(function(r){
+    if(r.status === 403) return {_forbidden: true}
+    return r.json()
+  }).then(function(d){
+    if(d._forbidden || !d.ok){ el.innerHTML = '<p style="opacity:.6;margin:0">Not available.</p>'; return }
+    function fmtBytes(b){
+      if(b >= 1024*1024*1024) return (b/(1024*1024*1024)).toFixed(1) + ' GB'
+      if(b >= 1024*1024) return (b/(1024*1024)).toFixed(0) + ' MB'
+      return (b/1024).toFixed(0) + ' KB'
+    }
+    var lines = ['<p style="margin:0 0 4px">' + d.count + ' saved trailer' + (d.count===1?'':'s') + ' &middot; ' + fmtBytes(d.total_bytes) + '</p>']
+    if(d.free_mb != null){
+      var freeLabel = d.free_mb >= 1024 ? (d.free_mb/1024).toFixed(1) + ' GB' : d.free_mb + ' MB'
+      lines.push('<p style="margin:0;opacity:.7">' + freeLabel + ' free on disk</p>')
+    }
+    if(d.missing_files){
+      lines.push('<p style="margin:4px 0 0;color:var(--tally);font-size:12px">' + d.missing_files + ' saved entr' + (d.missing_files===1?'y':'ies') + ' missing its file on disk</p>')
+    }
+    el.innerHTML = lines.join('')
+  }).catch(function(){
+    el.innerHTML = '<p style="opacity:.6;margin:0">Could not load library stats.</p>'
   })
 }
 

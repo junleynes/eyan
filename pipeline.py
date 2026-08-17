@@ -24,7 +24,7 @@ from werkzeug.utils import secure_filename
 import smbclient  # pip install smbprotocol -- lets the upload panels browse a Windows/SMB network share directly
 
 from core import app, ALLOWED_EXTENSIONS, _job_submit_limiter, _client_ip
-from library_db import (LIBRARY_DIR, _sqlite_connect, library_add, library_list, library_get_row, library_delete,
+from library_db import (LIBRARY_DIR, _sqlite_connect, library_add, library_list, library_stats, library_get_row, library_delete,
     load_branding, save_branding_text, save_branding_color, save_branding_logo, save_branding_favicon,
     clear_branding_logo, clear_branding_favicon, clear_branding_color, BRANDING_DIR,
     load_disabled_services, set_service_disabled, save_branding_theme, THEME_PRESETS,
@@ -4520,6 +4520,20 @@ def api_trailer_library():
     regular account sees only trailers it saved; an admin sees everyone's."""
     is_admin = session.get('role') == 'admin'
     return jsonify(ok=True, items=library_list(user_id=session.get('user_id'), is_admin=is_admin))
+
+@app.route('/api/admin/library-stats')
+def api_admin_library_stats():
+    """Total saved-trailer count, their combined size on disk, and free space
+    remaining -- for the dashboard's admin-only Library card. Admin-only
+    since it reports on every user's saved trailers combined, not just the
+    caller's own."""
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='Admin access required.'), 403
+    stats = library_stats()
+    free_mb = free_disk_mb(LIBRARY_DIR)
+    return jsonify(ok=True, count=stats['count'], total_bytes=stats['total_bytes'],
+                   missing_files=stats['missing_files'],
+                   free_mb=round(free_mb) if free_mb is not None else None)
 
 @app.route('/api/trailer/library/<int:tid>')
 @require_permission('promo_generation')
