@@ -46,6 +46,8 @@ button,input{font:inherit}
   --soft:rgba(255,255,255,.04);
   --shadow:0 24px 60px rgba(0,0,0,.4);
   --hero-spot:radial-gradient(ellipse 80% 55% at 50% -10%, color-mix(in srgb,var(--teal) 18%,transparent), transparent 60%);
+  --section-spot-amber:radial-gradient(ellipse 60% 100% at 50% 0%, color-mix(in srgb,var(--amber) 10%,transparent), transparent 65%);
+  --section-spot-blue:radial-gradient(ellipse 60% 100% at 50% 0%, color-mix(in srgb,var(--blue) 10%,transparent), transparent 65%);
 }
 [data-theme="light"]{
   --ink:#161b26;
@@ -58,6 +60,8 @@ button,input{font:inherit}
   --soft:rgba(15,23,42,.03);
   --shadow:0 20px 50px rgba(15,23,42,.08);
   --hero-spot:radial-gradient(ellipse 80% 55% at 50% -10%, color-mix(in srgb,var(--teal) 12%,transparent), transparent 60%);
+  --section-spot-amber:radial-gradient(ellipse 60% 100% at 50% 0%, color-mix(in srgb,var(--amber) 7%,transparent), transparent 65%);
+  --section-spot-blue:radial-gradient(ellipse 60% 100% at 50% 0%, color-mix(in srgb,var(--blue) 7%,transparent), transparent 65%);
 }
 
 .wrap{max-width:1080px;margin:0 auto;padding:0 24px}
@@ -126,6 +130,20 @@ button,input{font:inherit}
   background:color-mix(in srgb,var(--teal) 10%,transparent);color:var(--teal)
 }
 .hero-note{font-size:12px;color:var(--muted);margin-top:8px}
+.hero-shot{margin:40px auto 0;max-width:760px;perspective:1200px}
+.hero-shot-frame{
+  border:1px solid var(--line);border-radius:14px;overflow:hidden;
+  background:var(--surface);box-shadow:var(--shadow);
+  transform:rotateX(2deg);
+}
+.hero-shot-bar{
+  display:flex;align-items:center;gap:8px;padding:10px 14px;
+  background:var(--card);border-bottom:1px solid var(--line)
+}
+.hero-shot-dot{width:10px;height:10px;border-radius:50%;flex:0 0 auto}
+.hero-shot-label{margin-left:8px;font-size:12px;color:var(--ink-soft);font-family:'JetBrains Mono',monospace}
+.hero-shot-frame img{display:block;width:100%;height:auto}
+@media (max-width:640px){ .hero-shot{margin-top:28px} }
 
 /* Inline auth (no modal, compact, only after CTA) */
 .auth-dock{
@@ -185,6 +203,8 @@ button,input{font:inherit}
 
 /* Sections */
 .section{padding:72px 0}
+.section-glow-amber{background:var(--section-spot-amber);background-repeat:no-repeat}
+.section-glow-blue{background:var(--section-spot-blue);background-repeat:no-repeat}
 .section-title{
   text-align:center;margin:0 0 12px;
   font-size:clamp(1.6rem,3.5vw,2.2rem);font-weight:700;letter-spacing:-.02em
@@ -213,8 +233,13 @@ button,input{font:inherit}
   padding:20px;border-radius:14px;border:1px solid var(--line);background:var(--soft)
 }
 .feature .num{
-  font:600 11px 'JetBrains Mono',monospace;color:var(--teal);margin-bottom:8px
+  width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;
+  margin-bottom:12px;color:#061014
 }
+.feature .num svg{width:18px;height:18px}
+.feature .num.c-teal{background:var(--teal)}
+.feature .num.c-amber{background:var(--amber);color:#2a1900}
+.feature .num.c-blue{background:var(--blue)}
 .feature h3{margin:0 0 6px;font-size:15px}
 .feature p{margin:0;font-size:13px;color:var(--ink-soft);line-height:1.5}
 
@@ -251,6 +276,18 @@ footer{
     <h1>Create promo plugs that <span>actually ship.</span></h1>
     <p class="hero-lead">{{ brand_tagline }}. Score scenes, shape the cut, add music and narration, then export a polished episodic promo — all self-hosted.</p>
     <p class="hero-note">Self-hosted · No cloud upload of your masters · Admin-approved accounts</p>
+
+    <div class="hero-shot">
+      <div class="hero-shot-frame">
+        <div class="hero-shot-bar">
+          <span class="hero-shot-dot" style="background:#ff5f57"></span>
+          <span class="hero-shot-dot" style="background:#febc2e"></span>
+          <span class="hero-shot-dot" style="background:#28c840"></span>
+          <span class="hero-shot-label">Generate Promo Plug — real output, not a mockup</span>
+        </div>
+        <img src="/static/landing-screenshot.png" alt="{{ brand_name }} delivery package and scene breakdown from a real render" loading="lazy">
+      </div>
+    </div>
 
     {# ---- Sign in (hidden until CTA) ---- #}
     <div class="auth-dock{% if auth_panel == 'signin' or pending_2fa or login_error %} open{% endif %}" id="dock-signin" role="region" aria-label="Sign in">
@@ -321,7 +358,7 @@ footer{
     </div>
   </section>
 
-  <section class="section" id="how">
+  <section class="section section-glow-amber" id="how">
     <h2 class="section-title">How it works</h2>
     <p class="section-sub">From episode ingest to a finished plug — without jumping between tools.</p>
     <div class="how-grid">
@@ -343,16 +380,16 @@ footer{
     </div>
   </section>
 
-  <section class="section" id="features">
+  <section class="section section-glow-blue" id="features">
     <h2 class="section-title">Everything your promo needs</h2>
     <p class="section-sub">Built around real broadcast workflow — not a generic highlight reel toy.</p>
     <div class="features">
-      <article class="feature"><div class="num">01</div><h3>Intelligent scene selection</h3><p>Score, preview, and lock the cut before you render.</p></article>
-      <article class="feature"><div class="num">02</div><h3>VO- &amp; music-led cuts</h3><p>Optional selection driven by narration or beat energy.</p></article>
-      <article class="feature"><div class="num">03</div><h3>Music, SFX &amp; voice</h3><p>Dedicated AI tools for beds, hits, and TTS narration.</p></article>
-      <article class="feature"><div class="num">04</div><h3>Show templates</h3><p>Reuse per-programme packages episode after episode.</p></article>
-      <article class="feature"><div class="num">05</div><h3>Self-hosted by design</h3><p>Media and models stay in your environment.</p></article>
-      <article class="feature"><div class="num">06</div><h3>Delivery packages</h3><p>MP4, ProRes, scene lists, and library history.</p></article>
+      <article class="feature"><div class="num c-teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></div><h3>Intelligent scene selection</h3><p>Score, preview, and lock the cut before you render.</p></article>
+      <article class="feature"><div class="num c-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V6l11-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg></div><h3>VO- &amp; music-led cuts</h3><p>Optional selection driven by narration or beat energy.</p></article>
+      <article class="feature"><div class="num c-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a4 4 0 0 1 4 4v5a4 4 0 0 1-8 0V7a4 4 0 0 1 4-4z"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/><path d="M8 21h8"/></svg></div><h3>Music, SFX &amp; voice</h3><p>Dedicated AI tools for beds, hits, and TTS narration.</p></article>
+      <article class="feature"><div class="num c-teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg></div><h3>Show templates</h3><p>Reuse per-programme packages episode after episode.</p></article>
+      <article class="feature"><div class="num c-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div><h3>Self-hosted by design</h3><p>Media and models stay in your environment.</p></article>
+      <article class="feature"><div class="num c-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9.5v5l4.5-2.5L10 9.5z"/></svg></div><h3>Delivery packages</h3><p>MP4, ProRes, scene lists, and library history.</p></article>
     </div>
   </section>
 
