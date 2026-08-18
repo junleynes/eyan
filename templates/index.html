@@ -549,6 +549,37 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
 .asset-section.open .asset-section-chevron{transform:rotate(90deg)}
 .asset-section-body{display:none;padding:4px 14px 14px}
 .asset-section.open .asset-section-body{display:block}
+/* ---- Output peak/channel meter (Generate Promo Plug result) ---- */
+.tr-video-row{display:flex;gap:10px;align-items:stretch}
+.peak-meter{
+  flex:0 0 auto;width:52px;display:flex;flex-direction:column;align-items:center;
+  background:var(--sunken,#0b1220);border:1px solid var(--line);border-radius:10px;padding:8px 6px
+}
+.peak-meter-ch{
+  position:relative;width:16px;flex:1;min-height:120px;border-radius:3px;overflow:hidden;
+  background:
+    linear-gradient(to top,
+      #2ecc71 0%, #2ecc71 60%,
+      #f1c40f 60%, #f1c40f 82%,
+      #e74c3c 82%, #e74c3c 100%);
+}
+.peak-meter-ch + .peak-meter-ch{margin-top:6px}
+/* The gradient above IS the meter's colour scale (green/yellow/red bands by
+   dB range) painted once as the channel's background; the "fill" is really
+   an OPAQUE MASK on top of it, shrinking from the top down to reveal only
+   the currently-lit portion -- simpler and cheaper per frame than repainting
+   a gradient or recolouring bars every animation frame. */
+.peak-meter-fill{
+  position:absolute;left:0;right:0;top:0;height:100%;
+  background:var(--sunken,#0b1220);
+  transition:height 60ms linear
+}
+.peak-meter-hold{
+  position:absolute;left:0;right:0;height:2px;background:#fff;
+  box-shadow:0 0 2px rgba(255,255,255,.8);
+  transition:top 120ms linear
+}
+.peak-meter-labels{display:flex;gap:22px;margin-top:6px;font-size:10px;opacity:.6;font-family:'JetBrains Mono',monospace}
 </style>
 </head>
 <body>
@@ -1000,18 +1031,22 @@ document.addEventListener("DOMContentLoaded", function(){
   <p id=vo-gating-note style="display:none;margin-top:-4px;margin-bottom:8px;font-size:12px;color:var(--amber)">"Narration (AI voice)" is unavailable — the Fish Audio server is not reachable.</p>
   <div id=vo-upload-area style="display:none">
     <div class="browse-row">
-      {% if allow_local_upload %}<input type=file name=vo_upload accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" data-net-field="vo_upload">{% endif %}
+      {% if allow_local_upload %}<input type=file name=vo_upload accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" data-net-field="vo_upload" onchange="cardVoFileChosen(this,'vo_upload')">{% endif %}
       <button type=button class="browse-btn" onclick="openNetworkBrowser('vo_upload','vo','VO')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
     </div>
     <input type=hidden id=vo_upload_network name=vo_upload_network value="">
   <input type=hidden id=vo_upload_skip_template name=vo_upload_skip_template value="">
     <span class="net-file-chip" id=vo_upload_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('vo_upload')">&#10005;</span></span>
+    <audio id="vo_upload_player" controls style="display:none;width:100%;max-width:420px;height:32px;margin:8px 0 4px"></audio>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0">
       <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Trim uploaded audio — start (s):</span>
-      <input type=number name=vo_trim_start value=0 min=0 step=0.5 style="width:80px"></span>
+      <input type=number name=vo_trim_start id="vo_upload_start" value=0 min=0 step=0.5 style="width:80px"></span>
       <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">end (s, blank=to end):</span>
-      <input type=number name=vo_trim_end min=0 step=0.5 style="width:80px"></span>
+      <input type=number name=vo_trim_end id="vo_upload_end" min=0 step=0.5 style="width:80px"></span>
+      <button type=button class="btn" style="padding:5px 10px;font-size:12px" onclick="cardVoSetPoint('vo_upload','start')">Set in from player</button>
+      <button type=button class="btn" style="padding:5px 10px;font-size:12px" onclick="cardVoSetPoint('vo_upload','end')">Set out from player</button>
     </div>
+    <span id="vo_upload_preview_note" style="font-size:12px;opacity:.75;display:block;margin:-2px 0 6px"></span>
     <p style="margin-top:-2px;margin-bottom:8px;font-size:12px;opacity:.75">Selects which portion of the uploaded file to use as narration. This is separate from "Start at" below, which places the (already-trimmed) narration on the trailer's own timeline.</p>
   </div>
   <div id=vo-tts-area style="display:none">
@@ -3917,6 +3952,86 @@ function downloadSceneListCsv(d){
   setTimeout(function(){ URL.revokeObjectURL(a.href) }, 2000)
 }
 
+// ---- Output peak/channel meter ----
+// A real dBFS-style peak meter (green/yellow/red bands, decaying peak-hold
+// line) on the final rendered promo's own audio, not a generic waveform or
+// VU-style average -- reads actual sample peaks off the real <video> element
+// via the Web Audio API, split into genuinely separate L/R channels.
+var _peakMeterState = null  // holds the previous meter's cleanup handles, if any
+function attachPeakMeter(videoEl){
+  // renderTrailerResult() replaces #tr-video's entire innerHTML on every call
+  // (different trailer, re-preview, reopening one from history) -- each call
+  // hands this a genuinely new <video> element, but the PREVIOUS meter's
+  // AudioContext and animation loop are still alive and pointed at an
+  // element that's no longer in the DOM unless explicitly torn down here.
+  if(_peakMeterState){
+    cancelAnimationFrame(_peakMeterState.raf)
+    try{ _peakMeterState.ctx.close() }catch(e){}
+    _peakMeterState = null
+  }
+  if(!videoEl) return
+  var AudioCtx = window.AudioContext || window.webkitAudioContext
+  if(!AudioCtx) return  // Web Audio unavailable -- meter just doesn't appear, rest of the page is unaffected
+  var fillL = document.getElementById('pm-fill-l'), holdL = document.getElementById('pm-hold-l')
+  var fillR = document.getElementById('pm-fill-r'), holdR = document.getElementById('pm-hold-r')
+  if(!fillL || !fillR) return
+  try{
+    var ctx = new AudioCtx()
+    var source = ctx.createMediaElementSource(videoEl)
+    // Two separate branches from the same source: one feeds the analysers
+    // for METERING, the other goes to the speakers so the video is actually
+    // audible. createMediaElementSource() reroutes the element's audio
+    // entirely once called -- skipping this second connection would leave
+    // the video LOOKING like it's playing while genuinely silent, since the
+    // browser stops sending its audio anywhere on its own once a
+    // MediaElementSourceNode exists for it.
+    source.connect(ctx.destination)
+    var splitter = ctx.createChannelSplitter(2)
+    source.connect(splitter)
+    var analyserL = ctx.createAnalyser(); analyserL.fftSize = 512
+    var analyserR = ctx.createAnalyser(); analyserR.fftSize = 512
+    splitter.connect(analyserL, 0)
+    splitter.connect(analyserR, 1)  // silently reads as 0 for genuinely mono sources -- not an error case to guard
+    var bufL = new Float32Array(analyserL.fftSize)
+    var bufR = new Float32Array(analyserR.fftSize)
+
+    var FLOOR_DB = -60  // anything quieter than this reads as the bottom of the meter
+    var HOLD_DECAY_DB_PER_SEC = 18  // how fast the white peak-hold line falls back down
+    var held = {l: FLOOR_DB, r: FLOOR_DB}
+    var lastT = performance.now()
+
+    function peakDb(buf, analyser){
+      analyser.getFloatTimeDomainData(buf)
+      var peak = 0
+      for(var i=0;i<buf.length;i++){ var a = Math.abs(buf[i]); if(a>peak) peak = a }
+      if(peak <= 0) return FLOOR_DB
+      return Math.max(FLOOR_DB, 20*Math.log10(peak))
+    }
+    function dbToPercent(db){ return Math.max(0, Math.min(100, (db - FLOOR_DB) / (0 - FLOOR_DB) * 100)) }
+
+    function frame(now){
+      var dt = (now - lastT) / 1000
+      lastT = now
+      var dL = peakDb(bufL, analyserL), dR = peakDb(bufR, analyserR)
+      held.l = dL >= held.l ? dL : Math.max(FLOOR_DB, held.l - HOLD_DECAY_DB_PER_SEC*dt)
+      held.r = dR >= held.r ? dR : Math.max(FLOOR_DB, held.r - HOLD_DECAY_DB_PER_SEC*dt)
+      // Fill is an opaque mask shrinking from the top -- 100% level means 0%
+      // masked (fully revealed), so height is inverted from the level itself.
+      fillL.style.height = (100 - dbToPercent(dL)) + '%'
+      fillR.style.height = (100 - dbToPercent(dR)) + '%'
+      holdL.style.top = (100 - dbToPercent(held.l)) + '%'
+      holdR.style.top = (100 - dbToPercent(held.r)) + '%'
+      _peakMeterState.raf = requestAnimationFrame(frame)
+    }
+    _peakMeterState = {ctx: ctx, raf: requestAnimationFrame(frame)}
+  }catch(e){
+    // A Web Audio failure here (unsupported browser, suspended context,
+    // whatever) shouldn't take the rest of the result panel down with it --
+    // the video and delivery package still need to work regardless.
+    console.warn('Peak meter unavailable:', e)
+  }
+}
+
 function renderTrailerResult(d){
   if(d.error){ showJobError(d); return }
   var srcLabel=function(s){return {woosh:'AI-generated (Woosh)',ai_generated:'AI-generated (ACE-Step)',uploaded:'uploaded',synth_fallback:'placeholder synth (Woosh/ACE-Step unavailable)',tts:'text-to-speech',none:'none'}[s]||s}
@@ -3977,7 +4092,14 @@ function renderTrailerResult(d){
   })
 
   document.getElementById('tr-video').innerHTML =
-    '<video controls style="max-width:100%;border-radius:10px;background:#000"><source src="'+d.trailer_url+'" type="video/mp4"></video>'+
+    '<div class="tr-video-row">'+
+      '<video id="tr-video-el" controls style="max-width:100%;border-radius:10px;background:#000;flex:1;min-width:0"><source src="'+d.trailer_url+'" type="video/mp4"></video>'+
+      '<div id="tr-peak-meter" class="peak-meter" aria-label="Output level meter">'+
+        '<div class="peak-meter-ch"><div class="peak-meter-fill" id="pm-fill-l"></div><div class="peak-meter-hold" id="pm-hold-l"></div></div>'+
+        '<div class="peak-meter-ch"><div class="peak-meter-fill" id="pm-fill-r"></div><div class="peak-meter-hold" id="pm-hold-r"></div></div>'+
+        '<div class="peak-meter-labels"><span>L</span><span>R</span></div>'+
+      '</div>'+
+    '</div>'+
     '<div class="delivery-pack">'+
       '<div class="delivery-title">Delivery package</div>'+
       '<div class="delivery-name">Suggested name: <code>'+esc(suggest)+'</code></div>'+
@@ -3989,6 +4111,7 @@ function renderTrailerResult(d){
     '</div>'
   var csvBtn = document.getElementById('tr-scene-csv-btn')
   if(csvBtn) csvBtn.addEventListener('click', function(){ downloadSceneListCsv(d) })
+  attachPeakMeter(document.getElementById('tr-video-el'))
 
   var rows=''
   ;(d.scenes||[]).forEach(function(s){
