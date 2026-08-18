@@ -1104,6 +1104,13 @@ document.addEventListener("DOMContentLoaded", function(){
     <option value=war>War</option>
     <option value=western>Western</option>
   </select>
+    <label>Delivery format</label>
+    <select name=delivery_format id=delivery-format-select onchange="updateJobSummary()">
+      <option value=mp4_high selected>MP4 (H.264 High Profile)</option>
+      <option value=prores_hq_2997>Apple ProRes 422 HQ — 29.97fps</option>
+      <option value=prores_hq_2398>Apple ProRes 422 HQ — 23.976fps</option>
+      <option value=avci100i>AVC-Intra 100i (approximation)</option>
+    </select>
   </div><!-- /.promo-essentials -->
 
   <div id=generator-settings>
@@ -3951,33 +3958,35 @@ function renderTrailerResult(d){
   var stamp = new Date().toISOString().slice(0,10)
   var suggest = baseName + '_promo_' + (d.trailer_length||'') + 's_' + stamp
 
+  // One row, not two -- these used to also duplicate as a <select> + a
+  // separate "Download selected format" link below, both hitting the exact
+  // same URLs. The format picked upfront on the generate form (d.delivery_format)
+  // is surfaced here as the primary button; the others stay one click away
+  // as secondary buttons rather than needing a second control to reach them.
+  // Every one of these still encodes lazily on first click -- this only
+  // changes which button is visually primary, not when the real work happens.
+  var FORMAT_LABELS = {
+    mp4_high: 'MP4 master', prores_hq_2997: 'ProRes 29.97',
+    prores_hq_2398: 'ProRes 23.976', avci100i: 'AVC-Intra ~'
+  }
+  var chosen = FORMAT_LABELS[d.delivery_format] ? d.delivery_format : 'mp4_high'
+  var formatRow = '<a class="btn btn-primary-promo" style="text-decoration:none" href="'+dlUrl(chosen)+'">'+FORMAT_LABELS[chosen]+'</a>'
+  Object.keys(FORMAT_LABELS).forEach(function(fmt){
+    if(fmt === chosen) return
+    formatRow += '<a class="btn btn-secondary-promo" style="text-decoration:none" href="'+dlUrl(fmt)+'">'+FORMAT_LABELS[fmt]+'</a>'
+  })
+
   document.getElementById('tr-video').innerHTML =
     '<video controls style="max-width:100%;border-radius:10px;background:#000"><source src="'+d.trailer_url+'" type="video/mp4"></video>'+
     '<div class="delivery-pack">'+
       '<div class="delivery-title">Delivery package</div>'+
       '<div class="delivery-name">Suggested name: <code>'+esc(suggest)+'</code></div>'+
       '<div class="delivery-row">'+
-        '<a class="btn btn-primary-promo" style="text-decoration:none" href="'+dlUrl('mp4_high')+'">MP4 master</a>'+
-        '<a class="btn btn-secondary-promo" style="text-decoration:none" href="'+dlUrl('prores_hq_2997')+'">ProRes 29.97</a>'+
-        '<a class="btn btn-secondary-promo" style="text-decoration:none" href="'+dlUrl('prores_hq_2398')+'">ProRes 23.976</a>'+
-        '<a class="btn btn-secondary-promo" style="text-decoration:none" href="'+dlUrl('avci100i')+'">AVC-Intra ~</a>'+
+        formatRow+
         '<button type="button" class="btn btn-secondary-promo" id="tr-scene-csv-btn">Scene list CSV</button>'+
-      '</div>'+
-      '<div class="delivery-row" style="margin-top:8px">'+
-        '<select id=tr-export-format style="width:auto">'+
-          '<option value=mp4_high selected>MP4 (H.264 High Profile)</option>'+
-          '<option value=prores_hq_2997>Apple ProRes 422 HQ \u2014 29.97fps</option>'+
-          '<option value=prores_hq_2398>Apple ProRes 422 HQ \u2014 23.976fps</option>'+
-          '<option value=avci100i>AVC-Intra 100i (approximation)</option>'+
-        '</select>'+
-        '<a href="'+dlUrl('mp4_high')+'" id=tr-download-link class="btn" style="display:inline-block;text-decoration:none">Download selected format</a>'+
         '<button type="button" class="btn btn-secondary-promo" onclick="submitTrailer(true)">Re-preview same setup</button>'+
       '</div>'+
     '</div>'
-  var fmtEl = document.getElementById('tr-export-format')
-  if(fmtEl) fmtEl.addEventListener('change', function(){
-    document.getElementById('tr-download-link').href = dlUrl(this.value)
-  })
   var csvBtn = document.getElementById('tr-scene-csv-btn')
   if(csvBtn) csvBtn.addEventListener('click', function(){ downloadSceneListCsv(d) })
 

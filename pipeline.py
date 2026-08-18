@@ -3609,6 +3609,9 @@ def api_trailer():
     mode_includes_stt = True
     genre = request.form.get('genre', '').strip()
     scoring_mode = request.form.get('scoring_mode', 'generate')
+    delivery_format = request.form.get('delivery_format', 'mp4_high')
+    if delivery_format not in EXPORT_FORMATS:
+        delivery_format = 'mp4_high'
     trailer_length = int(request.form.get('trailer_length', 15))
     if trailer_length not in (15, 30, 45, 60):
         trailer_length = 30
@@ -4015,6 +4018,7 @@ def api_trailer():
                   # this is the only place ownership can be read from the login.
                   user_id=session.get('user_id'), username=session.get('username'),
                   trailer_length=trailer_length, max_scene_dur=max_scene_dur,
+                  delivery_format=delivery_format,
                   scene_threshold=scene_threshold, min_scene_len_sec=min_scene_len_sec,
                   detector=detector, adaptive_threshold=adaptive_threshold,
                   priority_prompt=priority_prompt,
@@ -5758,6 +5762,7 @@ def select_scenes_vo_led(scenes_data, vo_text, trailer_duration, max_scene_dur, 
 def _run_trailer_job(jid, params):
     path = params['path']; orig_name = params['orig_name']; mode = params['mode']
     genre = params['genre']; scoring_mode = params['scoring_mode']; trailer_length = params['trailer_length']
+    delivery_format = params.get('delivery_format', 'mp4_high')
     max_scene_dur = params.get('max_scene_dur')
     scene_threshold = params.get('scene_threshold', 30.0)
     min_scene_len_sec = params.get('min_scene_len_sec', 0.5)
@@ -7269,6 +7274,7 @@ def _run_trailer_job(jid, params):
         scenes_duration=round(total_sel, 1),
         video_duration=round(video_duration, 1),
         trailer_length=trailer_length,
+        delivery_format=delivery_format,
         bgm_source=bgm_source, sfx_source=sfx_source,
         vo_source=vo_source, vo_error=vo_error, sync_beats=sync_beats,
         whisper_enhance=whisper_enhance,
