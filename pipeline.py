@@ -1574,6 +1574,16 @@ EXPORT_FORMATS = {
     'avci100i':        {'ext': 'mov', 'label': 'AVC-Intra 100i (H.264 Intra approximation)'},
 }
 
+def resolve_delivery_format(requested):
+    """Validates a requested delivery-format key against EXPORT_FORMATS,
+    falling back to the MP4 master rather than raising -- an unrecognised
+    or missing value (a stale form, a hand-crafted request, a future format
+    key that got renamed) should degrade to a safe, always-exportable
+    default, not break the render. Pulled out of the generate route as its
+    own function specifically so it's unit-testable on its own, matching
+    how save_production_defaults' validation already works the same way."""
+    return requested if requested in EXPORT_FORMATS else 'mp4_high'
+
 def _detect_silence_intervals(audio_path, noise_db=-30, min_dur=0.3, timeout=120):
     """Runs ffmpeg's silencedetect filter and parses stderr for silence_start/silence_end
     pairs. Returns a list of (start, end) SILENT intervals in audio_path. A silence_start
@@ -3616,9 +3626,7 @@ def api_trailer():
     mode_includes_stt = True
     genre = request.form.get('genre', '').strip()
     scoring_mode = request.form.get('scoring_mode', 'generate')
-    delivery_format = request.form.get('delivery_format', 'mp4_high')
-    if delivery_format not in EXPORT_FORMATS:
-        delivery_format = 'mp4_high'
+    delivery_format = resolve_delivery_format(request.form.get('delivery_format', 'mp4_high'))
     trailer_length = int(request.form.get('trailer_length', 15))
     if trailer_length not in (15, 30, 45, 60):
         trailer_length = 30
