@@ -574,15 +574,15 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
   flex:0 0 auto;width:52px;display:flex;flex-direction:column;align-items:center;
   background:var(--sunken,#0b1220);border:1px solid var(--line);border-radius:10px;padding:8px 6px
 }
+.peak-meter-bars{display:flex;flex-direction:row;gap:6px;flex:1;width:100%;justify-content:center}
 .peak-meter-ch{
-  position:relative;width:16px;flex:1;min-height:120px;border-radius:3px;overflow:hidden;
+  position:relative;width:16px;flex:0 0 auto;height:100%;min-height:120px;border-radius:3px;overflow:hidden;
   background:
     linear-gradient(to top,
       #2ecc71 0%, #2ecc71 60%,
       #f1c40f 60%, #f1c40f 82%,
       #e74c3c 82%, #e74c3c 100%);
 }
-.peak-meter-ch + .peak-meter-ch{margin-top:6px}
 /* The gradient above IS the meter's colour scale (green/yellow/red bands by
    dB range) painted once as the channel's background; the "fill" is really
    an OPAQUE MASK on top of it, shrinking from the top down to reveal only
@@ -4161,30 +4161,32 @@ function renderTrailerResult(d){
   var stamp = new Date().toISOString().slice(0,10)
   var suggest = baseName + '_promo_' + (d.trailer_length||'') + 's_' + stamp
 
-  // One row, not two -- these used to also duplicate as a <select> + a
-  // separate "Download selected format" link below, both hitting the exact
-  // same URLs. The format picked upfront on the generate form (d.delivery_format)
-  // is surfaced here as the primary button; the others stay one click away
-  // as secondary buttons rather than needing a second control to reach them.
-  // Every one of these still encodes lazily on first click -- this only
-  // changes which button is visually primary, not when the real work happens.
+  // Select, don't download-on-click: buttons mark which format is wanted
+  // (only one active at a time, defaulting to whatever was chosen at
+  // generate time), and a single "Download selected format" button
+  // triggers the actual download of whichever one is currently marked --
+  // so a stray click on a format button can't kick off an encode/download
+  // by accident. Each format still only encodes lazily on first real
+  // download, same as before; this only changes when that click happens.
   var FORMAT_LABELS = {
     mp4_high: 'MP4 master', prores_hq_2997: 'ProRes 29.97',
     prores_hq_2398: 'ProRes 23.976', avci100i: 'AVC-Intra ~'
   }
-  var chosen = FORMAT_LABELS[d.delivery_format] ? d.delivery_format : 'mp4_high'
-  var formatRow = '<a class="btn btn-primary-promo" style="text-decoration:none" href="'+dlUrl(chosen)+'">'+FORMAT_LABELS[chosen]+'</a>'
-  Object.keys(FORMAT_LABELS).forEach(function(fmt){
-    if(fmt === chosen) return
-    formatRow += '<a class="btn btn-secondary-promo" style="text-decoration:none" href="'+dlUrl(fmt)+'">'+FORMAT_LABELS[fmt]+'</a>'
-  })
+  var chosenFormat = FORMAT_LABELS[d.delivery_format] ? d.delivery_format : 'mp4_high'
+  var formatRow = Object.keys(FORMAT_LABELS).map(function(fmt){
+    var active = fmt === chosenFormat
+    return '<button type="button" class="btn ' + (active ? 'btn-primary-promo' : 'btn-secondary-promo') +
+           ' fmt-select-btn" data-fmt="' + fmt + '" aria-pressed="' + active + '">' + FORMAT_LABELS[fmt] + '</button>'
+  }).join('')
 
   document.getElementById('tr-video').innerHTML =
     '<div class="tr-video-row">'+
       '<video id="tr-video-el" controls style="max-width:100%;border-radius:10px;background:#000;flex:1;min-width:0"><source src="'+d.trailer_url+'" type="video/mp4"></video>'+
       '<div id="tr-peak-meter" class="peak-meter" aria-label="Output level meter">'+
-        '<div class="peak-meter-ch"><div class="peak-meter-fill" id="pm-fill-l"></div><div class="peak-meter-hold" id="pm-hold-l"></div></div>'+
-        '<div class="peak-meter-ch"><div class="peak-meter-fill" id="pm-fill-r"></div><div class="peak-meter-hold" id="pm-hold-r"></div></div>'+
+        '<div class="peak-meter-bars">'+
+          '<div class="peak-meter-ch"><div class="peak-meter-fill" id="pm-fill-l"></div><div class="peak-meter-hold" id="pm-hold-l"></div></div>'+
+          '<div class="peak-meter-ch"><div class="peak-meter-fill" id="pm-fill-r"></div><div class="peak-meter-hold" id="pm-hold-r"></div></div>'+
+        '</div>'+
         '<div class="peak-meter-labels"><span>L</span><span>R</span></div>'+
       '</div>'+
     '</div>'+
@@ -4193,10 +4195,24 @@ function renderTrailerResult(d){
       '<div class="delivery-name">Suggested name: <code>'+esc(suggest)+'</code></div>'+
       '<div class="delivery-row">'+
         formatRow+
+      '</div>'+
+      '<div class="delivery-row" style="margin-top:8px">'+
+        '<a id="tr-download-selected" class="btn btn-primary-promo" style="text-decoration:none" href="'+dlUrl(chosenFormat)+'">Download selected format</a>'+
         '<button type="button" class="btn btn-secondary-promo" id="tr-scene-csv-btn">Scene list CSV</button>'+
         '<button type="button" class="btn btn-secondary-promo" onclick="submitTrailer(true)">Re-preview same setup</button>'+
       '</div>'+
     '</div>'
+  document.querySelectorAll('.fmt-select-btn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      document.querySelectorAll('.fmt-select-btn').forEach(function(b){
+        b.classList.remove('btn-primary-promo'); b.classList.add('btn-secondary-promo')
+        b.setAttribute('aria-pressed', 'false')
+      })
+      btn.classList.remove('btn-secondary-promo'); btn.classList.add('btn-primary-promo')
+      btn.setAttribute('aria-pressed', 'true')
+      document.getElementById('tr-download-selected').href = dlUrl(btn.getAttribute('data-fmt'))
+    })
+  })
   var csvBtn = document.getElementById('tr-scene-csv-btn')
   if(csvBtn) csvBtn.addEventListener('click', function(){ downloadSceneListCsv(d) })
   attachPeakMeter(document.getElementById('tr-video-el'))
