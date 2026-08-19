@@ -698,6 +698,8 @@ PRODUCTION_DEFAULT_SPEC = {
                           'help': 'Ollama model used to rate scene content. Must be a vision-capable model already pulled on the Ollama server.'},
     'max_video_size_mb': {'default': 8000.0, 'type': 'float', 'label': 'Max source video size (MB)',
                           'help': 'Rejects a HIRES source video larger than this, whether picked from a network share or uploaded directly. Set to 0 for no limit.'},
+    'unload_vision_after_scoring': {'default': True, 'type': 'bool', 'label': 'Unload AI Vision model after scoring',
+                          'help': "Frees GPU memory right after scoring finishes, before dialogue transcription starts. Turn off only if Ollama and faster-whisper run on separate GPUs (or you have VRAM to spare) and you'd rather keep the vision model warm for faster back-to-back renders."},
 }
 
 def load_production_defaults():
@@ -3184,6 +3186,38 @@ def api_scene_clip():
 
 OLLAMA_URL = os.environ.get('OLLAMA_URL', 'http://localhost:11434')
 
+def unload_ollama_model(model):
+    """Asks Ollama to unload `model` from VRAM right now, rather than
+    waiting out its normal keep-alive window (a few minutes by default).
+
+    Exists specifically for a shared-GPU deployment: if Ollama (vision
+    scoring) and a separate faster-whisper server sit on the same card,
+    Ollama holding the vision model warm after scoring finishes can leave
+    too little free VRAM for whisper to load its own model right after --
+    manifesting as whisper hanging shortly after vision scoring completes,
+    not as a clean out-of-memory error.
+
+    Deliberately NOT applied per scoring call -- a job scores dozens of
+    frames via concurrent /api/generate calls, and unloading between each
+    one would force a full model reload before every single frame, turning
+    a few seconds of inference into minutes of pure reload overhead. This
+    is called exactly once, after a job's ENTIRE scoring pass is done and
+    before whatever needs the freed VRAM next (transcription) begins --
+    the model stays warm and fast for the whole batch, then explicitly
+    steps aside right when it's actually finished being needed.
+
+    Ollama's documented way to trigger this: a normal /api/generate call
+    with keep_alive=0 and no prompt unloads the model without running any
+    inference. Best-effort -- a failure here shouldn't fail the render;
+    Ollama's own keep-alive timeout is still the fallback if this doesn't
+    get through."""
+    if not model:
+        return
+    try:
+        requests.post(f'{OLLAMA_URL}/api/generate', json={'model': model, 'keep_alive': 0}, timeout=15)
+    except Exception as e:
+        print(f'Could not ask Ollama to unload {model} early (non-fatal, keep-alive timeout still applies): {e}')
+
 @app.route('/api/vision/analyze', methods=['POST'])
 @require_permission('scene_detection')
 def api_vision():
@@ -3267,6 +3301,12 @@ def api_vision():
         results.append(entry)
 
     cap.release()
+    # Same reasoning as the main render pipeline's equivalent call: this tool
+    # is a plausible thing to run right before someone tries Speech to Text
+    # on the same video, so it gets the same "free the GPU the moment this
+    # scoring pass is actually done" treatment for consistency.
+    if load_production_defaults().get('unload_vision_after_scoring', True):
+        unload_ollama_model(model)
     return jsonify(frames_analyzed=len(results), total_scenes=len(scenes), results=results,
                     video_filename=video_filename)
 
@@ -6371,6 +6411,16 @@ def _run_trailer_job(jid, params):
             # reasonable default for a typical self-hosted single-GPU setup.
             with ThreadPoolExecutor(max_workers=min(AI_SCORE_WORKERS, n_scenes_ai or 1)) as ex:
                 list(ex.map(lambda pair: _score_one_ai(*pair), enumerate(ai_pool)))
+            # Scoring for this job is now genuinely finished -- every frame's
+            # /api/generate call above has returned, since list(ex.map(...))
+            # blocks until they all have. Transcription (faster-whisper,
+            # often sharing this GPU) starts shortly below; freeing the
+            # vision model's VRAM right now, rather than leaving it to
+            # Ollama's own keep-alive window, is specifically what this
+            # setting exists for. See unload_ollama_model()'s docstring for
+            # why this is a single call here rather than one per frame above.
+            if load_production_defaults().get('unload_vision_after_scoring', True):
+                unload_ollama_model(model)
         else:
             for s in scenes_data:
                 s['total_score'] = s['quality_score']
