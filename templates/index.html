@@ -412,8 +412,9 @@ p{color:var(--ink-dim);font-size:13px;line-height:1.65;margin:8px 0}
   padding:9px 10px;cursor:pointer;border-radius:7px;
 }
 .net-modal-row:hover{background:rgba(52,230,197,.08)}
-.net-modal-row .row-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.net-modal-row .row-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .net-modal-row .row-size{opacity:.55;flex-shrink:0;font-size:11px}
+.net-multi-check{flex:0 0 auto;width:15px;height:15px;cursor:pointer;accent-color:var(--accent,#4f8cff)}
 .net-modal-empty{padding:20px;text-align:center;opacity:.6}
 .net-fav-star{
   background:transparent;border:none;cursor:pointer;font-size:18px;line-height:1;
@@ -1010,6 +1011,10 @@ document.addEventListener("DOMContentLoaded", function(){
     </div>
     <div id="tr-network-favorites" class="net-modal-favorites" style="display:none"></div>
     <div id=tr-network-list class="net-modal-list" style="padding:0;max-height:280px">Loading&hellip;</div>
+    <div id="tr-network-combine-bar" style="display:none;padding:10px;border-top:1px solid var(--line);align-items:center;gap:10px">
+      <span id="tr-network-combine-status" style="font-size:12px;flex:1"></span>
+      <button type="button" class="btn btn-primary-promo" id="tr-network-combine-btn" onclick="combineTrNetworkSelection()">Combine selected</button>
+    </div>
   </div>
   <div id=tr-file-preview class="growing-preview">
     <div style="display:flex;gap:14px;align-items:flex-start;padding:12px">
@@ -2197,8 +2202,90 @@ document.addEventListener("DOMContentLoaded", function(){
       .catch(function(e){ networkList.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + e + '</div>' })
   }
 
+  var trNetworkSelected = []  // [{name, size}] -- cleared on every folder navigation; combining spans one folder's listing, not files picked across different folders
+
+  function updateTrNetworkCombineBar(){
+    var bar = document.getElementById('tr-network-combine-bar')
+    var status = document.getElementById('tr-network-combine-status')
+    var btn = document.getElementById('tr-network-combine-btn')
+    if(!bar) return
+    if(trNetworkSelected.length < 2){ bar.style.display = 'none'; return }
+    bar.style.display = 'flex'
+    var exts = trNetworkSelected.map(function(f){ return f.name.slice(f.name.lastIndexOf('.')).toLowerCase() })
+    var sameFormat = exts.every(function(e){ return e === exts[0] })
+    if(sameFormat){
+      status.textContent = trNetworkSelected.length + ' files selected \u00b7 same format \u2014 will be combined in the order shown'
+      status.style.color = ''
+      btn.disabled = false
+    }else{
+      status.textContent = trNetworkSelected.length + ' files selected, but formats differ (' +
+        Array.from(new Set(exts)).join(', ') + ') \u2014 select files of the same format to combine'
+      status.style.color = 'var(--tally)'
+      btn.disabled = true
+    }
+  }
+
+  function combineTrNetworkSelection(){
+    if(trNetworkSelected.length < 2) return
+    var status = document.getElementById('tr-network-combine-status')
+    var names = trNetworkSelected.map(function(f){ return f.name })
+    status.textContent = 'Fetching ' + names.length + ' files\u2026'
+    document.getElementById('tr-network-combine-btn').disabled = true
+
+    // Each file has to actually be staged (copied off the network share)
+    // before the server can combine them -- /api/network/fetch already does
+    // exactly that for a single pick, so this just calls it once per
+    // selected file, in order, then hands the resulting staged names to
+    // /api/network/combine.
+    var staged = []
+    function fetchNext(i){
+      if(i >= names.length){
+        status.textContent = 'Combining\u2026'
+        fetch('/api/network/combine', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({files: staged})
+        }).then(function(r){ return r.json() }).then(function(d){
+          if(!d.ok){
+            status.textContent = d.error || 'Could not combine the selected files.'
+            status.style.color = 'var(--tally)'
+            document.getElementById('tr-network-combine-btn').disabled = false
+            return
+          }
+          showNetworkPreview(d.filename, d.orig_name, d.size)
+        }).catch(function(e){
+          status.textContent = 'Error combining files: ' + e
+          status.style.color = 'var(--tally)'
+          document.getElementById('tr-network-combine-btn').disabled = false
+        })
+        return
+      }
+      status.textContent = 'Fetching ' + (i+1) + ' of ' + names.length + '\u2026'
+      fetch('/api/network/fetch', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name: names[i], category: 'hires', subpath: trNetworkSubpath || ''})
+      }).then(function(r){ return r.json() }).then(function(d){
+        if(!d.ok){
+          status.textContent = 'Could not fetch ' + names[i] + ': ' + d.error
+          status.style.color = 'var(--tally)'
+          document.getElementById('tr-network-combine-btn').disabled = false
+          return
+        }
+        staged.push(d.filename)
+        fetchNext(i + 1)
+      }).catch(function(e){
+        status.textContent = 'Error fetching ' + names[i] + ': ' + e
+        status.style.color = 'var(--tally)'
+        document.getElementById('tr-network-combine-btn').disabled = false
+      })
+    }
+    fetchNext(0)
+  }
+  window.combineTrNetworkSelection = combineTrNetworkSelection
+
   function renderTrNetworkList(folders, files, subpath){
     networkList.innerHTML = ''
+    trNetworkSelected = []
+    updateTrNetworkCombineBar()
     if(subpath){
       var up = document.createElement('div')
       up.className = 'net-modal-row'
@@ -2222,7 +2309,28 @@ document.addEventListener("DOMContentLoaded", function(){
     files.forEach(function(f){
       var row = document.createElement('div')
       row.className = 'net-modal-row'
-      row.innerHTML = '<span class="row-name">' + f.name + '</span><span class="row-size">' + humanSize(f.size) + '</span>'
+      var cb = document.createElement('input')
+      cb.type = 'checkbox'
+      cb.className = 'net-multi-check'
+      cb.title = 'Select to combine with other files'
+      cb.addEventListener('click', function(e){ e.stopPropagation() })
+      cb.addEventListener('change', function(){
+        if(cb.checked){
+          trNetworkSelected.push({name: f.name, size: f.size})
+        }else{
+          trNetworkSelected = trNetworkSelected.filter(function(sel){ return sel.name !== f.name })
+        }
+        updateTrNetworkCombineBar()
+      })
+      row.appendChild(cb)
+      var nameSpan = document.createElement('span')
+      nameSpan.className = 'row-name'
+      nameSpan.textContent = f.name
+      row.appendChild(nameSpan)
+      var sizeSpan = document.createElement('span')
+      sizeSpan.className = 'row-size'
+      sizeSpan.textContent = humanSize(f.size)
+      row.appendChild(sizeSpan)
       row.addEventListener('click', function(){ pickTrNetworkFile(f.name, subpath) })
       networkList.appendChild(row)
     })

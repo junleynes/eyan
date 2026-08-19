@@ -555,6 +555,21 @@ def fetch_network_file(name, category=DEFAULT_NETWORK_CATEGORY, subpath=''):
     sub = _sanitize_subpath(subpath)
     _network_session(category)
     remote_path = root + ('\\' + sub if sub else '') + '\\' + name
+    # Checked via a stat, before opening/copying anything -- rejecting a file
+    # that's over the configured limit shouldn't cost the time and bandwidth
+    # of pulling it across the network first. Only enforced for the HIRES
+    # category (the source video this limit is actually about); other
+    # categories (music, SFX, cards) aren't video and were never in scope
+    # for a "max video size" setting.
+    if category == 'hires':
+        try:
+            size = smbclient.stat(remote_path).st_size
+        except Exception:
+            size = None  # stat failing shouldn't block the fetch -- let the real copy surface the real error
+        if size is not None:
+            ok, err = check_video_size(size, label=name)
+            if not ok:
+                raise ValueError(err)
     local_name = f'net_{int(time.time())}_{secure_filename(name)}'
     local_path = os.path.join(app.config['UPLOAD_FOLDER'], local_name)
     with smbclient.open_file(remote_path, mode='rb') as rf, open(local_path, 'wb') as lf:
@@ -681,6 +696,8 @@ PRODUCTION_DEFAULT_SPEC = {
                           'help': 'Only used when the detector above is set to adaptive.'},
     'vision_model':      {'default': 'qwen3-vl:8b', 'type': 'text', 'label': 'AI Vision model',
                           'help': 'Ollama model used to rate scene content. Must be a vision-capable model already pulled on the Ollama server.'},
+    'max_video_size_mb': {'default': 8000.0, 'type': 'float', 'label': 'Max source video size (MB)',
+                          'help': 'Rejects a HIRES source video larger than this, whether picked from a network share or uploaded directly. Set to 0 for no limit.'},
 }
 
 def load_production_defaults():
@@ -711,6 +728,31 @@ def load_production_defaults():
         except Exception as e:
             print(f'Production defaults load error ({PRODUCTION_DEFAULTS_FILE}): {e}')
     return values
+
+def video_size_limit_bytes():
+    """Current max-source-video-size limit in bytes, or None for no limit
+    (0 or unset in Config > Production). Bytes rather than MB so every call
+    site can compare directly against a real file size without repeating
+    the unit conversion."""
+    mb = load_production_defaults().get('max_video_size_mb', 0)
+    return int(mb * 1024 * 1024) if mb and mb > 0 else None
+
+def check_video_size(size_bytes, label='This file'):
+    """(ok, error) against the current limit. Centralised so network-fetch,
+    direct upload, and the multi-file combine path all enforce the exact
+    same rule rather than three copies that could drift out of sync."""
+    limit = video_size_limit_bytes()
+    if limit is not None and size_bytes > limit:
+        limit_mb = limit / (1024 * 1024)
+        got_mb = size_bytes / (1024 * 1024)
+        # Enough decimal places that a small file/limit (a test fixture, or
+        # a deliberately tight admin-set limit) doesn't both round down to
+        # "0 MB" and produce a nonsensical "0 MB, over the 0 MB limit" --
+        # confirmed this was a real, reproducible bug by testing with an
+        # actual sub-1MB file rather than assuming large real footage would
+        # never hit the same rounding at some other boundary.
+        return False, f'{label} is {got_mb:.2f} MB, over the {limit_mb:.2f} MB limit set in Config > Production.'
+    return True, None
 
 def save_production_defaults(updates):
     """Merges `updates` into the saved production defaults. Unknown keys and
@@ -1770,6 +1812,17 @@ def load_video(req):
         disk_name = f'src_{int(time.time()*1000)}_{threading.get_ident()}_{fn}'
         path = os.path.join(app.config['UPLOAD_FOLDER'], disk_name)
         f.save(path)
+        # Checked against the saved file's real size, not a content-length
+        # header (not always present/reliable for a multipart upload) --
+        # same limit and same message-building as the network-fetch path,
+        # via the shared check_video_size() helper.
+        ok, err = check_video_size(os.path.getsize(path), label=fn)
+        if not ok:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            return None, err
         return path, fn
     # The main dropzone's own richer browser posts 'network_file'; the shared
     # "Browse library" modal used elsewhere (title/end card, BGM, SFX, VO, and
@@ -4916,6 +4969,80 @@ def api_network_fetch():
         return jsonify(ok=False, error=str(e)), 400
     except Exception as e:
         return jsonify(ok=False, error=f'Could not fetch {name}: {e}'), 500
+
+@app.route('/api/network/combine', methods=['POST'])
+def api_network_combine():
+    """Combines several already-staged HIRES files (each fetched individually
+    via /api/network/fetch first) into one source video, so multi-part
+    episode footage can be treated as a single source by the rest of the
+    render pipeline completely unchanged. The combined output keeps the
+    same net_<ts>_ staging prefix a single fetch produces, which is the
+    ONLY thing load_video()/_resolve_video() actually check to trust a
+    staged file -- so nothing downstream needed to change to support this.
+
+    Requires every input to share the same file extension. ffmpeg's concat
+    demuxer with stream copy (-c copy, fast, no re-encode of what could be
+    a long broadcast episode) needs matching codecs to work at all; same
+    extension is the simple, reliable proxy for that a non-technical admin
+    can reason about, and if the codecs turn out to be genuinely
+    incompatible despite matching extensions, ffmpeg's own failure is
+    caught below and reported clearly rather than producing broken output."""
+    data = request.get_json(silent=True) or {}
+    names = data.get('files') or []
+    if not isinstance(names, list) or len(names) < 2:
+        return jsonify(ok=False, error='Select at least two files to combine.'), 400
+    if len(names) > 12:
+        return jsonify(ok=False, error='Too many files selected (max 12 at once).'), 400
+
+    exts, paths, total_size = set(), [], 0
+    for n in names:
+        safe = os.path.basename(str(n))
+        if not safe.startswith('net_'):
+            return jsonify(ok=False, error='Invalid file reference -- please re-select from the browser.'), 400
+        p = os.path.join(app.config['UPLOAD_FOLDER'], safe)
+        if not os.path.exists(p):
+            return jsonify(ok=False, error=f'{safe} is no longer available -- please re-select it.'), 400
+        exts.add(os.path.splitext(safe)[1].lower())
+        paths.append(p)
+        total_size += os.path.getsize(p)
+
+    if len(exts) > 1:
+        return jsonify(ok=False, error='Selected files must share the same format '
+                       f'(found: {", ".join(sorted(exts))}).'), 400
+
+    # The combined size is what actually matters to the render pipeline --
+    # checked here even though each individual file was already checked at
+    # fetch time, since several files each under the limit can still add up
+    # to a combined file over it.
+    ok, err = check_video_size(total_size, label='The combined video')
+    if not ok:
+        return jsonify(ok=False, error=err), 400
+
+    ext = exts.pop()
+    combined_name = f'net_{int(time.time())}_{threading.get_ident()}_combined{ext}'
+    combined_path = os.path.join(app.config['UPLOAD_FOLDER'], combined_name)
+    list_path = combined_path + '.txt'
+    try:
+        with open(list_path, 'w', encoding='utf-8') as f:
+            for p in paths:
+                # ffmpeg's concat-demuxer list format needs its own escaping
+                # (single quotes around the path, literal quotes doubled),
+                # independent of shell quoting since this is a file ffmpeg
+                # parses itself, not a command-line argument.
+                f.write("file '" + p.replace("'", "'\\''") + "'\n")
+        cmd = [FFMPEG, '-y', '-f', 'concat', '-safe', '0', '-i', list_path, '-c', 'copy', combined_path]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if result.returncode != 0 or not os.path.exists(combined_path):
+            return jsonify(ok=False, error='Could not combine these files -- they may not share a '
+                           'compatible codec even though the file extensions match.'), 500
+    finally:
+        try:
+            os.remove(list_path)
+        except OSError:
+            pass
+
+    return jsonify(ok=True, filename=combined_name, orig_name=f'{len(names)} files combined{ext}',
+                   size=os.path.getsize(combined_path), url=f'/uploads/{combined_name}')
 
 # ---- Show templates (saved per-show asset bundles) ----
 
