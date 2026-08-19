@@ -257,7 +257,7 @@ body:has(.login-panel){overflow:hidden;background:radial-gradient(900px 600px at
   .rail .tabs{flex-direction:row!important}
 }
 
-img[src*="aimp-logo"],img[src*="logo-mark"],img[src*="branding/logo"]{
+img[src*="prism-logo"],img[src*="logo-mark"],img[src*="branding/logo"]{
   filter:drop-shadow(0 0 12px color-mix(in srgb,var(--phosphor) 20%,transparent))!important
 }
 @keyframes aimp-twinkle{0%,100%{opacity:.35;transform:scale(.85) rotate(0)}50%{opacity:1;transform:scale(1.15) rotate(15deg)}}

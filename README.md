@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="static/aimp-logo.svg" alt="PRISM" width="360">
+  <img src="static/prism-logo.svg" alt="PRISM" width="360">
 </p>
 
 # PRISM

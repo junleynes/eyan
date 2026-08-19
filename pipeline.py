@@ -5204,7 +5204,7 @@ def branding_logo():
     if cfg['logo_filename'] and os.path.exists(os.path.join(BRANDING_DIR, cfg['logo_filename'])):
         return send_from_directory(BRANDING_DIR, cfg['logo_filename'])
     # Prefer the same modern wordmark the landing page uses, not the legacy segment mark.
-    return redirect('/static/aimp-logo.svg')
+    return redirect('/static/prism-logo.svg')
 
 @app.route('/branding/logo-dark')
 def branding_logo_dark():
@@ -5212,7 +5212,7 @@ def branding_logo_dark():
     background. The DEFAULT PRISM wordmark specifically needs this -- its
     letters are solid near-black, correctly readable on the light default
     background but effectively invisible on a dark one, so the default has
-    two pre-made variants (see static/aimp-logo-dark.svg) switched via CSS
+    two pre-made variants (see static/prism-logo-dark.svg) switched via CSS
     based on data-theme, not a single image stretched to cover both.
 
     A custom admin-uploaded logo has no separate dark variant to switch
@@ -5225,7 +5225,7 @@ def branding_logo_dark():
     cfg = load_branding()
     if cfg['logo_filename'] and os.path.exists(os.path.join(BRANDING_DIR, cfg['logo_filename'])):
         return send_from_directory(BRANDING_DIR, cfg['logo_filename'])
-    return redirect('/static/aimp-logo-dark.svg')
+    return redirect('/static/prism-logo-dark.svg')
 
 @app.route('/branding/favicon')
 def branding_favicon():
