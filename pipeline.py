@@ -25,7 +25,7 @@ import smbclient  # pip install smbprotocol -- lets the upload panels browse a W
 
 from core import app, ALLOWED_EXTENSIONS, _job_submit_limiter, _client_ip
 from library_db import (LIBRARY_DIR, _sqlite_connect, library_add, library_list, library_stats, library_get_row, library_delete,
-    audit_log, audit_log_list,
+    audit_log, audit_log_list, network_favorites_list, network_favorite_add, network_favorite_remove,
     load_branding, save_branding_text, save_branding_color, save_branding_logo, save_branding_favicon,
     clear_branding_logo, clear_branding_favicon, clear_branding_color, BRANDING_DIR,
     load_disabled_services, set_service_disabled, save_branding_theme, THEME_PRESETS,
@@ -1177,7 +1177,14 @@ class JobCancelled(Exception):
     pass
 
 def job_new(user_id=None, username=None):
-    jid = f'{int(time.time()*1000)}_{threading.get_ident()}'
+    # random_suffix exists specifically to avoid a real (if rare) collision:
+    # timestamp_ms + thread_id alone can repeat if the same thread creates
+    # two jobs within the same millisecond -- rare in production, but a
+    # genuine flaky-test risk under a fast automated test run creating many
+    # jobs back-to-back. id is the primary key, so a collision would silently
+    # overwrite an existing job's row rather than erroring here specifically.
+    random_suffix = secrets.token_hex(3)
+    jid = f'{int(time.time()*1000)}_{threading.get_ident()}_{random_suffix}'
     with JOBS_LOCK:
         conn = _jobs_db()
         conn.execute(
@@ -4825,6 +4832,39 @@ def api_network_list():
         return jsonify(ok=False, error=str(e)), 400
     except Exception as e:
         return jsonify(ok=False, error=f'Could not reach network folder: {e}'), 500
+
+@app.route('/api/network/favorites')
+def api_network_favorites_list():
+    """This account's bookmarked folders, optionally narrowed to one
+    category via ?category=. No admin gate -- same access level as browsing
+    the network folders themselves (/api/network/list has none either),
+    since these are just personal shortcuts into what someone can already
+    reach by clicking through manually."""
+    category = request.args.get('category') or None
+    return jsonify(ok=True, items=network_favorites_list(session['user_id'], category))
+
+@app.route('/api/network/favorites', methods=['POST'])
+def api_network_favorites_add():
+    data = request.get_json(silent=True) or {}
+    category = (data.get('category') or '').strip()
+    path = (data.get('path') or '').strip()
+    label = (data.get('label') or '').strip()
+    if category not in _network_categories():
+        return jsonify(ok=False, error='Unknown category.'), 400
+    if not label:
+        # Falls back to the last path segment, or a readable placeholder for
+        # the category's own root (path='' there) -- never saves a blank
+        # label a favorites list would show as an empty row.
+        label = path.split('\\')[-1] if path else '(category root)'
+    network_favorite_add(session['user_id'], category, path, label)
+    return jsonify(ok=True, items=network_favorites_list(session['user_id'], category))
+
+@app.route('/api/network/favorites/<int:fid>', methods=['DELETE'])
+def api_network_favorites_remove(fid):
+    removed = network_favorite_remove(session['user_id'], fid)
+    if not removed:
+        return jsonify(ok=False, error='Not found.'), 404
+    return jsonify(ok=True)
 
 @app.route('/api/network/search')
 def api_network_search():

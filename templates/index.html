@@ -415,6 +415,25 @@ p{color:var(--ink-dim);font-size:13px;line-height:1.65;margin:8px 0}
 .net-modal-row .row-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .net-modal-row .row-size{opacity:.55;flex-shrink:0;font-size:11px}
 .net-modal-empty{padding:20px;text-align:center;opacity:.6}
+.net-fav-star{
+  background:transparent;border:none;cursor:pointer;font-size:18px;line-height:1;
+  color:var(--ink-dim);padding:2px 4px;margin-left:auto;transition:color .15s,transform .1s
+}
+.net-fav-star:hover{transform:scale(1.15)}
+.net-fav-star.active{color:#f5c518}
+.net-modal-favorites{
+  padding:6px 10px;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:6px;
+  max-height:80px;overflow-y:auto
+}
+.net-fav-chip{
+  display:inline-flex;align-items:center;gap:5px;font-size:12px;
+  background:rgba(245,197,24,.1);border:1px solid rgba(245,197,24,.35);
+  color:var(--ink);border-radius:7px;padding:4px 8px;cursor:pointer;max-width:220px
+}
+.net-fav-chip:hover{background:rgba(245,197,24,.18)}
+.net-fav-chip .fav-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.net-fav-chip .fav-remove{opacity:.6;flex-shrink:0}
+.net-fav-chip .fav-remove:hover{opacity:1;color:var(--tally)}
 /* ---- Trailer history panel ---- */
 #tr-history-toggle:hover{background:var(--wash-2)}
 .history-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 14px;border-bottom:1px solid var(--line)}
@@ -589,6 +608,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
       <div>
         <strong id="net-modal-title">Network folder</strong>
         <small id="net-modal-path"></small>
+        <button type="button" id="net-modal-fav-toggle" class="net-fav-star" title="Favorite this folder" onclick="toggleCurrentFolderFavorite()">&#9734;</button>
       </div>
       <span class="net-modal-close" id="net-modal-close">&#10005;</span>
     </div>
@@ -598,6 +618,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
         <input type=checkbox id="net-modal-recursive"> Include subfolders
       </label>
     </div>
+    <div id="net-modal-favorites" class="net-modal-favorites" style="display:none"></div>
     <div class="net-modal-list" id="net-modal-list">Loading&hellip;</div>
   </div>
 </div>
@@ -978,12 +999,16 @@ document.addEventListener("DOMContentLoaded", function(){
       </div>
       <span class="net-modal-close" id=tr-network-cancel title="Cancel">&#10005;</span>
     </div>
+    <div style="display:flex;justify-content:flex-end;margin:-6px 0 4px">
+      <button type="button" id="tr-network-fav-toggle" class="net-fav-star" title="Favorite this folder" onclick="toggleTrNetworkFavorite()">&#9734;</button>
+    </div>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
       <input type=text id=tr-network-search placeholder="Search filenames&hellip;" style="flex:1;font-size:13px;padding:6px 10px;border-radius:7px;border:1px solid var(--line);background:var(--panel);color:var(--ink)">
       <label style="display:flex;align-items:center;gap:5px;font-size:12px;white-space:nowrap;cursor:pointer">
         <input type=checkbox id=tr-network-recursive> Include subfolders
       </label>
     </div>
+    <div id="tr-network-favorites" class="net-modal-favorites" style="display:none"></div>
     <div id=tr-network-list class="net-modal-list" style="padding:0;max-height:280px">Loading&hellip;</div>
   </div>
   <div id=tr-file-preview class="growing-preview">
@@ -2262,6 +2287,67 @@ document.addEventListener("DOMContentLoaded", function(){
   })
   trNetworkRecursiveCheckbox.addEventListener('change', runTrNetworkSearch)
 
+  var trNetworkFavorites = []
+
+  function updateTrNetworkFavStarState(){
+    var btn = document.getElementById('tr-network-fav-toggle')
+    if(!btn) return
+    var isFav = trNetworkFavorites.some(function(f){ return f.path === (trNetworkSubpath || '') })
+    btn.classList.toggle('active', isFav)
+    btn.innerHTML = isFav ? '&#9733;' : '&#9734;'
+    btn.title = isFav ? 'Remove this folder from favorites' : 'Favorite this folder'
+  }
+
+  function renderTrNetworkFavoriteChips(){
+    var box = document.getElementById('tr-network-favorites')
+    if(!box) return
+    if(!trNetworkFavorites.length){ box.style.display = 'none'; box.innerHTML = ''; return }
+    box.style.display = 'flex'
+    box.innerHTML = ''
+    trNetworkFavorites.forEach(function(f){
+      var chip = document.createElement('div')
+      chip.className = 'net-fav-chip'
+      chip.title = f.path || '(category root)'
+      chip.innerHTML = '<span>&#9733;</span><span class="fav-label">' + f.label + '</span><span class="fav-remove">&#10005;</span>'
+      chip.querySelector('.fav-label').addEventListener('click', function(){ loadNetworkList(f.path) })
+      chip.querySelector('span:first-child').addEventListener('click', function(){ loadNetworkList(f.path) })
+      chip.querySelector('.fav-remove').addEventListener('click', function(e){
+        e.stopPropagation()
+        fetch('/api/network/favorites/' + f.id, {method: 'DELETE'}).then(function(r){ return r.json() }).then(function(d){
+          if(d.ok) loadTrNetworkFavorites()
+        })
+      })
+      box.appendChild(chip)
+    })
+  }
+
+  function loadTrNetworkFavorites(){
+    fetch('/api/network/favorites?category=hires').then(function(r){ return r.json() }).then(function(d){
+      trNetworkFavorites = (d.ok && d.items) ? d.items : []
+      renderTrNetworkFavoriteChips()
+      updateTrNetworkFavStarState()
+    }).catch(function(){ trNetworkFavorites = []; renderTrNetworkFavoriteChips() })
+  }
+
+  function toggleTrNetworkFavorite(){
+    var path = trNetworkSubpath || ''
+    var existing = trNetworkFavorites.find(function(f){ return f.path === path })
+    if(existing){
+      fetch('/api/network/favorites/' + existing.id, {method: 'DELETE'}).then(function(r){ return r.json() }).then(function(d){
+        if(d.ok) loadTrNetworkFavorites()
+      })
+    }else{
+      var label = path ? path.split('\\').pop() : '(category root)'
+      fetch('/api/network/favorites', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({category: 'hires', path: path, label: label})
+      }).then(function(r){ return r.json() }).then(function(d){
+        if(d.ok){ trNetworkFavorites = d.items; renderTrNetworkFavoriteChips(); updateTrNetworkFavStarState() }
+      })
+    }
+  }
+  window.toggleTrNetworkFavorite = toggleTrNetworkFavorite
+
   function loadNetworkList(subpath){
     trNetworkSubpath = subpath || ''
     // Navigating to a (new) folder always starts that folder's view fresh --
@@ -2278,6 +2364,7 @@ document.addEventListener("DOMContentLoaded", function(){
       trNetworkLoadedFolders = d.folders || []
       trNetworkLoadedFiles = d.files || []
       renderTrNetworkList(trNetworkLoadedFolders, trNetworkLoadedFiles, trNetworkSubpath)
+      updateTrNetworkFavStarState()
     }).catch(function(e){ networkList.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + e + '</div>' })
   }
 
@@ -2299,6 +2386,7 @@ document.addEventListener("DOMContentLoaded", function(){
     dropzone.style.display = 'none'
     networkPanel.style.display = 'block'
     loadNetworkList()
+    loadTrNetworkFavorites()
   })
   networkCancel.addEventListener('click', function(){
     networkPanel.style.display = 'none'
@@ -6331,6 +6419,73 @@ document.addEventListener('DOMContentLoaded', function(){
   })
   recursiveCheckbox.addEventListener('change', runSearch)
 
+  var currentFavorites = []  // this category's favorites, refreshed on category switch or list change
+
+  function updateFavStarState(){
+    var btn = document.getElementById('net-modal-fav-toggle')
+    if(!btn || !active) return
+    var isFav = currentFavorites.some(function(f){ return f.path === (active.subpath || '') })
+    btn.classList.toggle('active', isFav)
+    btn.innerHTML = isFav ? '&#9733;' : '&#9734;'
+    btn.title = isFav ? 'Remove this folder from favorites' : 'Favorite this folder'
+  }
+
+  function renderFavoriteChips(){
+    var box = document.getElementById('net-modal-favorites')
+    if(!box) return
+    if(!currentFavorites.length){ box.style.display = 'none'; box.innerHTML = ''; return }
+    box.style.display = 'flex'
+    box.innerHTML = ''
+    currentFavorites.forEach(function(f){
+      var chip = document.createElement('div')
+      chip.className = 'net-fav-chip'
+      chip.title = f.path || '(category root)'
+      chip.innerHTML = '<span>&#9733;</span><span class="fav-label">' + f.label + '</span><span class="fav-remove">&#10005;</span>'
+      chip.querySelector('.fav-label').addEventListener('click', function(){ loadFolder(f.path) })
+      chip.querySelector('span:first-child').addEventListener('click', function(){ loadFolder(f.path) })
+      chip.querySelector('.fav-remove').addEventListener('click', function(e){
+        e.stopPropagation()
+        fetch('/api/network/favorites/' + f.id, {method: 'DELETE'}).then(function(r){ return r.json() }).then(function(d){
+          if(d.ok) loadFavoritesForCategory()
+        })
+      })
+      box.appendChild(chip)
+    })
+  }
+
+  function loadFavoritesForCategory(){
+    if(!active) return
+    fetch('/api/network/favorites?category=' + encodeURIComponent(active.category))
+      .then(function(r){ return r.json() }).then(function(d){
+        currentFavorites = (d.ok && d.items) ? d.items : []
+        renderFavoriteChips()
+        updateFavStarState()
+      }).catch(function(){ currentFavorites = []; renderFavoriteChips() })
+  }
+
+  function toggleCurrentFolderFavorite(){
+    if(!active) return
+    var path = active.subpath || ''
+    var existing = currentFavorites.find(function(f){ return f.path === path })
+    if(existing){
+      fetch('/api/network/favorites/' + existing.id, {method: 'DELETE'}).then(function(r){ return r.json() }).then(function(d){
+        if(d.ok) loadFavoritesForCategory()
+      })
+    }else{
+      // Auto-labels from the current folder name (or a readable placeholder
+      // at the category root) rather than prompting for one -- one click
+      // to favorite, matching how the star itself is one click, not a form.
+      var label = path ? path.split('\\').pop() : '(category root)'
+      fetch('/api/network/favorites', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({category: active.category, path: path, label: label})
+      }).then(function(r){ return r.json() }).then(function(d){
+        if(d.ok){ currentFavorites = d.items; renderFavoriteChips(); updateFavStarState() }
+      })
+    }
+  }
+  window.toggleCurrentFolderFavorite = toggleCurrentFolderFavorite
+
   function loadFolder(subpath){
     if(!active) return
     active.subpath = subpath || ''
@@ -6348,6 +6503,7 @@ document.addEventListener('DOMContentLoaded', function(){
         active.loadedFolders = d.folders || []
         active.loadedFiles = d.files || []
         renderList(d.folders, d.files, d.subpath)
+        updateFavStarState()
       }).catch(function(e){ listEl.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + e + '</div>' })
   }
 
@@ -6357,6 +6513,7 @@ document.addEventListener('DOMContentLoaded', function(){
     pathEl.textContent = ''
     overlay.classList.add('open')
     loadFolder('')
+    loadFavoritesForCategory()
   }
   window.openNetworkBrowser = openNetworkBrowser
 

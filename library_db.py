@@ -50,6 +50,15 @@ def library_db_init():
         detail TEXT,
         ip TEXT
     )''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS network_favorites (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        category TEXT NOT NULL,
+        path TEXT NOT NULL,
+        label TEXT,
+        created_at REAL NOT NULL,
+        UNIQUE(user_id, category, path)
+    )''')
     conn.execute('''CREATE TABLE IF NOT EXISTS trailers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         orig_name TEXT,
@@ -104,6 +113,46 @@ def audit_log_list(limit=200):
     rows = conn.execute('SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ?', (limit,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+# ---- Network browser favorites ----
+# Per-user, per-category bookmarked folders (see network_folders.json for the
+# admin-configured ROOT paths per category -- these are user-level shortcuts
+# to specific subfolders under those roots, a different and much smaller
+# concept). Scoped to one user rather than shared: different people on the
+# same deployment typically work different shows with different recurring
+# folder locations, so a shared list would mostly be noise for anyone whose
+# shows aren't in it.
+def network_favorites_list(user_id, category=None):
+    conn = _lib_db()
+    if category:
+        rows = conn.execute('SELECT * FROM network_favorites WHERE user_id=? AND category=? ORDER BY label COLLATE NOCASE',
+                            (user_id, category)).fetchall()
+    else:
+        rows = conn.execute('SELECT * FROM network_favorites WHERE user_id=? ORDER BY category, label COLLATE NOCASE',
+                            (user_id,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def network_favorite_add(user_id, category, path, label):
+    """UNIQUE(user_id, category, path) means re-favoriting an already-saved
+    location is a harmless no-op (INSERT OR IGNORE) rather than a duplicate
+    row or a constraint-violation error the caller would need to handle."""
+    conn = _lib_db()
+    conn.execute('INSERT OR IGNORE INTO network_favorites (user_id, category, path, label, created_at) '
+                 'VALUES (?,?,?,?,?)', (user_id, category, path, label, time.time()))
+    conn.commit()
+    conn.close()
+
+def network_favorite_remove(user_id, favorite_id):
+    """Scoped to user_id in the WHERE clause, not just the row id -- so one
+    account can never remove another's favorite even by guessing/iterating
+    ids, without needing a separate ownership check before the delete."""
+    conn = _lib_db()
+    cur = conn.execute('DELETE FROM network_favorites WHERE id=? AND user_id=?', (favorite_id, user_id))
+    conn.commit()
+    removed = cur.rowcount > 0
+    conn.close()
+    return removed
 
 def library_add(upload_filename, result, user_id=None, username=None):
     """Copies the just-finished trailer (currently sitting in the ephemeral
