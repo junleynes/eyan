@@ -639,6 +639,25 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
     <video id="clip-modal-video" controls playsinline style="width:100%;max-height:70vh;background:#000;display:block"></video>
   </div>
 </div>
+<div id="saveas-modal-overlay" class="net-modal-overlay" style="z-index:1200" onclick="if(event.target===this) closeSaveAsModal()">
+  <div class="net-modal-box" style="max-width:440px">
+    <div class="net-modal-head">
+      <strong>Save as</strong>
+      <span class="net-modal-close" onclick="closeSaveAsModal()">&#10005;</span>
+    </div>
+    <div style="padding:18px">
+      <label style="display:block;font-size:12px;opacity:.75;margin-bottom:6px">File name</label>
+      <div style="display:flex;align-items:center;gap:6px">
+        <input type="text" id="saveas-modal-input" style="flex:1;min-width:0;font-family:'JetBrains Mono',monospace;font-size:13px;padding:8px 10px;border-radius:7px;border:1px solid var(--line);background:var(--panel);color:var(--ink)">
+        <span id="saveas-modal-ext" style="font-size:12px;opacity:.6;white-space:nowrap"></span>
+      </div>
+      <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
+        <button type="button" class="btn btn-secondary-promo" onclick="closeSaveAsModal()">Cancel</button>
+        <button type="button" class="btn btn-primary-promo" id="saveas-modal-confirm">Continue</button>
+      </div>
+    </div>
+  </div>
+</div>
 <div class="shell">
 <script>
 // Exposed once here rather than re-checked per-panel: several JS panels
@@ -4372,9 +4391,7 @@ function renderTrailerResult(d){
 
   var dlFilename = d.trailer_url.split('/').pop()
   var dlName = d.orig_name
-  var dlUrl = function(fmt){
-    var nameEl = document.getElementById('tr-delivery-filename')
-    var customName = nameEl ? nameEl.value.trim() : ''
+  var dlUrl = function(fmt, customName){
     var nameParam = customName ? '&name=' + encodeURIComponent(customName) : ''
     if(d.library_id) return '/library/'+d.library_id+'/download?format='+fmt+nameParam
     return '/download/'+dlFilename+'?name='+encodeURIComponent(customName || dlName)+'&format='+fmt
@@ -4418,18 +4435,12 @@ function renderTrailerResult(d){
     '</div>'+
     '<div class="delivery-pack">'+
       '<div class="delivery-title">Delivery package</div>'+
-      '<div class="delivery-name" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+
-        '<label for="tr-delivery-filename" style="font-size:12px;opacity:.75">File name:</label>'+
-        '<input type="text" id="tr-delivery-filename" value="'+esc(suggest)+'" '+
-          'style="flex:1;min-width:200px;font-family:\'JetBrains Mono\',monospace;font-size:12px;'+
-          'padding:5px 8px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink)">'+
-        '<span id="tr-delivery-ext" style="font-size:11px;opacity:.6">.'+EXPORT_EXTS[chosenFormat]+'</span>'+
-      '</div>'+
+      '<div class="delivery-name">Suggested name: <code>'+esc(suggest)+'</code></div>'+
       '<div class="delivery-row">'+
         formatRow+
       '</div>'+
       '<div class="delivery-row" style="margin-top:8px">'+
-        '<a id="tr-download-selected" class="btn btn-primary-promo" style="text-decoration:none" href="'+dlUrl(chosenFormat)+'">Download selected format</a>'+
+        '<button type="button" class="btn btn-primary-promo" id="tr-download-selected">Download selected format</button>'+
         '<button type="button" class="btn btn-secondary-promo" id="tr-send-destination-btn">Send to destination</button>'+
         '<span id="tr-send-destination-status" style="font-size:12px;align-self:center"></span>'+
         '<button type="button" class="btn btn-secondary-promo" id="tr-scene-csv-btn">Scene list CSV</button>'+
@@ -4437,7 +4448,6 @@ function renderTrailerResult(d){
       '</div>'+
     '</div>'
   var currentDeliveryFormat = chosenFormat  // tracks the fmt-select-btn selection so both Download and Send to destination act on the same one
-  var extLabel = document.getElementById('tr-delivery-ext')
   document.querySelectorAll('.fmt-select-btn').forEach(function(btn){
     btn.addEventListener('click', function(){
       document.querySelectorAll('.fmt-select-btn').forEach(function(b){
@@ -4447,16 +4457,27 @@ function renderTrailerResult(d){
       btn.classList.remove('btn-secondary-promo'); btn.classList.add('btn-primary-promo')
       btn.setAttribute('aria-pressed', 'true')
       currentDeliveryFormat = btn.getAttribute('data-fmt')
-      document.getElementById('tr-download-selected').href = dlUrl(currentDeliveryFormat)
-      if(extLabel) extLabel.textContent = '.' + EXPORT_EXTS[currentDeliveryFormat]
     })
-  })
-  var nameInput = document.getElementById('tr-delivery-filename')
-  if(nameInput) nameInput.addEventListener('input', function(){
-    document.getElementById('tr-download-selected').href = dlUrl(currentDeliveryFormat)
   })
   var csvBtn = document.getElementById('tr-scene-csv-btn')
   if(csvBtn) csvBtn.addEventListener('click', function(){ downloadSceneListCsv(d) })
+
+  var downloadBtn = document.getElementById('tr-download-selected')
+  if(downloadBtn) downloadBtn.addEventListener('click', function(){
+    openSaveAsModal(suggest, EXPORT_EXTS[currentDeliveryFormat], function(name){
+      // A real download needs an actual navigation, not fetch() -- creating
+      // and clicking a throwaway <a> triggers the browser's native download
+      // handling exactly like the old direct <a href> button used to,
+      // just now gated behind the confirmed name from the modal first.
+      var a = document.createElement('a')
+      a.href = dlUrl(currentDeliveryFormat, name)
+      a.style.display = 'none'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+    })
+  })
+
   var sendBtn = document.getElementById('tr-send-destination-btn')
   var sendStatus = document.getElementById('tr-send-destination-status')
   if(sendBtn) sendBtn.addEventListener('click', function(){
@@ -4465,26 +4486,27 @@ function renderTrailerResult(d){
       sendStatus.style.color = 'var(--tally)'
       return
     }
-    sendBtn.disabled = true
-    sendStatus.textContent = 'Sending\u2026'
-    sendStatus.style.color = ''
-    var customName = nameInput ? nameInput.value.trim() : ''
-    fetch('/library/' + d.library_id + '/send-to-destination', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({format: currentDeliveryFormat, filename: customName || undefined})
-    }).then(function(r){ return r.json() }).then(function(dd){
-      sendBtn.disabled = false
-      if(!dd.ok){
-        sendStatus.textContent = dd.error || 'Send failed.'
+    openSaveAsModal(suggest, EXPORT_EXTS[currentDeliveryFormat], function(name){
+      sendBtn.disabled = true
+      sendStatus.textContent = 'Sending\u2026'
+      sendStatus.style.color = ''
+      fetch('/library/' + d.library_id + '/send-to-destination', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({format: currentDeliveryFormat, filename: name})
+      }).then(function(r){ return r.json() }).then(function(dd){
+        sendBtn.disabled = false
+        if(!dd.ok){
+          sendStatus.textContent = dd.error || 'Send failed.'
+          sendStatus.style.color = 'var(--tally)'
+          return
+        }
+        sendStatus.textContent = 'Sent ' + dd.filename
+        sendStatus.style.color = 'var(--phosphor)'
+      }).catch(function(e){
+        sendBtn.disabled = false
+        sendStatus.textContent = 'Error: ' + e
         sendStatus.style.color = 'var(--tally)'
-        return
-      }
-      sendStatus.textContent = 'Sent ' + dd.filename
-      sendStatus.style.color = 'var(--phosphor)'
-    }).catch(function(e){
-      sendBtn.disabled = false
-      sendStatus.textContent = 'Error: ' + e
-      sendStatus.style.color = 'var(--tally)'
+      })
     })
   })
   attachPeakMeter(document.getElementById('tr-video-el'))
@@ -6530,6 +6552,52 @@ function closeClipModal(){
   overlay.classList.remove('open')
   document.removeEventListener('keydown', _clipEscHandler)
 }
+
+// ---- "Save as" modal ----
+// Shared by both Download and Send to destination: rather than a filename
+// field sitting inline all the time (tried first, but it competed for
+// attention with the format buttons above it even when someone just wants
+// the default name), the prompt now appears only at the moment it's
+// actually needed -- right after clicking either action, defaulting to the
+// same auto-suggested name either way. onConfirm receives the confirmed
+// name and is responsible for whatever should happen next (a real
+// navigation for Download, a fetch() for Send to destination) -- this
+// modal only owns collecting the name, not what's done with it.
+var _saveAsConfirmCallback = null
+function _saveAsEscHandler(e){ if(e.key === 'Escape') closeSaveAsModal() }
+function _saveAsEnterHandler(e){ if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('saveas-modal-confirm').click() } }
+
+function openSaveAsModal(defaultName, ext, onConfirm){
+  var overlay = document.getElementById('saveas-modal-overlay')
+  var input = document.getElementById('saveas-modal-input')
+  var extLabel = document.getElementById('saveas-modal-ext')
+  input.value = defaultName
+  extLabel.textContent = '.' + ext
+  _saveAsConfirmCallback = onConfirm
+  overlay.classList.add('open')
+  document.addEventListener('keydown', _saveAsEscHandler)
+  input.addEventListener('keydown', _saveAsEnterHandler)
+  // Focus + select-all so typing a whole new name immediately replaces the
+  // suggestion, rather than needing to clear it by hand first.
+  requestAnimationFrame(function(){ input.focus(); input.select() })
+}
+
+function closeSaveAsModal(){
+  var overlay = document.getElementById('saveas-modal-overlay')
+  var input = document.getElementById('saveas-modal-input')
+  overlay.classList.remove('open')
+  document.removeEventListener('keydown', _saveAsEscHandler)
+  input.removeEventListener('keydown', _saveAsEnterHandler)
+  _saveAsConfirmCallback = null
+}
+
+document.getElementById('saveas-modal-confirm').addEventListener('click', function(){
+  var input = document.getElementById('saveas-modal-input')
+  var name = input.value.trim()
+  var cb = _saveAsConfirmCallback
+  closeSaveAsModal()
+  if(cb) cb(name)
+})
 
 window.playClip = function(videoFilename, startSec, endSec, label){
   if(!videoFilename) return
