@@ -6204,6 +6204,27 @@ def _run_trailer_job(jid, params):
         scene_list = [None] * int(params.get('preview_total_scenes') or len(selected))
         word_starts = word_ends = []
         beat_times = []
+        # Needed below by the final exact-length correction, which now runs
+        # for this path too (see the shortfall/residual block after this
+        # if/else) -- previously computed only in the else: branch, which
+        # left an approved cut with NO duration correction applied at all
+        # whenever scenes were dropped/added without the total happening to
+        # land back on trailer_length by chance.
+        min_seg_dur = max(0.8, xfade_dur * 2.5)
+        if max_scene_dur:
+            min_seg_dur = min(min_seg_dur, max_scene_dur)
+        # No fresh transcription is run for an approved-cut render (that's
+        # the whole point -- analysis isn't repeated), so there's no new
+        # word/phrase timing to protect specific speech in THIS pass. The
+        # correction below still runs and still respects each clip's own
+        # min_seg_dur floor; it just can't additionally avoid landing a trim
+        # inside dialogue the way a fresh render's speech-aware pass can.
+        # Real per-scene selected_dur values (already speech-safe from
+        # whichever pass originally produced them) are still what's being
+        # adjusted, so this isn't operating blind -- just without a second,
+        # independent speech check layered on top for this specific pass.
+        speech_spans = []
+        phrase_ends = []
     else:
         job_set(jid, percent=8, step='Detecting scene cuts')
         # Detect scenes via PySceneDetect. downscale=2 speeds up detection on large
@@ -6824,59 +6845,72 @@ def _run_trailer_job(jid, params):
         # at all. For a broadcast promo plug that has to fit an exact slot,
         # "15 sec" needs to mean 15.00, not 14.6 or 15.4.
         #
-        # Distributes the remaining error across clips proportionally rather
-        # than dumping it all on one: taking 0.4s off a single clip is an
-        # audible jolt, taking ~0.05s off each of eight is not. Grows are
-        # capped by each clip's real remaining slack inside its own detected
-        # scene (never invents footage that isn't there); trims are floored at
-        # min_seg_dur so correction can't shave a clip into a sliver.
-        #
-        # IMPORTANT -- trims are ALSO capped by each clip's speech-free tail
-        # (see speech_free_slack). Without that, this pass silently undid the
-        # word/phrase snapping above: every cut point was carefully placed on
-        # a phrase end, then this shaved ~0.05s off each one to hit an exact
-        # total, putting them all back inside speech by a syllable's width.
-        # Exact duration and speech integrity were directly fighting, and
-        # duration was winning. A clip whose dialogue runs to its end now
-        # contributes nothing to the correction and is left exactly where the
-        # snapping put it; the error is absorbed by clips that have actual
-        # silence to give. If NO clip has silence to spare, the trailer ships
-        # a few hundredths off target rather than clipping a word -- the right
-        # trade for something whose whole job is sounding broadcast-clean.
-        n_seg = len(selected) + len(card_files)
-        xfade_loss = max(0, (n_seg - 1)) * xfade_dur
-        residual = trailer_length - (total_sel + total_card_dur - xfade_loss)
-        if selected and abs(residual) > 0.01:
-            for _ in range(3):  # a couple of passes: caps mean one pass may not absorb it all
-                if abs(residual) <= 0.01:
-                    break
-                if residual > 0:
-                    headroom = [(s, max(0.0, s['duration'] - s['selected_dur'])) for s in selected]
-                else:
-                    headroom = []
-                    for s in selected:
-                        room = max(0.0, s['selected_dur'] - min_seg_dur)
-                        if transcribe_for_cuts and speech_spans:
-                            clip_start = s['trim_start']
-                            clip_end = clip_start + s['selected_dur']
-                            room = min(room, speech_free_slack(clip_start, clip_end, speech_spans))
-                        headroom.append((s, room))
-                total_head = sum(h for _s, h in headroom)
-                if total_head <= 0.01:
-                    break  # nothing left to give -- accept the residual rather than distort a clip
-                step = residual
-                for s, head in headroom:
-                    if head <= 0:
-                        continue
-                    delta = step * (head / total_head)
-                    delta = min(delta, head) if delta > 0 else max(delta, -head)
-                    s['selected_dur'] += delta
-                    total_sel += delta
-                    residual -= delta
+        # This step now runs unconditionally for BOTH paths (moved out of this
+        # else: branch -- see right after this if/preselected/else block ends)
+        # since it operates purely on the already-built `selected` list and a
+        # handful of values available either way, not on anything specific to
+        # a fresh scene-selection pass. It used to run only here, which meant
+        # an approved-cut render (drop/add scenes, then "Lock cut & render")
+        # got NO duration correction at all -- dropping even one scene without
+        # adding a replacement landed the final render however short that made
+        # it, silently, with no attempt to close the gap.
 
     if not selected:
         job_set(jid, error='No scenes selected.')
         return
+
+    # Distributes the remaining error across clips proportionally rather than
+    # dumping it all on one: taking 0.4s off a single clip is an audible jolt,
+    # taking ~0.05s off each of eight is not. Grows are capped by each clip's
+    # real remaining slack inside its own detected scene (never invents
+    # footage that isn't there); trims are floored at min_seg_dur so
+    # correction can't shave a clip into a sliver.
+    #
+    # IMPORTANT -- trims are ALSO capped by each clip's speech-free tail (see
+    # speech_free_slack). Without that, this pass would silently undo the
+    # word/phrase snapping a fresh selection pass already did: every cut point
+    # carefully placed on a phrase end, then this shaving ~0.05s off each one
+    # to hit an exact total, putting them all back inside speech by a
+    # syllable's width. Exact duration and speech integrity were directly
+    # fighting, and duration was winning. A clip whose dialogue runs to its
+    # end now contributes nothing to the correction and is left exactly where
+    # the snapping put it; the error is absorbed by clips that have actual
+    # silence to give. If NO clip has silence to spare, the trailer ships a
+    # few hundredths off target rather than clipping a word -- the right
+    # trade for something whose whole job is sounding broadcast-clean. For an
+    # approved-cut render specifically, speech_spans is empty (see above), so
+    # this protection doesn't additionally apply there -- the correction
+    # still respects min_seg_dur, just without that second independent check.
+    n_seg = len(selected) + len(card_files)
+    xfade_loss = max(0, (n_seg - 1)) * xfade_dur
+    residual = trailer_length - (total_sel + total_card_dur - xfade_loss)
+    if selected and abs(residual) > 0.01:
+        for _ in range(3):  # a couple of passes: caps mean one pass may not absorb it all
+            if abs(residual) <= 0.01:
+                break
+            if residual > 0:
+                headroom = [(s, max(0.0, s['duration'] - s['selected_dur'])) for s in selected]
+            else:
+                headroom = []
+                for s in selected:
+                    room = max(0.0, s['selected_dur'] - min_seg_dur)
+                    if transcribe_for_cuts and speech_spans:
+                        clip_start = s['trim_start']
+                        clip_end = clip_start + s['selected_dur']
+                        room = min(room, speech_free_slack(clip_start, clip_end, speech_spans))
+                    headroom.append((s, room))
+            total_head = sum(h for _s, h in headroom)
+            if total_head <= 0.01:
+                break  # nothing left to give -- accept the residual rather than distort a clip
+            step = residual
+            for s, head in headroom:
+                if head <= 0:
+                    continue
+                delta = step * (head / total_head)
+                delta = min(delta, head) if delta > 0 else max(delta, -head)
+                s['selected_dur'] += delta
+                total_sel += delta
+                residual -= delta
 
     if params.get('preview_only'):
         # Analysis is done; stop here instead of spending minutes on extraction,
