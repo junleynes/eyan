@@ -3182,6 +3182,62 @@ def api_scene_clip():
         return jsonify(ok=False, error=f'Could not extract that clip. ffmpeg error: {r.stderr[-400:]}'), 502
     return jsonify(ok=True, url=f'/uploads/{out_name}')
 
+@app.route('/api/media/probe', methods=['POST'])
+def api_media_probe():
+    """Duration/resolution plus a single still-frame thumbnail for a staged
+    file, WITHOUT needing the browser to decode it at all.
+
+    This is specifically why the HIRES picker's preview used to hang on
+    "reading video info..." forever with a permanently black frame: it
+    pointed a real <video> element straight at the staged file and waited on
+    onloadedmetadata, which never fires for a codec the browser itself can't
+    decode (ProRes/DNxHD/MXF -- exactly what real broadcast HIRES masters
+    usually are). get_video_info() already goes through OpenCV's own ffmpeg
+    backend rather than the browser, which the comment on api_media_playable
+    above already established opens these formats just fine -- reused
+    directly rather than duplicating a second video-info path.
+
+    Deliberately NOT api_media_playable's full transcode: that rewrites the
+    entire file (this one might be 1-2GB+) just to get a still image and two
+    numbers. -ss before -i (matching api_scene_clip's existing pattern)
+    seeks to the nearest keyframe without decoding anything before it, so a
+    thumbnail comes back in well under a second regardless of file size.
+    Cached by filename so reopening the same preview doesn't redo the work."""
+    name = secure_filename(request.form.get('filename', ''))
+    if not name or name != request.form.get('filename', ''):
+        return jsonify(ok=False, error='Invalid filename.'), 400
+    src = os.path.join(app.config['UPLOAD_FOLDER'], name)
+    if not os.path.isfile(src):
+        return jsonify(ok=False, error='That file is no longer staged -- pick it again.'), 404
+
+    try:
+        info = get_video_info(src)
+    except Exception as e:
+        return jsonify(ok=False, error=f'Could not read this file as video: {e}'), 502
+    if not info.get('duration_sec'):
+        return jsonify(ok=False, error='Could not read duration/resolution from this file -- '
+                       'it may not be a valid video, or the format is unsupported.'), 502
+
+    thumb_name = 'thumb_' + hashlib.sha1(name.encode()).hexdigest()[:16] + '.jpg'
+    thumb_path = os.path.join(app.config['UPLOAD_FOLDER'], thumb_name)
+    if not (os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0):
+        # A couple of seconds in, not frame 0 -- broadcast masters commonly
+        # open on black/bars/a countdown, which would make every thumbnail
+        # look identically blank regardless of what's actually in the file.
+        seek = min(2.0, max(0.0, info['duration_sec'] / 2))
+        try:
+            r = run_ffmpeg([FFMPEG, '-y', '-ss', f'{seek:.3f}', '-i', src,
+                            '-frames:v', '1', '-vf', "scale='min(480,iw)':-2",
+                            '-q:v', '4', thumb_path],
+                           timeout=FFMPEG_TIMEOUT, label='media probe thumbnail')
+        except MediaToolTimeout as e:
+            return jsonify(ok=False, error=f'Thumbnail extraction took too long: {e}'), 504
+        if not (os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0):
+            return jsonify(ok=False, error=f'Could not extract a thumbnail. ffmpeg error: {r.stderr[-400:]}'), 502
+
+    return jsonify(ok=True, duration=info['duration_sec'], width=info['width'], height=info['height'],
+                   thumbnail_url=f'/uploads/{thumb_name}')
+
 # ---- Ollama Vision ----
 
 OLLAMA_URL = os.environ.get('OLLAMA_URL', 'http://localhost:11434')

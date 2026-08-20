@@ -1018,11 +1018,16 @@ document.addEventListener("DOMContentLoaded", function(){
   </div>
   <div id=tr-file-preview class="growing-preview">
     <div style="display:flex;gap:14px;align-items:flex-start;padding:12px">
-      <video id=tr-file-preview-video muted style="width:160px;height:90px;object-fit:cover;border-radius:6px;background:#000;flex-shrink:0"></video>
+      <div id=tr-file-preview-thumb-wrap style="width:160px;height:90px;border-radius:6px;background:#000;flex-shrink:0;position:relative;overflow:hidden">
+        <img id=tr-file-preview-thumb style="width:100%;height:100%;object-fit:cover;display:none">
+        <div id=tr-file-preview-spinner style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--ink-dim);font-size:11px;text-align:center;padding:4px">Reading&hellip;</div>
+      </div>
       <div style="flex:1;min-width:0">
         <div id=tr-file-preview-name style="font-size:13px;font-weight:600;word-break:break-all"></div>
         <div id=tr-file-preview-meta style="font-size:12px;opacity:.7;margin-top:3px"></div>
-        <button type=button id=tr-file-preview-clear style="margin-top:8px;font-size:12px">&#10005; Remove</button>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button type=button id=tr-file-preview-clear style="font-size:12px">&#10005; Remove</button>
+        </div>
       </div>
     </div>
   </div>
@@ -2116,7 +2121,8 @@ document.addEventListener("DOMContentLoaded", function(){
   var networkCancel = document.getElementById('tr-network-cancel')
   var promptEl = document.getElementById('tr-dropzone-prompt')
   var preview = document.getElementById('tr-file-preview')
-  var previewVideo = document.getElementById('tr-file-preview-video')
+  var previewThumb = document.getElementById('tr-file-preview-thumb')
+  var previewSpinner = document.getElementById('tr-file-preview-spinner')
   var previewName = document.getElementById('tr-file-preview-name')
   var previewMeta = document.getElementById('tr-file-preview-meta')
   var clearBtn = document.getElementById('tr-file-preview-clear')
@@ -2133,18 +2139,79 @@ document.addEventListener("DOMContentLoaded", function(){
     var m = Math.floor(sec/60), s = Math.round(sec%60)
     return m+':'+String(s).padStart(2,'0')
   }
+  function setPreviewThumbLoading(){
+    previewThumb.style.display = 'none'
+    previewSpinner.style.display = 'flex'
+    previewSpinner.textContent = 'Reading\u2026'
+  }
+  function setPreviewThumbImage(url){
+    previewThumb.src = url
+    previewThumb.style.display = 'block'
+    previewSpinner.style.display = 'none'
+  }
+  function setPreviewThumbUnavailable(msg){
+    previewThumb.style.display = 'none'
+    previewSpinner.style.display = 'flex'
+    previewSpinner.textContent = msg || 'No preview'
+  }
 
   function showPreview(file){
+    // Local files aren't staged on the server yet at this point (only a
+    // real form submission uploads them), so there's no filename the new
+    // /api/media/probe endpoint could read -- this path still relies on the
+    // browser's own decode via a blob URL, same as before. What's new is a
+    // bounded timeout: a codec the browser can't decode (ProRes/DNxHD/MXF,
+    // common for real broadcast masters even when dropped in locally) used
+    // to leave this stuck on "reading video info..." forever with no
+    // feedback at all. Now it gives up after a few seconds and says so --
+    // the FILE is still perfectly fine to render, only the in-browser
+    // preview of it isn't available.
     if(currentObjectUrl){ URL.revokeObjectURL(currentObjectUrl); currentObjectUrl = null }
     currentObjectUrl = URL.createObjectURL(file)
-    previewVideo.src = currentObjectUrl
     previewName.textContent = file.name
     if(typeof updateJobSummary==='function') updateJobSummary()
     previewMeta.textContent = humanSize(file.size) + ' — reading video info…'
-    previewVideo.onloadedmetadata = function(){
-      previewMeta.textContent = humanSize(file.size) + ' · ' + humanDuration(previewVideo.duration) +
-        ' · ' + previewVideo.videoWidth + '\u00d7' + previewVideo.videoHeight
+    setPreviewThumbLoading()
+    var probe = document.createElement('video')
+    probe.muted = true
+    probe.preload = 'metadata'
+    var settled = false
+    var timeoutId = setTimeout(function(){
+      if(settled) return
+      settled = true
+      previewMeta.textContent = humanSize(file.size) + ' · preview unavailable (unsupported format in-browser) — the file itself is still fine to render'
+      setPreviewThumbUnavailable('No preview')
+    }, 6000)
+    probe.onloadedmetadata = function(){
+      if(settled) return
+      settled = true
+      clearTimeout(timeoutId)
+      previewMeta.textContent = humanSize(file.size) + ' · ' + humanDuration(probe.duration) +
+        ' · ' + probe.videoWidth + '\u00d7' + probe.videoHeight
+      // Grab one frame as the thumbnail via a canvas, now that metadata (and
+      // therefore at least one decodable frame) is confirmed available --
+      // still entirely client-side, no server round trip needed for a
+      // browser-native file.
+      try{
+        probe.currentTime = Math.min(2, probe.duration / 2)
+        probe.onseeked = function(){
+          try{
+            var c = document.createElement('canvas')
+            c.width = 160; c.height = 90
+            c.getContext('2d').drawImage(probe, 0, 0, 160, 90)
+            setPreviewThumbImage(c.toDataURL('image/jpeg', 0.8))
+          }catch(e){ setPreviewThumbUnavailable('No preview') }
+        }
+      }catch(e){ setPreviewThumbUnavailable('No preview') }
     }
+    probe.onerror = function(){
+      if(settled) return
+      settled = true
+      clearTimeout(timeoutId)
+      previewMeta.textContent = humanSize(file.size) + ' · preview unavailable (unsupported format in-browser) — the file itself is still fine to render'
+      setPreviewThumbUnavailable('No preview')
+    }
+    probe.src = currentObjectUrl
     dropzone.style.display = 'none'
     // .shown triggers the CSS max-height/opacity transition — the panel visibly
     // grows into place rather than just popping in, so it reads as a live preview
@@ -2154,27 +2221,51 @@ document.addEventListener("DOMContentLoaded", function(){
   }
 
   function showNetworkPreview(localName, origName, size){
+    // Unlike the local-file path above, this file genuinely IS already
+    // staged server-side (that's what got it here) -- so this uses the
+    // real /api/media/probe endpoint instead of the browser's own decode.
+    // That's the actual fix for the reported bug: a real HIRES broadcast
+    // master is very often ProRes/DNxHD/MXF, which browsers do not decode
+    // natively at all, so onloadedmetadata never used to fire here --
+    // permanently stuck on "reading video info..." with a permanently
+    // black frame, not occasionally slow. get_video_info() server-side
+    // (via OpenCV's own ffmpeg backend, not the browser) reads these
+    // formats correctly, and a real extracted frame becomes the thumbnail
+    // instead of relying on the browser to render one at all.
     if(currentObjectUrl){ URL.revokeObjectURL(currentObjectUrl); currentObjectUrl = null }
     networkFileInput.value = localName
-    previewVideo.src = '/uploads/' + encodeURIComponent(localName)
     previewName.textContent = origName
     previewMeta.textContent = humanSize(size) + ' — reading video info…'
-    previewVideo.onloadedmetadata = function(){
-      previewMeta.textContent = humanSize(size) + ' · ' + humanDuration(previewVideo.duration) +
-        ' · ' + previewVideo.videoWidth + '\u00d7' + previewVideo.videoHeight
-    }
+    setPreviewThumbLoading()
     networkPanel.style.display = 'none'
     dropzone.style.display = 'none'
     requestAnimationFrame(function(){ preview.classList.add('shown') })
+
+    fetch('/api/media/probe', {method: 'POST', body: (function(){
+      var fd = new FormData(); fd.append('filename', localName); return fd
+    })()}).then(function(r){ return r.json() }).then(function(d){
+      if(!d.ok){
+        previewMeta.textContent = humanSize(size) + ' · ' + (d.error || 'could not read video info')
+        setPreviewThumbUnavailable('No preview')
+        return
+      }
+      previewMeta.textContent = humanSize(size) + ' · ' + humanDuration(d.duration) +
+        ' · ' + d.width + '\u00d7' + d.height
+      setPreviewThumbImage(d.thumbnail_url)
+    }).catch(function(e){
+      previewMeta.textContent = humanSize(size) + ' · could not read video info: ' + e
+      setPreviewThumbUnavailable('No preview')
+    })
   }
 
   function clearPreview(){
     fileInput.value = ''
     networkFileInput.value = ''
     preview.classList.remove('shown')
-    previewVideo.pause()
-    previewVideo.removeAttribute('src')
-    previewVideo.load()
+    previewThumb.removeAttribute('src')
+    previewThumb.style.display = 'none'
+    previewSpinner.style.display = 'flex'
+    previewSpinner.textContent = 'Reading\u2026'
     if(currentObjectUrl){ URL.revokeObjectURL(currentObjectUrl); currentObjectUrl = null }
     networkPanel.style.display = 'none'
     dropzone.style.display = ''
@@ -2191,15 +2282,48 @@ document.addEventListener("DOMContentLoaded", function(){
   // from `subpath` (which for a search result may be a different, deeper
   // folder than trNetworkSubpath itself, since a recursive search can span
   // many subfolders at once) and shows the picked-file preview.
+  var trNetworkFetchAbort = null  // the in-flight /api/network/fetch's AbortController, if any
+
   function pickTrNetworkFile(name, subpath){
-    networkList.innerHTML = '<div class="net-modal-empty">Fetching ' + name + '\u2026</div>'
-    fetch('/api/network/fetch', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: name, category: 'hires', subpath: subpath || ''})})
+    // A real fetch of a multi-GB file over SMB can take a while, and until
+    // now there was no way to back out of it once started -- the "reading
+    // video info..." hang this was built alongside made that worse (stuck
+    // there with literally no escape but reloading the page). This aborts
+    // the CLIENT's wait, letting the person pick something else right away;
+    // the note below is honest about what it doesn't do.
+    var controller = new AbortController()
+    trNetworkFetchAbort = controller
+    networkList.innerHTML =
+      '<div class="net-modal-empty">Fetching ' + name + '\u2026' +
+      '<div style="margin-top:10px"><button type="button" class="btn btn-secondary-promo" id="tr-network-fetch-cancel">Cancel</button></div></div>'
+    document.getElementById('tr-network-fetch-cancel').addEventListener('click', function(){
+      controller.abort()
+    })
+    fetch('/api/network/fetch', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({name: name, category: 'hires', subpath: subpath || ''}),
+      signal: controller.signal
+    })
       .then(function(r){ return r.json() })
       .then(function(d2){
+        trNetworkFetchAbort = null
         if(!d2.ok){ networkList.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + d2.error + '</div>'; return }
         showNetworkPreview(d2.filename, d2.orig_name, d2.size)
       })
-      .catch(function(e){ networkList.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + e + '</div>' })
+      .catch(function(e){
+        trNetworkFetchAbort = null
+        if(e.name === 'AbortError'){
+          // Only stops the CLIENT waiting on the response -- the server may
+          // still be partway through copying the file in the background for
+          // a little longer. The abandoned copy is harmless (just sits
+          // unused in the staging folder) and never becomes part of any
+          // render, since nothing referenced it before this was cancelled.
+          networkList.innerHTML = '<div class="net-modal-empty">Cancelled.</div>'
+          loadNetworkList(subpath || '')
+          return
+        }
+        networkList.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + e + '</div>'
+      })
   }
 
   var trNetworkSelected = []  // [{name, size}] -- cleared on every folder navigation; combining spans one folder's listing, not files picked across different folders
