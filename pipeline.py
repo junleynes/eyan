@@ -4861,29 +4861,99 @@ def library_file(tid):
 @app.route('/library/<int:tid>/download')
 @require_permission('promo_generation')
 def library_download(tid):
+    cache_path, base_name, ext, err, status = _resolve_export_file(tid, custom_name=request.args.get('name'))
+    if err:
+        return jsonify(error=err), status
+    resp = send_from_directory(LIBRARY_DIR, os.path.basename(cache_path))
+    resp.headers['Content-Disposition'] = f'attachment; filename="{base_name}.{ext}"'
+    return resp
+
+def _resolve_export_file(tid, fmt_key=None, custom_name=None):
+    """Resolves (generating and caching if needed) the exported delivery file
+    for a library trailer. Shared by the browser-download route and the
+    send-to-destination route below -- both need the exact same "have we
+    already exported this format, and if not, build it" logic, and having
+    two copies of an ffmpeg-invoking cache check is exactly the kind of
+    thing that quietly drifts out of sync over time.
+
+    custom_name, if given, only affects the returned DISPLAY name
+    (base_name) -- the actual cached file on disk is still keyed by trailer
+    id + format regardless of what someone names their download, so
+    renaming never creates a duplicate export or invalidates the cache for
+    anyone else pulling the same format.
+
+    Returns (cache_path, base_name, ext, error, status_code). On success,
+    error is None and status_code is unused."""
     row = library_get_row(tid)
     if not row:
-        return jsonify(error='Not found'), 404
+        return None, None, None, 'Not found', 404
     if not _owns_or_admin(row.get('user_id')):
-        return jsonify(error='Not found'), 404
-    fmt_key = request.args.get('format', 'mp4_high')
+        return None, None, None, 'Not found', 404
+    fmt_key = fmt_key or request.args.get('format', 'mp4_high')
     if fmt_key not in EXPORT_FORMATS:
-        return jsonify(error=f'Unknown export format: {fmt_key}'), 400
+        return None, None, None, f'Unknown export format: {fmt_key}', 400
     src_path = os.path.join(LIBRARY_DIR, row['filename'])
     if not os.path.exists(src_path):
-        return jsonify(error='File not found'), 404
+        return None, None, None, 'File not found', 404
     ext = EXPORT_FORMATS[fmt_key]['ext']
-    base_name, _ = os.path.splitext(row['orig_name'] or row['filename'])
+    if custom_name and custom_name.strip():
+        # secure_filename() also strips any extension-looking suffix the
+        # person typed (e.g. pasting "promo.mp4" as the name) along with
+        # anything unsafe -- the real extension is always the export
+        # format's own, appended once below, never whatever they typed.
+        safe = secure_filename(os.path.splitext(custom_name.strip())[0])
+        base_name = safe if safe else None
+    else:
+        base_name = None
+    if not base_name:
+        base_name, _ = os.path.splitext(row['orig_name'] or row['filename'])
     cache_name = f'{os.path.splitext(row["filename"])[0]}_{fmt_key}.{ext}'
     cache_path = os.path.join(LIBRARY_DIR, cache_name)
     if not (os.path.exists(cache_path) and os.path.getsize(cache_path) > 0):
         cmd = build_export_cmd(src_path, cache_path, fmt_key)
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         if not (os.path.exists(cache_path) and os.path.getsize(cache_path) > 0):
-            return jsonify(error=f'Export to {fmt_key} failed: {r.stderr[-800:]}'), 500
-    resp = send_from_directory(LIBRARY_DIR, cache_name)
-    resp.headers['Content-Disposition'] = f'attachment; filename="{base_name}.{ext}"'
-    return resp
+            return None, None, None, f'Export to {fmt_key} failed: {r.stderr[-800:]}', 500
+    return cache_path, base_name, ext, None, 200
+
+def send_file_to_network_destination(local_path, remote_filename):
+    """Copies an already-exported local file to the configured Config >
+    Network 'destination' share -- the write-side counterpart to
+    fetch_network_file()'s read. Same session/credential handling
+    (_network_session, reused per-server by smbclient itself), just
+    open_file(mode='wb') instead of 'rb'.
+
+    Raises ValueError with a message safe to show the user (no destination
+    configured, or the write itself failing -- most commonly a permissions
+    or connectivity problem on the destination share) rather than letting a
+    raw smbprotocol exception surface."""
+    root = _network_share_root('destination')
+    if not root:
+        raise ValueError('No destination folder configured yet -- set one in Config > Network.')
+    _network_session('destination')
+    remote_path = root + '\\' + remote_filename
+    try:
+        with open(local_path, 'rb') as lf, smbclient.open_file(remote_path, mode='wb') as rf:
+            shutil.copyfileobj(lf, rf)
+    except Exception as e:
+        raise ValueError(f'Could not write to the destination share: {e}')
+
+@app.route('/library/<int:tid>/send-to-destination', methods=['POST'])
+@require_permission('promo_generation')
+def library_send_to_destination(tid):
+    data = request.get_json(silent=True) or {}
+    fmt_key = data.get('format', 'mp4_high')
+    cache_path, base_name, ext, err, status = _resolve_export_file(tid, fmt_key, custom_name=data.get('filename'))
+    if err:
+        return jsonify(ok=False, error=err), status
+    remote_filename = f'{base_name}.{ext}'
+    try:
+        send_file_to_network_destination(cache_path, remote_filename)
+    except ValueError as e:
+        return jsonify(ok=False, error=str(e)), 502
+    audit_log('trailer_send_to_destination', target=remote_filename,
+              user_id=session.get('user_id'), username=session.get('username'), ip=_client_ip())
+    return jsonify(ok=True, filename=remote_filename)
 
 
 def _monitor_snapshot(filter_user_id=None, include_username=False):
@@ -7661,6 +7731,17 @@ def _run_trailer_job(jid, params):
     try:
         result['library_id'] = library_add(filename, result,
                                             user_id=params.get('user_id'), username=params.get('username'))
+        # job_set() above already persisted `result` -- but that write happens
+        # via JSON serialization at call time, not a live reference, so it
+        # captured `result` BEFORE library_id existed on it. Re-persisting
+        # here means callers reading the job's stored result (like the
+        # frontend, or Send to destination, which needs a real library_id to
+        # target) actually get it. The existing "Download selected format"
+        # button already had a filename-based fallback for exactly this gap,
+        # which is why it was never reported as broken -- Send to destination
+        # doesn't have an equivalent fallback, so this needed fixing rather
+        # than working around.
+        job_set(jid, result=result)
     except Exception as e:
         print(f'Trailer library save failed (job still succeeded): {e}')
     # No ip here -- this runs in the background render thread, well past the

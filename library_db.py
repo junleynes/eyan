@@ -560,7 +560,7 @@ def set_service_disabled(name, disabled):
 # filling this in already knows the exact path and login for each folder,
 # not a "base share" they're subdividing.
 NETWORK_FOLDERS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'network_folders.json')
-NETWORK_CATEGORY_KEYS = ['hires', 'tcard', 'endcard', 'music', 'vo', 'sfx']
+NETWORK_CATEGORY_KEYS = ['hires', 'tcard', 'endcard', 'music', 'vo', 'sfx', 'destination']
 _NETWORK_FOLDER_FIELDS = ('path', 'username', 'password')
 
 def load_network_folders():

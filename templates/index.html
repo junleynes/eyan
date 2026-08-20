@@ -4373,8 +4373,11 @@ function renderTrailerResult(d){
   var dlFilename = d.trailer_url.split('/').pop()
   var dlName = d.orig_name
   var dlUrl = function(fmt){
-    if(d.library_id) return '/library/'+d.library_id+'/download?format='+fmt
-    return '/download/'+dlFilename+'?name='+encodeURIComponent(dlName)+'&format='+fmt
+    var nameEl = document.getElementById('tr-delivery-filename')
+    var customName = nameEl ? nameEl.value.trim() : ''
+    var nameParam = customName ? '&name=' + encodeURIComponent(customName) : ''
+    if(d.library_id) return '/library/'+d.library_id+'/download?format='+fmt+nameParam
+    return '/download/'+dlFilename+'?name='+encodeURIComponent(customName || dlName)+'&format='+fmt
   }
   var baseName = (d.orig_name || 'promo').replace(/\.[^.]+$/,'')
   var stamp = new Date().toISOString().slice(0,10)
@@ -4391,6 +4394,10 @@ function renderTrailerResult(d){
     mp4_high: 'MP4 master', prores_hq_2997: 'ProRes 29.97',
     prores_hq_2398: 'ProRes 23.976', avci100i: 'AVC-Intra ~'
   }
+  // Matches EXPORT_FORMATS' own ext per key server-side -- shown next to the
+  // editable name field so it's clear the typed name never needs (or keeps)
+  // an extension of its own; the real one always comes from the selected format.
+  var EXPORT_EXTS = {mp4_high: 'mp4', prores_hq_2997: 'mov', prores_hq_2398: 'mov', avci100i: 'mov'}
   var chosenFormat = FORMAT_LABELS[d.delivery_format] ? d.delivery_format : 'mp4_high'
   var formatRow = Object.keys(FORMAT_LABELS).map(function(fmt){
     var active = fmt === chosenFormat
@@ -4411,16 +4418,26 @@ function renderTrailerResult(d){
     '</div>'+
     '<div class="delivery-pack">'+
       '<div class="delivery-title">Delivery package</div>'+
-      '<div class="delivery-name">Suggested name: <code>'+esc(suggest)+'</code></div>'+
+      '<div class="delivery-name" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+
+        '<label for="tr-delivery-filename" style="font-size:12px;opacity:.75">File name:</label>'+
+        '<input type="text" id="tr-delivery-filename" value="'+esc(suggest)+'" '+
+          'style="flex:1;min-width:200px;font-family:\'JetBrains Mono\',monospace;font-size:12px;'+
+          'padding:5px 8px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink)">'+
+        '<span id="tr-delivery-ext" style="font-size:11px;opacity:.6">.'+EXPORT_EXTS[chosenFormat]+'</span>'+
+      '</div>'+
       '<div class="delivery-row">'+
         formatRow+
       '</div>'+
       '<div class="delivery-row" style="margin-top:8px">'+
         '<a id="tr-download-selected" class="btn btn-primary-promo" style="text-decoration:none" href="'+dlUrl(chosenFormat)+'">Download selected format</a>'+
+        '<button type="button" class="btn btn-secondary-promo" id="tr-send-destination-btn">Send to destination</button>'+
+        '<span id="tr-send-destination-status" style="font-size:12px;align-self:center"></span>'+
         '<button type="button" class="btn btn-secondary-promo" id="tr-scene-csv-btn">Scene list CSV</button>'+
         '<button type="button" class="btn btn-secondary-promo" onclick="submitTrailer(true)">Re-preview same setup</button>'+
       '</div>'+
     '</div>'
+  var currentDeliveryFormat = chosenFormat  // tracks the fmt-select-btn selection so both Download and Send to destination act on the same one
+  var extLabel = document.getElementById('tr-delivery-ext')
   document.querySelectorAll('.fmt-select-btn').forEach(function(btn){
     btn.addEventListener('click', function(){
       document.querySelectorAll('.fmt-select-btn').forEach(function(b){
@@ -4429,11 +4446,47 @@ function renderTrailerResult(d){
       })
       btn.classList.remove('btn-secondary-promo'); btn.classList.add('btn-primary-promo')
       btn.setAttribute('aria-pressed', 'true')
-      document.getElementById('tr-download-selected').href = dlUrl(btn.getAttribute('data-fmt'))
+      currentDeliveryFormat = btn.getAttribute('data-fmt')
+      document.getElementById('tr-download-selected').href = dlUrl(currentDeliveryFormat)
+      if(extLabel) extLabel.textContent = '.' + EXPORT_EXTS[currentDeliveryFormat]
     })
+  })
+  var nameInput = document.getElementById('tr-delivery-filename')
+  if(nameInput) nameInput.addEventListener('input', function(){
+    document.getElementById('tr-download-selected').href = dlUrl(currentDeliveryFormat)
   })
   var csvBtn = document.getElementById('tr-scene-csv-btn')
   if(csvBtn) csvBtn.addEventListener('click', function(){ downloadSceneListCsv(d) })
+  var sendBtn = document.getElementById('tr-send-destination-btn')
+  var sendStatus = document.getElementById('tr-send-destination-status')
+  if(sendBtn) sendBtn.addEventListener('click', function(){
+    if(!d.library_id){
+      sendStatus.textContent = "Couldn't save this render to the library, so there's nothing to send yet."
+      sendStatus.style.color = 'var(--tally)'
+      return
+    }
+    sendBtn.disabled = true
+    sendStatus.textContent = 'Sending\u2026'
+    sendStatus.style.color = ''
+    var customName = nameInput ? nameInput.value.trim() : ''
+    fetch('/library/' + d.library_id + '/send-to-destination', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({format: currentDeliveryFormat, filename: customName || undefined})
+    }).then(function(r){ return r.json() }).then(function(dd){
+      sendBtn.disabled = false
+      if(!dd.ok){
+        sendStatus.textContent = dd.error || 'Send failed.'
+        sendStatus.style.color = 'var(--tally)'
+        return
+      }
+      sendStatus.textContent = 'Sent ' + dd.filename
+      sendStatus.style.color = 'var(--phosphor)'
+    }).catch(function(e){
+      sendBtn.disabled = false
+      sendStatus.textContent = 'Error: ' + e
+      sendStatus.style.color = 'var(--tally)'
+    })
+  })
   attachPeakMeter(document.getElementById('tr-video-el'))
 
   var rows=''
@@ -5333,7 +5386,7 @@ function switchDocs(btn){
 </div>
 
 <div id="p-config-network" class="sub-panel">
-<p style="margin-top:-4px;color:var(--ink-dim)">Where Browse Library looks for files. Each category is fully independent — its own full network path, username, and password — since HIRES, cards, music, VO, and SFX often live on genuinely different volumes with different credentials. Takes effect immediately; no restart needed.</p>
+<p style="margin-top:-4px;color:var(--ink-dim)">Where Browse Library looks for source files (HIRES, cards, music, VO, SFX), plus one write destination: "Send to destination" on a finished render copies it to this folder instead of downloading through the browser — useful for handing a render off to another system (e.g. a Vantage watch folder) without a manual step. Each category is fully independent — its own full network path, username, and password — since these often live on genuinely different volumes with different credentials. Takes effect immediately; no restart needed.</p>
 <div id="config-network-folders" style="display:flex;flex-direction:column;gap:12px;margin-top:16px">
   <!-- cards injected by loadNetworkFolders() -->
 </div>
@@ -5778,7 +5831,7 @@ async function saveProductionTab(){
 }
 window.saveProductionTab = saveProductionTab
 
-var NETWORK_CATEGORY_LABELS = {hires: 'Video (HIRES)', tcard: 'Title card', endcard: 'End card', music: 'Music', vo: 'VO', sfx: 'SFX'}
+var NETWORK_CATEGORY_LABELS = {hires: 'Video (HIRES)', tcard: 'Title card', endcard: 'End card', music: 'Music', vo: 'VO', sfx: 'SFX', destination: 'Delivery destination (Send to destination)'}
 var networkFoldersLoaded = false
 async function loadNetworkFolders(){
   var container = document.getElementById('config-network-folders')
