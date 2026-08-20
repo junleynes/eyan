@@ -104,13 +104,31 @@ def audit_log(action, target=None, detail=None, user_id=None, username=None, ip=
     conn.commit()
     conn.close()
 
-def audit_log_list(limit=200):
+def audit_log_list(limit=200, q=None):
     """Most recent audit entries, newest first. Admin-only at the route
     level (this function itself doesn't check permissions -- same pattern
     as library_stats(), which the dashboard's Library card already uses the
-    same way)."""
+    same way).
+
+    Optional ``q`` filters case-insensitively across action, target, detail,
+    and username (substring match). Empty/whitespace ``q`` is ignored."""
     conn = _lib_db()
-    rows = conn.execute('SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ?', (limit,)).fetchall()
+    needle = (q or '').strip()
+    if needle:
+        like = f'%{needle}%'
+        rows = conn.execute(
+            'SELECT * FROM audit_log WHERE '
+            'action LIKE ? COLLATE NOCASE OR '
+            'IFNULL(target,\'\') LIKE ? COLLATE NOCASE OR '
+            'IFNULL(detail,\'\') LIKE ? COLLATE NOCASE OR '
+            'IFNULL(username,\'\') LIKE ? COLLATE NOCASE '
+            'ORDER BY created_at DESC LIMIT ?',
+            (like, like, like, like, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            'SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ?', (limit,)
+        ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 

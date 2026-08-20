@@ -4814,10 +4814,12 @@ def api_admin_library_stats():
 @app.route('/api/admin/audit-log')
 def api_admin_audit_log():
     """The most recent audit entries for Config > Audit Log. Admin-only --
-    this is a record of every user's actions, not just the caller's own."""
+    this is a record of every user's actions, not just the caller's own.
+    Optional ``?q=`` filters action/target/detail/username (substring)."""
     if session.get('role') != 'admin':
         return jsonify(ok=False, error='Admin access required.'), 403
-    return jsonify(ok=True, items=audit_log_list(limit=200))
+    q = request.args.get('q') or None
+    return jsonify(ok=True, items=audit_log_list(limit=200, q=q), q=q or '')
 
 @app.route('/api/trailer/library/<int:tid>')
 @require_permission('promo_generation')
@@ -4884,32 +4886,39 @@ def library_download(tid):
     return resp
 
 
-@app.route('/api/monitor')
-@require_permission('promo_generation')
-def api_monitor():
-    """Live snapshot of trailer jobs the server currently knows about: running
-    right now, waiting for a free concurrency slot, or finished
-    (success/error/cancelled) within the last JOB_TTL. Per-user for a regular
-    account (only jobs *they* started); whole-server for an admin. This is
-    the transient, in-progress counterpart to the permanent Saved Trailers
-    library: finished entries here age out after JOB_TTL regardless of
-    whether they were also saved to the library."""
-    is_admin = session.get('role') == 'admin'
+def _monitor_snapshot(filter_user_id=None, include_username=False):
+    """Build active/queued/finished lists from the jobs table.
+
+    When ``filter_user_id`` is set, only that user's jobs are included.
+    When None, every job is included (admin all-jobs view)."""
     with JOB_QUEUE_LOCK:
         queued_ids = list(JOB_QUEUE)
-    snapshot = {jid: j for jid, j in job_list_all().items() if _owns_or_admin(j.get('user_id'))}
+    all_jobs = job_list_all()
+    if filter_user_id is not None:
+        snapshot = {jid: j for jid, j in all_jobs.items()
+                    if j.get('user_id') is not None and j.get('user_id') == filter_user_id}
+    else:
+        snapshot = all_jobs
 
-    queued = [{'job_id': jid, 'position': i, 'orig_name': snapshot.get(jid, {}).get('orig_name'),
-               **({'username': snapshot.get(jid, {}).get('username')} if is_admin else {})}
-              for i, jid in enumerate(queued_ids) if jid in snapshot]
+    queued = []
+    for i, jid in enumerate(queued_ids):
+        if jid not in snapshot:
+            continue
+        entry = {'job_id': jid, 'position': i,
+                 'orig_name': snapshot[jid].get('orig_name'),
+                 'user_id': snapshot[jid].get('user_id')}
+        if include_username:
+            entry['username'] = snapshot[jid].get('username')
+        queued.append(entry)
 
     active, finished = [], []
     for jid, j in snapshot.items():
         if jid in queued_ids:
             continue
         entry = {'job_id': jid, 'orig_name': j.get('orig_name'), 'percent': j.get('percent'),
-                  'step': j.get('step'), 'status': j.get('status'), 'created': j.get('created')}
-        if is_admin:
+                 'step': j.get('step'), 'status': j.get('status'), 'created': j.get('created'),
+                 'user_id': j.get('user_id'), 'cancel_requested': bool(j.get('cancel_requested'))}
+        if include_username:
             entry['username'] = j.get('username')
         if j.get('done'):
             entry['error'] = j.get('error')
@@ -4918,7 +4927,56 @@ def api_monitor():
             active.append(entry)
     active.sort(key=lambda e: e['created'] or 0)
     finished.sort(key=lambda e: e['created'] or 0, reverse=True)
-    return jsonify(active=active, queued=queued, finished=finished[:20], limit=GATE.status()['limit'])
+    return active, queued, finished
+
+
+@app.route('/api/monitor')
+@require_permission('promo_generation')
+def api_monitor():
+    """Live snapshot of *this account's* trailer jobs: running, queued, or
+    finished within JOB_TTL. Always scoped to the current user — even for
+    admins — so the Promo tab Job monitor only reflects your own process.
+    Admins use /api/admin/jobs for the whole-server view."""
+    uid = session.get('user_id')
+    if uid is None:
+        return jsonify(active=[], queued=[], finished=[], limit=GATE.status()['limit'])
+    active, queued, finished = _monitor_snapshot(filter_user_id=uid, include_username=False)
+    return jsonify(active=active, queued=queued, finished=finished[:20],
+                   limit=GATE.status()['limit'])
+
+
+@app.route('/api/admin/jobs')
+def api_admin_jobs():
+    """Whole-server job monitor for admins: every active, queued, and recent
+    finished job across all accounts. Used by Config > Jobs."""
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='Admin access required.'), 403
+    active, queued, finished = _monitor_snapshot(filter_user_id=None, include_username=True)
+    gate = GATE.status()
+    return jsonify(ok=True, active=active, queued=queued, finished=finished[:50],
+                   limit=gate['limit'], running=gate['running'])
+
+
+@app.route('/api/admin/jobs/<job_id>/cancel', methods=['POST'])
+def api_admin_job_cancel(job_id):
+    """Admin-only cancel of any queued or running job, regardless of owner."""
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='Admin access required.'), 403
+    j = job_get(job_id)
+    if not j:
+        return jsonify(ok=False, error='Unknown job id'), 404
+    ok = job_cancel(job_id)
+    if not ok:
+        j = job_get(job_id)
+        if not j:
+            return jsonify(ok=False, error='Unknown job id'), 404
+        return jsonify(ok=False, error='Job already finished'), 409
+    audit_log('job_cancel',
+              target=j.get('orig_name') or job_id,
+              detail=f"owner={j.get('username') or j.get('user_id')}",
+              user_id=session.get('user_id'), username=session.get('username'),
+              ip=_client_ip())
+    return jsonify(ok=True, cancelled=True, job_id=job_id)
 
 @app.route('/api/queue/status')
 def api_queue_status():

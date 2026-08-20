@@ -2044,7 +2044,7 @@ document.addEventListener("DOMContentLoaded", function(){
 <div class="work-out">
 <div id=tr-monitor class=card style="padding:0;margin-bottom:14px;overflow:hidden">
   <div id=tr-monitor-toggle style="display:flex;align-items:center;justify-content:space-between;padding:11px 16px;cursor:pointer">
-    <strong style="font-size:13px">Job monitor <span id=tr-monitor-summary style="opacity:.6;font-weight:400"></span></strong>
+    <strong style="font-size:13px">Your jobs <span id=tr-monitor-summary style="opacity:.6;font-weight:400"></span></strong>
     <span id=tr-monitor-chevron style="opacity:.6;font-size:12px">&#9660;</span>
   </div>
   <div id=tr-monitor-body style="display:none;border-top:1px solid var(--line)">
@@ -2830,25 +2830,12 @@ async function resumeActiveJobIfAny(){
   var r
   try{ r = await fetch('/api/monitor') }catch(e){ return }
   var d = await r.json()
-  // /api/monitor's "active" list is trailer-generation jobs specifically
-  // (music/SFX/TTS are synchronous request/response, never in this list) and
-  // is already filtered to this session's own jobs for a regular account --
-  // for an admin (who sees everyone's), only auto-resume one that's actually
-  // theirs, so an admin never has someone else's job silently take over
-  // their own Generate tab's progress bar and Cancel button.
-  var mine = (d.active || []).find(function(j){
-    return j.job_id && (!IS_ADMIN || !j.username || j.username === CURRENT_USERNAME)
-  })
+  // /api/monitor is always scoped to this account's jobs (even for admins —
+  // the whole-server view lives under Config > Jobs). Pick the first active
+  // or queued trailer job so a page refresh can resume the inline progress UI.
+  var mine = (d.active || []).find(function(j){ return j.job_id })
   if(!mine){
-    // Also check jobs still waiting for a free concurrency slot -- a job
-    // submitted right as the page was refreshed could still be queued, not
-    // running yet, and is just as orphaned without this. pollJob() itself
-    // fetches the authoritative current state on its first tick regardless
-    // of what's shown here first, so an initial 0%/"Queued" is only ever
-    // displayed for a moment.
-    mine = (d.queued || []).find(function(j){
-      return j.job_id && (!IS_ADMIN || !j.username || j.username === CURRENT_USERNAME)
-    })
+    mine = (d.queued || []).find(function(j){ return j.job_id })
   }
   if(!mine) return
 
@@ -4520,10 +4507,9 @@ function renderTrailerResult(d){
   refreshHistory() // populate the count even while collapsed
 })();
 
-// ---- Job monitor — live view of what's currently active/queued/recently
-// finished on the server. Whole-server view (no login system, see the
-// backend route's docstring), auto-refreshes every few seconds while
-// expanded so it stays live without the person needing to reopen it.
+// ---- Your jobs — live view of *this account's* active/queued/recent
+// trailer jobs. Always scoped to the current user (admins use Config > Jobs
+// for the whole-server list). Auto-refreshes while expanded.
 (function(){
   var body = document.getElementById('tr-monitor-body')
   var toggle = document.getElementById('tr-monitor-toggle')
@@ -4542,27 +4528,42 @@ function renderTrailerResult(d){
   }
   function emptyRow(text){ return '<div class="monitor-row" style="opacity:.5;font-size:12px">' + text + '</div>' }
 
+  function bindCancel(container){
+    container.querySelectorAll('[data-job-cancel]').forEach(function(btn){
+      btn.addEventListener('click', async function(){
+        var jid = btn.getAttribute('data-job-cancel')
+        if(!confirm('Cancel this job?')) return
+        btn.disabled = true
+        try{ await fetch('/api/trailer/cancel/' + encodeURIComponent(jid), {method:'POST'}) }catch(e){}
+        refreshMonitor()
+      })
+    })
+  }
   function renderActive(items){
     if(!items.length){ activeEl.innerHTML = emptyRow('Nothing running right now.'); return }
     activeEl.innerHTML = items.map(function(j){
       var pct = j.percent || 0
-      var by = (IS_ADMIN && j.username) ? ' \u00b7 ' + j.username : ''
+      var cancel = j.cancel_requested
+        ? '<span class="monitor-badge cancel">Cancelling…</span>'
+        : '<button type="button" class="btn-sm" data-job-cancel="' + j.job_id + '" style="color:var(--tally);border-color:var(--tally);padding:3px 8px;font-size:10px">Cancel</button>'
       return '<div class="monitor-row">' +
-        '<span class="m-name" title="' + (j.step||'') + '">' + (j.orig_name || 'Untitled') + by + ' &mdash; ' + (j.step||'') + '</span>' +
+        '<span class="m-name" title="' + (j.step||'') + '">' + (j.orig_name || 'Untitled') + ' &mdash; ' + (j.step||'') + '</span>' +
         '<span class="m-bar"><span class="m-bar-fill" style="width:' + pct + '%"></span></span>' +
-        '<span class="m-pct">' + pct + '%</span>' +
+        '<span class="m-pct">' + pct + '%</span>' + cancel +
       '</div>'
     }).join('')
+    bindCancel(activeEl)
   }
   function renderQueued(items){
     if(!items.length){ queuedEl.innerHTML = emptyRow('Nothing waiting.'); return }
     queuedEl.innerHTML = items.map(function(j){
-      var by = (IS_ADMIN && j.username) ? ' \u00b7 ' + j.username : ''
       return '<div class="monitor-row">' +
-        '<span class="m-name">' + (j.orig_name || 'Untitled') + by + '</span>' +
+        '<span class="m-name">' + (j.orig_name || 'Untitled') + '</span>' +
         '<span class="m-pos">' + (j.position === 0 ? 'starting shortly' : j.position + ' ahead') + '</span>' +
+        '<button type="button" class="btn-sm" data-job-cancel="' + j.job_id + '" style="color:var(--tally);border-color:var(--tally);padding:3px 8px;font-size:10px">Cancel</button>' +
       '</div>'
     }).join('')
+    bindCancel(queuedEl)
   }
   function renderFinished(items){
     if(!items.length){ finishedEl.innerHTML = emptyRow('Nothing finished recently.'); return }
@@ -4570,9 +4571,8 @@ function renderTrailerResult(d){
       var badge = j.status === 'cancelled' ? '<span class="monitor-badge cancel">Cancelled</span>'
                 : j.error ? '<span class="monitor-badge err">Error</span>'
                 : '<span class="monitor-badge ok">Done</span>'
-      var by = (IS_ADMIN && j.username) ? ' \u00b7 ' + j.username : ''
       return '<div class="monitor-row">' +
-        '<span class="m-name" title="' + (j.error||'') + '">' + (j.orig_name || 'Untitled') + by + '</span>' +
+        '<span class="m-name" title="' + (j.error||'') + '">' + (j.orig_name || 'Untitled') + '</span>' +
         '<span class="m-pos">' + fmtWhen(j.created) + '</span>' +
         badge +
       '</div>'
@@ -5305,7 +5305,8 @@ function switchDocs(btn){
   <div class="sub-tab" onclick="switchSubTab('p-config-branding',this)" role="button" tabindex="0">Branding</div>
   <div class="sub-tab" onclick="switchSubTab('p-config-security',this)" role="button" tabindex="0">Security</div>
   <div class="sub-tab" onclick="switchSubTab('p-config-users',this)" role="button" tabindex="0">Users</div>
-  <div class="sub-tab" onclick="switchSubTab('p-config-audit',this)" role="button" tabindex="0">Audit Log</div>
+  <div class="sub-tab" onclick="switchSubTab('p-config-jobs',this); if(typeof loadAdminJobs==='function') loadAdminJobs()" role="button" tabindex="0">Jobs</div>
+  <div class="sub-tab" onclick="switchSubTab('p-config-audit',this); if(typeof loadAuditLog==='function') loadAuditLog()" role="button" tabindex="0">Audit Log</div>
 </div>
 
 <div id="p-config-services" class="sub-panel active">
@@ -5429,8 +5430,27 @@ function switchDocs(btn){
 <div id="config-users-rows"><p style="opacity:.7">Loading&hellip;</p></div>
 </div>
 
+<div id="p-config-jobs" class="sub-panel">
+<p style="margin-top:-4px;color:var(--ink-dim)">All jobs across every account. Cancel active or queued work from here.</p>
+<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+  <button type="button" class="btn" onclick="loadAdminJobs()">Refresh</button>
+  <span id="config-jobs-summary" style="font-size:12px;opacity:.7"></span>
+</div>
+<div class="monitor-section-label">Active</div>
+<div id="config-jobs-active"><p style="opacity:.6;font-size:12px;padding:8px 4px">Loading&hellip;</p></div>
+<div class="monitor-section-label">Queued</div>
+<div id="config-jobs-queued"><p style="opacity:.6;font-size:12px;padding:8px 4px">Loading&hellip;</p></div>
+<div class="monitor-section-label">Recently finished</div>
+<div id="config-jobs-finished" style="max-height:320px;overflow-y:auto"><p style="opacity:.6;font-size:12px;padding:8px 4px">Loading&hellip;</p></div>
+</div>
+
 <div id="p-config-audit" class="sub-panel">
 <p style="margin-top:-4px;color:var(--ink-dim)">Who did what — the last 200 admin actions, renders, and deletions. Newest first.</p>
+<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+  <input type="search" id="config-audit-q" placeholder="Search action, user, target&hellip;" style="flex:1;min-width:200px;max-width:360px" onkeydown="if(event.key==='Enter'){event.preventDefault();loadAuditLog()}">
+  <button type="button" class="btn" onclick="loadAuditLog()">Search</button>
+  <button type="button" class="btn" style="background:transparent;border:1px solid var(--line);color:var(--ink)" onclick="document.getElementById('config-audit-q').value='';loadAuditLog()">Clear</button>
+</div>
 <div id="config-audit-rows"><p style="opacity:.7">Loading&hellip;</p></div>
 </div>
 
@@ -5833,17 +5853,25 @@ async function loadAuditLog(){
   auditLogLoaded = true
   var container = document.getElementById('config-audit-rows')
   if(!container) return
+  var qEl = document.getElementById('config-audit-q')
+  var q = qEl ? qEl.value.trim() : ''
   try{
-    var r = await fetch('/api/admin/audit-log')
+    var url = '/api/admin/audit-log' + (q ? ('?q=' + encodeURIComponent(q)) : '')
+    var r = await fetch(url)
     var d = await r.json()
     if(!d.ok){ container.innerHTML = '<p style="color:var(--amber)">Could not load the audit log.</p>'; return }
-    if(!d.items.length){ container.innerHTML = '<p style="opacity:.6">Nothing recorded yet.</p>'; return }
+    if(!d.items.length){
+      container.innerHTML = q
+        ? '<p style="opacity:.6">No matches for “' + escapeHtmlLite(q) + '”.</p>'
+        : '<p style="opacity:.6">Nothing recorded yet.</p>'
+      return
+    }
     var ACTION_LABELS = {
       user_create: 'Created account', user_role_change: 'Changed role', user_enable: 'Enabled account',
       user_disable: 'Disabled account', user_2fa_reset: 'Reset 2FA', user_password_reset: 'Reset password',
       user_delete: 'Deleted account', trailer_delete: 'Deleted trailer', trailer_generate: 'Generated promo',
       network_folder_change: 'Changed network folder', production_defaults_change: 'Changed production defaults',
-      branding_change: 'Changed branding'
+      branding_change: 'Changed branding', job_cancel: 'Cancelled job'
     }
     var rows = d.items.map(function(it){
       var when = new Date(it.created_at * 1000).toLocaleString()
@@ -5863,6 +5891,86 @@ async function loadAuditLog(){
   }
 }
 window.loadAuditLog = loadAuditLog
+
+var adminJobsTimer = null
+async function loadAdminJobs(){
+  var activeEl = document.getElementById('config-jobs-active')
+  var queuedEl = document.getElementById('config-jobs-queued')
+  var finishedEl = document.getElementById('config-jobs-finished')
+  var summaryEl = document.getElementById('config-jobs-summary')
+  if(!activeEl) return
+  try{
+    var r = await fetch('/api/admin/jobs')
+    var d = await r.json()
+    if(!d.ok){
+      activeEl.innerHTML = '<p style="color:var(--amber);font-size:12px">Could not load jobs.</p>'
+      return
+    }
+    if(summaryEl){
+      summaryEl.textContent = (d.active.length) + ' active · ' + (d.queued.length) + ' queued · limit ' + (d.limit || '?')
+    }
+    function empty(t){ return '<div class="monitor-row" style="opacity:.5;font-size:12px">' + t + '</div>' }
+    function cancelBtn(jid){
+      return '<button type="button" class="btn-sm" data-admin-cancel="' + jid + '" style="color:var(--tally);border-color:var(--tally);padding:3px 8px;font-size:10px">Cancel</button>'
+    }
+    if(!d.active.length) activeEl.innerHTML = empty('Nothing running.')
+    else activeEl.innerHTML = d.active.map(function(j){
+      var pct = j.percent || 0
+      var who = j.username ? ' · ' + escapeHtmlLite(j.username) : ''
+      var cancelling = j.cancel_requested ? ' <span class="monitor-badge cancel">Cancelling…</span>' : cancelBtn(j.job_id)
+      return '<div class="monitor-row">' +
+        '<span class="m-name" title="' + escapeHtmlLite(j.step||'') + '">' + escapeHtmlLite(j.orig_name || 'Untitled') + who + ' — ' + escapeHtmlLite(j.step||'') + '</span>' +
+        '<span class="m-bar"><span class="m-bar-fill" style="width:' + pct + '%"></span></span>' +
+        '<span class="m-pct">' + pct + '%</span>' + cancelling +
+      '</div>'
+    }).join('')
+    if(!d.queued.length) queuedEl.innerHTML = empty('Nothing waiting.')
+    else queuedEl.innerHTML = d.queued.map(function(j){
+      var who = j.username ? ' · ' + escapeHtmlLite(j.username) : ''
+      return '<div class="monitor-row">' +
+        '<span class="m-name">' + escapeHtmlLite(j.orig_name || 'Untitled') + who + '</span>' +
+        '<span class="m-pos">' + (j.position === 0 ? 'starting shortly' : j.position + ' ahead') + '</span>' +
+        cancelBtn(j.job_id) +
+      '</div>'
+    }).join('')
+    if(!d.finished.length) finishedEl.innerHTML = empty('Nothing finished recently.')
+    else finishedEl.innerHTML = d.finished.map(function(j){
+      var badge = j.status === 'cancelled' ? '<span class="monitor-badge cancel">Cancelled</span>'
+                : j.error ? '<span class="monitor-badge err">Error</span>'
+                : '<span class="monitor-badge ok">Done</span>'
+      var who = j.username ? ' · ' + escapeHtmlLite(j.username) : ''
+      var when = j.created ? new Date(j.created * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : ''
+      return '<div class="monitor-row">' +
+        '<span class="m-name" title="' + escapeHtmlLite(j.error||'') + '">' + escapeHtmlLite(j.orig_name || 'Untitled') + who + '</span>' +
+        '<span class="m-pos">' + when + '</span>' + badge +
+      '</div>'
+    }).join('')
+    ;[activeEl, queuedEl].forEach(function(el){
+      el.querySelectorAll('[data-admin-cancel]').forEach(function(btn){
+        btn.addEventListener('click', async function(){
+          var jid = btn.getAttribute('data-admin-cancel')
+          if(!confirm('Cancel this job?')) return
+          btn.disabled = true
+          try{
+            var cr = await fetch('/api/admin/jobs/' + encodeURIComponent(jid) + '/cancel', {method:'POST'})
+            var cd = await cr.json()
+            if(!cd.ok && !cd.cancelled){ alert(cd.error || 'Cancel failed'); btn.disabled = false }
+          }catch(e){ alert('Cancel failed: ' + e); btn.disabled = false }
+          loadAdminJobs()
+        })
+      })
+    })
+    if(!adminJobsTimer){
+      adminJobsTimer = setInterval(function(){
+        var panel = document.getElementById('p-config-jobs')
+        if(panel && panel.classList.contains('active')) loadAdminJobs()
+      }, 4000)
+    }
+  }catch(e){
+    activeEl.innerHTML = '<p style="color:var(--amber);font-size:12px">Error: ' + e + '</p>'
+  }
+}
+window.loadAdminJobs = loadAdminJobs
 
 var usersTabLoaded = false
 var USERS_TAB_DATA = null  // last-fetched users/groups/permissions, reused by action handlers below without a re-fetch
