@@ -57,3 +57,18 @@ def test_list_respects_limit(tmp_path, monkeypatch):
     assert len(items) == 3
     # Still newest-first even when truncated
     assert items[0]['action'] == 'action_9'
+
+
+def test_list_search_filters_across_fields(tmp_path, monkeypatch):
+    _use_temp_lib_db(tmp_path, monkeypatch)
+    library_db.audit_log('trailer_delete', target='show_a.mp4', username='alice')
+    library_db.audit_log('user_create', target='bob', username='admin')
+    library_db.audit_log('job_cancel', target='ep03.mxf', detail='owner=carol', username='admin')
+    by_user = library_db.audit_log_list(q='alice')
+    assert len(by_user) == 1 and by_user[0]['username'] == 'alice'
+    by_target = library_db.audit_log_list(q='ep03')
+    assert len(by_target) == 1 and by_target[0]['action'] == 'job_cancel'
+    by_action = library_db.audit_log_list(q='user_create')
+    assert len(by_action) == 1
+    assert library_db.audit_log_list(q='   ')  # whitespace = no filter
+    assert len(library_db.audit_log_list(q='no-such-thing')) == 0
