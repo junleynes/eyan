@@ -4713,21 +4713,56 @@ def api_music_models():
     except ValueError:
         return jsonify(ok=True, models=[], reachable=True,
                         error=f'ACE-Step at {ACE_STEP_URL} responded to /v1/models, but not with JSON')
-    if isinstance(data, dict):
-        items = data.get('models') or data.get('data') or data.get('aliases') or []
-    elif isinstance(data, list):
+    # ACE-Step 1.5's native shape is:
+    #   {"data": {"models": [{"name": "acestep-v15-turbo", "is_default": true}, ...],
+    #             "default_model": "acestep-v15-turbo"}, "code": 200, ...}
+    # OpenRouter-compat shape is OpenAI-style:
+    #   {"object": "list", "data": [{"id": "acemusic/...", "name": "ACE-Step"}, ...]}
+    # Older/simple wrappers may return a bare list or {"models": [...]}.
+    # Important: data.get('data') is often a *dict*, not a list — iterating that
+    # dict yields its keys (models, default_model, lm_models, ...) which is
+    # exactly the bogus dropdown users were seeing.
+    items = []
+    default_model = None
+    if isinstance(data, list):
         items = data
-    else:
-        items = []
+    elif isinstance(data, dict):
+        inner = data.get('data')
+        if isinstance(inner, dict):
+            raw = inner.get('models') or inner.get('aliases') or []
+            items = raw if isinstance(raw, list) else []
+            default_model = inner.get('default_model') or inner.get('default')
+        elif isinstance(inner, list):
+            items = inner
+        else:
+            raw = data.get('models') or data.get('aliases') or []
+            items = raw if isinstance(raw, list) else []
+            default_model = data.get('default_model') or data.get('default')
     models = []
+    seen = set()
     for it in items:
+        name = None
         if isinstance(it, str):
-            models.append(it)
+            name = it
         elif isinstance(it, dict):
             name = it.get('alias') or it.get('name') or it.get('id') or it.get('model')
-            if name:
-                models.append(name)
-    return jsonify(ok=True, models=models, reachable=True)
+        if not name or not isinstance(name, str):
+            continue
+        name = name.strip()
+        if not name or name in seen:
+            continue
+        # Skip non-checkpoint status keys that some builds nest under models.
+        if name in ('models', 'default_model', 'lm_models', 'loaded_lm_model',
+                    'llm_initialized', 'code', 'error', 'timestamp', 'extra'):
+            continue
+        seen.add(name)
+        models.append(name)
+    if default_model and isinstance(default_model, str):
+        default_model = default_model.strip() or None
+        if default_model and default_model not in seen:
+            models.insert(0, default_model)
+    return jsonify(ok=True, models=models, reachable=True,
+                   default_model=default_model)
 
 @app.route('/api/music/genres')
 @require_permission('music_generation')
