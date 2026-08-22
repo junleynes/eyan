@@ -83,13 +83,9 @@ button,input{font:inherit}
   padding:16px 0;position:sticky;top:0;z-index:30;
   background:transparent;
   border-bottom:1px solid transparent;
-  transition:background .2s,border-color .2s
+  transition:border-color .2s
 }
-.nav.scrolled{
-  background:color-mix(in srgb,var(--page) 72%,transparent);
-  backdrop-filter:blur(16px) saturate(1.2);
-  border-bottom-color:var(--line)
-}
+.nav.scrolled{border-bottom-color:var(--line)}
 .brand img{height:34px;width:auto;display:block;border-radius:8px}
 .brand .logo-dark{display:none}
 [data-theme="dark"] .brand .logo-light{display:none}
