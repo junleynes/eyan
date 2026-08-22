@@ -174,11 +174,22 @@ button,input{font:inherit}
   border:1px solid var(--line);box-shadow:var(--shadow)
 }
 
-/* Auth dock */
+/* Auth modal */
+.auth-overlay{
+  display:none;
+  position:fixed;inset:0;z-index:200;
+  align-items:center;justify-content:center;
+  padding:24px;overflow-y:auto;
+  background:rgba(4,8,16,.6);
+  backdrop-filter:blur(6px);
+  animation:overlay-in .18s ease
+}
+.auth-overlay.open{display:flex}
+@keyframes overlay-in{from{opacity:0}to{opacity:1}}
 .auth-dock{
-  max-width:400px;margin:24px auto 0;
+  width:100%;max-width:400px;margin:auto;
   border:1px solid var(--line);border-radius:18px;
-  background:var(--card);backdrop-filter:blur(20px) saturate(1.2);
+  background:var(--card-solid);backdrop-filter:blur(20px) saturate(1.2);
   box-shadow:var(--shadow);
   overflow:hidden;display:none
 }
@@ -375,65 +386,66 @@ footer{
       <img src="/static/landing-hero.jpg" alt="{{ brand_name }} — finished promo on a calibrated monitor with live output metering" loading="eager" width="1600" height="900">
     </div>
 
-    {# ---- Sign in (hidden until CTA) ---- #}
-    <div class="auth-dock{% if auth_panel == 'signin' or pending_2fa or login_error %} open{% endif %}" id="dock-signin" role="region" aria-label="Sign in">
-      <div class="auth-dock-head">
-        <strong>{% if pending_2fa %}Two-factor code{% else %}Sign in{% endif %}</strong>
-        <button type="button" class="auth-close" data-close="signin" aria-label="Close">×</button>
+    {# ---- Auth modal (hidden until CTA) ---- #}
+    <div class="auth-overlay{% if auth_panel in ('signin', 'register', 'register-done') or pending_2fa or login_error or register_error or register_success %} open{% endif %}" id="authOverlay">
+      <div class="auth-dock{% if auth_panel == 'signin' or pending_2fa or login_error %} open{% endif %}" id="dock-signin" role="dialog" aria-modal="true" aria-label="Sign in">
+        <div class="auth-dock-head">
+          <strong>{% if pending_2fa %}Two-factor code{% else %}Sign in{% endif %}</strong>
+          <button type="button" class="auth-close" data-close="signin" aria-label="Close">×</button>
+        </div>
+        <div class="auth-body">
+          <form method="post" action="/login" autocomplete="on">
+            {% if login_error %}<div class="auth-err" role="alert">{{ login_error }}</div>{% endif %}
+            <input type="hidden" name="next" value="{{ next_url or '/' }}">
+            {% if pending_2fa %}
+            <p class="auth-hint">Enter the 6-digit code from your authenticator, or a backup code.</p>
+            <label for="totp_code">Authentication code</label>
+            <input type="text" id="totp_code" name="totp_code" autofocus
+                   autocomplete="one-time-code" inputmode="numeric" pattern="[0-9A-Za-z]*"
+                   placeholder="123456" required>
+            {% else %}
+            <label for="username">Username</label>
+            <input type="text" id="username" name="username" {% if auth_panel == 'signin' or login_error %}autofocus{% endif %}
+                   autocomplete="username" placeholder="Username" required>
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password"
+                   autocomplete="current-password" placeholder="Password" required>
+            {% endif %}
+            <button type="submit" class="btn btn-primary">Continue</button>
+          </form>
+          <p class="auth-meta">Secure session · rate-limited</p>
+          <p class="auth-switch">Need an account? <button type="button" data-auth="register">Request access</button></p>
+        </div>
       </div>
-      <div class="auth-body">
-        <form method="post" action="/login" autocomplete="on">
-          {% if login_error %}<div class="auth-err" role="alert">{{ login_error }}</div>{% endif %}
-          <input type="hidden" name="next" value="{{ next_url or '/' }}">
-          {% if pending_2fa %}
-          <p class="auth-hint">Enter the 6-digit code from your authenticator, or a backup code.</p>
-          <label for="totp_code">Authentication code</label>
-          <input type="text" id="totp_code" name="totp_code" autofocus
-                 autocomplete="one-time-code" inputmode="numeric" pattern="[0-9A-Za-z]*"
-                 placeholder="123456" required>
-          {% else %}
-          <label for="username">Username</label>
-          <input type="text" id="username" name="username" {% if auth_panel == 'signin' or login_error %}autofocus{% endif %}
-                 autocomplete="username" placeholder="Username" required>
-          <label for="password">Password</label>
-          <input type="password" id="password" name="password"
-                 autocomplete="current-password" placeholder="Password" required>
-          {% endif %}
-          <button type="submit" class="btn btn-primary">Continue</button>
-        </form>
-        <p class="auth-meta">Secure session · rate-limited</p>
-        <p class="auth-switch">Need an account? <button type="button" data-auth="register">Request access</button></p>
-      </div>
-    </div>
 
-    {# ---- Register (hidden until CTA) ---- #}
-    <div class="auth-dock{% if auth_panel in ('register', 'register-done') or register_error or register_success %} open{% endif %}" id="dock-register" role="region" aria-label="Request access">
-      <div class="auth-dock-head">
-        <strong>{% if register_success %}Request received{% else %}Request access{% endif %}</strong>
-        <button type="button" class="auth-close" data-close="register" aria-label="Close">×</button>
-      </div>
-      <div class="auth-body">
-        {% if register_success %}
-        <div class="auth-ok">{{ register_success }}</div>
-        <p class="auth-switch"><button type="button" data-auth="signin">Back to sign in</button></p>
-        {% else %}
-        <p class="auth-hint">Create an account. An administrator must approve it before you can sign in.</p>
-        <form method="post" action="/register" autocomplete="on">
-          {% if register_error %}<div class="auth-err" role="alert">{{ register_error }}</div>{% endif %}
-          <label for="reg_username">Username</label>
-          <input type="text" id="reg_username" name="username" {% if auth_panel == 'register' or register_error %}autofocus{% endif %}
-                 autocomplete="username" placeholder="Choose a username" required minlength="3" maxlength="64">
-          <label for="reg_password">Password</label>
-          <input type="password" id="reg_password" name="password"
-                 autocomplete="new-password" placeholder="At least 12 characters" required minlength="12">
-          <label for="reg_password2">Confirm password</label>
-          <input type="password" id="reg_password2" name="password2"
-                 autocomplete="new-password" placeholder="Repeat password" required minlength="12">
-          <button type="submit" class="btn btn-primary">Submit request</button>
-        </form>
-        <p class="auth-meta">Pending until enabled in Config → Users</p>
-        <p class="auth-switch">Already approved? <button type="button" data-auth="signin">Sign in</button></p>
-        {% endif %}
+      <div class="auth-dock{% if auth_panel in ('register', 'register-done') or register_error or register_success %} open{% endif %}" id="dock-register" role="dialog" aria-modal="true" aria-label="Request access">
+        <div class="auth-dock-head">
+          <strong>{% if register_success %}Request received{% else %}Request access{% endif %}</strong>
+          <button type="button" class="auth-close" data-close="register" aria-label="Close">×</button>
+        </div>
+        <div class="auth-body">
+          {% if register_success %}
+          <div class="auth-ok">{{ register_success }}</div>
+          <p class="auth-switch"><button type="button" data-auth="signin">Back to sign in</button></p>
+          {% else %}
+          <p class="auth-hint">Create an account. An administrator must approve it before you can sign in.</p>
+          <form method="post" action="/register" autocomplete="on">
+            {% if register_error %}<div class="auth-err" role="alert">{{ register_error }}</div>{% endif %}
+            <label for="reg_username">Username</label>
+            <input type="text" id="reg_username" name="username" {% if auth_panel == 'register' or register_error %}autofocus{% endif %}
+                   autocomplete="username" placeholder="Choose a username" required minlength="3" maxlength="64">
+            <label for="reg_password">Password</label>
+            <input type="password" id="reg_password" name="password"
+                   autocomplete="new-password" placeholder="At least 12 characters" required minlength="12">
+            <label for="reg_password2">Confirm password</label>
+            <input type="password" id="reg_password2" name="password2"
+                   autocomplete="new-password" placeholder="Repeat password" required minlength="12">
+            <button type="submit" class="btn btn-primary">Submit request</button>
+          </form>
+          <p class="auth-meta">Pending until enabled in Config → Users</p>
+          <p class="auth-switch">Already approved? <button type="button" data-auth="signin">Sign in</button></p>
+          {% endif %}
+        </div>
       </div>
     </div>
 
@@ -561,6 +573,8 @@ footer{
     if(nav) nav.classList.toggle('scrolled', window.scrollY > 8);
   }, {passive:true});
 
+  var overlay = document.getElementById('authOverlay');
+
   function openAuth(which){
     var sign = document.getElementById('dock-signin');
     var reg = document.getElementById('dock-register');
@@ -568,6 +582,8 @@ footer{
     var btnR = document.getElementById('navBtnRegister');
     if(sign) sign.classList.toggle('open', which === 'signin');
     if(reg) reg.classList.toggle('open', which === 'register');
+    if(overlay) overlay.classList.add('open');
+    document.body.style.overflow = 'hidden';
     if(btnS) btnS.classList.toggle('active', which === 'signin');
     if(btnR){
       btnR.classList.toggle('active', which === 'register');
@@ -577,12 +593,12 @@ footer{
     var focusId = which === 'register' ? 'reg_username' : (document.getElementById('totp_code') ? 'totp_code' : 'username');
     var el = document.getElementById(focusId);
     if(el) setTimeout(function(){ el.focus(); }, 50);
-    var dock = document.getElementById(which === 'register' ? 'dock-register' : 'dock-signin');
-    if(dock) dock.scrollIntoView({behavior:'smooth', block:'nearest'});
   }
   function closeAuth(){
     document.querySelectorAll('.auth-dock').forEach(function(d){ d.classList.remove('open'); });
     document.querySelectorAll('[data-auth]').forEach(function(b){ b.classList.remove('active'); });
+    if(overlay) overlay.classList.remove('open');
+    document.body.style.overflow = '';
   }
 
   document.querySelectorAll('[data-auth]').forEach(function(btn){
@@ -592,6 +608,14 @@ footer{
   });
   document.querySelectorAll('[data-close]').forEach(function(btn){
     btn.addEventListener('click', closeAuth);
+  });
+  if(overlay){
+    overlay.addEventListener('click', function(e){
+      if(e.target === overlay) closeAuth();
+    });
+  }
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape' && overlay && overlay.classList.contains('open')) closeAuth();
   });
 
   var panel = {{ (auth_panel or '')|tojson }};
