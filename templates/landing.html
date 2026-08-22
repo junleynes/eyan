@@ -80,7 +80,8 @@ button,input{font:inherit}
 }
 .nav{
   position:sticky;top:0;z-index:30;
-  background:transparent;
+  background:color-mix(in srgb,var(--page) 45%,transparent);
+  backdrop-filter:blur(14px) saturate(1.2);
   border-bottom:1px solid transparent;
   transition:border-color .2s
 }
