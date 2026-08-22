@@ -158,7 +158,7 @@ def register():
 @app.route('/logout')
 def logout():
     session.clear()
-    return redirect('/#signin')
+    return redirect('/')
 
 # ---- Two-factor enrolment (self-service, any signed-in account) ----
 # Deliberately not admin-gated: 2FA protects the individual account, so every
