@@ -5263,8 +5263,8 @@ job. Configured via env vars:
     <div class="docs-pane" id="docs-workflow">
       <h2>Workflow</h2>
       <p>What happens, in order, from upload to finished export:</p>
-      <div style="overflow-x:auto;margin:14px 0 18px;background:var(--sunken);border:1px solid var(--line);border-radius:var(--radius);padding:16px;display:flex;justify-content:center">
-      <svg viewBox="0 0 1008 348" style="width:100%;max-width:960px;min-width:700px;aspect-ratio:1008/348;height:auto;display:block;font-family:'JetBrains Mono',monospace">
+      <div style="overflow-x:auto;margin:14px 0 18px;background:var(--sunken);border:1px solid var(--line);border-radius:var(--radius);padding:16px;text-align:center">
+      <svg viewBox="0 0 1008 348" style="width:100%;max-width:960px;min-width:700px;aspect-ratio:1008/348;height:auto;display:inline-block;vertical-align:top;font-family:'JetBrains Mono',monospace">
       <defs>
         <marker id="dg-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M0,0 L10,5 L0,10 z" fill="var(--phosphor)"/>
@@ -5312,7 +5312,7 @@ job. Configured via env vars:
       <line x1="420" y1="290.0" x2="394" y2="290.0" stroke="var(--phosphor)" stroke-width="2" marker-end="url(#dg-arrow)"/>
       <line x1="220" y1="290.0" x2="194" y2="290.0" stroke="var(--phosphor)" stroke-width="2" marker-end="url(#dg-arrow)"/>
       </svg>
-      <p style="margin:8px 2px 0;font-size:11px;color:var(--ink-dim)">Amber dashed = optional, feeds into the main pipeline rather than sitting inline with it.</p>
+      <p style="margin:8px 2px 0;font-size:11px;color:var(--ink-dim);text-align:left">Amber dashed = optional, feeds into the main pipeline rather than sitting inline with it.</p>
       </div>
       <ol style="line-height:1.9">
         <li><strong>Scene detection</strong> — PySceneDetect (Content or Adaptive) finds every cut, using the same settings as Scene Detection &amp; Analysis.</li>
