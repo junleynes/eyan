@@ -1164,7 +1164,7 @@ document.addEventListener("DOMContentLoaded", function(){
       <input type=radio name=vo_mode value=tts data-requires="fish_audio"> Narration (AI voice)
     </label>
   </div>
-  <p id=vo-gating-note style="display:none;margin-top:-4px;margin-bottom:8px;font-size:12px;color:var(--amber)">"Narration (AI voice)" is unavailable — the Fish Audio server is not reachable.</p>
+  <p id=vo-gating-note style="display:none;margin-top:6px;margin-bottom:8px;font-size:12px;color:var(--amber)">"Narration (AI voice)" is unavailable — the Fish Audio server is not reachable.</p>
   <div id=vo-upload-area style="display:none">
     <div class="browse-row">
       {% if allow_local_upload %}<input type=file name=vo_upload accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" data-net-field="vo_upload" onchange="cardVoFileChosen(this,'vo_upload')">{% endif %}
@@ -1183,7 +1183,7 @@ document.addEventListener("DOMContentLoaded", function(){
       <button type=button class="btn" style="padding:5px 10px;font-size:12px" onclick="cardVoSetPoint('vo_upload','end')">Set out from player</button>
     </div>
     <span id="vo_upload_preview_note" style="font-size:12px;opacity:.75;display:block;margin:-2px 0 6px"></span>
-    <p style="margin-top:-2px;margin-bottom:8px;font-size:12px;opacity:.75">Selects which portion of the uploaded file to use as narration. This is separate from "Start at" below, which places the (already-trimmed) narration on the trailer's own timeline.</p>
+    <p style="margin-top:6px;margin-bottom:8px;font-size:12px;opacity:.75">Selects which portion of the uploaded file to use as narration. This is separate from "Start at" below, which places the (already-trimmed) narration on the trailer's own timeline.</p>
   </div>
   <div id=vo-tts-area style="display:none">
     <textarea name=vo_text id=vo-text-input class=input-box rows=3 placeholder="Type the narration script here..."></textarea>
@@ -1239,7 +1239,7 @@ document.addEventListener("DOMContentLoaded", function(){
     <button type=button class=btn style="padding:6px 12px;font-size:12px" onclick="loadTemplates()">Refresh</button>
     <button type=button class=btn id=template-delete-btn style="padding:6px 12px;font-size:12px;background:var(--danger,#c94f4f)" onclick="deleteSelectedTemplate()">Delete</button>
   </div>
-  <p style="margin-top:-4px;margin-bottom:10px;font-size:12px;opacity:.75">A template carries its whole setup — genre, transition, lengths, audio targets, voice — plus its music bed, SFX, VO and cards. Picking one fills the form in below; change anything you like afterwards and it applies to this job only.</p>
+  <p style="margin-top:6px;margin-bottom:10px;font-size:12px;opacity:.75">A template carries its whole setup — genre, transition, lengths, audio targets, voice — plus its music bed, SFX, VO and cards. Picking one fills the form in below; change anything you like afterwards and it applies to this job only.</p>
   <div id=template-summary style="font-size:12px;opacity:.85;margin:0 0 14px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;display:none"></div>
 
   <div class="promo-mode-bar" role="group" aria-label="Form mode">
@@ -1288,7 +1288,7 @@ document.addEventListener("DOMContentLoaded", function(){
   <div class="adv-only">
   <label>Max clip length (s):</label>
   <input type=number name=max_scene_dur value=3 placeholder="no limit" min=0.5 step=0.5 style="width:100px">
-  <p style="margin-top:-4px;margin-bottom:8px;font-size:12px;opacity:.75">Caps how long any single selected scene can run. Defaults to 3s; clear for no limit.</p>
+  <p style="margin-top:6px;margin-bottom:8px;font-size:12px;opacity:.75">Caps how long any single selected scene can run. Defaults to 3s; clear for no limit.</p>
   <p style="margin-bottom:8px;font-size:12px;opacity:.6">Cut detector settings live in <strong>Config &gt; Production</strong>.</p>
   </div>
   <div class="genre-manual-transition" style="display:none">
@@ -1334,8 +1334,8 @@ document.addEventListener("DOMContentLoaded", function(){
       <input type=checkbox name=sync_beats checked> Sync cuts to beat
     </label>
   </div>
-  <p style="margin-top:-4px;margin-bottom:8px;font-size:12px;color:var(--amber)">These are independent, not sequential — "Sync cuts to beat" snaps cut points to the music's original beat grid; "Beat match" separately time-stretches that same music afterward to match the video's tempo, which shifts where its beats actually land. Using both together can pull cuts slightly off the beat they were synced to. If exact sync matters most, leave Beat match off.</p>
-  <p style="margin-top:-4px;margin-bottom:8px;font-size:12px;opacity:.75">Dialogue is transcribed locally to boost ratings for scenes with quotable lines, and to place cut points on phrase/word boundaries instead of mid-sentence. Uses the large-v2 Whisper model by default (needed for reliable Tagalog — smaller models are noticeably worse at it), so the first run may take a bit to load.</p>
+  <p style="margin-top:6px;margin-bottom:8px;font-size:12px;color:var(--amber)">These are independent, not sequential — "Sync cuts to beat" snaps cut points to the music's original beat grid; "Beat match" separately time-stretches that same music afterward to match the video's tempo, which shifts where its beats actually land. Using both together can pull cuts slightly off the beat they were synced to. If exact sync matters most, leave Beat match off.</p>
+  <p style="margin-top:6px;margin-bottom:8px;font-size:12px;opacity:.75">Dialogue is transcribed locally to boost ratings for scenes with quotable lines, and to place cut points on phrase/word boundaries instead of mid-sentence. Uses the large-v2 Whisper model by default (needed for reliable Tagalog — smaller models are noticeably worse at it), so the first run may take a bit to load.</p>
   <p style="margin-bottom:8px;font-size:12px;opacity:.6">Loudness target, true peak, music level, ducking, and broadcast dual-mono are set once for this deployment in <strong>Config &gt; Production</strong> — they're delivery-spec values that should be identical on every promo, not per-job choices.</p>
   </div>
   <div class="asset-section" id=asset-title-card>
@@ -1431,7 +1431,7 @@ document.addEventListener("DOMContentLoaded", function(){
       <input type=radio name=scoring_mode value=upload> Upload
     </label>
   </div>
-  <p id=bgm-gating-note style="display:none;margin-top:-4px;margin-bottom:8px;font-size:12px;color:var(--amber)">"Generate music" is unavailable — ACE-Step isn't reachable.</p>
+  <p id=bgm-gating-note style="display:none;margin-top:6px;margin-bottom:8px;font-size:12px;color:var(--amber)">"Generate music" is unavailable — ACE-Step isn't reachable.</p>
   <div id=scoring-upload-area style="display:none">
     <div class="browse-row">
       {% if allow_local_upload %}<input type=file name=scoring_audio accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" data-net-field="scoring_audio">{% endif %}
@@ -1463,7 +1463,7 @@ document.addEventListener("DOMContentLoaded", function(){
       <input type=radio name=sfx_mode value=none checked> None
     </label>
   </div>
-  <p id=sfx-gating-note style="display:none;margin-top:-4px;margin-bottom:8px;font-size:12px;color:var(--amber)">"From genre" is unavailable — Woosh isn't reachable.</p>
+  <p id=sfx-gating-note style="display:none;margin-top:6px;margin-bottom:8px;font-size:12px;color:var(--amber)">"From genre" is unavailable — Woosh isn't reachable.</p>
   <div id=sfx-upload-area style="display:none">
     <div class="browse-row">
       {% if allow_local_upload %}<input type=file name=sfx_upload accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" data-net-field="sfx_upload">{% endif %}
@@ -1480,7 +1480,7 @@ document.addEventListener("DOMContentLoaded", function(){
 
   <div class=card style="padding:12px 14px;margin:18px 0 0;border:1px dashed var(--line)">
     <label style="margin-top:0">Save as template</label>
-    <p style="margin-top:-4px;margin-bottom:10px;font-size:12px;opacity:.75">Saves the whole configuration above — genre, transition, lengths, audio targets, voice settings — together with whichever of the background music, SFX, voiceover, title card and end card you've picked, under a show name. Next episode is then one dropdown away. Saving under a name that already exists updates that show: settings are replaced, and only the asset slots you supplied this time are rewritten.</p>
+    <p style="margin-top:6px;margin-bottom:10px;font-size:12px;opacity:.75">Saves the whole configuration above — genre, transition, lengths, audio targets, voice settings — together with whichever of the background music, SFX, voiceover, title card and end card you've picked, under a show name. Next episode is then one dropdown away. Saving under a name that already exists updates that show: settings are replaced, and only the asset slots you supplied this time are rewritten.</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <input type=text id=template-save-name placeholder="Show name (e.g. 24 Oras)" style="flex:1;min-width:200px" maxlength=120>
       <button type=button class=btn id=template-save-btn style="padding:8px 14px" onclick="saveTemplate()">Save as template</button>
@@ -5102,7 +5102,7 @@ document.getElementById('vf').addEventListener('submit', async function(e){
   </select>
   <label>Scene cut sensitivity:</label>
   <input type=number name=scene_threshold value=30 min=1 max=100 step=1 style="width:100px">
-  <p style="margin-top:-4px;margin-bottom:8px;font-size:12px;opacity:.75">Matches the generator form's "Scene cut sensitivity" — set these the same to see exactly what generation will detect before running a full render.</p>
+  <p style="margin-top:6px;margin-bottom:8px;font-size:12px;opacity:.75">Matches the generator form's "Scene cut sensitivity" — set these the same to see exactly what generation will detect before running a full render.</p>
   <div id=vf-adaptive-threshold-row style="display:none">
   <label>Adaptive sensitivity:</label>
   <input type=number name=adaptive_threshold value=3.0 min=1 max=10 step=0.5 style="width:100px">
@@ -5507,7 +5507,7 @@ function switchDocs(btn){
 <input type=text id=brand-tagline-input class=input-box placeholder="AI-Powered Media Creation">
 <label>Footer (optional):</label>
 <input type=text id=brand-footer-input class=input-box placeholder="e.g. Internal use only &mdash; contact IT for access">
-<p style="font-size:11px;opacity:.65;margin-top:-4px">Shown at the very bottom of the sidebar, and on the sign-in page. Leave blank for no footer at all — most installs won't want one.</p>
+<p style="font-size:11px;opacity:.65;margin-top:6px">Shown at the very bottom of the sidebar, and on the sign-in page. Leave blank for no footer at all — most installs won't want one.</p>
 <div style="margin-top:10px">
   <button type=button class=btn id=brand-text-save-btn onclick="saveBrandText()">Save name, tagline &amp; footer</button>
   <span id=brand-text-status style="font-size:13px;margin-left:8px"></span>
