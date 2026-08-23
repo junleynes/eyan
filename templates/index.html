@@ -877,6 +877,19 @@ document.addEventListener("DOMContentLoaded", function(){
     if(inp.dataset.skipClearUi) return
     if(inp.dataset.clearWired) return
     inp.dataset.clearWired = "1"
+    // The native file input already renders its own "Choose File / No file
+    // chosen" widget, and the custom status span below duplicates that same
+    // "No file chosen" text right next to it. Hide the native input itself
+    // (still fully functional, just not visible) and drive it entirely
+    // through our own button + status text instead, so there's only one.
+    inp.style.cssText = "position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0"
+    inp.tabIndex = -1
+    var chooseBtn = document.createElement("button")
+    chooseBtn.type = "button"
+    chooseBtn.className = "btn"
+    chooseBtn.style.cssText = "padding:5px 11px;font-size:12px"
+    chooseBtn.textContent = "Choose file"
+    chooseBtn.addEventListener("click", function(){ inp.click() })
     var status = document.createElement("span")
     status.style.fontSize = "11px"
     status.style.opacity = "0.75"
@@ -912,7 +925,8 @@ document.addEventListener("DOMContentLoaded", function(){
       }
     }
     inp.addEventListener("change", refresh)
-    inp.insertAdjacentElement("afterend", status)
+    inp.insertAdjacentElement("afterend", chooseBtn)
+    chooseBtn.insertAdjacentElement("afterend", status)
     status.insertAdjacentElement("afterend", clearBtn)
     refresh()
   })
