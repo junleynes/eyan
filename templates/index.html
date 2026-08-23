@@ -346,6 +346,7 @@ h2 small{font-family:'IBM Plex Sans',sans-serif;text-transform:none;letter-spaci
 p{color:var(--ink-dim);font-size:13px;line-height:1.65;margin:8px 0}
 
 .btn{font-family:'JetBrains Mono',monospace;background:transparent;color:var(--phosphor);border:1px solid var(--phosphor-dim);padding:9px 18px;border-radius:7px;cursor:pointer;font-size:12px;letter-spacing:.04em;text-transform:uppercase;display:inline-block;text-decoration:none;transition:all .15s}
+.btn:disabled{opacity:.4;cursor:default;pointer-events:none;background:transparent!important}
 .btn:hover{background:rgba(52,230,197,.1);border-color:var(--phosphor)}
 .btn:active{transform:translateY(1px)}
 .btn:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--phosphor);outline-offset:2px}
@@ -1237,7 +1238,7 @@ document.addEventListener("DOMContentLoaded", function(){
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">
     <select name=template_id id=template-select style="max-width:100%;flex:1;min-width:220px"><option value="">Loading templates…</option></select>
     <button type=button class=btn style="padding:6px 12px;font-size:12px" onclick="loadTemplates()">Refresh</button>
-    <button type=button class=btn id=template-delete-btn style="padding:6px 12px;font-size:12px;background:var(--danger,#c94f4f)" onclick="deleteSelectedTemplate()">Delete</button>
+    <button type=button class=btn id=template-delete-btn disabled style="padding:6px 12px;font-size:12px;background:var(--danger,#c94f4f)" onclick="deleteSelectedTemplate()">Delete</button>
   </div>
   <p style="margin-top:6px;margin-bottom:10px;font-size:12px;opacity:.75">A template carries its whole setup — genre, transition, lengths, audio targets, voice — plus its music bed, SFX, VO and cards. Picking one fills the form in below; change anything you like afterwards and it applies to this job only.</p>
   <div id=template-summary style="font-size:12px;opacity:.85;margin:0 0 14px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;display:none"></div>
@@ -1756,6 +1757,13 @@ document.addEventListener("DOMContentLoaded", function(){
     // the settings visible, since there's nothing else supplying them.
     setGeneratorSettingsOpen((typeof _promoMode !== 'undefined' && _promoMode === 'advanced') ? true : !tpl)
     if(typeof updateJobSummary === 'function') updateJobSummary()
+    // The Delete button next to this dropdown deletes whatever's currently
+    // selected -- with no template picked there's nothing for it to act on,
+    // so it stays disabled rather than sitting there fully "live" (and
+    // red) with nothing behind it. deleteSelectedTemplate() already
+    // no-ops in that case, but a clickable button that silently does
+    // nothing reads as broken rather than as safe.
+    document.getElementById('template-delete-btn').disabled = !tpl
     if(!tpl){ box.style.display = 'none'; box.innerHTML = ''; return }
 
     function row(label, value, dim){
