@@ -5577,7 +5577,7 @@ function _renderConfigRows(fieldOrder, container, fields, config){
     var row = document.createElement('div')
     row.style.cssText = 'display:flex;flex-direction:column;gap:4px'
     var labelEl = document.createElement('label')
-    labelEl.style.cssText = 'font-size:13px;text-transform:none;letter-spacing:0'
+    labelEl.style.cssText = 'margin:0'
     labelEl.textContent = meta.label
     var inputRow = document.createElement('div')
     inputRow.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap'
@@ -5586,11 +5586,14 @@ function _renderConfigRows(fieldOrder, container, fields, config){
     input.id = 'cfg-' + key
     input.value = val
     input.placeholder = meta.help
-    input.style.cssText = 'flex:1;min-width:260px'
+    input.className = 'input-box'
+    input.style.cssText = 'flex:1;min-width:260px;margin-bottom:0'
     inputRow.appendChild(input)
     if(!CONFIG_NO_TEST_FIELDS[key]){
       var testBtn = document.createElement('button')
       testBtn.type = 'button'
+      testBtn.className = 'btn'
+      testBtn.style.cssText = 'padding:5px 12px;font-size:12px'
       testBtn.textContent = 'Test'
       testBtn.addEventListener('click', function(){ testConfigRow(key) })
       inputRow.appendChild(testBtn)
