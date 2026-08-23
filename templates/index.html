@@ -5796,6 +5796,31 @@ async function loadProductionTab(){
       var val = d.values[key]
       var row = document.createElement('div')
       row.style.cssText = 'display:flex;flex-direction:column;gap:4px'
+      // Bool fields render as a single inline checkbox+label (matching the
+      // <label><input type=checkbox> Text</label> pattern used everywhere
+      // else in the app for a toggle) rather than the stacked
+      // label-then-field layout below -- putting a checkbox on its own row
+      // under a separate label left it looking oddly far from the text
+      // describing what it does.
+      if(spec.type === 'bool'){
+        var boolLabel = document.createElement('label')
+        boolLabel.style.cssText = 'display:flex;align-items:center;gap:6px;cursor:pointer;margin:0;text-transform:none;font-size:13px;letter-spacing:0'
+        var input = document.createElement('input')
+        input.type = 'checkbox'
+        input.checked = !!val
+        input.id = 'prod-' + key
+        boolLabel.appendChild(input)
+        boolLabel.appendChild(document.createTextNode(spec.label || key))
+        row.appendChild(boolLabel)
+        if(spec.help){
+          var boolHelp = document.createElement('span')
+          boolHelp.style.cssText = 'font-size:11px;opacity:.65'
+          boolHelp.textContent = spec.help
+          row.appendChild(boolHelp)
+        }
+        container.appendChild(row)
+        return
+      }
       var labelEl = document.createElement('label')
       labelEl.style.cssText = 'margin:0'
       labelEl.textContent = spec.label || key
@@ -5815,10 +5840,6 @@ async function loadProductionTab(){
           if(m === val) o.selected = true
           input.appendChild(o)
         })
-      }else if(spec.type === 'bool'){
-        input = document.createElement('input')
-        input.type = 'checkbox'
-        input.checked = !!val
       }else if(spec.type === 'choice'){
         input = document.createElement('select')
         ;(spec.choices || []).forEach(function(c){
