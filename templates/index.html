@@ -6190,7 +6190,7 @@ function renderUsersTab(d){
       '<td>'+lastLogin+'</td>' +
       '<td><div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center">' +
         '<button type=button class=btn-sm data-action="toggle" data-uid="'+u.id+'"'+(u.is_you?' disabled':'')+'>'+(u.is_active?'Disable':'Enable')+'</button>' +
-        '<input type=password data-pw-input data-uid="'+u.id+'" placeholder="New password" minlength=12 class=input-box style="width:150px;margin-bottom:0">' +
+        '<input type=password data-pw-input data-uid="'+u.id+'" placeholder="New password" minlength=12 class=input-box style="width:150px;margin-bottom:0;padding:3px 9px;font-size:11px;line-height:1.4;border-radius:6px">' +
         '<button type=button class=btn-sm data-action="set-password" data-uid="'+u.id+'">Set</button>' +
         '<button type=button class="btn-sm" style="color:var(--tally);border-color:var(--tally)" data-action="delete-user" data-uid="'+u.id+'" data-username="'+escapeHtmlLite(u.username)+'"'+(u.is_you?' disabled':'')+'>Delete</button>' +
       '</div></td></tr>'
