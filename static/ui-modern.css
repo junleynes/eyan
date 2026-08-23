@@ -504,3 +504,23 @@ img[src*="prism-logo"],img[src*="logo-mark"],img[src*="branding/logo"]{
 @media(max-width:800px){
   .selection-driver-row{grid-template-columns:1fr}
 }
+
+/* Video Player toolbar: the category <select> inherits the generic form
+   input's size (14px font, 10px/12px padding) while the "Browse library"
+   button and the native "Choose file" button use the smaller browse-btn
+   sizing (12px font, 8px/14px padding). Sitting in the same row, the
+   select reads visibly taller/larger than the two buttons next to it.
+   Scope it down to match. */
+#pl-category{
+  width:auto!important;
+  max-width:220px!important;
+  padding:8px 30px 8px 14px!important;
+  margin:0!important;
+  font-size:12px!important;
+  font-family:'JetBrains Mono',monospace!important;
+}
+#pl-local::file-selector-button,
+#pl-local::-webkit-file-upload-button{
+  padding:8px 14px!important;
+  font-size:12px!important;
+}
