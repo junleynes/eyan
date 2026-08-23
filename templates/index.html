@@ -5469,7 +5469,7 @@ function switchDocs(btn){
 
 <div id="p-config-services" class="sub-panel active">
 <h3 style="margin-top:0">AI Service Configuration</h3>
-<p style="margin-top:-4px;color:var(--ink-dim)">These control where the app looks for each local/self-hosted AI service. Changes save immediately (no restart needed) and are written to <code>ai_services_config.json</code> next to the script, so they persist across restarts too. Environment variables set the initial defaults; anything saved here overrides them from then on.</p>
+<p style="margin-top:6px;color:var(--ink-dim)">These control where the app looks for each local/self-hosted AI service. Changes save immediately (no restart needed) and are written to <code>ai_services_config.json</code> next to the script, so they persist across restarts too. Environment variables set the initial defaults; anything saved here overrides them from then on.</p>
 <div id="config-rows" style="display:flex;flex-direction:column;gap:14px;margin-top:16px">
   <!-- rows injected by loadConfigTab() -->
 </div>
@@ -5480,7 +5480,7 @@ function switchDocs(btn){
 </div>
 
 <div id="p-config-production" class="sub-panel">
-<p style="margin-top:-4px;color:var(--ink-dim)">Delivery-spec and tuning values that should be identical on every promo this deployment renders — broadcast loudness compliance, the house mix standard, and scene-detection tuning. Moved off the generator form so operators aren't asked about them on every job. Takes effect on the next render; no restart needed.</p>
+<p style="margin-top:6px;color:var(--ink-dim)">Delivery-spec and tuning values that should be identical on every promo this deployment renders — broadcast loudness compliance, the house mix standard, and scene-detection tuning. Moved off the generator form so operators aren't asked about them on every job. Takes effect on the next render; no restart needed.</p>
 <div id="config-production-rows" style="display:flex;flex-direction:column;gap:14px;margin-top:16px">
   <!-- rows injected by loadProductionTab() -->
 </div>
@@ -5491,7 +5491,7 @@ function switchDocs(btn){
 </div>
 
 <div id="p-config-network" class="sub-panel">
-<p style="margin-top:-4px;color:var(--ink-dim)">Where Browse Library looks for source files (HIRES, cards, music, VO, SFX), plus one write destination: "Send to destination" on a finished render copies it to this folder instead of downloading through the browser — useful for handing a render off to another system (e.g. a Vantage watch folder) without a manual step. Each category is fully independent — its own full network path, username, and password — since these often live on genuinely different volumes with different credentials. Takes effect immediately; no restart needed.</p>
+<p style="margin-top:6px;color:var(--ink-dim)">Where Browse Library looks for source files (HIRES, cards, music, VO, SFX), plus one write destination: "Send to destination" on a finished render copies it to this folder instead of downloading through the browser — useful for handing a render off to another system (e.g. a Vantage watch folder) without a manual step. Each category is fully independent — its own full network path, username, and password — since these often live on genuinely different volumes with different credentials. Takes effect immediately; no restart needed.</p>
 <div id="config-network-folders" style="display:flex;flex-direction:column;gap:12px;margin-top:16px">
   <!-- cards injected by loadNetworkFolders() -->
 </div>
@@ -5499,7 +5499,7 @@ function switchDocs(btn){
 
 <div id="p-config-branding" class="sub-panel">
 <h3 style="margin-top:0">Branding</h3>
-<p style="margin-top:-4px;color:var(--ink-dim)">Changes the name, tagline, footer, color theme, logo, and favicon everyone signed in (and the sign-in page itself) sees — saved to <code>branding_config.json</code> next to the script (text) and a <code>branding/</code> folder in the trailer library (logo/favicon files), so both persist across restarts. Takes effect immediately; existing sessions pick it up on their next page load.</p>
+<p style="margin-top:6px;color:var(--ink-dim)">Changes the name, tagline, footer, color theme, logo, and favicon everyone signed in (and the sign-in page itself) sees — saved to <code>branding_config.json</code> next to the script (text) and a <code>branding/</code> folder in the trailer library (logo/favicon files), so both persist across restarts. Takes effect immediately; existing sessions pick it up on their next page load.</p>
 
 <label>Brand name:</label>
 <input type=text id=brand-name-input class=input-box placeholder="PRISM">
@@ -5557,7 +5557,7 @@ function switchDocs(btn){
 
 <div id="p-config-security" class="sub-panel">
 <h3 style="margin-top:0">Two-factor authentication</h3>
-<p style="margin-top:-4px;color:var(--ink-dim)">Adds a 6-digit code from your phone on top of your password. Works with Google Authenticator, Authy, 1Password, or any TOTP app. This applies to <strong>your own account only</strong> — every user sets up their own.</p>
+<p style="margin-top:6px;color:var(--ink-dim)">Adds a 6-digit code from your phone on top of your password. Works with Google Authenticator, Authy, 1Password, or any TOTP app. This applies to <strong>your own account only</strong> — every user sets up their own.</p>
 <div id=twofa-status style="margin-top:14px"><p style="opacity:.7">Loading&hellip;</p></div>
 
 <div id=twofa-setup style="display:none;margin-top:16px;border:1px solid var(--line);border-radius:10px;padding:16px">
@@ -5583,13 +5583,13 @@ function switchDocs(btn){
 </div>
 
 <div id="p-config-users" class="sub-panel">
-<p style="margin-top:-4px;color:var(--ink-dim)">Full user and group management, right here.</p>
+<p style="margin-top:6px;color:var(--ink-dim)">Full user and group management, right here.</p>
 <div id="config-users-status"></div>
 <div id="config-users-rows"><p style="opacity:.7">Loading&hellip;</p></div>
 </div>
 
 <div id="p-config-jobs" class="sub-panel">
-<p style="margin-top:-4px;color:var(--ink-dim)">All jobs across every account. Cancel active or queued work from here.</p>
+<p style="margin-top:6px;color:var(--ink-dim)">All jobs across every account. Cancel active or queued work from here.</p>
 <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
   <button type="button" class="btn" onclick="loadAdminJobs()">Refresh</button>
   <span id="config-jobs-summary" style="font-size:12px;opacity:.7"></span>
@@ -5603,7 +5603,7 @@ function switchDocs(btn){
 </div>
 
 <div id="p-config-audit" class="sub-panel">
-<p style="margin-top:-4px;color:var(--ink-dim)">Who did what — the last 200 admin actions, renders, and deletions. Newest first.</p>
+<p style="margin-top:6px;color:var(--ink-dim)">Who did what — the last 200 admin actions, renders, and deletions. Newest first.</p>
 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
   <input type="search" id="config-audit-q" placeholder="Search action, user, target&hellip;" class="input-box" style="flex:1;min-width:200px;max-width:360px;margin-bottom:0" onkeydown="if(event.key==='Enter'){event.preventDefault();loadAuditLog()}">
   <button type="button" class="btn" onclick="loadAuditLog()">Search</button>
