@@ -780,6 +780,21 @@ document.addEventListener('DOMContentLoaded',function(){
       }
     }
   }catch(e){}
+  // Docs uses its own nav (.docs-nav-item/switchDocs), separate from the
+  // .sub-tab system above, so it needs its own restore step -- otherwise
+  // refreshing while on e.g. Workflow always snaps back to Overview.
+  try{
+    var docsPanel=document.getElementById('p-docs')
+    if(docsPanel){
+      var savedDocs=localStorage.getItem('prism_docs_tab')
+      if(savedDocs){
+        var docsBtn=Array.prototype.find.call(docsPanel.querySelectorAll('.docs-nav-item'),function(b){
+          return b.getAttribute('data-docs')===savedDocs
+        })
+        if(docsBtn) switchDocs(docsBtn)
+      }
+    }
+  }catch(e){}
 });
 
 
@@ -5264,7 +5279,7 @@ job. Configured via env vars:
       <h2>Workflow</h2>
       <p>What happens, in order, from upload to finished export:</p>
       <div style="overflow-x:auto;margin:14px 0 18px;background:var(--sunken);border:1px solid var(--line);border-radius:var(--radius);padding:16px;text-align:center">
-      <svg viewBox="0 0 1008 348" style="width:100%;max-width:1280px;min-width:700px;aspect-ratio:1008/348;height:auto;display:inline-block;vertical-align:top;font-family:'JetBrains Mono',monospace">
+      <svg viewBox="0 0 1008 348" style="width:100%;max-width:1180px;min-width:700px;aspect-ratio:1008/348;height:auto;display:inline-block;vertical-align:top;font-family:'JetBrains Mono',monospace">
       <defs>
         <marker id="dg-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M0,0 L10,5 L0,10 z" fill="var(--phosphor)"/>
@@ -5434,6 +5449,7 @@ function switchDocs(btn){
   document.querySelectorAll('.docs-pane').forEach(function(p){ p.classList.toggle('active', p.id===id); });
   var pane = document.getElementById(id);
   if(pane) pane.scrollTop = 0;
+  try{localStorage.setItem('prism_docs_tab',id)}catch(e){}
 }
 </script>
 </div>
