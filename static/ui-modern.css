@@ -522,11 +522,14 @@ img[src*="prism-logo"],img[src*="logo-mark"],img[src*="branding/logo"]{
   font-family:'JetBrains Mono',monospace!important;
 }
 
-/* All checkboxes and radio inputs app-wide use the brand's orange accent
-   (--amber), including the few that previously set their own accent-color
-   (network-browse "Include subfolders" checkbox, chat reasoning toggle) --
+/* All checkboxes and radio inputs app-wide use the brand's main accent
+   (--phosphor -- the active-tab highlight / button / badge color, a true
+   orange under the Sunset theme), including the few that previously set
+   their own accent-color (network-browse "Include subfolders" checkbox,
+   chat reasoning toggle). --amber is a separate, more yellow accent used
+   for warnings/secondary badges, which read as "yellow-orange" here --
    !important so a single rule wins over all of them consistently. */
 input[type=checkbox],
 input[type=radio]{
-  accent-color:var(--amber)!important;
+  accent-color:var(--phosphor)!important;
 }
