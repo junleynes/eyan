@@ -521,3 +521,12 @@ img[src*="prism-logo"],img[src*="logo-mark"],img[src*="branding/logo"]{
   font-size:12px!important;
   font-family:'JetBrains Mono',monospace!important;
 }
+
+/* All checkboxes and radio inputs app-wide use the brand's orange accent
+   (--amber), including the few that previously set their own accent-color
+   (network-browse "Include subfolders" checkbox, chat reasoning toggle) --
+   !important so a single rule wins over all of them consistently. */
+input[type=checkbox],
+input[type=radio]{
+  accent-color:var(--amber)!important;
+}
