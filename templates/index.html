@@ -5114,7 +5114,7 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <div class=info>
   <div class=info-item><strong>POST</strong> /api/opencv/info</div>
   <div class=info-item><strong>POST</strong> /api/opencv/analyze<br><small>+ num_frames</small></div>
-  <div class=info-item><strong>POST</strong> /api/scenedetect/detect<br><small>+ scene_threshold, min_scene_len, detector (content/adaptive), adaptive_threshold</small></div>
+  <div class=info-item><strong>POST</strong> /api/scenedetect/<wbr>detect<br><small>+ scene_threshold, min_scene_len, detector (content/adaptive), adaptive_threshold</small></div>
 </div>
 </div>
 <p><strong>Player</strong>:</p>
@@ -6413,7 +6413,7 @@ function runHealthCheck(){
       var isDisabled = s.status==='disabled'
       var toggleLabel = isDisabled ? 'Enable' : 'Disable'
       return '<div class="info-item">' +
-        '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">' +
+        '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">' +
         '<span><strong style="color:'+color+'">&#9679;</strong> '+s.name+'</span>' +
         '<button type=button class=btn style="padding:2px 8px;font-size:11px;flex-shrink:0" ' +
         'onclick="toggleServiceDisabled(\''+s.name+'\','+(!isDisabled)+')">'+toggleLabel+'</button>' +
