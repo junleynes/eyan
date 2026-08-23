@@ -350,6 +350,18 @@ p{color:var(--ink-dim);font-size:13px;line-height:1.65;margin:8px 0}
 .btn:active{transform:translateY(1px)}
 .btn:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--phosphor);outline-offset:2px}
 .btn.danger{color:var(--tally);border-color:rgba(255,84,112,.5)}
+/* Compact variant of .btn -- used throughout Jobs (cancel) and Users
+   (Reset/Enable/Set/Delete, group Save/Delete) for row-level actions
+   packed several to a line, where .btn's own padding/font-size read too
+   large. Used via class=btn-sm everywhere already; this rule was simply
+   missing, so every one of those buttons had been rendering completely
+   unstyled (default browser button chrome) despite passing per-instance
+   inline overrides for color/padding/font-size that assumed a styled
+   base was already there. */
+.btn-sm{font-family:'JetBrains Mono',monospace;background:transparent;color:var(--phosphor);border:1px solid var(--phosphor-dim);padding:4px 9px;border-radius:6px;cursor:pointer;font-size:11px;letter-spacing:.02em;display:inline-block;text-decoration:none;transition:all .15s}
+.btn-sm:hover{background:rgba(52,230,197,.1);border-color:var(--phosphor)}
+.btn-sm:active{transform:translateY(1px)}
+.btn-sm:disabled{opacity:.4;cursor:default;pointer-events:none}
 .btn.danger:hover{background:rgba(255,84,112,.1);border-color:var(--tally)}
 .btn.small{padding:6px 13px;font-size:11px}
 .btn.active-filter{background:var(--phosphor);color:#04140f;border-color:var(--phosphor);font-weight:600}
@@ -5577,7 +5589,7 @@ function switchDocs(btn){
 <div id="p-config-audit" class="sub-panel">
 <p style="margin-top:-4px;color:var(--ink-dim)">Who did what — the last 200 admin actions, renders, and deletions. Newest first.</p>
 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
-  <input type="search" id="config-audit-q" placeholder="Search action, user, target&hellip;" style="flex:1;min-width:200px;max-width:360px" onkeydown="if(event.key==='Enter'){event.preventDefault();loadAuditLog()}">
+  <input type="search" id="config-audit-q" placeholder="Search action, user, target&hellip;" class="input-box" style="flex:1;min-width:200px;max-width:360px;margin-bottom:0" onkeydown="if(event.key==='Enter'){event.preventDefault();loadAuditLog()}">
   <button type="button" class="btn" onclick="loadAuditLog()">Search</button>
   <button type="button" class="btn" style="background:transparent;border:1px solid var(--line);color:var(--ink)" onclick="document.getElementById('config-audit-q').value='';loadAuditLog()">Clear</button>
 </div>
@@ -6178,7 +6190,7 @@ function renderUsersTab(d){
       '<td>'+lastLogin+'</td>' +
       '<td style="display:flex;flex-wrap:wrap;gap:4px;align-items:center">' +
         '<button type=button class=btn-sm data-action="toggle" data-uid="'+u.id+'"'+(u.is_you?' disabled':'')+'>'+(u.is_active?'Disable':'Enable')+'</button>' +
-        '<input type=password data-pw-input data-uid="'+u.id+'" placeholder="New password" minlength=12 style="width:110px">' +
+        '<input type=password data-pw-input data-uid="'+u.id+'" placeholder="New password" minlength=12 class=input-box style="width:110px;margin-bottom:0">' +
         '<button type=button class=btn-sm data-action="set-password" data-uid="'+u.id+'">Set</button>' +
         '<button type=button class="btn-sm" style="color:var(--tally);border-color:var(--tally)" data-action="delete-user" data-uid="'+u.id+'" data-username="'+escapeHtmlLite(u.username)+'"'+(u.is_you?' disabled':'')+'>Delete</button>' +
       '</td></tr>'
@@ -6218,7 +6230,7 @@ function renderUsersTab(d){
       '<h3 style="margin:0 0 10px;font-size:13px">Add user</h3>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
         '<input type=text id=cu-username placeholder="Username" style="flex:1;min-width:140px">' +
-        '<input type=password id=cu-password placeholder="Password (min 12 chars)" minlength=12 style="flex:1;min-width:140px">' +
+        '<input type=password id=cu-password placeholder="Password (min 12 chars)" minlength=12 class=input-box style="flex:1;min-width:140px;margin-bottom:0">' +
         '<select id=cu-role><option value=user selected>user</option><option value=admin>admin</option></select>' +
         '<button type=button class=btn id=cu-submit>Create</button>' +
       '</div>' +
