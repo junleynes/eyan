@@ -5797,7 +5797,7 @@ async function loadProductionTab(){
       var row = document.createElement('div')
       row.style.cssText = 'display:flex;flex-direction:column;gap:4px'
       var labelEl = document.createElement('label')
-      labelEl.style.cssText = 'font-size:13px;text-transform:none;letter-spacing:0'
+      labelEl.style.cssText = 'margin:0'
       labelEl.textContent = spec.label || key
       row.appendChild(labelEl)
       var input
@@ -5831,13 +5831,15 @@ async function loadProductionTab(){
         input = document.createElement('input')
         input.type = 'text'
         input.value = val == null ? '' : val
-        input.style.maxWidth = '320px'
+        input.className = 'input-box'
+        input.style.cssText = 'max-width:320px;margin-bottom:0'
       }else{
         input = document.createElement('input')
         input.type = 'number'
         input.step = 'any'
         input.value = val
-        input.style.maxWidth = '160px'
+        input.className = 'input-box'
+        input.style.cssText = 'max-width:160px;margin-bottom:0'
       }
       input.id = 'prod-' + key
       row.appendChild(input)
