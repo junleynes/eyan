@@ -99,7 +99,7 @@ body:has(.login-panel){overflow:hidden;background:radial-gradient(900px 600px at
 }
 .rail .tab{
   display:flex!important;
-  align-items:flex-start!important;
+  align-items:center!important;
   gap:10px!important;
   padding:9px 10px!important;
   border-radius:11px!important;
@@ -146,7 +146,6 @@ body:has(.login-panel){overflow:hidden;background:radial-gradient(900px 600px at
   box-shadow:0 0 16px color-mix(in srgb,var(--phosphor) 18%,transparent);
 }
 .rail .tab-text{
-  padding-top:2px;
   line-height:1.25;
 }
 .rail .tab-sub{
