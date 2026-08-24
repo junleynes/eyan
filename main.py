@@ -56,6 +56,7 @@ def index():
                            current_role=role,
                            current_permissions=perms,
                            default_tab=default_tab,
+                           just_logged_in=session.pop('just_logged_in', False),
                            brand_name=brand['name'],
                            brand_tagline=brand['tagline'],
                            brand_accent=brand['theme_colors']['accent'],

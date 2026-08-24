@@ -754,6 +754,22 @@ document.addEventListener('DOMContentLoaded',function(){
   // (document.getElementById(id) is null) and gets silently swallowed by
   // the try/catch below, so the button highlights but the panel never
   // actually switches.
+  // Skipped entirely right after a fresh login ({{ 'true' if just_logged_in else 'false' }}
+  // here) -- logging in should always land on the server's default tab
+  // (Dashboard), not wherever localStorage says a previous session (maybe
+  // a different user on a shared machine) last left off. This flag is a
+  // one-shot session value popped by the '/' route, so it's only true for
+  // the single page load immediately following a successful login --
+  // every later refresh in the same session restores normally.
+  if({{ 'true' if just_logged_in else 'false' }}){
+    // Sync localStorage to reality (the server's default tab, now
+    // actually on screen) rather than leaving the stale pre-login value
+    // sitting there -- otherwise a plain refresh a moment later (no
+    // longer flagged just_logged_in, since that's a one-shot value)
+    // would read the old value back out and jump to it.
+    try{localStorage.setItem('prism_last_tab','{{ default_tab }}')}catch(e){}
+    return
+  }
   try{
     var saved=localStorage.getItem('prism_last_tab')
     if(saved){

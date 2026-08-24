@@ -33,6 +33,14 @@ def _establish_session(user):
     # so a token handed out during the half-authenticated 2FA step can't be
     # reused against the fully-authenticated session.
     session['csrf_token'] = secrets.token_urlsafe(32)
+    # One-shot marker for the very next page render: tells index.html's
+    # tab-restore script to skip restoring the last-open tab from
+    # localStorage and land on the server's default (Dashboard) instead,
+    # since "just logged in" should always start fresh regardless of
+    # whatever tab a previous session (possibly a different user, on a
+    # shared machine) happened to leave active. main.py's '/' route pops
+    # this immediately, so it only applies to this one login.
+    session['just_logged_in'] = True
     user_touch_login(user['id'])
 
 @app.route('/login', methods=['GET', 'POST'])
