@@ -346,6 +346,7 @@ h2 small{font-family:'IBM Plex Sans',sans-serif;text-transform:none;letter-spaci
 p{color:var(--ink-dim);font-size:13px;line-height:1.65;margin:8px 0}
 
 .btn{font-family:'JetBrains Mono',monospace;background:transparent;color:var(--phosphor);border:1px solid var(--phosphor-dim);padding:9px 18px;border-radius:7px;cursor:pointer;font-size:12px;letter-spacing:.04em;text-transform:uppercase;display:inline-block;text-decoration:none;transition:all .15s}
+.btn:disabled{opacity:.4;cursor:default;pointer-events:none;background:transparent!important}
 .btn:hover{background:rgba(52,230,197,.1);border-color:var(--phosphor)}
 .btn:active{transform:translateY(1px)}
 .btn:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--phosphor);outline-offset:2px}
@@ -463,14 +464,14 @@ p{color:var(--ink-dim);font-size:13px;line-height:1.65;margin:8px 0}
 .history-del:hover{opacity:1;background:rgba(255,90,90,.12)}
 /* ---- Job monitor panel ---- */
 #tr-monitor-toggle:hover{background:var(--wash-2)}
-.monitor-section-label{padding:10px 16px 4px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;opacity:.5}
-.monitor-row{display:flex;align-items:center;gap:10px;padding:8px 16px}
-.monitor-row .m-name{flex:1;min-width:0;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.monitor-section-label{padding:10px 16px 4px;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-dim)}
+.monitor-row{display:flex;align-items:center;gap:10px;padding:8px 16px;max-width:640px}
+.monitor-row .m-name{flex:0 1 auto;min-width:0;max-width:340px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:auto}
 .monitor-row .m-bar{width:80px;height:5px;border-radius:3px;background:var(--wash-5);overflow:hidden;flex-shrink:0}
 .monitor-row .m-bar-fill{height:100%;background:var(--phosphor);border-radius:3px}
-.monitor-row .m-pct{font-size:11px;opacity:.65;width:34px;text-align:right;flex-shrink:0}
-.monitor-row .m-pos{font-size:11px;opacity:.65;flex-shrink:0}
-.monitor-badge{font-size:10px;padding:2px 7px;border-radius:10px;flex-shrink:0;font-weight:600;letter-spacing:.02em}
+.monitor-row .m-pct{font-size:12px;opacity:.75;width:34px;text-align:right;flex-shrink:0}
+.monitor-row .m-pos{font-size:12px;opacity:.75;flex-shrink:0}
+.monitor-badge{font-size:11px;padding:3px 8px;border-radius:10px;flex-shrink:0;font-weight:600;letter-spacing:.02em}
 .monitor-badge.ok{background:rgba(52,230,197,.15);color:var(--phosphor)}
 .monitor-badge.err{background:rgba(255,90,90,.15);color:var(--tally)}
 .monitor-badge.cancel{background:var(--wash-5);color:var(--ink);opacity:.7}
@@ -796,6 +797,21 @@ document.addEventListener('DOMContentLoaded',function(){
       }
     }
   }catch(e){}
+  // Docs uses its own nav (.docs-nav-item/switchDocs), separate from the
+  // .sub-tab system above, so it needs its own restore step -- otherwise
+  // refreshing while on e.g. Workflow always snaps back to Overview.
+  try{
+    var docsPanel=document.getElementById('p-docs')
+    if(docsPanel){
+      var savedDocs=localStorage.getItem('prism_docs_tab')
+      if(savedDocs){
+        var docsBtn=Array.prototype.find.call(docsPanel.querySelectorAll('.docs-nav-item'),function(b){
+          return b.getAttribute('data-docs')===savedDocs
+        })
+        if(docsBtn) switchDocs(docsBtn)
+      }
+    }
+  }catch(e){}
 });
 
 
@@ -915,7 +931,7 @@ document.addEventListener("DOMContentLoaded", function(){
     var chooseBtn = document.createElement("button")
     chooseBtn.type = "button"
     chooseBtn.className = "btn"
-    chooseBtn.style.cssText = "padding:5px 11px;font-size:12px"
+    chooseBtn.style.cssText = "padding:8px 14px;font-size:12px"
     chooseBtn.textContent = "Choose file"
     chooseBtn.addEventListener("click", function(){ inp.click() })
     var status = document.createElement("span")
@@ -1165,7 +1181,7 @@ document.addEventListener("DOMContentLoaded", function(){
       <input type=radio name=vo_mode value=tts data-requires="fish_audio"> Narration (AI voice)
     </label>
   </div>
-  <p id=vo-gating-note style="display:none;margin-top:-4px;margin-bottom:8px;font-size:12px;color:var(--amber)">"Narration (AI voice)" is unavailable — the Fish Audio server is not reachable.</p>
+  <p id=vo-gating-note style="display:none;margin-top:6px;margin-bottom:8px;font-size:12px;color:var(--amber)">"Narration (AI voice)" is unavailable — the Fish Audio server is not reachable.</p>
   <div id=vo-upload-area style="display:none">
     <div class="browse-row">
       {% if allow_local_upload %}<input type=file name=vo_upload accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" data-net-field="vo_upload" onchange="cardVoFileChosen(this,'vo_upload')">{% endif %}
@@ -1184,7 +1200,7 @@ document.addEventListener("DOMContentLoaded", function(){
       <button type=button class="btn" style="padding:5px 10px;font-size:12px" onclick="cardVoSetPoint('vo_upload','end')">Set out from player</button>
     </div>
     <span id="vo_upload_preview_note" style="font-size:12px;opacity:.75;display:block;margin:-2px 0 6px"></span>
-    <p style="margin-top:-2px;margin-bottom:8px;font-size:12px;opacity:.75">Selects which portion of the uploaded file to use as narration. This is separate from "Start at" below, which places the (already-trimmed) narration on the trailer's own timeline.</p>
+    <p style="margin-top:6px;margin-bottom:8px;font-size:12px;opacity:.75">Selects which portion of the uploaded file to use as narration. This is separate from "Start at" below, which places the (already-trimmed) narration on the trailer's own timeline.</p>
   </div>
   <div id=vo-tts-area style="display:none">
     <textarea name=vo_text id=vo-text-input class=input-box rows=3 placeholder="Type the narration script here..."></textarea>
@@ -1238,9 +1254,9 @@ document.addEventListener("DOMContentLoaded", function(){
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">
     <select name=template_id id=template-select style="max-width:100%;flex:1;min-width:220px"><option value="">Loading templates…</option></select>
     <button type=button class=btn style="padding:6px 12px;font-size:12px" onclick="loadTemplates()">Refresh</button>
-    <button type=button class=btn id=template-delete-btn style="padding:6px 12px;font-size:12px;background:var(--danger,#c94f4f)" onclick="deleteSelectedTemplate()">Delete</button>
+    <button type=button class=btn id=template-delete-btn disabled style="padding:6px 12px;font-size:12px;background:var(--danger,#c94f4f)" onclick="deleteSelectedTemplate()">Delete</button>
   </div>
-  <p style="margin-top:-4px;margin-bottom:10px;font-size:12px;opacity:.75">A template carries its whole setup — genre, transition, lengths, audio targets, voice — plus its music bed, SFX, VO and cards. Picking one fills the form in below; change anything you like afterwards and it applies to this job only.</p>
+  <p style="margin-top:6px;margin-bottom:10px;font-size:12px;opacity:.75">A template carries its whole setup — genre, transition, lengths, audio targets, voice — plus its music bed, SFX, VO and cards. Picking one fills the form in below; change anything you like afterwards and it applies to this job only.</p>
   <div id=template-summary style="font-size:12px;opacity:.85;margin:0 0 14px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;display:none"></div>
 
   <div class="promo-mode-bar" role="group" aria-label="Form mode">
@@ -1289,7 +1305,7 @@ document.addEventListener("DOMContentLoaded", function(){
   <div class="adv-only">
   <label>Max clip length (s):</label>
   <input type=number name=max_scene_dur value=3 placeholder="no limit" min=0.5 step=0.5 style="width:100px">
-  <p style="margin-top:-4px;margin-bottom:8px;font-size:12px;opacity:.75">Caps how long any single selected scene can run. Defaults to 3s; clear for no limit.</p>
+  <p style="margin-top:6px;margin-bottom:8px;font-size:12px;opacity:.75">Caps how long any single selected scene can run. Defaults to 3s; clear for no limit.</p>
   <p style="margin-bottom:8px;font-size:12px;opacity:.6">Cut detector settings live in <strong>Config &gt; Production</strong>.</p>
   </div>
   <div class="genre-manual-transition" style="display:none">
@@ -1335,8 +1351,8 @@ document.addEventListener("DOMContentLoaded", function(){
       <input type=checkbox name=sync_beats checked> Sync cuts to beat
     </label>
   </div>
-  <p style="margin-top:-4px;margin-bottom:8px;font-size:12px;color:var(--amber)">These are independent, not sequential — "Sync cuts to beat" snaps cut points to the music's original beat grid; "Beat match" separately time-stretches that same music afterward to match the video's tempo, which shifts where its beats actually land. Using both together can pull cuts slightly off the beat they were synced to. If exact sync matters most, leave Beat match off.</p>
-  <p style="margin-top:-4px;margin-bottom:8px;font-size:12px;opacity:.75">Dialogue is transcribed locally to boost ratings for scenes with quotable lines, and to place cut points on phrase/word boundaries instead of mid-sentence. Uses the large-v2 Whisper model by default (needed for reliable Tagalog — smaller models are noticeably worse at it), so the first run may take a bit to load.</p>
+  <p style="margin-top:6px;margin-bottom:8px;font-size:12px;color:var(--amber)">These are independent, not sequential — "Sync cuts to beat" snaps cut points to the music's original beat grid; "Beat match" separately time-stretches that same music afterward to match the video's tempo, which shifts where its beats actually land. Using both together can pull cuts slightly off the beat they were synced to. If exact sync matters most, leave Beat match off.</p>
+  <p style="margin-top:6px;margin-bottom:8px;font-size:12px;opacity:.75">Dialogue is transcribed locally to boost ratings for scenes with quotable lines, and to place cut points on phrase/word boundaries instead of mid-sentence. Uses the large-v2 Whisper model by default (needed for reliable Tagalog — smaller models are noticeably worse at it), so the first run may take a bit to load.</p>
   <p style="margin-bottom:8px;font-size:12px;opacity:.6">Loudness target, true peak, music level, ducking, and broadcast dual-mono are set once for this deployment in <strong>Config &gt; Production</strong> — they're delivery-spec values that should be identical on every promo, not per-job choices.</p>
   </div>
   <div class="asset-section" id=asset-title-card>
@@ -1432,7 +1448,7 @@ document.addEventListener("DOMContentLoaded", function(){
       <input type=radio name=scoring_mode value=upload> Upload
     </label>
   </div>
-  <p id=bgm-gating-note style="display:none;margin-top:-4px;margin-bottom:8px;font-size:12px;color:var(--amber)">"Generate music" is unavailable — ACE-Step isn't reachable.</p>
+  <p id=bgm-gating-note style="display:none;margin-top:6px;margin-bottom:8px;font-size:12px;color:var(--amber)">"Generate music" is unavailable — ACE-Step isn't reachable.</p>
   <div id=scoring-upload-area style="display:none">
     <div class="browse-row">
       {% if allow_local_upload %}<input type=file name=scoring_audio accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" data-net-field="scoring_audio">{% endif %}
@@ -1464,7 +1480,7 @@ document.addEventListener("DOMContentLoaded", function(){
       <input type=radio name=sfx_mode value=none checked> None
     </label>
   </div>
-  <p id=sfx-gating-note style="display:none;margin-top:-4px;margin-bottom:8px;font-size:12px;color:var(--amber)">"From genre" is unavailable — Woosh isn't reachable.</p>
+  <p id=sfx-gating-note style="display:none;margin-top:6px;margin-bottom:8px;font-size:12px;color:var(--amber)">"From genre" is unavailable — Woosh isn't reachable.</p>
   <div id=sfx-upload-area style="display:none">
     <div class="browse-row">
       {% if allow_local_upload %}<input type=file name=sfx_upload accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" data-net-field="sfx_upload">{% endif %}
@@ -1481,7 +1497,7 @@ document.addEventListener("DOMContentLoaded", function(){
 
   <div class=card style="padding:12px 14px;margin:18px 0 0;border:1px dashed var(--line)">
     <label style="margin-top:0">Save as template</label>
-    <p style="margin-top:-4px;margin-bottom:10px;font-size:12px;opacity:.75">Saves the whole configuration above — genre, transition, lengths, audio targets, voice settings — together with whichever of the background music, SFX, voiceover, title card and end card you've picked, under a show name. Next episode is then one dropdown away. Saving under a name that already exists updates that show: settings are replaced, and only the asset slots you supplied this time are rewritten.</p>
+    <p style="margin-top:6px;margin-bottom:10px;font-size:12px;opacity:.75">Saves the whole configuration above — genre, transition, lengths, audio targets, voice settings — together with whichever of the background music, SFX, voiceover, title card and end card you've picked, under a show name. Next episode is then one dropdown away. Saving under a name that already exists updates that show: settings are replaced, and only the asset slots you supplied this time are rewritten.</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <input type=text id=template-save-name placeholder="Show name (e.g. 24 Oras)" style="flex:1;min-width:200px" maxlength=120>
       <button type=button class=btn id=template-save-btn style="padding:8px 14px" onclick="saveTemplate()">Save as template</button>
@@ -1757,6 +1773,13 @@ document.addEventListener("DOMContentLoaded", function(){
     // the settings visible, since there's nothing else supplying them.
     setGeneratorSettingsOpen((typeof _promoMode !== 'undefined' && _promoMode === 'advanced') ? true : !tpl)
     if(typeof updateJobSummary === 'function') updateJobSummary()
+    // The Delete button next to this dropdown deletes whatever's currently
+    // selected -- with no template picked there's nothing for it to act on,
+    // so it stays disabled rather than sitting there fully "live" (and
+    // red) with nothing behind it. deleteSelectedTemplate() already
+    // no-ops in that case, but a clickable button that silently does
+    // nothing reads as broken rather than as safe.
+    document.getElementById('template-delete-btn').disabled = !tpl
     if(!tpl){ box.style.display = 'none'; box.innerHTML = ''; return }
 
     function row(label, value, dim){
@@ -4887,20 +4910,20 @@ document.getElementById('vf').addEventListener('submit', async function(e){
   <select id=music-model style="max-width:280px"><option value="">Loading models&hellip;</option></select>
   <button type=button class=btn style="padding:5px 11px;font-size:12px" onclick="loadAceStepModels()">Refresh</button>
 </div>
-<p id=music-model-note style="font-size:12px;opacity:.7;margin-top:-4px">Read live from your ACE-Step server. Pick a specific checkpoint (e.g. a fast/turbo model vs. a higher-quality one), or leave on the server default.</p>
+<p id=music-model-note style="font-size:12px;opacity:.7;margin-top:6px">Read live from your ACE-Step server. Pick a specific checkpoint (e.g. a fast/turbo model vs. a higher-quality one), or leave on the server default.</p>
 
 <label>Prompt (style tags):</label>
 <textarea id=music-prompt class=input-box rows=3 placeholder="cinematic, orchestral, tense strings, driving percussion">Modern alternative rock with energetic electric guitars, driving bass, punchy live drums, melodic guitar riffs, clean male lead vocals, expressive vocal harmonies, dynamic transitions, and a memorable sing-along chorus. Confident, uplifting, and motivational with a polished contemporary production.</textarea>
-<p style="font-size:12px;opacity:.7;margin-top:-4px">Comma-separated style tags work best — instrument, mood, era, production style.</p>
+<p style="font-size:12px;opacity:.7;margin-top:6px">Comma-separated style tags work best — instrument, mood, era, production style.</p>
 
 <label>Lyrics:</label>
 <textarea id=music-lyrics class=input-box rows=4 placeholder="Leave empty for instrumental."></textarea>
-<p style="font-size:12px;opacity:.7;margin-top:-4px">Leave empty and ACE-Step is told <code>[inst]</code> plus a vocal-suppressing negative prompt, which is the reliable way to guarantee no singing. Type lyrics here and both are dropped so the vocal actually comes through — use structure tags like <code>[verse]</code> and <code>[chorus]</code> on their own lines.</p>
+<p style="font-size:12px;opacity:.7;margin-top:6px">Leave empty and ACE-Step is told <code>[inst]</code> plus a vocal-suppressing negative prompt, which is the reliable way to guarantee no singing. Type lyrics here and both are dropped so the vocal actually comes through — use structure tags like <code>[verse]</code> and <code>[chorus]</code> on their own lines.</p>
 <div id=music-lyrics-hint style="display:none;font-size:12px;margin:-2px 0 10px;padding:8px 10px;border-radius:6px;border:1px solid var(--line)"></div>
 
 <label>Negative styles (optional):</label>
 <textarea id=music-negative class=input-box rows=2 placeholder="e.g. distorted, lo-fi, out of tune, clipping"></textarea>
-<p style="font-size:12px;opacity:.7;margin-top:-4px">What to steer away from. Leaving this empty on an instrumental take still applies a built-in vocal-suppressing default — type anything here (even just re-typing that same idea in your own words) to replace it entirely with your own.</p>
+<p style="font-size:12px;opacity:.7;margin-top:6px">What to steer away from. Leaving this empty on an instrumental take still applies a built-in vocal-suppressing default — type anything here (even just re-typing that same idea in your own words) to replace it entirely with your own.</p>
 
 <label>Reference audio (optional &mdash; audio2audio):</label>
 <input type=file id=music-ref accept="audio/*">
@@ -4909,8 +4932,8 @@ document.getElementById('vf').addEventListener('submit', async function(e){
   <input type=range id=music-ref-strength min=0 max=1 step=0.05 value=0.5 style="width:200px"></span>
   <span id=music-ref-strength-val style="font-size:12px;opacity:.8;font-family:'JetBrains Mono',monospace">0.50</span>
 </div>
-<p style="font-size:12px;opacity:.7;margin-top:-4px">Generates in the shape of an existing track — useful for matching a show's established sting, or restyling a bed you already have. Higher strength stays closer to the reference; lower gives the prompt more freedom. Around 0.5 is a good starting point for a style transfer.</p>
-<p style="font-size:12px;opacity:.6;margin-top:-4px">ACE-Step reads the reference from a file path rather than an upload, so this needs ACE-Step running on this machine — or <code>ACE_STEP_REF_DIR</code> pointed at a mount both machines resolve identically.</p>
+<p style="font-size:12px;opacity:.7;margin-top:6px">Generates in the shape of an existing track — useful for matching a show's established sting, or restyling a bed you already have. Higher strength stays closer to the reference; lower gives the prompt more freedom. Around 0.5 is a good starting point for a style transfer.</p>
+<p style="font-size:12px;opacity:.6;margin-top:6px">ACE-Step reads the reference from a file path rather than an upload, so this needs ACE-Step running on this machine — or <code>ACE_STEP_REF_DIR</code> pointed at a mount both machines resolve identically.</p>
 
 <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:12px 0">
   <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Duration (s):</span>
@@ -4940,13 +4963,13 @@ document.getElementById('vf').addEventListener('submit', async function(e){
   <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Seed:</span>
   <input type=number id=music-seed placeholder="random" style="width:105px"></span>
 </div>
-<p style="font-size:12px;opacity:.7;margin-top:-6px">BPM, key, and time signature are all passed as prompt tags (ACE-Step conditions tempo/key/meter on the prompt text for this server rather than taking separate fields for them) — leaving any on <em>auto</em> lets the model pick what suits the style. More samples generate alternatives in one pass — slower, but you audition them side by side. Higher steps means better quality and proportionally more GPU time. Reuse a seed to reproduce a take.</p>
+<p style="font-size:12px;opacity:.7;margin-top:6px">BPM, key, and time signature are all passed as prompt tags (ACE-Step conditions tempo/key/meter on the prompt text for this server rather than taking separate fields for them) — leaving any on <em>auto</em> lets the model pick what suits the style. More samples generate alternatives in one pass — slower, but you audition them side by side. Higher steps means better quality and proportionally more GPU time. Reuse a seed to reproduce a take.</p>
 
 <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:10px">
   <input type=checkbox id=music-thinking>
   <span>Let ACE-Step's LM plan the take (thinking mode)</span>
 </label>
-<p style="font-size:12px;opacity:.7;margin-top:-4px">Runs an extra planning pass over your prompt and lyrics before generating, auto-filling in whatever you left on auto (tempo, key, structure). Slower — often better when you don't have strong opinions on the specifics above; leave it off for a fast, literal take on exactly what you typed.</p>
+<p style="font-size:12px;opacity:.7;margin-top:6px">Runs an extra planning pass over your prompt and lyrics before generating, auto-filling in whatever you left on auto (tempo, key, structure). Slower — often better when you don't have strong opinions on the specifics above; leave it off for a fast, literal take on exactly what you typed.</p>
 
 <div class="asset-section" id=asset-music-advanced>
   <div class="asset-section-header" onclick="toggleAssetSection(this)">
@@ -4955,14 +4978,14 @@ document.getElementById('vf').addEventListener('submit', async function(e){
     <span class="asset-section-chevron">&#9656;</span>
   </div>
   <div class="asset-section-body">
-    <p style="font-size:12px;opacity:.7;margin-top:-4px">The actual quality/style controls ACE-Step's own pipeline exposes underneath the fields above. Left on "server default" (unchanged from before this existed) unless you set them. If your self-hosted output sounds different from a hosted service running the same checkpoint, this is usually why — a tuned service has picked deliberate values here.</p>
+    <p style="font-size:12px;opacity:.7;margin-top:6px">The actual quality/style controls ACE-Step's own pipeline exposes underneath the fields above. Left on "server default" (unchanged from before this existed) unless you set them. If your self-hosted output sounds different from a hosted service running the same checkpoint, this is usually why — a tuned service has picked deliberate values here.</p>
     <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:8px 0">
       <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Guidance scale:</span>
       <input type=number id=music-guidance-scale placeholder="server default" min=1 max=30 step=0.5 style="width:100px" onchange="updateMusicAdvancedSummary()"></span>
       <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Omega scale (APG):</span>
       <input type=number id=music-omega-scale placeholder="server default" min=1 max=20 step=0.5 style="width:100px" onchange="updateMusicAdvancedSummary()"></span>
     </div>
-    <p style="font-size:12px;opacity:.7;margin-top:-4px">Guidance scale: how strictly the output follows your prompt/lyrics — ACE-Step's own default is 15; lower gives the model more creative freedom, higher can sound overcooked. Omega scale only matters when CFG type below is "apg" (default 10) — controls how fine-grained that guidance is.</p>
+    <p style="font-size:12px;opacity:.7;margin-top:6px">Guidance scale: how strictly the output follows your prompt/lyrics — ACE-Step's own default is 15; lower gives the model more creative freedom, higher can sound overcooked. Omega scale only matters when CFG type below is "apg" (default 10) — controls how fine-grained that guidance is.</p>
     <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:8px 0">
       <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Scheduler:</span>
       <select id=music-scheduler-type onchange="updateMusicAdvancedSummary()">
@@ -4983,7 +5006,7 @@ document.getElementById('vf').addEventListener('submit', async function(e){
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px"><input type=checkbox id=music-erg-lyric onchange="updateMusicAdvancedSummary()"> Enhanced lyric realism</label>
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px"><input type=checkbox id=music-erg-diffusion onchange="updateMusicAdvancedSummary()"> Enhanced diffusion detail</label>
     </div>
-    <p style="font-size:12px;opacity:.7;margin-top:-4px">ERG (Enhanced Realism Generation) settings — left unchecked here means "use the server's own default" for each, not "off". Check a box to explicitly force it on; ACE-Step's own pipeline defaults all three to on.</p>
+    <p style="font-size:12px;opacity:.7;margin-top:6px">ERG (Enhanced Realism Generation) settings — left unchecked here means "use the server's own default" for each, not "off". Check a box to explicitly force it on; ACE-Step's own pipeline defaults all three to on.</p>
     <p style="font-size:12px;opacity:.6;margin-top:4px">Note: a turbo/distilled checkpoint ignores CFG guidance by design — if your ACE-Step server is running a turbo variant, guidance scale/CFG type/omega scale above may have no audible effect regardless of value.</p>
   </div>
 </div>
@@ -5001,13 +5024,13 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 
 <label>Description:</label>
 <textarea id=sfx-prompt class=input-box rows=3 placeholder="glass shattering, footsteps on gravel, whoosh transition, camera shutter click"></textarea>
-<p style="font-size:12px;opacity:.7;margin-top:-4px">Be concrete: name the object and the action, not a mood. Woosh is a sound-effects model, not a music model — style words like "epic" or "cinematic" do less here than a literal description of the sound itself.</p>
+<p style="font-size:12px;opacity:.7;margin-top:6px">Be concrete: name the object and the action, not a mood. Woosh is a sound-effects model, not a music model — style words like "epic" or "cinematic" do less here than a literal description of the sound itself.</p>
 
 <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:12px 0">
   <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Samples:</span>
   <input type=number id=sfx-samples value=1 min=1 max=4 step=1 style="width:70px"></span>
 </div>
-<p style="font-size:12px;opacity:.7;margin-top:-6px">No duration control -- Woosh has no such parameter itself, so this returns whatever length it naturally generates for the description rather than an artificially trimmed clip. More samples generate that many independent takes of the same description, so you can audition and pick the best one — each is a separate request to Woosh, run one after another.</p>
+<p style="font-size:12px;opacity:.7;margin-top:6px">No duration control -- Woosh has no such parameter itself, so this returns whatever length it naturally generates for the description rather than an artificially trimmed clip. More samples generate that many independent takes of the same description, so you can audition and pick the best one — each is a separate request to Woosh, run one after another.</p>
 
 <div style="margin-top:14px">
   <button class=btn type=button id=sfx-gen-btn onclick="generateSfxTool()">Generate SFX</button>
@@ -5103,7 +5126,7 @@ document.getElementById('vf').addEventListener('submit', async function(e){
   </select>
   <label>Scene cut sensitivity:</label>
   <input type=number name=scene_threshold value=30 min=1 max=100 step=1 style="width:100px">
-  <p style="margin-top:-4px;margin-bottom:8px;font-size:12px;opacity:.75">Matches the generator form's "Scene cut sensitivity" — set these the same to see exactly what generation will detect before running a full render.</p>
+  <p style="margin-top:6px;margin-bottom:8px;font-size:12px;opacity:.75">Matches the generator form's "Scene cut sensitivity" — set these the same to see exactly what generation will detect before running a full render.</p>
   <div id=vf-adaptive-threshold-row style="display:none">
   <label>Adaptive sensitivity:</label>
   <input type=number name=adaptive_threshold value=3.0 min=1 max=10 step=0.5 style="width:100px">
@@ -5279,8 +5302,8 @@ job. Configured via env vars:
     <div class="docs-pane" id="docs-workflow">
       <h2>Workflow</h2>
       <p>What happens, in order, from upload to finished export:</p>
-      <div style="overflow-x:auto;margin:14px 0 18px;background:var(--sunken);border:1px solid var(--line);border-radius:var(--radius);padding:16px">
-      <svg viewBox="0 0 1008 308" style="min-width:820px;width:100%;height:auto;font-family:'JetBrains Mono',monospace">
+      <div style="overflow-x:auto;margin:14px 0 18px;background:var(--sunken);border:1px solid var(--line);border-radius:var(--radius);padding:16px;text-align:center">
+      <svg viewBox="0 0 1008 348" style="width:100%;max-width:1180px;min-width:700px;aspect-ratio:1008/348;height:auto;display:inline-block;vertical-align:top;font-family:'JetBrains Mono',monospace">
       <defs>
         <marker id="dg-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M0,0 L10,5 L0,10 z" fill="var(--phosphor)"/>
@@ -5293,44 +5316,44 @@ job. Configured via env vars:
       <text x="404.0" y="30.0" text-anchor="middle" font-size="12" fill="var(--amber)">Beat / Dialogue Prep (optional)</text>
       <line x1="304.0" y1="48" x2="304.0" y2="92" stroke="var(--amber)" stroke-width="1.5" stroke-dasharray="4,4" marker-end="url(#dg-arrow-amber)"/>
       <line x1="504.0" y1="48" x2="504.0" y2="92" stroke="var(--amber)" stroke-width="1.5" stroke-dasharray="4,4" marker-end="url(#dg-arrow-amber)"/>
-      <rect x="20" y="92" width="168" height="56" rx="8" fill="var(--elevated)" stroke="var(--line)" stroke-width="1.5"/>
-      <text x="104.0" y="116.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Scene</text>
-      <text x="104.0" y="133.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Detection</text>
-      <rect x="220" y="92" width="168" height="56" rx="8" fill="var(--elevated)" stroke="var(--line)" stroke-width="1.5"/>
-      <text x="304.0" y="125.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Rating</text>
-      <rect x="420" y="92" width="168" height="56" rx="8" fill="var(--elevated)" stroke="var(--line)" stroke-width="1.5"/>
-      <text x="504.0" y="116.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Scene</text>
-      <text x="504.0" y="133.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Selection</text>
-      <rect x="620" y="92" width="168" height="56" rx="8" fill="var(--elevated)" stroke="var(--line)" stroke-width="1.5"/>
-      <text x="704.0" y="125.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Assembly</text>
-      <rect x="820" y="92" width="168" height="56" rx="8" fill="var(--elevated)" stroke="var(--line)" stroke-width="1.5"/>
-      <text x="904.0" y="116.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Audio</text>
-      <text x="904.0" y="133.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Normalize</text>
-      <rect x="820" y="232" width="168" height="56" rx="8" fill="var(--elevated)" stroke="var(--line)" stroke-width="1.5"/>
-      <text x="904.0" y="265.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">SFX at Cuts</text>
-      <rect x="620" y="232" width="168" height="56" rx="8" fill="var(--elevated)" stroke="var(--line)" stroke-width="1.5"/>
-      <text x="704.0" y="256.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Background</text>
-      <text x="704.0" y="273.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Music</text>
-      <rect x="420" y="232" width="168" height="56" rx="8" fill="var(--elevated)" stroke="var(--amber)" stroke-width="1.5" stroke-dasharray="5,4"/>
-      <text x="504.0" y="256.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Narration</text>
-      <text x="504.0" y="273.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">(optional)</text>
-      <rect x="220" y="232" width="168" height="56" rx="8" fill="var(--elevated)" stroke="var(--line)" stroke-width="1.5"/>
-      <text x="304.0" y="265.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Final Mix</text>
-      <rect x="20" y="232" width="168" height="56" rx="8" fill="var(--elevated)" stroke="var(--line)" stroke-width="1.5"/>
-      <text x="104.0" y="265.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Export</text>
-      <line x1="188" y1="120.0" x2="214" y2="120.0" stroke="var(--phosphor)" stroke-width="2" marker-end="url(#dg-arrow)"/>
-      <line x1="388" y1="120.0" x2="414" y2="120.0" stroke="var(--phosphor)" stroke-width="2" marker-end="url(#dg-arrow)"/>
-      <line x1="588" y1="120.0" x2="614" y2="120.0" stroke="var(--phosphor)" stroke-width="2" marker-end="url(#dg-arrow)"/>
-      <line x1="788" y1="120.0" x2="814" y2="120.0" stroke="var(--phosphor)" stroke-width="2" marker-end="url(#dg-arrow)"/>
-      <line x1="904.0" y1="148" x2="904.0" y2="226" stroke="var(--phosphor)" stroke-width="2" marker-end="url(#dg-arrow)"/>
-      <line x1="820" y1="260.0" x2="794" y2="260.0" stroke="var(--phosphor)" stroke-width="2" marker-end="url(#dg-arrow)"/>
-      <line x1="620" y1="260.0" x2="594" y2="260.0" stroke="var(--phosphor)" stroke-width="2" marker-end="url(#dg-arrow)"/>
-      <line x1="420" y1="260.0" x2="394" y2="260.0" stroke="var(--phosphor)" stroke-width="2" marker-end="url(#dg-arrow)"/>
-      <line x1="220" y1="260.0" x2="194" y2="260.0" stroke="var(--phosphor)" stroke-width="2" marker-end="url(#dg-arrow)"/>
+      <rect x="20" y="92" width="168" height="76" rx="8" fill="var(--elevated)" stroke="var(--line)" stroke-width="1.5"/>
+      <text x="104.0" y="119.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Scene</text>
+      <text x="104.0" y="141.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Detection</text>
+      <rect x="220" y="92" width="168" height="76" rx="8" fill="var(--elevated)" stroke="var(--line)" stroke-width="1.5"/>
+      <text x="304.0" y="135.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Rating</text>
+      <rect x="420" y="92" width="168" height="76" rx="8" fill="var(--elevated)" stroke="var(--line)" stroke-width="1.5"/>
+      <text x="504.0" y="119.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Scene</text>
+      <text x="504.0" y="141.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Selection</text>
+      <rect x="620" y="92" width="168" height="76" rx="8" fill="var(--elevated)" stroke="var(--line)" stroke-width="1.5"/>
+      <text x="704.0" y="135.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Assembly</text>
+      <rect x="820" y="92" width="168" height="76" rx="8" fill="var(--elevated)" stroke="var(--line)" stroke-width="1.5"/>
+      <text x="904.0" y="119.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Audio</text>
+      <text x="904.0" y="141.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Normalize</text>
+      <rect x="820" y="252" width="168" height="76" rx="8" fill="var(--elevated)" stroke="var(--line)" stroke-width="1.5"/>
+      <text x="904.0" y="295.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">SFX at Cuts</text>
+      <rect x="620" y="252" width="168" height="76" rx="8" fill="var(--elevated)" stroke="var(--line)" stroke-width="1.5"/>
+      <text x="704.0" y="279.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Background</text>
+      <text x="704.0" y="301.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Music</text>
+      <rect x="420" y="252" width="168" height="76" rx="8" fill="var(--elevated)" stroke="var(--amber)" stroke-width="1.5" stroke-dasharray="5,4"/>
+      <text x="504.0" y="279.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Narration</text>
+      <text x="504.0" y="301.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">(optional)</text>
+      <rect x="220" y="252" width="168" height="76" rx="8" fill="var(--elevated)" stroke="var(--line)" stroke-width="1.5"/>
+      <text x="304.0" y="295.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Final Mix</text>
+      <rect x="20" y="252" width="168" height="76" rx="8" fill="var(--elevated)" stroke="var(--line)" stroke-width="1.5"/>
+      <text x="104.0" y="295.0" text-anchor="middle" font-size="12.5" fill="var(--ink)">Export</text>
+      <line x1="188" y1="130.0" x2="214" y2="130.0" stroke="var(--phosphor)" stroke-width="2" marker-end="url(#dg-arrow)"/>
+      <line x1="388" y1="130.0" x2="414" y2="130.0" stroke="var(--phosphor)" stroke-width="2" marker-end="url(#dg-arrow)"/>
+      <line x1="588" y1="130.0" x2="614" y2="130.0" stroke="var(--phosphor)" stroke-width="2" marker-end="url(#dg-arrow)"/>
+      <line x1="788" y1="130.0" x2="814" y2="130.0" stroke="var(--phosphor)" stroke-width="2" marker-end="url(#dg-arrow)"/>
+      <line x1="904.0" y1="168" x2="904.0" y2="246" stroke="var(--phosphor)" stroke-width="2" marker-end="url(#dg-arrow)"/>
+      <line x1="820" y1="290.0" x2="794" y2="290.0" stroke="var(--phosphor)" stroke-width="2" marker-end="url(#dg-arrow)"/>
+      <line x1="620" y1="290.0" x2="594" y2="290.0" stroke="var(--phosphor)" stroke-width="2" marker-end="url(#dg-arrow)"/>
+      <line x1="420" y1="290.0" x2="394" y2="290.0" stroke="var(--phosphor)" stroke-width="2" marker-end="url(#dg-arrow)"/>
+      <line x1="220" y1="290.0" x2="194" y2="290.0" stroke="var(--phosphor)" stroke-width="2" marker-end="url(#dg-arrow)"/>
       </svg>
-      <p style="margin:8px 2px 0;font-size:11px;color:var(--ink-dim)">Amber dashed = optional, feeds into the main pipeline rather than sitting inline with it.</p>
+      <p style="margin:8px 2px 0;font-size:11px;color:var(--ink-dim);text-align:left">Amber dashed = optional, feeds into the main pipeline rather than sitting inline with it.</p>
       </div>
-      <ol style="line-height:1.9">
+      <ol style="line-height:1.9;padding-left:26px">
         <li><strong>Scene detection</strong> — PySceneDetect (Content or Adaptive) finds every cut, using the same settings as Scene Detection &amp; Analysis.</li>
         <li><strong>Rating</strong> — sharpness/brightness/duration/faces (OpenCV), AI Vision quality, and dialogue boosts from faster-whisper.</li>
         <li><strong>Beat/dialogue prep (optional)</strong> — beat grid and word-level timestamps when those options are on.</li>
@@ -5450,6 +5473,7 @@ function switchDocs(btn){
   document.querySelectorAll('.docs-pane').forEach(function(p){ p.classList.toggle('active', p.id===id); });
   var pane = document.getElementById(id);
   if(pane) pane.scrollTop = 0;
+  try{localStorage.setItem('prism_docs_tab',id)}catch(e){}
 }
 </script>
 </div>
@@ -5469,7 +5493,7 @@ function switchDocs(btn){
 
 <div id="p-config-services" class="sub-panel active">
 <h3 style="margin-top:0">AI Service Configuration</h3>
-<p style="margin-top:-4px;color:var(--ink-dim)">These control where the app looks for each local/self-hosted AI service. Changes save immediately (no restart needed) and are written to <code>ai_services_config.json</code> next to the script, so they persist across restarts too. Environment variables set the initial defaults; anything saved here overrides them from then on.</p>
+<p style="margin-top:6px;color:var(--ink-dim)">These control where the app looks for each local/self-hosted AI service. Changes save immediately (no restart needed) and are written to <code>ai_services_config.json</code> next to the script, so they persist across restarts too. Environment variables set the initial defaults; anything saved here overrides them from then on.</p>
 <div id="config-rows" style="display:flex;flex-direction:column;gap:14px;margin-top:16px">
   <!-- rows injected by loadConfigTab() -->
 </div>
@@ -5480,7 +5504,7 @@ function switchDocs(btn){
 </div>
 
 <div id="p-config-production" class="sub-panel">
-<p style="margin-top:-4px;color:var(--ink-dim)">Delivery-spec and tuning values that should be identical on every promo this deployment renders — broadcast loudness compliance, the house mix standard, and scene-detection tuning. Moved off the generator form so operators aren't asked about them on every job. Takes effect on the next render; no restart needed.</p>
+<p style="margin-top:6px;color:var(--ink-dim)">Delivery-spec and tuning values that should be identical on every promo this deployment renders — broadcast loudness compliance, the house mix standard, and scene-detection tuning. Moved off the generator form so operators aren't asked about them on every job. Takes effect on the next render; no restart needed.</p>
 <div id="config-production-rows" style="display:flex;flex-direction:column;gap:14px;margin-top:16px">
   <!-- rows injected by loadProductionTab() -->
 </div>
@@ -5491,7 +5515,7 @@ function switchDocs(btn){
 </div>
 
 <div id="p-config-network" class="sub-panel">
-<p style="margin-top:-4px;color:var(--ink-dim)">Where Browse Library looks for source files (HIRES, cards, music, VO, SFX), plus one write destination: "Send to destination" on a finished render copies it to this folder instead of downloading through the browser — useful for handing a render off to another system (e.g. a Vantage watch folder) without a manual step. Each category is fully independent — its own full network path, username, and password — since these often live on genuinely different volumes with different credentials. Takes effect immediately; no restart needed.</p>
+<p style="margin-top:6px;color:var(--ink-dim)">Where Browse Library looks for source files (HIRES, cards, music, VO, SFX), plus one write destination: "Send to destination" on a finished render copies it to this folder instead of downloading through the browser — useful for handing a render off to another system (e.g. a Vantage watch folder) without a manual step. Each category is fully independent — its own full network path, username, and password — since these often live on genuinely different volumes with different credentials. Takes effect immediately; no restart needed.</p>
 <div id="config-network-folders" style="display:flex;flex-direction:column;gap:12px;margin-top:16px">
   <!-- cards injected by loadNetworkFolders() -->
 </div>
@@ -5499,7 +5523,7 @@ function switchDocs(btn){
 
 <div id="p-config-branding" class="sub-panel">
 <h3 style="margin-top:0">Branding</h3>
-<p style="margin-top:-4px;color:var(--ink-dim)">Changes the name, tagline, footer, color theme, logo, and favicon everyone signed in (and the sign-in page itself) sees — saved to <code>branding_config.json</code> next to the script (text) and a <code>branding/</code> folder in the trailer library (logo/favicon files), so both persist across restarts. Takes effect immediately; existing sessions pick it up on their next page load.</p>
+<p style="margin-top:6px;color:var(--ink-dim)">Changes the name, tagline, footer, color theme, logo, and favicon everyone signed in (and the sign-in page itself) sees — saved to <code>branding_config.json</code> next to the script (text) and a <code>branding/</code> folder in the trailer library (logo/favicon files), so both persist across restarts. Takes effect immediately; existing sessions pick it up on their next page load.</p>
 
 <label>Brand name:</label>
 <input type=text id=brand-name-input class=input-box placeholder="PRISM">
@@ -5507,7 +5531,7 @@ function switchDocs(btn){
 <input type=text id=brand-tagline-input class=input-box placeholder="AI-Powered Media Creation">
 <label>Footer (optional):</label>
 <input type=text id=brand-footer-input class=input-box placeholder="e.g. Internal use only &mdash; contact IT for access">
-<p style="font-size:11px;opacity:.65;margin-top:-4px">Shown at the very bottom of the sidebar, and on the sign-in page. Leave blank for no footer at all — most installs won't want one.</p>
+<p style="font-size:11px;opacity:.65;margin-top:6px">Shown at the very bottom of the sidebar, and on the sign-in page. Leave blank for no footer at all — most installs won't want one.</p>
 <div style="margin-top:10px">
   <button type=button class=btn id=brand-text-save-btn onclick="saveBrandText()">Save name, tagline &amp; footer</button>
   <span id=brand-text-status style="font-size:13px;margin-left:8px"></span>
@@ -5557,7 +5581,7 @@ function switchDocs(btn){
 
 <div id="p-config-security" class="sub-panel">
 <h3 style="margin-top:0">Two-factor authentication</h3>
-<p style="margin-top:-4px;color:var(--ink-dim)">Adds a 6-digit code from your phone on top of your password. Works with Google Authenticator, Authy, 1Password, or any TOTP app. This applies to <strong>your own account only</strong> — every user sets up their own.</p>
+<p style="margin-top:6px;color:var(--ink-dim)">Adds a 6-digit code from your phone on top of your password. Works with Google Authenticator, Authy, 1Password, or any TOTP app. This applies to <strong>your own account only</strong> — every user sets up their own.</p>
 <div id=twofa-status style="margin-top:14px"><p style="opacity:.7">Loading&hellip;</p></div>
 
 <div id=twofa-setup style="display:none;margin-top:16px;border:1px solid var(--line);border-radius:10px;padding:16px">
@@ -5583,13 +5607,13 @@ function switchDocs(btn){
 </div>
 
 <div id="p-config-users" class="sub-panel">
-<p style="margin-top:-4px;color:var(--ink-dim)">Full user and group management, right here.</p>
+<p style="margin-top:6px;color:var(--ink-dim)">Full user and group management, right here.</p>
 <div id="config-users-status"></div>
 <div id="config-users-rows"><p style="opacity:.7">Loading&hellip;</p></div>
 </div>
 
 <div id="p-config-jobs" class="sub-panel">
-<p style="margin-top:-4px;color:var(--ink-dim)">All jobs across every account. Cancel active or queued work from here.</p>
+<p style="margin-top:6px;color:var(--ink-dim)">All jobs across every account. Cancel active or queued work from here.</p>
 <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
   <button type="button" class="btn" onclick="loadAdminJobs()">Refresh</button>
   <span id="config-jobs-summary" style="font-size:12px;opacity:.7"></span>
@@ -5603,7 +5627,7 @@ function switchDocs(btn){
 </div>
 
 <div id="p-config-audit" class="sub-panel">
-<p style="margin-top:-4px;color:var(--ink-dim)">Who did what — the last 200 admin actions, renders, and deletions. Newest first.</p>
+<p style="margin-top:6px;color:var(--ink-dim)">Who did what — the last 200 admin actions, renders, and deletions. Newest first.</p>
 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
   <input type="search" id="config-audit-q" placeholder="Search action, user, target&hellip;" class="input-box" style="flex:1;min-width:200px;max-width:360px;margin-bottom:0" onkeydown="if(event.key==='Enter'){event.preventDefault();loadAuditLog()}">
   <button type="button" class="btn" onclick="loadAuditLog()">Search</button>

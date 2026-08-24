@@ -99,7 +99,7 @@ body:has(.login-panel){overflow:hidden;background:radial-gradient(900px 600px at
 }
 .rail .tab{
   display:flex!important;
-  align-items:flex-start!important;
+  align-items:center!important;
   gap:10px!important;
   padding:9px 10px!important;
   border-radius:11px!important;
@@ -146,7 +146,6 @@ body:has(.login-panel){overflow:hidden;background:radial-gradient(900px 600px at
   box-shadow:0 0 16px color-mix(in srgb,var(--phosphor) 18%,transparent);
 }
 .rail .tab-text{
-  padding-top:2px;
   line-height:1.25;
 }
 .rail .tab-sub{
@@ -504,4 +503,33 @@ img[src*="prism-logo"],img[src*="logo-mark"],img[src*="branding/logo"]{
 }
 @media(max-width:800px){
   .selection-driver-row{grid-template-columns:1fr}
+}
+
+/* Video Player toolbar: the category <select> inherits the generic form
+   input's size (14px font, 10px/12px padding) while the "Browse library"
+   button uses the smaller browse-btn sizing (12px font, 8px/14px
+   padding). Sitting in the same row, the select reads visibly
+   taller/larger than the button next to it. Scope it down to match.
+   (The "Choose file" button is a JS-generated .btn — its own padding
+   is fixed directly in the inline style where it's created, since the
+   underlying native file input is hidden and unstyleable here.) */
+#pl-category{
+  width:auto!important;
+  max-width:220px!important;
+  padding:8px 30px 8px 14px!important;
+  margin:0!important;
+  font-size:12px!important;
+  font-family:'JetBrains Mono',monospace!important;
+}
+
+/* All checkboxes and radio inputs app-wide use the brand's main accent
+   (--phosphor -- the active-tab highlight / button / badge color, a true
+   orange under the Sunset theme), including the few that previously set
+   their own accent-color (network-browse "Include subfolders" checkbox,
+   chat reasoning toggle). --amber is a separate, more yellow accent used
+   for warnings/secondary badges, which read as "yellow-orange" here --
+   !important so a single rule wins over all of them consistently. */
+input[type=checkbox],
+input[type=radio]{
+  accent-color:var(--phosphor)!important;
 }
