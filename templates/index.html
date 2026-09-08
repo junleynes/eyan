@@ -2477,8 +2477,14 @@ document.addEventListener("DOMContentLoaded", function(){
   function combineTrNetworkSelection(){
     if(trNetworkSelected.length < 2) return
     var status = document.getElementById('tr-network-combine-status')
-    var names = trNetworkSelected.map(function(f){ return f.name })
-    status.textContent = 'Fetching ' + names.length + ' files\u2026'
+    // Each selection carries its OWN subpath now, not just a name -- needed
+    // because search results (see renderTrNetworkSearchResults) can span
+    // multiple different subfolders, unlike a normal single-folder listing
+    // where every file shares the current trNetworkSubpath. Fetching by
+    // name alone with one shared subpath would silently grab the wrong
+    // file (or fail) for anything selected outside the current folder.
+    var items = trNetworkSelected.slice()
+    status.textContent = 'Fetching ' + items.length + ' files\u2026'
     document.getElementById('tr-network-combine-btn').disabled = true
 
     // Each file has to actually be staged (copied off the network share)
@@ -2488,7 +2494,7 @@ document.addEventListener("DOMContentLoaded", function(){
     // /api/network/combine.
     var staged = []
     function fetchNext(i){
-      if(i >= names.length){
+      if(i >= items.length){
         status.textContent = 'Combining\u2026'
         fetch('/api/network/combine', {
           method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -2508,13 +2514,13 @@ document.addEventListener("DOMContentLoaded", function(){
         })
         return
       }
-      status.textContent = 'Fetching ' + (i+1) + ' of ' + names.length + '\u2026'
+      status.textContent = 'Fetching ' + (i+1) + ' of ' + items.length + '\u2026'
       fetch('/api/network/fetch', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({name: names[i], category: 'hires', subpath: trNetworkSubpath || ''})
+        body: JSON.stringify({name: items[i].name, category: 'hires', subpath: items[i].subpath || ''})
       }).then(function(r){ return r.json() }).then(function(d){
         if(!d.ok){
-          status.textContent = 'Could not fetch ' + names[i] + ': ' + d.error
+          status.textContent = 'Could not fetch ' + items[i].name + ': ' + d.error
           status.style.color = 'var(--tally)'
           document.getElementById('tr-network-combine-btn').disabled = false
           return
@@ -2522,7 +2528,7 @@ document.addEventListener("DOMContentLoaded", function(){
         staged.push(d.filename)
         fetchNext(i + 1)
       }).catch(function(e){
-        status.textContent = 'Error fetching ' + names[i] + ': ' + e
+        status.textContent = 'Error fetching ' + items[i].name + ': ' + e
         status.style.color = 'var(--tally)'
         document.getElementById('tr-network-combine-btn').disabled = false
       })
@@ -2565,9 +2571,9 @@ document.addEventListener("DOMContentLoaded", function(){
       cb.addEventListener('click', function(e){ e.stopPropagation() })
       cb.addEventListener('change', function(){
         if(cb.checked){
-          trNetworkSelected.push({name: f.name, size: f.size})
+          trNetworkSelected.push({name: f.name, size: f.size, subpath: subpath || ''})
         }else{
-          trNetworkSelected = trNetworkSelected.filter(function(sel){ return sel.name !== f.name })
+          trNetworkSelected = trNetworkSelected.filter(function(sel){ return !(sel.name === f.name && sel.subpath === (subpath || '')) })
         }
         updateTrNetworkCombineBar()
       })
@@ -2603,9 +2609,29 @@ document.addEventListener("DOMContentLoaded", function(){
     files.forEach(function(f){
       var row = document.createElement('div')
       row.className = 'net-modal-row'
+      var cb = document.createElement('input')
+      cb.type = 'checkbox'
+      cb.className = 'net-multi-check'
+      cb.title = 'Select to combine with other files'
+      cb.addEventListener('click', function(e){ e.stopPropagation() })
+      cb.addEventListener('change', function(){
+        if(cb.checked){
+          trNetworkSelected.push({name: f.name, size: f.size, subpath: f.subpath || ''})
+        }else{
+          trNetworkSelected = trNetworkSelected.filter(function(sel){ return !(sel.name === f.name && sel.subpath === (f.subpath || '')) })
+        }
+        updateTrNetworkCombineBar()
+      })
+      row.appendChild(cb)
       var locationLabel = f.subpath ? f.subpath.replace(/\\/g, ' / ') + ' / ' : ''
-      row.innerHTML = '<span class="row-name"><span style="opacity:.55;font-size:11px">' + locationLabel + '</span>' + f.name +
-                      '</span><span class="row-size">' + humanSize(f.size) + '</span>'
+      var nameSpan = document.createElement('span')
+      nameSpan.className = 'row-name'
+      nameSpan.innerHTML = '<span style="opacity:.55;font-size:11px">' + locationLabel + '</span>' + f.name
+      row.appendChild(nameSpan)
+      var sizeSpan = document.createElement('span')
+      sizeSpan.className = 'row-size'
+      sizeSpan.textContent = humanSize(f.size)
+      row.appendChild(sizeSpan)
       row.addEventListener('click', function(){ pickTrNetworkFile(f.name, f.subpath) })
       networkList.appendChild(row)
     })
