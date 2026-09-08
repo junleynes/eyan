@@ -1870,7 +1870,27 @@ document.addEventListener("DOMContentLoaded", function(){
     // no-ops in that case, but a clickable button that silently does
     // nothing reads as broken rather than as safe.
     document.getElementById('template-delete-btn').disabled = !tpl
-    if(!tpl){ box.style.display = 'none'; box.innerHTML = ''; return }
+    if(!tpl){
+      box.style.display = 'none'; box.innerHTML = ''
+      // Switching back to "no template" must not leave the PREVIOUS
+      // template's files sitting in the form looking selected -- confirmed
+      // this was a real gap: this used to just hide the summary box and
+      // stop, leaving every template-sourced chip untouched. Only clears
+      // slots the template itself set (chip.dataset.fromTemplate === '1');
+      // anything the person picked by hand stays exactly as they left it,
+      // since that's their own deliberate choice, not the template's.
+      Object.keys(TPL_SLOT_TO_FIELD).forEach(function(slot){
+        var field = TPL_SLOT_TO_FIELD[slot]
+        var chip = document.getElementById(field + '_chip')
+        if(chip && chip.dataset.fromTemplate === '1'){
+          window.clearNetworkField(field)
+          var skip = document.getElementById(field + '_skip_template')
+          if(skip) skip.value = ''  // an empty slot from leaving a template isn't a manual opt-out
+        }
+      })
+      refreshAllAssetSummaries()
+      return
+    }
 
     function row(label, value, dim){
       return '<div style="display:flex;gap:8px;padding:2px 0">' +
