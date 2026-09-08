@@ -5993,6 +5993,34 @@ def free_disk_mb(path=None):
     except OSError:
         return None
 
+def _remove_job_intermediate(path):
+    """Deletes a per-job intermediate file the render pipeline is finished
+    with -- EXCEPT a shared network-staged file (net_<ts>_<name>), which
+    this must never touch.
+
+    Real bug this fixes: several call sites inside _run_trailer_job deleted
+    an uploaded VO/SFX/card-VO path unconditionally right after using it,
+    completely bypassing the net_* protection _cleanup_job_temp already has
+    a few lines below (added specifically because "the same staged file can
+    legitimately be attached to two concurrent jobs" -- and, just as much,
+    to the SAME job's next render if the user reuses their Browse Library
+    selection without re-picking). Whenever the source was a network pick,
+    this deleted the shared staged copy mid-render, so a second job -- or
+    even a retry of the same one -- would find it gone and fail with
+    "please re-select", even though the file chip still showed it as
+    selected. A direct browser upload's own per-job temp file isn't shared
+    with anything else, so it's still deleted normally; only the shared
+    staging case is protected here, matching _cleanup_job_temp exactly.
+    Silently no-ops if the path is falsy or already gone."""
+    if not path or not os.path.exists(path):
+        return
+    if os.path.basename(path).startswith('net_'):
+        return
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
 def _cleanup_job_temp(jid, params, keep_basename=None):
     """Removes every temp file a job could have created, whatever exit path it took.
 
@@ -7517,12 +7545,9 @@ def _run_trailer_job(jid, params):
                 os.remove(sfx_path)
             if os.path.exists(sfx_m4a):
                 os.remove(sfx_m4a)
-    if sfx_upload_path and os.path.exists(sfx_upload_path):
-        os.remove(sfx_upload_path)
-    if title_card_vo_path and os.path.exists(title_card_vo_path):
-        os.remove(title_card_vo_path)
-    if end_card_vo_path and os.path.exists(end_card_vo_path):
-        os.remove(end_card_vo_path)
+    _remove_job_intermediate(sfx_upload_path)
+    _remove_job_intermediate(title_card_vo_path)
+    _remove_job_intermediate(end_card_vo_path)
 
     job_set(jid, percent=80, step='Generating/mixing background music')
     # Prepare background music (ducked under SOT) as its own stem — the actual
@@ -7646,8 +7671,7 @@ def _run_trailer_job(jid, params):
             if not (os.path.exists(vo_ready_path) and os.path.getsize(vo_ready_path) > 0):
                 print(f'VO prep error: {r.stderr[:500]}')
                 vo_ready_path = None
-        if vo_upload_path and os.path.exists(vo_upload_path):
-            os.remove(vo_upload_path)
+        _remove_job_intermediate(vo_upload_path)
         tts_wav = os.path.join(app.config['UPLOAD_FOLDER'], f'tts_{base_ts}.wav')
         if os.path.exists(tts_wav):
             os.remove(tts_wav)
