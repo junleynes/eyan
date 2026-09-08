@@ -2566,7 +2566,7 @@ def transcribe_audio_file(path, trim_start=0.0, trim_end=None):
             cmd += ['-to', f'{float(trim_end):.3f}']
         cmd += ['-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', audio_path]
         try:
-            run_media(cmd, timeout=FFMPEG_TIMEOUT, label='VO STT extract')
+            run_ffmpeg(cmd, timeout=FFMPEG_TIMEOUT, label='VO STT extract')
         except Exception as e:
             print(f'Whisper VO: extract failed ({e}); skipping uploaded-VO transcription.')
             return [], []
