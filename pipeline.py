@@ -2664,19 +2664,35 @@ def _vo_beats_from_segments(segments):
     return beats
 
 
-def nearest_word_boundary(target, boundaries, max_snap=0.35):
+def nearest_word_boundary(target, boundaries, max_snap=0.35, hard_limit=None):
     """Nearest timestamp in `boundaries` to `target`, but only if within
     `max_snap` seconds — otherwise returns `target` unchanged (no nearby word
-    to snap to, e.g. a silent B-roll clip, so leave the cut point as-is)."""
+    to snap to, e.g. a silent B-roll clip, so leave the cut point as-is),
+    UNLESS `hard_limit` is given.
+
+    `hard_limit` is the furthest this cut point is allowed to move (e.g. the
+    scene's own start/end) -- if nothing is within max_snap, the search
+    widens all the way out to hard_limit before giving up, rather than
+    silently accepting a cut that lands mid-word. A clip running a bit
+    longer or shorter than originally planned is a smaller problem than
+    audibly cutting someone off before they finish a word -- this is what
+    lets a scene's own available footage be used to find a clean cut
+    instead of settling for whatever the untouched target happened to land
+    on. Still always returns the CLOSEST boundary within whatever range
+    ends up being searched, so a nearby word always wins over a distant one
+    even when the wider search is what finds it."""
     if not boundaries:
         return target
     candidates = [b for b in boundaries if abs(b - target) <= max_snap]
+    if not candidates and hard_limit is not None:
+        lo, hi = (target, hard_limit) if hard_limit >= target else (hard_limit, target)
+        candidates = [b for b in boundaries if lo <= b <= hi]
     if not candidates:
         return target
     return min(candidates, key=lambda b: abs(b - target))
 
 def nearest_speech_out(target, phrase_ends, word_ends,
-                       phrase_snap=1.2, word_snap=0.35):
+                       phrase_snap=1.2, word_snap=0.35, hard_limit=None):
     """Best out-point near `target`, preferring the end of a complete phrase
     over the end of a mere word.
 
@@ -2690,12 +2706,18 @@ def nearest_speech_out(target, phrase_ends, word_ends,
 
     Falls back to word boundaries, then to `target` unchanged when there's
     no speech nearby at all (silent B-roll -- nothing to protect, so leave
-    the visual cut point alone)."""
+    the visual cut point alone). `hard_limit`, when given, is tried for
+    both phrase ends and the word-boundary fallback -- see
+    nearest_word_boundary for why widening the search this far is worth it
+    rather than accepting a cut mid-word or mid-sentence."""
     if phrase_ends:
         near = [b for b in phrase_ends if abs(b - target) <= phrase_snap]
+        if not near and hard_limit is not None:
+            lo, hi = (target, hard_limit) if hard_limit >= target else (hard_limit, target)
+            near = [b for b in phrase_ends if lo <= b <= hi]
         if near:
             return min(near, key=lambda b: abs(b - target))
-    return nearest_word_boundary(target, word_ends, max_snap=word_snap)
+    return nearest_word_boundary(target, word_ends, max_snap=word_snap, hard_limit=hard_limit)
 
 def speech_free_slack(clip_start, clip_end, speech_spans, guard=0.12):
     """How much of [clip_start, clip_end) can be trimmed off the END without
@@ -6222,7 +6244,7 @@ def select_scenes_vo_led(scenes_data, vo_text, trailer_duration, max_scene_dur, 
         seg_dur = max(0.3, seg_dur)
         seg_start = s['start']
         if transcribe_for_cuts and word_starts:
-            snapped_start = nearest_word_boundary(seg_start, word_starts, max_snap=0.35)
+            snapped_start = nearest_word_boundary(seg_start, word_starts, max_snap=0.35, hard_limit=seg_start + seg_dur)
             if seg_start < snapped_start < seg_start + seg_dur:
                 drift = snapped_start - seg_start
                 seg_start = snapped_start
@@ -6234,7 +6256,7 @@ def select_scenes_vo_led(scenes_data, vo_text, trailer_duration, max_scene_dur, 
             seg_dur = max(0.3, min(scene_end - seg_start, snapped_cut - total_sel))
         if transcribe_for_cuts and (phrase_ends or word_ends) and seg_dur < (scene_end - seg_start):
             target_end = seg_start + seg_dur
-            snapped_end = nearest_speech_out(target_end, phrase_ends, word_ends)
+            snapped_end = nearest_speech_out(target_end, phrase_ends, word_ends, hard_limit=scene_end)
             if seg_start < snapped_end <= scene_end:
                 seg_dur = max(0.3, snapped_end - seg_start)
         s = dict(s)
@@ -6919,7 +6941,7 @@ def _run_trailer_job(jid, params):
                     # Don't start playback mid-word — nudge the in-point forward to
                     # the start of the nearest word within this scene (capped so we
                     # never drift far from the original visual cut point).
-                    snapped_start = nearest_word_boundary(seg_start, word_starts, max_snap=0.35)
+                    snapped_start = nearest_word_boundary(seg_start, word_starts, max_snap=0.35, hard_limit=seg_start + seg_dur)
                     if seg_start < snapped_start < seg_start + seg_dur:
                         drift = snapped_start - seg_start
                         seg_start = snapped_start
@@ -6943,7 +6965,7 @@ def _run_trailer_job(jid, params):
                     # nearest_speech_out for why that distinction is worth a
                     # wider snap window.
                     target_end = seg_start + seg_dur
-                    snapped_end = nearest_speech_out(target_end, phrase_ends, word_ends)
+                    snapped_end = nearest_speech_out(target_end, phrase_ends, word_ends, hard_limit=scene_end)
                     if seg_start < snapped_end <= scene_end:
                         seg_dur = max(0.3, snapped_end - seg_start)
                 s['trim_start'] = seg_start
@@ -6981,7 +7003,7 @@ def _run_trailer_job(jid, params):
                     # exactly the mid-word cut the rest of this mechanism exists
                     # to prevent.
                     scene_end_abs = last['start'] + last['duration']
-                    snapped = nearest_speech_out(new_end, phrase_ends, word_ends)
+                    snapped = nearest_speech_out(new_end, phrase_ends, word_ends, hard_limit=scene_end_abs)
                     if last['trim_start'] < snapped <= scene_end_abs:
                         new_end = snapped
                 grow = max(0.0, new_end - (last['trim_start'] + last['selected_dur']))
