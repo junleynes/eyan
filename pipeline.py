@@ -1628,6 +1628,35 @@ def resolve_delivery_format(requested):
     how save_production_defaults' validation already works the same way."""
     return requested if requested in EXPORT_FORMATS else 'mp4_high'
 
+def build_ai_vision_prompt(base_prompt, genre, priority_prompt=None, negative_prompt=None):
+    """Assembles the actual scoring prompt sent to the vision model for each
+    frame, layering in genre, an optional free-text description of what the
+    promo should favour, and an optional free-text description of what it
+    should avoid. Pulled out of the scoring loop as its own function so
+    each layer can be verified independently, rather than only ever
+    checked as part of a full render.
+
+    priority_prompt and negative_prompt are deliberately two separate,
+    clearly-labelled instructions rather than one combined sentence --
+    "prefer X, avoid Y" folded together is more likely to confuse a vision
+    model than PRIORITY: and AVOID: as their own distinct blocks. Both
+    steer the 1-5 score itself (matching scenes rated higher or lower)
+    rather than filtering scenes outright -- a scene that's otherwise
+    clearly the best available can still get used if nothing better
+    exists, for either direction."""
+    ai_prompt = base_prompt
+    if genre in GENRE_PRESETS and 'DESC:' in base_prompt:
+        ai_prompt = base_prompt.replace('for a movie trailer', f'for a {genre} promo trailer', 1)
+    if priority_prompt:
+        ai_prompt = (f"{ai_prompt}\n\nPRIORITY: This promo should especially feature: "
+                     f"{priority_prompt}. Score scenes matching that description "
+                     f"noticeably higher than scenes that don't.")
+    if negative_prompt:
+        ai_prompt = (f"{ai_prompt}\n\nAVOID: This promo should NOT feature: "
+                     f"{negative_prompt}. Score scenes matching that description "
+                     f"noticeably lower than scenes that don't.")
+    return ai_prompt
+
 def _detect_silence_intervals(audio_path, noise_db=-30, min_dur=0.3, timeout=120):
     """Runs ffmpeg's silencedetect filter and parses stderr for silence_start/silence_end
     pairs. Returns a list of (start, end) SILENT intervals in audio_path. A silence_start
@@ -3827,6 +3856,7 @@ def api_trailer():
     # Parsed here (in the request, where the upload exists) rather than in the
     # job thread, which has no access to request.files.
     priority_prompt = (request.form.get('priority_prompt') or '').strip()
+    negative_prompt = (request.form.get('negative_prompt') or '').strip()
     script_cues = []
     script_file = request.files.get('script_file')
     if script_file and script_file.filename:
@@ -4186,6 +4216,7 @@ def api_trailer():
                   scene_threshold=scene_threshold, min_scene_len_sec=min_scene_len_sec,
                   detector=detector, adaptive_threshold=adaptive_threshold,
                   priority_prompt=priority_prompt,
+                  negative_prompt=negative_prompt,
                   script_cues=script_cues,
                   transition=transition, xfade_dur=xfade_dur, transition_matte_path=transition_matte_path,
                   target_loudness=target_loudness, true_peak=true_peak, music_duck_db=music_duck_db, duck_depth_db=duck_depth_db, duck_release_hold=duck_release_hold, beat_match=beat_match, broadcast_stereo=broadcast_stereo, model=model,
@@ -6477,23 +6508,11 @@ def _run_trailer_job(jid, params):
 
             # Tell the model what it's selecting *for*. The prompt never mentioned the
             # genre before, so an action promo and a drama promo were ranked by the
-            # same generic "good for a movie trailer" criterion.
-            ai_prompt = prompt
-            if genre in GENRE_PRESETS and 'DESC:' in prompt:
-                ai_prompt = prompt.replace('for a movie trailer',
-                                           f'for a {genre} promo trailer', 1)
-            # An optional free-text description of what this particular promo
-            # should favour ("the confrontation in the kitchen", "anything
-            # with the red car"). Appended to the scoring prompt so it steers
-            # the 1-5 vision score itself, rather than being applied as a
-            # separate boost afterwards -- the model is the only component
-            # that can actually tell whether a frame matches a description, so
-            # this is where that judgement belongs. Applies whenever it's
-            # filled in, independently of whether a script was also supplied.
-            if params.get('priority_prompt'):
-                ai_prompt = (f"{ai_prompt}\n\nPRIORITY: This promo should especially feature: "
-                             f"{params['priority_prompt']}. Score scenes matching that description "
-                             f"noticeably higher than scenes that don't.")
+            # same generic "good for a movie trailer" criterion. See
+            # build_ai_vision_prompt() for genre/priority/negative layering details.
+            ai_prompt = build_ai_vision_prompt(prompt, genre,
+                                                priority_prompt=params.get('priority_prompt'),
+                                                negative_prompt=params.get('negative_prompt'))
 
             n_scenes_ai = len(ai_pool)
             _ai_progress = {'done': 0}
