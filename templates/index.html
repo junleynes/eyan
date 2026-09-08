@@ -1897,16 +1897,39 @@ document.addEventListener("DOMContentLoaded", function(){
     if(!st.transition && tpl.transition) st.transition = tpl.transition
     if(!st.xfade_dur && tpl.xfade_dur) st.xfade_dur = tpl.xfade_dur
     var seen = {}
-    var settingRows = Object.keys(TPL_SETTING_LABELS).filter(function(k){
-      return st[k] !== undefined && st[k] !== '' && !seen[k] && (seen[k] = 1)
-    }).map(function(k){
+    // Settings that only make sense for one narration mode -- shown
+    // unconditionally before this fix, which is exactly the reported bug:
+    // Voice engine/language/rate (Fish Audio TTS parameters) appeared in a
+    // template's summary even when that template uses uploaded narration,
+    // where those fields were never actually read at render time. VO
+    // trim in/out is the mirror case -- only meaningful for an uploaded
+    // file being cut down, never for freshly-generated TTS audio. vo_start
+    // and vo_volume apply to narration either way, so they're not gated
+    // here; the gate only removes fields tied to ONE specific source.
+    var TTS_ONLY_VO_FIELDS = {vo_engine: 1, vo_voice: 1, vo_language: 1, vo_rate: 1, vo_text: 1}
+    var UPLOAD_ONLY_VO_FIELDS = {vo_trim_start: 1, vo_trim_end: 1}
+    function settingApplies(k){
+      if(st.vo_mode === 'none' && (TTS_ONLY_VO_FIELDS[k] || UPLOAD_ONLY_VO_FIELDS[k] || k === 'vo_start' || k === 'vo_volume')) return false
+      if(st.vo_mode === 'upload' && TTS_ONLY_VO_FIELDS[k]) return false
+      if(st.vo_mode === 'tts' && UPLOAD_ONLY_VO_FIELDS[k]) return false
+      return true
+    }
+    var shownKeys = Object.keys(TPL_SETTING_LABELS).filter(function(k){
+      return st[k] !== undefined && st[k] !== '' && !seen[k] && (seen[k] = 1) && settingApplies(k)
+    })
+    var settingRows = shownKeys.map(function(k){
       return row(TPL_SETTING_LABELS[k], tplSettingValue(k, st[k]), false)
     }).join('')
     // Anything saved that has no label yet still gets shown, so nothing is hidden.
-    var unlabelled = Object.keys(st).filter(function(k){ return !TPL_SETTING_LABELS[k] && st[k] !== '' })
-      .map(function(k){ return row(k, String(st[k]), false) }).join('')
+    var unlabelledKeys = Object.keys(st).filter(function(k){ return !TPL_SETTING_LABELS[k] && st[k] !== '' })
+    var unlabelled = unlabelledKeys.map(function(k){ return row(k, String(st[k]), false) }).join('')
 
-    var nset = Object.keys(st).length
+    // Counts what's actually displayed below, not every key stored on the
+    // template -- otherwise "Settings (17)" would still say 17 even after
+    // the filtering above hides some of them, which reads as a second,
+    // separate inconsistency on top of the original bug.
+    var nset = shownKeys.length + unlabelledKeys.length
+
     box.innerHTML =
       '<div style="font-weight:600;margin-bottom:8px">' + escapeHtmlLite(tpl.name) + '</div>' +
       '<div style="opacity:.6;text-transform:uppercase;letter-spacing:.06em;font-size:10px;margin:8px 0 4px">Settings (' + nset + ')</div>' +
