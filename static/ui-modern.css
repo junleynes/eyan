@@ -307,25 +307,6 @@ img[src*="prism-logo"],img[src*="logo-mark"],img[src*="branding/logo"]{
 }
 
 /* ---- Docs organized layout ---- */
-.docs-layout{
-  display:grid;grid-template-columns:200px minmax(0,1fr);gap:22px;align-items:start;min-height:420px
-}
-.docs-nav{
-  position:sticky;top:18px;display:flex;flex-direction:column;gap:4px;
-  padding:10px;border:1px solid var(--line);border-radius:14px;
-  background:color-mix(in srgb,var(--sunken) 55%,transparent)
-}
-.docs-nav-item{
-  text-align:left;border:1px solid transparent;background:transparent;color:var(--ink-dim);
-  font:600 12px 'JetBrains Mono',monospace;letter-spacing:.04em;text-transform:uppercase;
-  padding:10px 12px;border-radius:10px;cursor:pointer;transition:background .15s,color .15s,border-color .15s
-}
-.docs-nav-item:hover{color:var(--ink);background:var(--wash-3)}
-.docs-nav-item.active{
-  color:var(--phosphor);
-  background:color-mix(in srgb,var(--phosphor) 10%,transparent);
-  border-color:color-mix(in srgb,var(--phosphor) 22%,transparent)
-}
 .docs-body{min-width:0}
 .docs-pane{display:none}
 .docs-pane.active{display:block;animation:fade-in .2s ease}
@@ -349,9 +330,6 @@ img[src*="prism-logo"],img[src*="logo-mark"],img[src*="branding/logo"]{
 .docs-table-wrap table{margin:0}
 .docs-pane h3{margin-top:22px}
 @media(max-width:900px){
-  .docs-layout{grid-template-columns:1fr}
-  .docs-nav{position:static;flex-direction:row;flex-wrap:wrap;gap:6px}
-  .docs-nav-item{padding:8px 10px;font-size:10px}
   .rail-logo{height:36px!important;max-width:140px!important}
 }
 
@@ -458,31 +436,6 @@ img[src*="prism-logo"],img[src*="logo-mark"],img[src*="branding/logo"]{
 .job-error-actions{display:flex;flex-wrap:wrap;gap:8px}
 
 
-/* Docs: top tabs (no second sidebar — keeps content full width) */
-.docs-layout,
-.docs-layout-top{
-  display:block!important;
-  grid-template-columns:unset!important;
-  min-height:0!important
-}
-.docs-nav,
-.docs-nav-top{
-  position:static!important;
-  display:flex!important;
-  flex-direction:row!important;
-  flex-wrap:wrap!important;
-  gap:6px!important;
-  margin:0 0 18px!important;
-  padding:8px!important;
-  border:1px solid var(--line)!important;
-  border-radius:12px!important;
-  background:color-mix(in srgb,var(--sunken) 55%,transparent)!important
-}
-.docs-nav-item{
-  padding:8px 12px!important;
-  font-size:12px!important;
-  white-space:nowrap
-}
 .docs-body{min-width:0;width:100%}
 
 .selection-driver-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:8px}

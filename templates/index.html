@@ -580,6 +580,18 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
 .sub-tab{padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;color:var(--ink-dim);transition:all .15s;user-select:none}
 .sub-tab:hover{color:var(--ink);background:var(--elevated)}
 .sub-tab.active{color:var(--phosphor);background:rgba(52,230,197,.1)}
+/* Visually identical to .sub-tab, but a distinct class -- Docs' nav
+   buttons sit inside a .sub-tabs container for the same look, but
+   switchTab() clears .active from every .sub-tab on the page globally
+   on every top-level tab switch, and only re-adds it by pairing a
+   .sub-tab with a .sub-panel, which Docs doesn't have (it uses
+   .docs-pane instead). Reusing .sub-tab directly here left Docs'
+   nav with no active item at all after navigating to it from the
+   sidebar -- confirmed directly, not assumed, since it wasn't
+   obviously wrong from a screenshot alone.  */
+.docs-tab{padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;color:var(--ink-dim);transition:all .15s;user-select:none;border:none;background:transparent;font-family:inherit}
+.docs-tab:hover{color:var(--ink);background:var(--elevated)}
+.docs-tab.active{color:var(--phosphor);background:rgba(52,230,197,.1)}
 .sub-panel{display:none}
 .sub-panel.active{display:block}
 
@@ -5647,20 +5659,19 @@ job. Configured via env vars:
 </div>
 
 <div id="p-docs" class="panel{{ ' active' if default_tab == 'p-docs' else '' }}">
-<div class="docs-layout docs-layout-top">
-  <nav class="docs-nav docs-nav-top" aria-label="Documentation sections">
-    <button type="button" class="docs-nav-item active" data-docs="docs-overview" onclick="switchDocs(this)">Overview</button>
-    <button type="button" class="docs-nav-item" data-docs="docs-workflow" onclick="switchDocs(this)">Workflow</button>
-    <button type="button" class="docs-nav-item" data-docs="docs-media" onclick="switchDocs(this)">Media &amp; library</button>
-    <button type="button" class="docs-nav-item" data-docs="docs-tools" onclick="switchDocs(this)">Tools</button>
-    <button type="button" class="docs-nav-item" data-docs="docs-templates" onclick="switchDocs(this)">Templates</button>
-    <button type="button" class="docs-nav-item" data-docs="docs-genres" onclick="switchDocs(this)">Genre presets</button>
-    <button type="button" class="docs-nav-item" data-docs="docs-music" onclick="switchDocs(this)">Music &amp; VO tips</button>
-    <button type="button" class="docs-nav-item" data-docs="docs-access" onclick="switchDocs(this)">Access &amp; theme</button>
-  </nav>
+<h2>Docs</h2>
+<div class="sub-tabs">
+  <button type="button" class="docs-tab docs-nav-item active" data-docs="docs-overview" onclick="switchDocs(this)">Overview</button>
+  <button type="button" class="docs-tab docs-nav-item" data-docs="docs-workflow" onclick="switchDocs(this)">Workflow</button>
+  <button type="button" class="docs-tab docs-nav-item" data-docs="docs-media" onclick="switchDocs(this)">Media &amp; library</button>
+  <button type="button" class="docs-tab docs-nav-item" data-docs="docs-tools" onclick="switchDocs(this)">Tools</button>
+  <button type="button" class="docs-tab docs-nav-item" data-docs="docs-templates" onclick="switchDocs(this)">Templates</button>
+  <button type="button" class="docs-tab docs-nav-item" data-docs="docs-genres" onclick="switchDocs(this)">Genre presets</button>
+  <button type="button" class="docs-tab docs-nav-item" data-docs="docs-music" onclick="switchDocs(this)">Music &amp; VO tips</button>
+  <button type="button" class="docs-tab docs-nav-item" data-docs="docs-access" onclick="switchDocs(this)">Access &amp; theme</button>
+</div>
   <div class="docs-body">
     <div class="docs-pane active" id="docs-overview">
-      <h2>Docs</h2>
       <p class="docs-lead">Guides for the promo pipeline, tools, templates, and account settings. Pick a section on the left — content stays focused so you are not scrolling through everything at once.</p>
       <div class="docs-cards">
         <button type="button" class="docs-card" onclick="switchDocs(document.querySelector('[data-docs=docs-workflow]'))">
@@ -5691,7 +5702,7 @@ job. Configured via env vars:
     </div>
 
     <div class="docs-pane" id="docs-workflow">
-      <h2>Workflow</h2>
+      <h3 style="margin-top:0">Workflow</h3>
       <p>What happens, in order, from upload to finished export:</p>
       <div style="overflow-x:auto;margin:14px 0 18px;background:var(--sunken);border:1px solid var(--line);border-radius:var(--radius);padding:16px;text-align:center">
       <svg viewBox="0 0 1008 348" style="width:100%;max-width:1180px;min-width:700px;aspect-ratio:1008/348;height:auto;display:inline-block;vertical-align:top;font-family:'JetBrains Mono',monospace">
@@ -5761,7 +5772,7 @@ job. Configured via env vars:
     </div>
 
     <div class="docs-pane" id="docs-media">
-      <h2>Media &amp; library</h2>
+      <h3 style="margin-top:0">Media &amp; library</h3>
       <h3>Upload or network folder</h3>
       <p>Every media input can be a direct upload or <strong>Browse library</strong> on the configured Windows/SMB share:</p>
       <table>
@@ -5782,7 +5793,7 @@ job. Configured via env vars:
     </div>
 
     <div class="docs-pane" id="docs-tools">
-      <h2>Tools</h2>
+      <h3 style="margin-top:0">Tools</h3>
       <h3>Text to SFX</h3>
       <p>One-shot effects via Woosh from a concrete description (e.g. <em>"glass shattering"</em>). Duration is enforced locally with ffmpeg. No silent fallback — if Woosh is down, the tool reports failure (the promo pipeline still has a procedural click for cut stamps).</p>
       <pre>POST /api/sfx/generate  + prompt, duration, samples</pre>
@@ -5794,7 +5805,7 @@ POST /api/chat  + model, messages, system?, think?</pre>
     </div>
 
     <div class="docs-pane" id="docs-templates">
-      <h2>Templates</h2>
+      <h3 style="margin-top:0">Templates</h3>
       <p>A <strong>template</strong> is a full programme setup: rating mode, duration, genre, transitions, audio targets, narration settings, plus music/SFX/VO/cards.</p>
       <h3>Building</h3>
       <p>Configure the form, attach assets, name it under <strong>Save as template</strong>. Saving an existing name updates settings and only rewrites slots you supply.</p>
@@ -5807,7 +5818,7 @@ POST /api/trailer/generate + template_id</pre>
     </div>
 
     <div class="docs-pane" id="docs-genres">
-      <h2>Genre presets</h2>
+      <h3 style="margin-top:0">Genre presets</h3>
       <p>Each genre sets a default transition, crossfade, SFX-at-cuts, and AI music/SFX themes.</p>
       <div class="docs-table-wrap">
       <table>
@@ -5827,7 +5838,7 @@ POST /api/trailer/generate + template_id</pre>
     </div>
 
     <div class="docs-pane" id="docs-music">
-      <h2>Music &amp; VO tips</h2>
+      <h3 style="margin-top:0">Music &amp; VO tips</h3>
       <h3>ACE-Step lyrics</h3>
       <ul style="line-height:1.8;padding-left:20px">
         <li>Thinking mode is off; vocal-suppressing negatives are dropped when lyrics are present.</li>
@@ -5841,7 +5852,7 @@ This is [emphasis] the one you cannot miss.</pre>
     </div>
 
     <div class="docs-pane" id="docs-access">
-      <h2>Access &amp; theme</h2>
+      <h3 style="margin-top:0">Access &amp; theme</h3>
       <h3>Theme</h3>
       <p>Rail controls: light / dark / auto (follows OS). Stored in <code>aimp_theme</code> localStorage per browser.</p>
       <h3>Access control</h3>
@@ -5854,7 +5865,6 @@ This is [emphasis] the one you cannot miss.</pre>
       <p>Session lifetime is <code>SESSION_LIFETIME_DAYS</code> (default 30). Cookie is <code>Secure</code> only when <code>FORCE_HTTPS=1</code>.</p>
     </div>
   </div>
-</div>
 <script>
 function switchDocs(btn){
   if(!btn) return;
