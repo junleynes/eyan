@@ -1053,9 +1053,6 @@ document.addEventListener("DOMContentLoaded", function(){
       Generate a promo
     </button>
     {% endif %}
-    {% if current_role == 'admin' or 'player' in current_permissions %}
-    <button type=button class="btn" style="background:transparent;border:1px solid var(--line);color:var(--ink)" onclick="switchTab('p-tools', document.querySelector('.tab[onclick*=p-tools]'))">Browse saved trailers</button>
-    {% endif %}
   </div>
 
 
