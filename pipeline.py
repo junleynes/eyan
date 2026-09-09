@@ -1703,16 +1703,45 @@ def _detect_silence_intervals(audio_path, noise_db=-30, min_dur=0.3, timeout=120
     """Runs ffmpeg's silencedetect filter and parses stderr for silence_start/silence_end
     pairs. Returns a list of (start, end) SILENT intervals in audio_path. A silence_start
     with no matching silence_end (file ends mid-silence) is dropped rather than guessed at —
-    the caller treats "not explicitly silent" as active, which is the safe default."""
+    the caller treats "not explicitly silent" as active, which is the safe default.
+
+    Runs against a fresh PCM decode of `audio_path`, not the file directly -- a real,
+    observed bug: a loudnorm-processed track re-encoded to AAC (uploaded VO's own prep
+    step does exactly this) made silencedetect stop reliably recognizing genuinely-silent
+    stretches (confirmed by direct sample inspection: RMS and peak both exactly 0 in the
+    region silencedetect was misreading as active) after roughly its first ~0.3s -- the
+    same PCM audio, decoded and analyzed directly with no AAC round-trip in between,
+    detected the real silent interval correctly and completely. This mattered because this
+    function is what determines exactly where BGM/dialogue duck under VO -- silencedetect
+    misreading the silent gap before VO actually starts as "VO already playing" ducks BGM
+    too early, for however long that confusion lasts, not from the real, correct moment
+    the voiceover actually begins."""
+    pcm_path = None
     try:
-        r = subprocess.run([FFMPEG, '-i', audio_path, '-af',
+        pcm_path = os.path.join(app.config['UPLOAD_FOLDER'], f'sildet_{uuid.uuid4().hex}.wav')
+        conv = subprocess.run([FFMPEG, '-y', '-i', audio_path, '-ac', '1', '-ar', '44100',
+                                '-c:a', 'pcm_s16le', pcm_path],
+                               capture_output=True, text=True, timeout=timeout)
+        analyze_path = pcm_path if (os.path.exists(pcm_path) and os.path.getsize(pcm_path) > 0) else audio_path
+        r = subprocess.run([FFMPEG, '-i', analyze_path, '-af',
                              f'silencedetect=noise={noise_db}dB:d={min_dur}', '-f', 'null', '-'],
                             capture_output=True, text=True, timeout=timeout)
     except Exception as e:
         print(f'Silence detection error ({audio_path}): {e}')
         return []
-    starts = [float(m) for m in re.findall(r'silence_start:\s*([\d.]+)', r.stderr)]
-    ends = [float(m) for m in re.findall(r'silence_end:\s*([\d.]+)', r.stderr)]
+    finally:
+        if pcm_path and os.path.exists(pcm_path):
+            try:
+                os.remove(pcm_path)
+            except OSError:
+                pass
+    # -? handles a silence_start ffmpeg itself sometimes reports as slightly
+    # negative right at the very start of a file -- silently dropping the
+    # sign here (the original pattern had no way to match one at all) would
+    # turn an edge-of-file silence into a small POSITIVE timestamp instead,
+    # which is a different, wrong moment, not a harmlessly-rounded one.
+    starts = [float(m) for m in re.findall(r'silence_start:\s*(-?[\d.]+)', r.stderr)]
+    ends = [float(m) for m in re.findall(r'silence_end:\s*(-?[\d.]+)', r.stderr)]
     return list(zip(starts, ends))
 
 def _active_windows_from_silence(silence_intervals, total_duration, content_duration=None):
@@ -7944,6 +7973,14 @@ def _run_trailer_job(jid, params):
                     cmd.extend(['-to', str(vo_trim_end)])
             cmd.extend(['-i', vo_raw_path,
                         '-af', f'loudnorm=I={target_loudness}:TP={true_peak}:LRA=7,adelay={ms}|{ms},volume={vo_volume}',
+                        # Forces a standard, well-supported rate (already used
+                        # elsewhere in this app for other audio processing)
+                        # rather than whatever loudnorm+this AAC encoder would
+                        # otherwise pick on their own -- a smaller, separate
+                        # good-practice fix, not the actual fix for silence
+                        # detection misreading this file (see
+                        # _detect_silence_intervals' own docstring for that).
+                        '-ar', '44100',
                         '-c:a', 'aac', '-b:a', '192k', vo_ready_path])
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             if not (os.path.exists(vo_ready_path) and os.path.getsize(vo_ready_path) > 0):
