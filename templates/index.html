@@ -6150,8 +6150,9 @@ async function loadNetworkFolders(){
           '<input type=text id="net-path-' + cat + '" placeholder="Full network path, e.g. \\\\10.0.1.130\\media\\' + cat.toUpperCase() + '" value="' + (row.path || '').replace(/"/g,'&quot;') + '" style="' + fieldStyle + '">' +
           '<div style="display:flex;gap:10px;flex-wrap:wrap">' +
             '<input type=text id="net-user-' + cat + '" placeholder="Username" value="' + (row.username || '').replace(/"/g,'&quot;') + '" style="' + fieldStyle + ';flex:1;min-width:130px">' +
-            '<input type=password id="net-pass-' + cat + '" placeholder="' + (row.has_password ? 'Leave blank to keep' : 'Password') + '" style="' + fieldStyle + ';flex:1;min-width:130px">' +
+            '<input type=password id="net-pass-' + cat + '" placeholder="Password" style="' + fieldStyle + ';flex:1;min-width:130px">' +
           '</div>' +
+          (row.has_password ? '<div style="font-size:11px;opacity:.65;margin-top:-4px">A password is already saved for this share — leave the field above blank to keep it.</div>' : '') +
           '<div><button type=button class=btn style="padding:6px 12px;font-size:11px" onclick="saveNetworkFolder(\'' + cat + '\')">Save</button> ' +
           '<span id="net-status-' + cat + '" style="font-size:11px;margin-left:8px"></span></div>' +
         '</div>'
