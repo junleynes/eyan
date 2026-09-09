@@ -5667,7 +5667,7 @@ function switchDocs(btn){
 
 <div id="p-config-network" class="sub-panel">
 <p style="margin-top:6px;color:var(--ink-dim)">Where Browse Library looks for source files (HIRES, cards, music, VO, SFX), plus one write destination: "Send to destination" on a finished render copies it to this folder instead of downloading through the browser — useful for handing a render off to another system (e.g. a Vantage watch folder) without a manual step. Each category is fully independent — its own full network path, username, and password — since these often live on genuinely different volumes with different credentials. Takes effect immediately; no restart needed.</p>
-<div id="config-network-folders" style="display:flex;flex-direction:column;gap:12px;margin-top:16px">
+<div id="config-network-folders" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:18px;margin-top:16px">
   <!-- cards injected by loadNetworkFolders() -->
 </div>
 </div>
@@ -6139,21 +6139,21 @@ async function loadNetworkFolders(){
       // .input-box / input[type=text] rules elsewhere in the app are sized
       // for primary fields (prompts, scripts) and read oversized here, where
       // four fields need to sit compactly in one row.
-      var fieldStyle = 'width:100%;box-sizing:border-box;padding:6px 9px;margin:0;' +
-        'font-size:12px;border:1px solid var(--line);border-radius:6px;' +
+      var fieldStyle = 'width:100%;box-sizing:border-box;padding:8px 11px;margin:0;' +
+        'font-size:12px;border:1px solid var(--line);border-radius:7px;' +
         'background:var(--elevated);color:var(--ink);font-family:inherit'
       var wrap = document.createElement('div')
-      wrap.style.cssText = 'border:1px solid var(--line);border-radius:10px;padding:10px 12px'
+      wrap.style.cssText = 'border:1px solid var(--line);border-radius:12px;padding:16px 18px'
       wrap.innerHTML =
-        '<label style="font-size:12px;font-weight:600;display:block;margin-bottom:6px">' + NETWORK_CATEGORY_LABELS[cat] + '</label>' +
-        '<div style="display:flex;flex-direction:column;gap:6px">' +
+        '<label style="font-size:12px;font-weight:600;display:block;margin-bottom:10px">' + NETWORK_CATEGORY_LABELS[cat] + '</label>' +
+        '<div style="display:flex;flex-direction:column;gap:10px">' +
           '<input type=text id="net-path-' + cat + '" placeholder="Full network path, e.g. \\\\10.0.1.130\\media\\' + cat.toUpperCase() + '" value="' + (row.path || '').replace(/"/g,'&quot;') + '" style="' + fieldStyle + '">' +
-          '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
+          '<div style="display:flex;gap:10px;flex-wrap:wrap">' +
             '<input type=text id="net-user-' + cat + '" placeholder="Username" value="' + (row.username || '').replace(/"/g,'&quot;') + '" style="' + fieldStyle + ';flex:1;min-width:130px">' +
             '<input type=password id="net-pass-' + cat + '" placeholder="' + (row.has_password ? 'Password set \u2014 leave blank to keep it' : 'Password') + '" style="' + fieldStyle + ';flex:1;min-width:130px">' +
           '</div>' +
-          '<div><button type=button class=btn style="padding:4px 10px;font-size:11px" onclick="saveNetworkFolder(\'' + cat + '\')">Save</button> ' +
-          '<span id="net-status-' + cat + '" style="font-size:11px;margin-left:6px"></span></div>' +
+          '<div><button type=button class=btn style="padding:6px 12px;font-size:11px" onclick="saveNetworkFolder(\'' + cat + '\')">Save</button> ' +
+          '<span id="net-status-' + cat + '" style="font-size:11px;margin-left:8px"></span></div>' +
         '</div>'
       container.appendChild(wrap)
     })
