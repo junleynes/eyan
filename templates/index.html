@@ -1296,7 +1296,6 @@ document.addEventListener("DOMContentLoaded", function(){
       <button type=button class="btn" style="padding:5px 10px;font-size:12px" onclick="cardVoSetPoint('vo_upload','end')">Set out from player</button>
     </div>
     <span id="vo_upload_preview_note" style="font-size:12px;opacity:.75;display:block;margin:-2px 0 6px"></span>
-    <p style="margin-top:6px;margin-bottom:8px;font-size:12px;opacity:.75">Selects which portion of the uploaded file to use as narration. This is separate from "Start at" below, which places the (already-trimmed) narration on the trailer's own timeline.</p>
   </div>
   <div id=vo-tts-area style="display:none">
     <textarea name=vo_text id=vo-text-input class=input-box rows=3 placeholder="Type the narration script here..."></textarea>
@@ -1323,26 +1322,21 @@ document.addEventListener("DOMContentLoaded", function(){
       <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Rate (wpm):</span>
       <input type=number name=vo_rate id=vo-rate-input value=175 min=80 max=300 step=5 style="width:80px"></span>
     </div>
-    <p style="margin-top:4px;font-size:12px;opacity:.75">There's no built-in default voice — the list is fetched live from your Fish Audio server (<code>/api/voices?engine=fish_audio</code>). A self-hosted server's voices come from <code>/v1/references/list</code>; the cloud API is used instead when <code>FISH_AUDIO_API_KEY</code> is set. Fish Audio S2 auto-detects the script's language (including Tagalog) unless you override it above.</p>
 
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:10px 0 4px">
       <button type=button class=btn id=vo-preview-btn onclick="previewVoiceover()">Generate &amp; preview</button>
       <span id=vo-preview-status style="font-size:12px;opacity:.75"></span>
     </div>
     <audio id=vo-preview-audio controls style="display:none;width:100%;margin-top:4px"></audio>
-    <p style="margin-top:4px;font-size:12px;opacity:.75">Renders just this script through the settings above so you can check the voice, rate, and language before running the full trailer job.</p>
   </div>
   <div id=vo-common-area style="display:none;margin:8px 0">
     <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Start at (s into promo plug):</span>
     <input type=number name=vo_start value=0 min=0 step=0.5 style="width:80px"></span>
     <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Audio level:</span>
     <input type=number name=vo_volume value=1.15 min=0.3 max=3.0 step=0.05 style="width:80px"></span>
-    <p style="margin-top:4px;font-size:12px;opacity:.75">Music, SFX, and original dialogue automatically duck under the voiceover wherever it plays. Audio level is a gain multiplier applied to the voiceover track before mixing (1.0 = unchanged, higher = louder).</p>
   </div>
     </div>
   </div>
-    <p style="font-size:12px;opacity:.7;margin:4px 0 0">Description steers AI Vision ratings. A rundown with timecodes (<code>00:01:30</code> or <code>1:30</code>) pins those moments &mdash; matched scenes score high enough to be picked automatically, no separate mode needed. Both can be used together.</p>
-    <p style="font-size:12px;opacity:.7;margin:8px 0 0">There's no scene-selection mode to pick either &mdash; it's automatic based on what you've supplied. Neither one set: best-scoring scenes fill the whole promo. A script and/or narration: those pin the specific moments they call for, and best-scoring scenes fill whatever's left over. Nothing is ever replaced outright by uploading something &mdash; it's always layered on top.</p>
   </div>
 
 
@@ -1352,7 +1346,6 @@ document.addEventListener("DOMContentLoaded", function(){
     <button type=button class=btn style="padding:6px 12px;font-size:12px" onclick="loadTemplates()">Refresh</button>
     <button type=button class=btn id=template-delete-btn disabled style="padding:6px 12px;font-size:12px;background:var(--danger,#c94f4f)" onclick="deleteSelectedTemplate()">Delete</button>
   </div>
-  <p style="margin-top:6px;margin-bottom:10px;font-size:12px;opacity:.75">A template carries its whole setup — genre, transition, lengths, audio targets, voice — plus its music bed, SFX, VO and cards. Picking one fills the form in below; change anything you like afterwards and it applies to this job only.</p>
   <div id=template-summary style="font-size:12px;opacity:.85;margin:0 0 14px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;display:none"></div>
 
   <div class="promo-mode-bar" role="group" aria-label="Form mode">
@@ -1401,7 +1394,6 @@ document.addEventListener("DOMContentLoaded", function(){
   <div class="adv-only">
   <label>Max clip length (s):</label>
   <input type=number name=max_scene_dur value=3 placeholder="no limit" min=0.5 step=0.5 style="width:100px">
-  <p style="margin-top:6px;margin-bottom:8px;font-size:12px;opacity:.75">Caps how long any single selected scene can run. Defaults to 3s; clear for no limit.</p>
   <p style="margin-bottom:8px;font-size:12px;opacity:.6">Cut detector settings live in <strong>Config &gt; Production</strong>.</p>
   </div>
   <div class="genre-manual-transition" style="display:none">
@@ -1432,7 +1424,6 @@ document.addEventListener("DOMContentLoaded", function(){
   </select>
   <div id=transition-matte-area style="display:none;margin-top:8px">
     <input type=file name=transition_matte accept="video/*,image/*">
-    <p style="margin-top:4px;margin-bottom:0;font-size:12px;opacity:.75">A short video (or a single image) whose brightness drives the wipe: black keeps the outgoing scene, white reveals the incoming one, and whatever animates in between defines the transition's shape. Trimmed to the transition duration below and reused at every cut. Falls back to Fade if nothing is uploaded.</p>
   </div>
   </div>
   <div class="adv-only">
@@ -1448,7 +1439,6 @@ document.addEventListener("DOMContentLoaded", function(){
     </label>
   </div>
   <p style="margin-top:6px;margin-bottom:8px;font-size:12px;color:var(--amber)">These are independent, not sequential — "Sync cuts to beat" snaps cut points to the music's original beat grid; "Beat match" separately time-stretches that same music afterward to match the video's tempo, which shifts where its beats actually land. Using both together can pull cuts slightly off the beat they were synced to. If exact sync matters most, leave Beat match off.</p>
-  <p style="margin-top:6px;margin-bottom:8px;font-size:12px;opacity:.75">Dialogue is transcribed locally to boost ratings for scenes with quotable lines, and to place cut points on phrase/word boundaries instead of mid-sentence. Uses the large-v2 Whisper model by default (needed for reliable Tagalog — smaller models are noticeably worse at it), so the first run may take a bit to load.</p>
   <p style="margin-bottom:8px;font-size:12px;opacity:.6">Loudness target, true peak, music level, ducking, and broadcast dual-mono are set once for this deployment in <strong>Config &gt; Production</strong> — they're delivery-spec values that should be identical on every promo, not per-job choices.</p>
   </div>
   <div class="asset-section" id=asset-title-card>
@@ -1566,7 +1556,6 @@ document.addEventListener("DOMContentLoaded", function(){
       <button type=button class="btn" style="padding:5px 10px;font-size:12px" onclick="cardVoSetPoint('scoring_audio','end')">Set out from player</button>
     </div>
     <span id="scoring_audio_preview_note" style="font-size:12px;opacity:.75;display:block;margin:-2px 0 6px"></span>
-    <p style="margin-top:6px;margin-bottom:8px;font-size:12px;opacity:.75">Selects which portion of the uploaded track to use as background music -- picked up whether the file came from a direct upload or Browse Library.</p>
   </div>
     </div>
   </div>
@@ -1578,7 +1567,6 @@ document.addEventListener("DOMContentLoaded", function(){
       <span class="asset-section-chevron">&#9656;</span>
     </div>
     <div class="asset-section-body">
-  <p style="margin-top:-4px;margin-bottom:8px;font-size:12px;opacity:.7">Stamped at every scene cut.</p>
   <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:8px 0">
     <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
       <input type=radio name=sfx_mode value=genre data-requires="woosh"> From genre
@@ -1607,7 +1595,6 @@ document.addEventListener("DOMContentLoaded", function(){
 
   <div class=card style="padding:12px 14px;margin:18px 0 0;border:1px dashed var(--line)">
     <label style="margin-top:0">Save as template</label>
-    <p style="margin-top:6px;margin-bottom:10px;font-size:12px;opacity:.75">Saves the whole configuration above — genre, transition, lengths, audio targets, voice settings — together with whichever of the background music, SFX, voiceover, title card and end card you've picked, under a show name. Next episode is then one dropdown away. Saving under a name that already exists updates that show: settings are replaced, and only the asset slots you supplied this time are rewritten.</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <input type=text id=template-save-name placeholder="Show name (e.g. 24 Oras)" style="flex:1;min-width:200px" maxlength=120>
       <button type=button class=btn id=template-save-btn style="padding:8px 14px" onclick="saveTemplate()">Save as template</button>
@@ -2437,7 +2424,6 @@ document.addEventListener("DOMContentLoaded", function(){
     <button class="btn btn-secondary-promo" type=submit id=trailer-submit-btn>Generate without preview</button>
     <button type=button id=tr-cancel-btn class=btn style="display:none;background:var(--danger,#c94f4f)">Cancel</button>
   </div>
-  <p class="promo-actions-hint"><strong>Recommended:</strong> Preview runs analysis only (detect → score → select), usually under a minute. Review scenes, then <em>Render this cut</em> — it reuses that analysis. Full generate skips the review step.</p>
 </form>
 </div><!-- /.work-in -->
 <div class="work-out">
@@ -2476,7 +2462,6 @@ document.addEventListener("DOMContentLoaded", function(){
       <strong style="font-size:14px">Proposed cut</strong>
       <span id=tr-preview-stats style="font-size:12px;opacity:.8"></span>
     </div>
-    <p style="margin:6px 0 10px;font-size:12px;opacity:.75">Untick scenes to drop them, add alternates below, then <strong>Lock cut &amp; render</strong>. Picture analysis is reused — only extract → mix → export runs.</p>
     <div id=tr-cut-timeline class="cut-timeline" aria-label="Cut timeline"></div>
     <div id=tr-preview-grid style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-top:14px"></div>
     <div id=tr-alt-wrap style="display:none;margin-top:16px;border-top:1px solid var(--line);padding-top:14px">
