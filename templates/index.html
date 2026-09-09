@@ -408,6 +408,7 @@ p{color:var(--ink-dim);font-size:13px;line-height:1.65;margin:8px 0}
   display:none;align-items:center;gap:6px;font-size:12px;
   background:rgba(52,230,197,.1);border:1px solid rgba(52,230,197,.35);
   color:var(--phosphor);border-radius:7px;padding:5px 10px;max-width:100%;
+  margin-top:8px;
 }
 .net-file-chip .chip-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px}
 .net-file-chip .chip-x{cursor:pointer;opacity:.7;flex-shrink:0}
@@ -721,7 +722,7 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
     <div class="tab{{ ' active' if default_tab == 'p-dashboard' else '' }}" onclick="switchTab('p-dashboard',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg></span><span class=tab-text>Dashboard</span></div>
     <div class="rail-section">Create</div>
     {% if current_role == 'admin' or 'promo_generation' in current_permissions %}
-    <div class="tab{{ ' active' if default_tab == 'p-trailer' else '' }}" onclick="switchTab('p-trailer',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9.5v5l4.5-2.5L10 9.5z"/></svg></span><span class=tab-text>Generate Promo Plug</span></div>
+    <div class="tab{{ ' active' if default_tab == 'p-trailer' else '' }}" onclick="switchTab('p-trailer',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9.5v5l4.5-2.5L10 9.5z"/></svg></span><span class=tab-text>Episodic Plug</span></div>
     {% endif %}
     {% if current_role == 'admin' or 'music_generation' in current_permissions %}
     <div class="tab{{ ' active' if default_tab == 'p-music' else '' }}" onclick="switchTab('p-music',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l11-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg></span><span class=tab-text>Music Generation</span></div>
@@ -770,7 +771,7 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
 </nav>
 <div class="container">
 
-<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadNetworkFolders==='function'&&!networkFoldersLoaded){loadNetworkFolders()}if(id==='p-config'&&typeof loadProductionTab==='function'&&!productionTabLoaded){loadProductionTab()}if(id==='p-config'&&typeof loadTwofaStatus==='function'&&!twofaLoaded){loadTwofaStatus()}if(id==='p-config'&&typeof loadUsersTab==='function'&&!usersTabLoaded){loadUsersTab()}if(id==='p-config'&&typeof loadAuditLog==='function'&&!auditLogLoaded){loadAuditLog()}if(id==='p-music'&&typeof loadAceStepModels==='function'){loadAceStepModels()}if(id==='p-dashboard'&&typeof loadDashboard==='function'){loadDashboard()}try{localStorage.setItem('prism_last_tab',id)}catch(e){}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active');try{var panel=btn.closest('.panel');if(panel)localStorage.setItem('prism_subtab_'+panel.id,id)}catch(e){}}
+<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadNetworkFolders==='function'&&!networkFoldersLoaded){loadNetworkFolders()}if(id==='p-config'&&typeof loadNetworkDestinations==='function'&&!networkDestinationsLoaded){loadNetworkDestinations()}if(id==='p-config'&&typeof loadProductionTab==='function'&&!productionTabLoaded){loadProductionTab()}if(id==='p-config'&&typeof loadTwofaStatus==='function'&&!twofaLoaded){loadTwofaStatus()}if(id==='p-config'&&typeof loadUsersTab==='function'&&!usersTabLoaded){loadUsersTab()}if(id==='p-config'&&typeof loadAuditLog==='function'&&!auditLogLoaded){loadAuditLog()}if(id==='p-music'&&typeof loadAceStepModels==='function'){loadAceStepModels()}if(id==='p-dashboard'&&typeof loadDashboard==='function'){loadDashboard()}try{localStorage.setItem('prism_last_tab',id)}catch(e){}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active');try{var panel=btn.closest('.panel');if(panel)localStorage.setItem('prism_subtab_'+panel.id,id)}catch(e){}}
 document.addEventListener('DOMContentLoaded',function(){
   // Restore the tab (and, within it, the sub-tab) the user was last on,
   // since switchTab()/switchSubTab() only toggle CSS classes client-side
@@ -1244,7 +1245,7 @@ document.addEventListener("DOMContentLoaded", function(){
         })
       })()
     </script>
-    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0 4px">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:14px 0 4px">
       <button type=button class="browse-btn" onclick="document.getElementById('script-file-input').click()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>Attach script
       </button>
@@ -2273,7 +2274,7 @@ document.addEventListener("DOMContentLoaded", function(){
       var url = URL.createObjectURL(input.files[0])
       cardVoObjectUrls[prefix] = url
       player.src = url
-      player.style.display = ''
+      player.style.display = 'block'
       note.textContent = 'Play the file, pause where you want the cut, then click Set in / Set out.'
     } else {
       player.removeAttribute('src')
@@ -4726,7 +4727,8 @@ function renderTrailerResult(d){
       '</div>'+
       '<div class="delivery-row" style="margin-top:8px">'+
         '<button type="button" class="btn btn-primary-promo" id="tr-download-selected">Download selected format</button>'+
-        '<button type="button" class="btn btn-secondary-promo" id="tr-send-destination-btn">Send to destination</button>'+
+        '<select id="tr-destination-select" style="display:none;font-size:12px;padding:6px 8px;border-radius:7px;border:1px solid var(--line);background:var(--panel);color:var(--ink)"></select>'+
+        '<button type="button" class="btn btn-secondary-promo" id="tr-send-destination-btn" style="display:none">Send to destination</button>'+
         '<span id="tr-send-destination-status" style="font-size:12px;align-self:center"></span>'+
         '<button type="button" class="btn btn-secondary-promo" id="tr-scene-csv-btn">Scene list CSV</button>'+
         '<button type="button" class="btn btn-secondary-promo" onclick="submitTrailer(true)">Re-preview same setup</button>'+
@@ -4765,19 +4767,38 @@ function renderTrailerResult(d){
 
   var sendBtn = document.getElementById('tr-send-destination-btn')
   var sendStatus = document.getElementById('tr-send-destination-status')
+  var destSelect = document.getElementById('tr-destination-select')
+  // The dropdown and Send button both start hidden (see the markup above) --
+  // only shown once we know at least one destination is actually configured,
+  // rather than showing a control that would just fail with "pick a
+  // destination first" every time for anyone who hasn't set one up.
+  fetch('/api/network/destinations').then(function(r){ return r.json() }).then(function(dd){
+    if(!dd.ok || !dd.items.length) return
+    dd.items.forEach(function(dest){
+      var opt = document.createElement('option')
+      opt.value = dest.id
+      opt.textContent = dest.name
+      destSelect.appendChild(opt)
+    })
+    destSelect.style.display = ''
+    sendBtn.style.display = ''
+  }).catch(function(){})
+
   if(sendBtn) sendBtn.addEventListener('click', function(){
     if(!d.library_id){
       sendStatus.textContent = "Couldn't save this render to the library, so there's nothing to send yet."
       sendStatus.style.color = 'var(--tally)'
       return
     }
+    var destId = destSelect.value
+    var destName = destSelect.options[destSelect.selectedIndex] ? destSelect.options[destSelect.selectedIndex].textContent : ''
     openSaveAsModal(suggest, EXPORT_EXTS[currentDeliveryFormat], function(name){
       sendBtn.disabled = true
-      sendStatus.textContent = 'Sending\u2026'
+      sendStatus.textContent = 'Sending to ' + destName + '\u2026'
       sendStatus.style.color = ''
       fetch('/library/' + d.library_id + '/send-to-destination', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({format: currentDeliveryFormat, filename: name})
+        body: JSON.stringify({destination_id: destId, format: currentDeliveryFormat, filename: name})
       }).then(function(r){ return r.json() }).then(function(dd){
         sendBtn.disabled = false
         if(!dd.ok){
@@ -4785,7 +4806,8 @@ function renderTrailerResult(d){
           sendStatus.style.color = 'var(--tally)'
           return
         }
-        sendStatus.textContent = 'Sent ' + dd.filename
+        var sentList = Array.isArray(dd.sent) ? dd.sent.join(', ') : dd.filename
+        sendStatus.textContent = 'Sent ' + sentList + ' to ' + dd.destination
         sendStatus.style.color = 'var(--phosphor)'
       }).catch(function(e){
         sendBtn.disabled = false
@@ -5694,9 +5716,33 @@ function switchDocs(btn){
 </div>
 
 <div id="p-config-network" class="sub-panel">
-<p style="margin-top:6px;color:var(--ink-dim)">Where Browse Library looks for source files (HIRES, cards, music, VO, SFX), plus one write destination: "Send to destination" on a finished render copies it to this folder instead of downloading through the browser — useful for handing a render off to another system (e.g. a Vantage watch folder) without a manual step. Each category is fully independent — its own full network path, username, and password — since these often live on genuinely different volumes with different credentials. Takes effect immediately; no restart needed.</p>
+<p style="margin-top:6px;color:var(--ink-dim)">Where Browse Library looks for source files (HIRES, cards, music, VO, SFX). Each category is fully independent — its own full network path, username, and password — since these often live on genuinely different volumes with different credentials. Takes effect immediately; no restart needed. Delivery destinations for "Send to destination" are managed separately below — a facility can configure several, each with its own name and format.</p>
 <div id="config-network-folders" style="display:flex;flex-direction:column;gap:12px;margin-top:16px">
   <!-- cards injected by loadNetworkFolders() -->
+</div>
+
+<h3 style="margin-top:28px">Delivery destinations</h3>
+<p style="margin-top:6px;color:var(--ink-dim)">Named "Send to destination" targets, shown as a dropdown when delivering a finished render — a facility can configure several (e.g. separate Vantage watch folders, or a MAM ingest and a logging system side by side). Each has its own network path, credentials, and delivery format: the rendered video, the scene-list CSV, or both.</p>
+<div id="config-destinations-list" style="display:flex;flex-direction:column;gap:10px;margin-top:12px">
+  <!-- cards injected by loadNetworkDestinations() -->
+</div>
+<div class="net-card" style="border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:14px">
+  <label style="font-size:12px;font-weight:600;display:block;margin-bottom:6px">Add a destination</label>
+  <div style="display:flex;flex-direction:column;gap:6px">
+    <input type=text id=dest-new-name placeholder="Name, e.g. PMC_MAMS_PUBLISHING" style="width:100%;box-sizing:border-box;padding:6px 9px;margin:0;font-size:12px;border:1px solid var(--line);border-radius:6px;background:var(--elevated);color:var(--ink);font-family:inherit">
+    <input type=text id=dest-new-path placeholder="Full network path, e.g. \\10.0.1.130\vantage\ingest" style="width:100%;box-sizing:border-box;padding:6px 9px;margin:0;font-size:12px;border:1px solid var(--line);border-radius:6px;background:var(--elevated);color:var(--ink);font-family:inherit">
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <input type=text id=dest-new-username placeholder="Username" style="flex:1;min-width:130px;box-sizing:border-box;padding:6px 9px;margin:0;font-size:12px;border:1px solid var(--line);border-radius:6px;background:var(--elevated);color:var(--ink);font-family:inherit">
+      <input type=password id=dest-new-password placeholder="Password" style="flex:1;min-width:130px;box-sizing:border-box;padding:6px 9px;margin:0;font-size:12px;border:1px solid var(--line);border-radius:6px;background:var(--elevated);color:var(--ink);font-family:inherit">
+    </div>
+    <select id=dest-new-kind style="width:100%;box-sizing:border-box;padding:6px 9px;margin:0;font-size:12px;border:1px solid var(--line);border-radius:6px;background:var(--elevated);color:var(--ink);font-family:inherit">
+      <option value="video">Sends: video only</option>
+      <option value="csv_video">Sends: video + scene list CSV</option>
+      <option value="csv">Sends: scene list CSV only</option>
+    </select>
+    <div><button type=button class=btn style="padding:4px 10px;font-size:11px" onclick="addNetworkDestination()">Add destination</button>
+    <span id="dest-new-status" style="font-size:11px;margin-left:6px"></span></div>
+  </div>
 </div>
 </div>
 
@@ -6165,8 +6211,9 @@ async function saveProductionTab(){
 }
 window.saveProductionTab = saveProductionTab
 
-var NETWORK_CATEGORY_LABELS = {hires: 'Video (HIRES)', tcard: 'Title card', endcard: 'End card', music: 'Music', vo: 'VO', sfx: 'SFX', destination: 'Delivery destination (Send to destination)'}
+var NETWORK_CATEGORY_LABELS = {hires: 'Video (HIRES)', tcard: 'Title card', endcard: 'End card', music: 'Music', vo: 'VO', sfx: 'SFX'}
 var networkFoldersLoaded = false
+var networkDestinationsLoaded = false
 async function loadNetworkFolders(){
   var container = document.getElementById('config-network-folders')
   container.innerHTML = '<p style="opacity:.7">Loading\u2026</p>'
@@ -6226,6 +6273,122 @@ async function saveNetworkFolder(cat){
   }
 }
 window.saveNetworkFolder = saveNetworkFolder
+
+// ---- Delivery destinations (Config > Network) ----
+// A list of named "Send to <name>" targets, unlike the single-value network
+// categories above -- rendered as editable cards plus a separate "add new"
+// form, matching the same fetch-and-render pattern every Config tab uses.
+var DEST_KIND_LABELS = {video: 'Video only', csv_video: 'Video + scene list CSV', csv: 'Scene list CSV only'}
+
+async function loadNetworkDestinations(){
+  var container = document.getElementById('config-destinations-list')
+  if(!container) return
+  container.innerHTML = '<p style="opacity:.7">Loading\u2026</p>'
+  try{
+    var r = await fetch('/api/network/destinations')
+    var d = await r.json()
+    if(!d.ok){ container.innerHTML = '<p style="color:var(--amber)">Could not load destinations.</p>'; return }
+    container.innerHTML = ''
+    if(!d.items.length){ container.innerHTML = '<p style="opacity:.6;font-size:12px">No destinations configured yet.</p>' }
+    d.items.forEach(function(dest){
+      var fieldStyle = 'width:100%;box-sizing:border-box;padding:6px 9px;margin:0;font-size:12px;border:1px solid var(--line);border-radius:6px;background:var(--elevated);color:var(--ink);font-family:inherit'
+      var wrap = document.createElement('div')
+      wrap.style.cssText = 'border:1px solid var(--line);border-radius:10px;padding:10px 12px'
+      var kindOptions = Object.keys(DEST_KIND_LABELS).map(function(k){
+        return '<option value="' + k + '"' + (k === dest.delivery_kind ? ' selected' : '') + '>' + DEST_KIND_LABELS[k] + '</option>'
+      }).join('')
+      wrap.innerHTML =
+        '<input type=text id="dest-name-' + dest.id + '" value="' + String(dest.name).replace(/"/g,'&quot;') + '" style="' + fieldStyle + ';font-weight:600;margin-bottom:6px">' +
+        '<input type=text id="dest-path-' + dest.id + '" value="' + String(dest.path).replace(/"/g,'&quot;') + '" style="' + fieldStyle + ';margin-bottom:6px">' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">' +
+          '<input type=text id="dest-user-' + dest.id + '" placeholder="Username" value="' + String(dest.username || '').replace(/"/g,'&quot;') + '" style="' + fieldStyle + ';flex:1;min-width:120px">' +
+          '<input type=password id="dest-pass-' + dest.id + '" placeholder="Password \u2014 leave blank to keep it" style="' + fieldStyle + ';flex:1;min-width:120px">' +
+        '</div>' +
+        '<select id="dest-kind-' + dest.id + '" style="' + fieldStyle + ';margin-bottom:8px">' + kindOptions + '</select>' +
+        '<div><button type=button class=btn style="padding:4px 10px;font-size:11px" onclick="updateNetworkDestination(' + dest.id + ')">Save</button> ' +
+        '<button type=button class=btn style="padding:4px 10px;font-size:11px;color:var(--tally);border-color:var(--tally)" onclick="deleteNetworkDestination(' + dest.id + ',\'' + String(dest.name).replace(/'/g,"\\'") + '\')">Delete</button> ' +
+        '<span id="dest-status-' + dest.id + '" style="font-size:11px;margin-left:6px"></span></div>'
+      container.appendChild(wrap)
+    })
+    networkDestinationsLoaded = true
+  }catch(e){
+    container.innerHTML = '<p style="color:var(--amber)">Error loading destinations: '+e+'</p>'
+  }
+}
+
+async function addNetworkDestination(){
+  var status = document.getElementById('dest-new-status')
+  var name = document.getElementById('dest-new-name').value.trim()
+  var path = document.getElementById('dest-new-path').value.trim()
+  if(!name || !path){
+    status.textContent = 'Name and network path are both required.'
+    status.style.color = 'var(--amber)'
+    return
+  }
+  var payload = {
+    name: name, path: path,
+    username: document.getElementById('dest-new-username').value.trim(),
+    password: document.getElementById('dest-new-password').value,
+    delivery_kind: document.getElementById('dest-new-kind').value,
+  }
+  status.textContent = 'Adding\u2026'; status.style.color = 'var(--ink-dim)'
+  try{
+    var r = await fetch('/api/network/destinations', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)})
+    var d = await r.json()
+    if(d.ok){
+      status.textContent = ''
+      document.getElementById('dest-new-name').value = ''
+      document.getElementById('dest-new-path').value = ''
+      document.getElementById('dest-new-username').value = ''
+      document.getElementById('dest-new-password').value = ''
+      loadNetworkDestinations()
+    }else{
+      status.textContent = 'Failed: ' + (d.error || 'unknown error'); status.style.color = 'var(--amber)'
+    }
+  }catch(e){
+    status.textContent = 'Failed: ' + e; status.style.color = 'var(--amber)'
+  }
+}
+window.addNetworkDestination = addNetworkDestination
+
+async function updateNetworkDestination(id){
+  var status = document.getElementById('dest-status-' + id)
+  var payload = {
+    name: document.getElementById('dest-name-' + id).value.trim(),
+    path: document.getElementById('dest-path-' + id).value.trim(),
+    username: document.getElementById('dest-user-' + id).value.trim(),
+    delivery_kind: document.getElementById('dest-kind-' + id).value,
+  }
+  var pw = document.getElementById('dest-pass-' + id).value
+  if(pw) payload.password = pw   // omitted when blank -- leaves the saved password untouched
+  if(status){ status.textContent = 'Saving\u2026'; status.style.color = 'var(--ink-dim)' }
+  try{
+    var r = await fetch('/api/network/destinations/' + id, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)})
+    var d = await r.json()
+    if(d.ok){
+      if(status){ status.textContent = 'Saved.'; status.style.color = 'var(--phosphor)' }
+      loadNetworkDestinations()
+    }else{
+      if(status){ status.textContent = 'Save failed: ' + (d.error || 'unknown error'); status.style.color = 'var(--amber)' }
+    }
+  }catch(e){
+    if(status){ status.textContent = 'Save failed: ' + e; status.style.color = 'var(--amber)' }
+  }
+}
+window.updateNetworkDestination = updateNetworkDestination
+
+async function deleteNetworkDestination(id, name){
+  if(!confirm('Remove the destination "' + name + '"? This does not affect anything already sent there.')) return
+  try{
+    var r = await fetch('/api/network/destinations/' + id, {method:'DELETE'})
+    var d = await r.json()
+    if(d.ok) loadNetworkDestinations()
+    else alert('Could not remove: ' + (d.error || 'unknown error'))
+  }catch(e){
+    alert('Could not remove: ' + e)
+  }
+}
+window.deleteNetworkDestination = deleteNetworkDestination
 
 // ---- Users & groups (Config > Users) ----
 // Was an <iframe src="/admin/users?embed=1"> to a separate server-rendered
@@ -7121,7 +7284,7 @@ document.addEventListener('DOMContentLoaded', function(){
       var note = document.getElementById(active.fieldName + '_preview_note')
       if(player){
         player.src = '/uploads/' + encodeURIComponent(d.filename)
-        player.style.display = ''
+        player.style.display = 'block'
         if(note) note.textContent = 'Play the file, pause where you want the cut, then click Set in / Set out.'
       }
       closeModal()
@@ -7465,7 +7628,7 @@ function _dashLoadShows(){
     }
     var items = (d.templates || []).slice(0, 5)
     if(!items.length){
-      el.innerHTML = '<p style="opacity:.6;margin:0">No saved shows yet — save one from Generate Promo Plug.</p>'
+      el.innerHTML = '<p style="opacity:.6;margin:0">No saved shows yet — save one from Episodic Plug.</p>'
       return
     }
     el.innerHTML = items.map(function(t){
