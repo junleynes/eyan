@@ -1539,12 +1539,23 @@ document.addEventListener("DOMContentLoaded", function(){
   <p id=bgm-gating-note style="display:none;margin-top:6px;margin-bottom:8px;font-size:12px;color:var(--amber)">"Generate music" is unavailable — ACE-Step isn't reachable.</p>
   <div id=scoring-upload-area style="display:none">
     <div class="browse-row">
-      {% if allow_local_upload %}<input type=file name=scoring_audio accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" data-net-field="scoring_audio">{% endif %}
+      {% if allow_local_upload %}<input type=file name=scoring_audio accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" data-net-field="scoring_audio" onchange="cardVoFileChosen(this,'scoring_audio')">{% endif %}
       <button type=button class="browse-btn" onclick="openNetworkBrowser('scoring_audio','music','Music')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
     </div>
     <input type=hidden id=scoring_audio_network name=scoring_audio_network value="">
   <input type=hidden id=scoring_audio_skip_template name=scoring_audio_skip_template value="">
     <span class="net-file-chip" id=scoring_audio_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('scoring_audio')">&#10005;</span></span>
+    <audio id="scoring_audio_player" controls style="display:none;width:100%;max-width:420px;height:32px;margin:8px 0 4px"></audio>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0">
+      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Trim uploaded music — start (s):</span>
+      <input type=number name=scoring_audio_trim_start id="scoring_audio_start" value=0 min=0 step=0.5 style="width:80px"></span>
+      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">end (s, blank=to end):</span>
+      <input type=number name=scoring_audio_trim_end id="scoring_audio_end" min=0 step=0.5 style="width:80px"></span>
+      <button type=button class="btn" style="padding:5px 10px;font-size:12px" onclick="cardVoSetPoint('scoring_audio','start')">Set in from player</button>
+      <button type=button class="btn" style="padding:5px 10px;font-size:12px" onclick="cardVoSetPoint('scoring_audio','end')">Set out from player</button>
+    </div>
+    <span id="scoring_audio_preview_note" style="font-size:12px;opacity:.75;display:block;margin:-2px 0 6px"></span>
+    <p style="margin-top:6px;margin-bottom:8px;font-size:12px;opacity:.75">Selects which portion of the uploaded track to use as background music -- picked up whether the file came from a direct upload or Browse Library.</p>
   </div>
     </div>
   </div>

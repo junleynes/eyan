@@ -2363,10 +2363,15 @@ def generate_tts(text, output_wav_path, rate=175, voice_id=None, reference_audio
         print(f'{engine_label} unavailable: {e}')
         return False, f'{engine_label} unavailable: {e}'
 
-def prepare_bgm_track(genre, scoring_mode, scoring_audio_path, duration, base_ts, fade_in=2.0, fade_out=3.0):
+def prepare_bgm_track(genre, scoring_mode, scoring_audio_path, duration, base_ts, fade_in=2.0, fade_out=3.0,
+                       trim_start=0.0, trim_end=None):
     """Produce a ready-to-mix BGM track (AAC .m4a, faded, trimmed to `duration`).
     Shared by the early beat-sync pass (approximate target duration) and the
     final mix pass (reused as-is if already prepared, else generated fresh).
+    trim_start/trim_end select which portion of an UPLOADED source file to
+    use (ignored for 'generate' mode, which has no source file to trim) --
+    before this, an upload was always read from its own beginning, with no
+    way to pick a different part of a longer track.
     Returns (path_or_None, source) where source is 'uploaded' | 'ai_generated' | 'synth_fallback' | 'none'."""
     bgm_source = 'none'
     if not scoring_audio_path:
@@ -2447,12 +2452,24 @@ def prepare_bgm_track(genre, scoring_mode, scoring_audio_path, duration, base_ts
         return None, 'none'
     else:
         processed_audio = os.path.join(app.config['UPLOAD_FOLDER'], f'score_{base_ts}_{int(time.time()*1000)%100000}.m4a')
-        r = subprocess.run([FFMPEG, '-y', '-i', scoring_audio_path,
-                            '-af', (f'atrim=duration={duration},'
-                                    f'afade=t=in:d={fade_in},'
-                                    f'afade=t=out:st={max(duration - fade_out, 0)}:d={min(fade_out, duration)}'),
-                            '-c:a', 'aac', '-b:a', '192k', '-vn', processed_audio],
-                           capture_output=True, text=True, timeout=60)
+        # Same -ss/-to-before-the-input pattern already used for uploaded VO
+        # trimming: seeking at the input level (not via an -af atrim start=)
+        # is both faster (ffmpeg can skip straight there) and simpler to
+        # combine with the *duration*-based atrim right after it, which
+        # fits whatever portion this selects to the render's actual needed
+        # length -- trim_start/trim_end pick WHICH part of the source to
+        # use, the af filter below decides how much of THAT to keep.
+        cmd = [FFMPEG, '-y']
+        if trim_start > 0 or trim_end is not None:
+            cmd.extend(['-ss', str(trim_start)])
+            if trim_end is not None:
+                cmd.extend(['-to', str(trim_end)])
+        cmd.extend(['-i', scoring_audio_path,
+                    '-af', (f'atrim=duration={duration},'
+                            f'afade=t=in:d={fade_in},'
+                            f'afade=t=out:st={max(duration - fade_out, 0)}:d={min(fade_out, duration)}'),
+                    '-c:a', 'aac', '-b:a', '192k', '-vn', processed_audio])
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         if os.path.exists(processed_audio) and os.path.getsize(processed_audio) > 0:
             return processed_audio, 'uploaded'
         return None, 'none'
@@ -4017,6 +4034,21 @@ def api_trailer():
     if vo_trim_end is not None and vo_trim_end <= vo_trim_start:
         vo_trim_end = None
 
+    # Same idea, for the uploaded background music track: which portion of
+    # that source file to actually use, rather than always starting from
+    # its own beginning (the only option before this).
+    try:
+        scoring_audio_trim_start = max(0.0, float(request.form.get('scoring_audio_trim_start', 0) or 0))
+    except ValueError:
+        scoring_audio_trim_start = 0.0
+    scoring_audio_trim_end_raw = request.form.get('scoring_audio_trim_end', '').strip()
+    try:
+        scoring_audio_trim_end = float(scoring_audio_trim_end_raw) if scoring_audio_trim_end_raw else None
+    except ValueError:
+        scoring_audio_trim_end = None
+    if scoring_audio_trim_end is not None and scoring_audio_trim_end <= scoring_audio_trim_start:
+        scoring_audio_trim_end = None
+
     # Sync cuts to the beat of the background music (only meaningful when a
     # music track is actually used). Requires prepping the BGM before scene
     # selection instead of after, so cut points can be nudged onto beats.
@@ -4250,6 +4282,7 @@ def api_trailer():
                   vo_rate=vo_rate, vo_start=vo_start, vo_volume=vo_volume, sync_beats=sync_beats, whisper_enhance=whisper_enhance,
                   selection_driver=selection_driver,
                   vo_trim_start=vo_trim_start, vo_trim_end=vo_trim_end,
+                  scoring_audio_trim_start=scoring_audio_trim_start, scoring_audio_trim_end=scoring_audio_trim_end,
                   end_card_path=end_card_path, schedule_card_path=schedule_card_path,
                   title_card_vo_path=title_card_vo_path, title_card_vo_start=title_card_vo_start, title_card_vo_end=title_card_vo_end,
                   end_card_vo_path=end_card_vo_path, end_card_vo_start=end_card_vo_start, end_card_vo_end=end_card_vo_end,
@@ -6914,7 +6947,9 @@ def _run_trailer_job(jid, params):
         if sync_beats:
             job_set(jid, percent=20, step='Preparing music for beat-synced cuts')
             early_bgm_path, early_bgm_source = prepare_bgm_track(genre, scoring_mode, scoring_audio_path,
-                                                                  base_target, base_ts)
+                                                                  base_target, base_ts,
+                                                                  trim_start=params.get('scoring_audio_trim_start') or 0.0,
+                                                                  trim_end=params.get('scoring_audio_trim_end'))
             if early_bgm_path:
                 beat_times = detect_beat_times(early_bgm_path, base_target)
                 if not beat_times:
@@ -7711,7 +7746,9 @@ def _run_trailer_job(jid, params):
             if os.path.exists(early_bgm_path):
                 os.remove(early_bgm_path)
         else:
-            prepared_bgm, bgm_source = prepare_bgm_track(genre, scoring_mode, scoring_audio_path, scenes_dur, base_ts)
+            prepared_bgm, bgm_source = prepare_bgm_track(genre, scoring_mode, scoring_audio_path, scenes_dur, base_ts,
+                                                           trim_start=params.get('scoring_audio_trim_start') or 0.0,
+                                                           trim_end=params.get('scoring_audio_trim_end'))
 
         # NOTE: independent of sync_beats above, not sequential to it. When
         # sync_beats is also on, cut points were already snapped (during scene
