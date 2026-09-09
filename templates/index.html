@@ -5899,7 +5899,7 @@ function switchDocs(btn){
 <div id="p-config-services" class="sub-panel active">
 <h3 style="margin-top:0">AI Service Configuration</h3>
 <p style="margin-top:6px;color:var(--ink-dim)">These control where the app looks for each local/self-hosted AI service. Changes save immediately (no restart needed) and are written to <code>ai_services_config.json</code> next to the script, so they persist across restarts too. Environment variables set the initial defaults; anything saved here overrides them from then on.</p>
-<div id="config-rows" style="display:flex;flex-direction:column;gap:14px;margin-top:16px">
+<div id="config-rows" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:18px;margin-top:16px">
   <!-- rows injected by loadConfigTab() -->
 </div>
 <div style="margin-top:18px;display:flex;gap:10px;align-items:center">
@@ -5910,7 +5910,7 @@ function switchDocs(btn){
 
 <div id="p-config-production" class="sub-panel">
 <p style="margin-top:6px;color:var(--ink-dim)">Delivery-spec and tuning values that should be identical on every promo this deployment renders — broadcast loudness compliance, the house mix standard, and scene-detection tuning. Moved off the generator form so operators aren't asked about them on every job. Takes effect on the next render; no restart needed.</p>
-<div id="config-production-rows" style="display:flex;flex-direction:column;gap:14px;margin-top:16px">
+<div id="config-production-rows" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:18px;margin-top:16px">
   <!-- rows injected by loadProductionTab() -->
 </div>
 <div style="margin-top:18px;display:flex;gap:10px;align-items:center">
@@ -5954,6 +5954,9 @@ function switchDocs(btn){
 <h3 style="margin-top:0">Branding</h3>
 <p style="margin-top:6px;color:var(--ink-dim)">Changes the name, tagline, footer, color theme, logo, and favicon everyone signed in (and the sign-in page itself) sees — saved to <code>branding_config.json</code> next to the script (text) and a <code>branding/</code> folder in the trailer library (logo/favicon files), so both persist across restarts. Takes effect immediately; existing sessions pick it up on their next page load.</p>
 
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px;margin-top:16px">
+
+<div style="border:1px solid var(--line);border-radius:12px;padding:16px 18px">
 <label>Brand name:</label>
 <input type=text id=brand-name-input class=input-box placeholder="PRISM">
 <label>Tagline:</label>
@@ -5965,8 +5968,9 @@ function switchDocs(btn){
   <button type=button class=btn id=brand-text-save-btn onclick="saveBrandText()">Save name, tagline &amp; footer</button>
   <span id=brand-text-status style="font-size:13px;margin-left:8px"></span>
 </div>
+</div>
 
-<div style="margin-top:20px;min-width:260px">
+<div style="border:1px solid var(--line);border-radius:12px;padding:16px 18px">
   <label>Color theme:</label>
   <p style="font-size:11px;opacity:.65;margin:2px 0 8px">A coordinated set of colors used app-wide &mdash; the active-tab highlight, most buttons, badges, and status indicators, in both light and dark mode, including the sign-in page. Pick "Custom" to set just the accent color instead.</p>
   <div id=brand-theme-swatches style="display:flex;flex-wrap:wrap;gap:10px"></div>
@@ -5978,8 +5982,7 @@ function switchDocs(btn){
   <span id=brand-accent-status style="font-size:12px;margin-top:6px;display:inline-block"></span>
 </div>
 
-<div style="display:flex;gap:24px;flex-wrap:wrap;margin-top:20px">
-  <div style="min-width:220px">
+<div style="border:1px solid var(--line);border-radius:12px;padding:16px 18px">
     <label>Logo (sidebar icon):</label>
     <div style="display:flex;align-items:center;gap:10px;margin:6px 0">
       <img src="/branding/logo" id=brand-logo-preview alt="" width=40 height=40 style="border-radius:8px;border:1px solid var(--line)">
@@ -5991,8 +5994,9 @@ function switchDocs(btn){
       <button type=button class=btn style="padding:5px 11px;font-size:12px" onclick="resetBrandImage('logo')">Reset to default</button>
     </div>
     <p style="font-size:11px;opacity:.65;margin-top:6px">SVG, PNG, JPG, WEBP, or GIF. Displayed at 28&times;28 in the sidebar, so anything reasonably square works best.</p>
-  </div>
-  <div style="min-width:220px">
+</div>
+
+<div style="border:1px solid var(--line);border-radius:12px;padding:16px 18px">
     <label>Favicon (browser tab icon):</label>
     <div style="display:flex;align-items:center;gap:10px;margin:6px 0">
       <img src="/branding/favicon" id=brand-favicon-preview alt="" width=24 height=24 style="border-radius:4px;border:1px solid var(--line)">
@@ -6004,7 +6008,8 @@ function switchDocs(btn){
       <button type=button class=btn style="padding:5px 11px;font-size:12px" onclick="resetBrandImage('favicon')">Reset to default</button>
     </div>
     <p style="font-size:11px;opacity:.65;margin-top:6px">ICO, SVG, or PNG. Browsers cache favicons aggressively — a hard refresh may be needed to see a change.</p>
-  </div>
+</div>
+
 </div>
 </div>
 
@@ -6073,20 +6078,27 @@ function _renderConfigRows(fieldOrder, container, fields, config){
     var meta = fields[key] || {label: key, help: ''}
     var val = config[key] || ''
     var isKey = !!CONFIG_SECRET_FIELDS[key]
+    // Card styling matches the Network tab's own category cards exactly
+    // (border:1px solid var(--line);border-radius:12px;padding:16px 18px)
+    // -- these rows previously had no visual boundary of their own, so
+    // simply switching this container to a grid (see below) would have
+    // put unbordered rows side by side with nothing to separate them.
+    var wrap = document.createElement('div')
+    wrap.style.cssText = 'border:1px solid var(--line);border-radius:12px;padding:16px 18px'
     var row = document.createElement('div')
     row.style.cssText = 'display:flex;flex-direction:column;gap:4px'
     var labelEl = document.createElement('label')
-    labelEl.style.cssText = 'margin:0'
+    labelEl.style.cssText = 'margin:0;font-size:12px;font-weight:600'
     labelEl.textContent = meta.label
     var inputRow = document.createElement('div')
-    inputRow.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap'
+    inputRow.style.cssText = 'display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px'
     var input = document.createElement('input')
     input.type = isKey ? 'password' : 'text'
     input.id = 'cfg-' + key
     input.value = val
     input.placeholder = meta.help
     input.className = 'input-box'
-    input.style.cssText = 'flex:1;min-width:260px;margin-bottom:0'
+    input.style.cssText = 'flex:1;min-width:180px;margin-bottom:0'
     inputRow.appendChild(input)
     if(!CONFIG_NO_TEST_FIELDS[key]){
       var testBtn = document.createElement('button')
@@ -6099,15 +6111,16 @@ function _renderConfigRows(fieldOrder, container, fields, config){
     }
     var statusSpan = document.createElement('span')
     statusSpan.id = 'cfg-status-' + key
-    statusSpan.style.cssText = 'font-size:12px;min-width:140px'
+    statusSpan.style.cssText = 'font-size:12px;min-width:100px'
     inputRow.appendChild(statusSpan)
     var helpSpan = document.createElement('span')
-    helpSpan.style.cssText = 'font-size:11px;opacity:.65'
+    helpSpan.style.cssText = 'font-size:11px;opacity:.65;margin-top:6px;display:block'
     helpSpan.textContent = meta.help
     row.appendChild(labelEl)
     row.appendChild(inputRow)
     row.appendChild(helpSpan)
-    container.appendChild(row)
+    wrap.appendChild(row)
+    container.appendChild(wrap)
   })
 }
 
@@ -6293,6 +6306,12 @@ async function loadProductionTab(){
     d.order.forEach(function(key){
       var spec = d.spec[key] || {}
       var val = d.values[key]
+      // Card styling matches Network/Services' own cards exactly -- this
+      // function builds its rows independently of _renderConfigRows (a
+      // separate function, not shared with it), so needed the same fix
+      // applied here directly rather than automatically inheriting it.
+      var wrap = document.createElement('div')
+      wrap.style.cssText = 'border:1px solid var(--line);border-radius:12px;padding:16px 18px'
       var row = document.createElement('div')
       row.style.cssText = 'display:flex;flex-direction:column;gap:4px'
       // Bool fields render as a single inline checkbox+label (matching the
@@ -6313,15 +6332,16 @@ async function loadProductionTab(){
         row.appendChild(boolLabel)
         if(spec.help){
           var boolHelp = document.createElement('span')
-          boolHelp.style.cssText = 'font-size:11px;opacity:.65'
+          boolHelp.style.cssText = 'font-size:11px;opacity:.65;margin-top:6px;display:block'
           boolHelp.textContent = spec.help
           row.appendChild(boolHelp)
         }
-        container.appendChild(row)
+        wrap.appendChild(row)
+        container.appendChild(wrap)
         return
       }
       var labelEl = document.createElement('label')
-      labelEl.style.cssText = 'margin:0'
+      labelEl.style.cssText = 'margin:0;font-size:12px;font-weight:600'
       labelEl.textContent = spec.label || key
       row.appendChild(labelEl)
       var input
@@ -6352,24 +6372,25 @@ async function loadProductionTab(){
         input.type = 'text'
         input.value = val == null ? '' : val
         input.className = 'input-box'
-        input.style.cssText = 'max-width:320px;margin-bottom:0'
+        input.style.cssText = 'width:100%;box-sizing:border-box;margin-top:6px;margin-bottom:0'
       }else{
         input = document.createElement('input')
         input.type = 'number'
         input.step = 'any'
         input.value = val
         input.className = 'input-box'
-        input.style.cssText = 'max-width:160px;margin-bottom:0'
+        input.style.cssText = 'width:100%;box-sizing:border-box;margin-top:6px;margin-bottom:0'
       }
       input.id = 'prod-' + key
       row.appendChild(input)
       if(spec.help){
         var help = document.createElement('span')
-        help.style.cssText = 'font-size:11px;opacity:.65'
+        help.style.cssText = 'font-size:11px;opacity:.65;margin-top:6px;display:block'
         help.textContent = spec.help
         row.appendChild(help)
       }
-      container.appendChild(row)
+      wrap.appendChild(row)
+      container.appendChild(wrap)
     })
     productionTabLoaded = true
   }catch(e){
