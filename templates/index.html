@@ -1125,6 +1125,7 @@ document.addEventListener("DOMContentLoaded", function(){
   <div id=tr-dropzone class="dropzone">
     <input type=file name=file id=tr-file-input accept=video/* data-skip-clear-ui="1" style="display:none">
     <input type=hidden name=network_file id=tr-network-file value="">
+    <input type=hidden name=file_segment_durations id=tr-file-segment-durations value="">
     <div id=tr-dropzone-prompt>
       <div style="font-size:28px;line-height:1;margin-bottom:6px">&#8682;</div>
       <div style="font-size:14px;margin-bottom:12px">{% if allow_local_upload %}Drag &amp; drop a video here{% else %}Pick a video from the library{% endif %}</div>
@@ -2488,6 +2489,15 @@ document.addEventListener("DOMContentLoaded", function(){
   }
 
   function showNetworkPreview(localName, origName, size){
+    // Cleared unconditionally here, not just where a single pick happens to
+    // call this -- every caller of showNetworkPreview funnels through this
+    // one place, so this is the one spot that reliably prevents an earlier
+    // combine's segment durations from silently surviving onto an unrelated
+    // later single-file pick. combineTrNetworkSelection re-populates this
+    // right after its own call to showNetworkPreview, which runs after this
+    // line since it happens later in that function's own flow.
+    var segDurField = document.getElementById('tr-file-segment-durations')
+    if(segDurField) segDurField.value = ''
     // Unlike the local-file path above, this file genuinely IS already
     // staged server-side (that's what got it here) -- so this uses the
     // real /api/media/probe endpoint instead of the browser's own decode.
@@ -2528,6 +2538,8 @@ document.addEventListener("DOMContentLoaded", function(){
   function clearPreview(){
     fileInput.value = ''
     networkFileInput.value = ''
+    var segDurField = document.getElementById('tr-file-segment-durations')
+    if(segDurField) segDurField.value = ''
     preview.classList.remove('shown')
     previewThumb.removeAttribute('src')
     previewThumb.style.display = 'none'
@@ -2649,6 +2661,13 @@ document.addEventListener("DOMContentLoaded", function(){
             return
           }
           showNetworkPreview(d.filename, d.orig_name, d.size)
+          // Each segment's own duration, in combine order -- lets a
+          // script's "M1"/"M2" cues be offset to the right point in this
+          // now-single combined file. Cleared whenever the source video is
+          // picked any other way (see pickTrNetworkFile / a direct upload's
+          // own change handler), so a stale combine from an earlier pick
+          // never silently applies to an unrelated single file.
+          document.getElementById('tr-file-segment-durations').value = JSON.stringify(d.segment_durations || [])
         }).catch(function(e){
           status.textContent = 'Error combining files: ' + e
           status.style.color = 'var(--tally)'
@@ -2894,7 +2913,16 @@ document.addEventListener("DOMContentLoaded", function(){
   }
 
   fileInput.addEventListener('change', function(){
-    if(fileInput.files && fileInput.files[0]) showPreview(fileInput.files[0])
+    if(fileInput.files && fileInput.files[0]){
+      // A direct upload never goes through showNetworkPreview (that's only
+      // for network-staged files), so it needs its own reset of any
+      // earlier combine's segment durations -- otherwise a script's "M2"
+      // cue could get offset against a combine that no longer has anything
+      // to do with the file actually being used.
+      var segDurField = document.getElementById('tr-file-segment-durations')
+      if(segDurField) segDurField.value = ''
+      showPreview(fileInput.files[0])
+    }
   })
   clearBtn.addEventListener('click', clearPreview)
   // browseLink (and the dropzone's own click-to-browse-local behavior) only

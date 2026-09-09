@@ -78,3 +78,67 @@ class TestApplyScriptPriority:
         matched = pipeline.apply_script_priority(scenes, [])
         assert matched == 0
         assert scenes[0]['total_score'] == 5.0
+
+
+class TestSegmentOffsets:
+    """Real-world scripts for multi-part episode footage commonly label
+    each raw plug file "M1", "M2", etc., each timecoded from its own zero
+    -- but combining those files into one source video (Browse Library's
+    multi-select combine) means the render only ever sees a single
+    timeline. These cover the offset logic that makes a script written
+    against separate files still line up correctly once combined."""
+
+    def test_m1_defaults_to_offset_zero_with_no_segment_info_at_all(self):
+        # The common "only one material this week" case -- a script still
+        # labelled M1 needs no adjustment when nothing was combined.
+        cues = pipeline.parse_script_cues("M1 0:05 only one file this week")
+        assert len(cues) == 1
+        assert cues[0]['time'] == 5.0
+
+    def test_m2_with_no_known_offset_is_dropped_not_guessed(self):
+        # M2 named but segment_offsets has no entry for it (no combine
+        # happened, or fewer than 2 files were combined) -- must be
+        # skipped rather than treated as offset 0, which would silently
+        # pin the wrong scene.
+        cues = pipeline.parse_script_cues("M2 0:05 second file that doesn't exist here")
+        assert cues == []
+
+    def test_m2_offset_by_the_correct_cumulative_duration(self):
+        cues = pipeline.parse_script_cues("M2 0:12 twelve seconds into the second file",
+                                           segment_offsets={2: 240.0})
+        assert len(cues) == 1
+        assert cues[0]['time'] == 252.0
+
+    def test_m1_and_m2_cues_together_real_script_shape(self):
+        # Mirrors the actual reported script's shape: M1 cues unaffected,
+        # M2 cues correctly offset, in the same document.
+        text = "M1 3:33 first file cue\nM2 0:12 second file cue"
+        cues = pipeline.parse_script_cues(text, segment_offsets={2: 240.0})
+        assert len(cues) == 2
+        times = sorted(c['time'] for c in cues)
+        assert times == [213.0, 252.0]
+
+    def test_m3_offset_when_three_segments_combined(self):
+        # Not just a two-file special case -- offsets stack correctly for
+        # a third (or later) segment too.
+        cues = pipeline.parse_script_cues("M3 0:05 third file",
+                                           segment_offsets={2: 100.0, 3: 180.0})
+        assert len(cues) == 1
+        assert cues[0]['time'] == 185.0
+
+    def test_line_without_any_segment_prefix_is_unaffected_by_offsets(self):
+        # A script that never uses the M1/M2 convention at all must behave
+        # exactly as before, even when segment_offsets is supplied (e.g. a
+        # combine happened, but this particular script wasn't written
+        # against separate files).
+        cues = pipeline.parse_script_cues("00:01:30 no segment prefix here",
+                                           segment_offsets={2: 240.0})
+        assert len(cues) == 1
+        assert cues[0]['time'] == 90.0
+
+    def test_segment_prefix_does_not_get_confused_with_the_timecode_itself(self):
+        # M1/M2 must not be mistaken for part of the timecode pattern, and
+        # the timecode must still be found correctly alongside it.
+        cues = pipeline.parse_script_cues("M1 01:02:03 fully qualified timecode")
+        assert len(cues) == 1
+        assert cues[0]['time'] == 3723.0

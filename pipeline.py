@@ -2777,6 +2777,13 @@ _TC_PATTERNS = [
     re.compile(r'\b(\d{1,2}):(\d{2})\b'),                       # MM:SS
 ]
 
+# Multi-part episode scripts commonly label each raw plug file "M1", "M2",
+# etc. (short for "Master 1" / "Master 2"), each timecoded from its own
+# zero -- since combining those files into one source video (see
+# /api/network/combine) is common, a cue naming one needs that segment's
+# own offset added before it means anything against the combined timeline.
+_SEGMENT_PREFIX_RE = re.compile(r'\bM(\d{1,2})\b')
+
 def _parse_timecode_line(line, fps=25.0):
     """First timecode found in `line`, as seconds, plus the remaining text of
     the line as its description. Returns (seconds, description) or None.
@@ -2802,20 +2809,48 @@ def _parse_timecode_line(line, fps=25.0):
         return secs, desc
     return None
 
-def parse_script_cues(text, fps=25.0):
+def parse_script_cues(text, fps=25.0, segment_offsets=None):
     """Every (seconds, description) cue found in a script's text, sorted by
     time. Lines without a recognisable timecode are ignored rather than
     guessed at -- a rundown is mostly prose and column headers, and inventing
-    cues from unparseable lines would quietly skew selection."""
+    cues from unparseable lines would quietly skew selection.
+
+    segment_offsets: optional {segment_number: offset_seconds}, computed
+    from combining multiple source files via Browse Library's multi-select
+    (see /api/network/combine's segment_durations). A cue line naming a
+    segment ("M1 3:33", "M2 00:12") gets that segment's own offset added to
+    its raw time, so a script written against separate files -- each with
+    its own 0:00 start -- still lines up with the single combined video the
+    render actually works with.
+
+    Segment 1 is always treated as offset 0, even with no segment_offsets
+    at all -- covers the common case of a script still labelled "M1" when
+    only one material was actually used that week, which needs no
+    adjustment regardless. Any OTHER segment number named in the script
+    but missing from segment_offsets is dropped rather than guessed at --
+    e.g. a script mentions M2 but only one file was combined (or none at
+    all), so there's no known second segment to offset against. Applying a
+    wrong offset would silently pin the wrong scene, which is worse than
+    not pinning one at all."""
     cues = []
+    segment_offsets = segment_offsets or {}
     for raw_line in (text or '').splitlines():
         line = raw_line.strip()
         if not line:
             continue
         parsed = _parse_timecode_line(line, fps=fps)
-        if parsed:
-            secs, desc = parsed
-            cues.append({'time': secs, 'desc': desc})
+        if not parsed:
+            continue
+        secs, desc = parsed
+        seg_match = _SEGMENT_PREFIX_RE.search(line)
+        if seg_match:
+            seg_num = int(seg_match.group(1))
+            if seg_num in segment_offsets:
+                secs += segment_offsets[seg_num]
+            elif seg_num != 1:
+                continue
+            # seg_num == 1 with no entry in segment_offsets: offset 0, fall through unchanged.
+        cues.append({'time': secs, 'desc': desc})
     cues.sort(key=lambda c: c['time'])
     return cues
 
@@ -3898,13 +3933,29 @@ def api_trailer():
     # job thread, which has no access to request.files.
     priority_prompt = (request.form.get('priority_prompt') or '').strip()
     negative_prompt = (request.form.get('negative_prompt') or '').strip()
+    # Set by the frontend after combining multiple HIRES files via Browse
+    # Library's multi-select -- each segment's own duration, in combine
+    # order, as a JSON list. Turned into {segment_number: cumulative_offset}
+    # so a script's "M1"/"M2" cues can be offset to match the single
+    # combined source video. Absent entirely for the (equally common)
+    # single-material case, which parse_script_cues already treats "M1" as
+    # offset 0 for regardless.
+    segment_offsets = {}
+    try:
+        durations = json.loads(request.form.get('file_segment_durations') or '[]')
+        cumulative = 0.0
+        for i, d in enumerate(durations):
+            segment_offsets[i + 1] = cumulative
+            cumulative += float(d)
+    except (ValueError, TypeError):
+        segment_offsets = {}
     script_cues = []
     script_file = request.files.get('script_file')
     if script_file and script_file.filename:
         text, err = extract_script_text(script_file)
         if err:
             return jsonify(error=err), 400
-        script_cues = parse_script_cues(text)
+        script_cues = parse_script_cues(text, segment_offsets=segment_offsets)
         if not script_cues:
             return jsonify(error='No timecodes were found in that script. Each cue line needs a '
                                  'timecode like 00:01:30:12, 00:01:30, or 1:30 -- lines without '
@@ -5485,6 +5536,15 @@ def api_network_combine():
     combined_name = f'net_{int(time.time())}_{threading.get_ident()}_combined{ext}'
     combined_path = os.path.join(app.config['UPLOAD_FOLDER'], combined_name)
     list_path = combined_path + '.txt'
+    # Each segment's own duration, in the order they're being combined --
+    # returned so a script referencing "M1"/"M2" (separate source files,
+    # each timecoded from its own zero) can have those timecodes offset to
+    # match the SINGLE combined file the render actually works with. Probed
+    # before combining rather than after splitting the result back apart,
+    # since ffmpeg's concat-demuxer stream copy doesn't re-encode and so
+    # doesn't reliably preserve exact per-segment boundaries to re-derive
+    # them from the output alone.
+    segment_durations = [get_video_info(p).get('duration_sec', 0) for p in paths]
     try:
         with open(list_path, 'w', encoding='utf-8') as f:
             for p in paths:
@@ -5505,7 +5565,8 @@ def api_network_combine():
             pass
 
     return jsonify(ok=True, filename=combined_name, orig_name=f'{len(names)} files combined{ext}',
-                   size=os.path.getsize(combined_path), url=f'/uploads/{combined_name}')
+                   size=os.path.getsize(combined_path), url=f'/uploads/{combined_name}',
+                   segment_durations=segment_durations)
 
 # ---- Show templates (saved per-show asset bundles) ----
 
