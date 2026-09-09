@@ -29,7 +29,9 @@ from library_db import (LIBRARY_DIR, _sqlite_connect, library_add, library_list,
     load_branding, save_branding_text, save_branding_color, save_branding_logo, save_branding_favicon,
     clear_branding_logo, clear_branding_favicon, clear_branding_color, BRANDING_DIR,
     load_disabled_services, set_service_disabled, save_branding_theme, THEME_PRESETS,
-    load_network_folders, save_network_folder, NETWORK_CATEGORY_KEYS)
+    load_network_folders, save_network_folder, NETWORK_CATEGORY_KEYS,
+    network_destinations_list, network_destination_get, network_destination_add,
+    network_destination_update, network_destination_remove)
 from auth import require_permission
 
 # ---- Per-show asset templates (SQLite) ----
@@ -5004,44 +5006,160 @@ def _resolve_export_file(tid, fmt_key=None, custom_name=None):
             return None, None, None, f'Export to {fmt_key} failed: {r.stderr[-800:]}', 500
     return cache_path, base_name, ext, None, 200
 
-def send_file_to_network_destination(local_path, remote_filename):
-    """Copies an already-exported local file to the configured Config >
-    Network 'destination' share -- the write-side counterpart to
-    fetch_network_file()'s read. Same session/credential handling
-    (_network_session, reused per-server by smbclient itself), just
-    open_file(mode='wb') instead of 'rb'.
+def build_scene_list_csv(row):
+    """Same CSV shape as the client-side downloadSceneListCsv() (used for
+    the manual "Scene list CSV" button), rebuilt server-side from a saved
+    library row's own result_json -- needed here because Send to
+    destination is a server-side SMB write, with no browser involved to
+    build a Blob from data already sitting in a page's memory."""
+    result = json.loads(row['result_json'] or '{}')
+    lines = ['#,Start_s,End_s,Used_s,Score,Description']
+    for s in (result.get('scenes') or []):
+        desc = str(s.get('description', '')).replace('"', '""')
+        lines.append(f"{s.get('scene','')},{s.get('start','')},{s.get('end','')},"
+                     f"{s.get('duration','')},{s.get('quality','')},\"{desc}\"")
+    return '\n'.join(lines) + '\n'
 
-    Raises ValueError with a message safe to show the user (no destination
-    configured, or the write itself failing -- most commonly a permissions
-    or connectivity problem on the destination share) rather than letting a
-    raw smbprotocol exception surface."""
-    root = _network_share_root('destination')
-    if not root:
-        raise ValueError('No destination folder configured yet -- set one in Config > Network.')
-    _network_session('destination')
-    remote_path = root + '\\' + remote_filename
+def send_file_to_network_destination(local_path, remote_filename, destination):
+    """Copies an already-exported local file to `destination` (a
+    network_destinations row) -- the write-side counterpart to
+    fetch_network_file()'s read. Registers its own SMB session directly
+    from the destination's own path/username/password rather than going
+    through _network_session()/load_network_folders(), since a destination
+    is a separate, admin-managed, potentially-multiple set of credentials,
+    not one of the fixed single-value network categories those helpers
+    were built for.
+
+    Raises ValueError with a message safe to show the user (the write
+    itself failing -- most commonly a permissions or connectivity problem
+    on the destination share) rather than letting a raw smbprotocol
+    exception surface."""
+    root = _normalize_unc_path(destination['path'])
+    parts = root.split('\\')
+    host = parts[2] if len(parts) > 2 else ''
     try:
+        smbclient.register_session(host, username=destination.get('username') or '',
+                                    password=destination.get('password') or '', connection_timeout=10)
+        remote_path = root + '\\' + remote_filename
         with open(local_path, 'rb') as lf, smbclient.open_file(remote_path, mode='wb') as rf:
             shutil.copyfileobj(lf, rf)
     except Exception as e:
-        raise ValueError(f'Could not write to the destination share: {e}')
+        raise ValueError(f'Could not write to "{destination["name"]}": {e}')
+
+def send_bytes_to_network_destination(data, remote_filename, destination):
+    """Same as send_file_to_network_destination, but for in-memory content
+    (the generated CSV) rather than an existing local file -- avoids
+    writing the CSV to a throwaway temp file first just to immediately
+    read it back for the SMB upload."""
+    root = _normalize_unc_path(destination['path'])
+    parts = root.split('\\')
+    host = parts[2] if len(parts) > 2 else ''
+    try:
+        smbclient.register_session(host, username=destination.get('username') or '',
+                                    password=destination.get('password') or '', connection_timeout=10)
+        remote_path = root + '\\' + remote_filename
+        with smbclient.open_file(remote_path, mode='wb') as rf:
+            rf.write(data)
+    except Exception as e:
+        raise ValueError(f'Could not write to "{destination["name"]}": {e}')
 
 @app.route('/library/<int:tid>/send-to-destination', methods=['POST'])
 @require_permission('promo_generation')
 def library_send_to_destination(tid):
     data = request.get_json(silent=True) or {}
+    destination_id = data.get('destination_id')
+    destination = network_destination_get(destination_id) if destination_id else None
+    if not destination:
+        return jsonify(ok=False, error='That destination no longer exists -- pick another.'), 400
+
     fmt_key = data.get('format', 'mp4_high')
-    cache_path, base_name, ext, err, status = _resolve_export_file(tid, fmt_key, custom_name=data.get('filename'))
-    if err:
-        return jsonify(ok=False, error=err), status
-    remote_filename = f'{base_name}.{ext}'
-    try:
-        send_file_to_network_destination(cache_path, remote_filename)
-    except ValueError as e:
-        return jsonify(ok=False, error=str(e)), 502
-    audit_log('trailer_send_to_destination', target=remote_filename,
+    custom_name = data.get('filename')
+    sent = []
+
+    if destination['delivery_kind'] in ('video', 'csv_video'):
+        cache_path, base_name, ext, err, status = _resolve_export_file(tid, fmt_key, custom_name=custom_name)
+        if err:
+            return jsonify(ok=False, error=err), status
+        remote_filename = f'{base_name}.{ext}'
+        try:
+            send_file_to_network_destination(cache_path, remote_filename, destination)
+        except ValueError as e:
+            return jsonify(ok=False, error=str(e)), 502
+        sent.append(remote_filename)
+
+    if destination['delivery_kind'] in ('csv', 'csv_video'):
+        row = library_get_row(tid)
+        if not row or not _owns_or_admin(row.get('user_id')):
+            return jsonify(ok=False, error='Not found'), 404
+        csv_text = build_scene_list_csv(row)
+        base_name = (custom_name or '').strip() or os.path.splitext(row['orig_name'] or row['filename'])[0]
+        base_name = secure_filename(base_name) or 'scenes'
+        csv_filename = f'{base_name}_scenes.csv'
+        try:
+            send_bytes_to_network_destination(csv_text.encode('utf-8'), csv_filename, destination)
+        except ValueError as e:
+            return jsonify(ok=False, error=str(e)), 502
+        sent.append(csv_filename)
+
+    audit_log('trailer_send_to_destination', target=f'{destination["name"]}: {", ".join(sent)}',
               user_id=session.get('user_id'), username=session.get('username'), ip=_client_ip())
-    return jsonify(ok=True, filename=remote_filename)
+    return jsonify(ok=True, filename=sent[0] if len(sent) == 1 else sent, sent=sent, destination=destination['name'])
+
+@app.route('/api/network/destinations', methods=['GET'])
+def api_network_destinations_list():
+    """Available to any signed-in user (not admin-only) -- everyone who can
+    generate a promo needs to see the destination list to pick one from,
+    the same way every user already sees the configured HIRES/music/etc.
+    network categories without needing admin rights. Passwords are never
+    included in this response."""
+    items = network_destinations_list()
+    for d in items:
+        d.pop('password', None)
+    return jsonify(ok=True, items=items)
+
+@app.route('/api/network/destinations', methods=['POST'])
+def api_network_destinations_add():
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='Admin access required.'), 403
+    data = request.get_json(silent=True) or request.form
+    name = (data.get('name') or '').strip()
+    path = (data.get('path') or '').strip()
+    if not name or not path:
+        return jsonify(ok=False, error='Name and network path are both required.'), 400
+    new_id = network_destination_add(
+        name, path, username=data.get('username'), password=data.get('password'),
+        delivery_kind=data.get('delivery_kind', 'video'))
+    audit_log('destination_add', target=name, user_id=session.get('user_id'),
+              username=session.get('username'), ip=_client_ip())
+    return jsonify(ok=True, id=new_id)
+
+@app.route('/api/network/destinations/<int:dest_id>', methods=['POST'])
+def api_network_destinations_update(dest_id):
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='Admin access required.'), 403
+    data = request.get_json(silent=True) or request.form
+    existing = network_destination_get(dest_id)
+    if not existing:
+        return jsonify(ok=False, error='Not found'), 404
+    ok = network_destination_update(
+        dest_id, name=data.get('name'), path=data.get('path'),
+        username=data.get('username'), password=data.get('password') or None,
+        delivery_kind=data.get('delivery_kind'))
+    if ok:
+        audit_log('destination_update', target=existing['name'], user_id=session.get('user_id'),
+                  username=session.get('username'), ip=_client_ip())
+    return jsonify(ok=ok)
+
+@app.route('/api/network/destinations/<int:dest_id>', methods=['DELETE'])
+def api_network_destinations_delete(dest_id):
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='Admin access required.'), 403
+    existing = network_destination_get(dest_id)
+    removed = network_destination_remove(dest_id)
+    if removed and existing:
+        audit_log('destination_remove', target=existing['name'], user_id=session.get('user_id'),
+                  username=session.get('username'), ip=_client_ip())
+    return jsonify(ok=removed)
 
 
 def _monitor_snapshot(filter_user_id=None, include_username=False):
@@ -7827,23 +7945,24 @@ def _run_trailer_job(jid, params):
             'quality': s['total_score'], 'duration': round(s['selected_dur'], 1),
             'description': _scene_desc(s)
         } for i, s in enumerate(selected)])
-    job_set(jid, percent=100, step='Done', done=True, result=result)
+    # library_add() runs BEFORE the job is marked done, not after -- doing it
+    # the other way (mark done, then fix up the result with library_id
+    # afterward) leaves a real window where a client polling progress sees
+    # done=True with no library_id yet, since library_add() does a real file
+    # copy plus a DB insert that takes measurable time. Send to destination
+    # needs a real library_id to target and has no fallback for a missing
+    # one (unlike Download, which already tolerates it via a filename-based
+    # fallback) -- so that window is a real bug, not just a cosmetic gap.
+    # Still wrapped in its own try/except: a failed library save (disk full,
+    # permissions) must not stop the render from being marked done at all --
+    # the user's file is still sitting in UPLOAD_FOLDER and downloadable
+    # either way, just without a permanent library entry.
     try:
         result['library_id'] = library_add(filename, result,
                                             user_id=params.get('user_id'), username=params.get('username'))
-        # job_set() above already persisted `result` -- but that write happens
-        # via JSON serialization at call time, not a live reference, so it
-        # captured `result` BEFORE library_id existed on it. Re-persisting
-        # here means callers reading the job's stored result (like the
-        # frontend, or Send to destination, which needs a real library_id to
-        # target) actually get it. The existing "Download selected format"
-        # button already had a filename-based fallback for exactly this gap,
-        # which is why it was never reported as broken -- Send to destination
-        # doesn't have an equivalent fallback, so this needed fixing rather
-        # than working around.
-        job_set(jid, result=result)
     except Exception as e:
         print(f'Trailer library save failed (job still succeeded): {e}')
+    job_set(jid, percent=100, step='Done', done=True, result=result)
     # No ip here -- this runs in the background render thread, well past the
     # point the original request (which had it) returned. user_id/username
     # are available because they're already threaded through params for
