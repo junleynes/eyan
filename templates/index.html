@@ -438,6 +438,7 @@ p{color:var(--ink-dim);font-size:13px;line-height:1.65;margin:8px 0}
   padding:9px 10px;cursor:pointer;border-radius:7px;
 }
 .net-modal-row:hover{background:rgba(52,230,197,.08)}
+.net-modal-row.selected{background:rgba(52,230,197,.16);outline:1px solid var(--phosphor)}
 .net-modal-row .row-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .net-modal-row .row-size{opacity:.55;flex-shrink:0;font-size:11px}
 .net-multi-check{flex:0 0 auto;width:15px;height:15px;cursor:pointer;accent-color:var(--accent,#4f8cff)}
@@ -1155,6 +1156,10 @@ document.addEventListener("DOMContentLoaded", function(){
     </div>
     <div id="tr-network-favorites" class="net-modal-favorites" style="display:none"></div>
     <div id=tr-network-list class="net-modal-list" style="padding:0;max-height:280px">Loading&hellip;</div>
+    <div id="tr-network-pick-bar" style="display:none;padding:10px;border-top:1px solid var(--line);align-items:center;gap:10px">
+      <span id="tr-network-pick-status" style="font-size:12px;flex:1"></span>
+      <button type="button" class="btn btn-primary-promo" id="tr-network-pick-btn">Use this file</button>
+    </div>
     <div id="tr-network-combine-bar" style="display:none;padding:10px;border-top:1px solid var(--line);align-items:center;gap:10px">
       <span id="tr-network-combine-status" style="font-size:12px;flex:1"></span>
       <button type="button" class="btn btn-primary-promo" id="tr-network-combine-btn" onclick="combineTrNetworkSelection()">Combine selected</button>
@@ -1250,8 +1255,8 @@ document.addEventListener("DOMContentLoaded", function(){
       <input type=file name=script_file id=script-file-input data-skip-clear-ui="1"
              accept=".pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.txt,.md,.csv" style="display:none"
              onchange="scriptFileChosen(this); updateJobSummary()">
-      <span class="net-file-chip" id=script-file-chip style="display:none"><span class=chip-name></span><span class=chip-x onclick="clearScriptFile(); updateJobSummary()">&#10005;</span></span>
     </div>
+    <span class="net-file-chip" id=script-file-chip style="display:none"><span class=chip-name></span><span class=chip-x onclick="clearScriptFile(); updateJobSummary()">&#10005;</span></span>
   <div class="asset-section" id=asset-narration style="margin-top:10px">
     <div class="asset-section-header" onclick="toggleAssetSection(this)">
       <span class="asset-section-title">Narration</span>
@@ -2563,6 +2568,39 @@ document.addEventListener("DOMContentLoaded", function(){
   // many subfolders at once) and shows the picked-file preview.
   var trNetworkFetchAbort = null  // the in-flight /api/network/fetch's AbortController, if any
 
+  // Selecting a row no longer fetches immediately -- a large file over SMB
+  // is a real, sometimes-slow operation, and clicking the wrong row by
+  // accident used to start staging it right away with no chance to back
+  // out first. This mirrors the same "select, then confirm with an
+  // explicit button" shape the multi-select "Combine selected" bar
+  // already uses, just for a single file instead of several.
+  var trNetworkPendingPick = null  // {name, subpath} -- the one row currently armed, or null
+
+  function selectTrNetworkRow(rowEl, name, subpath){
+    document.querySelectorAll('#tr-network-list .net-modal-row.selected').forEach(function(el){
+      el.classList.remove('selected')
+    })
+    rowEl.classList.add('selected')
+    trNetworkPendingPick = {name: name, subpath: subpath || ''}
+    var bar = document.getElementById('tr-network-pick-bar')
+    var status = document.getElementById('tr-network-pick-status')
+    if(bar){ bar.style.display = 'flex' }
+    if(status){ status.textContent = 'Selected: ' + name }
+  }
+
+  function resetTrNetworkPick(){
+    trNetworkPendingPick = null
+    var bar = document.getElementById('tr-network-pick-bar')
+    if(bar) bar.style.display = 'none'
+  }
+
+  var pickBarBtn = document.getElementById('tr-network-pick-btn')
+  if(pickBarBtn) pickBarBtn.addEventListener('click', function(){
+    if(!trNetworkPendingPick) return
+    pickTrNetworkFile(trNetworkPendingPick.name, trNetworkPendingPick.subpath)
+    trNetworkPendingPick = null
+  })
+
   function pickTrNetworkFile(name, subpath){
     // A real fetch of a multi-GB file over SMB can take a while, and until
     // now there was no way to back out of it once started -- the "reading
@@ -2701,6 +2739,7 @@ document.addEventListener("DOMContentLoaded", function(){
   function renderTrNetworkList(folders, files, subpath){
     networkList.innerHTML = ''
     trNetworkSelected = []
+    resetTrNetworkPick()
     updateTrNetworkCombineBar()
     if(subpath){
       var up = document.createElement('div')
@@ -2747,7 +2786,7 @@ document.addEventListener("DOMContentLoaded", function(){
       sizeSpan.className = 'row-size'
       sizeSpan.textContent = humanSize(f.size)
       row.appendChild(sizeSpan)
-      row.addEventListener('click', function(){ pickTrNetworkFile(f.name, subpath) })
+      row.addEventListener('click', function(){ selectTrNetworkRow(row, f.name, subpath) })
       networkList.appendChild(row)
     })
   }
@@ -2756,6 +2795,7 @@ document.addEventListener("DOMContentLoaded", function(){
   // subfolders at once), so each row shows where it actually lives.
   function renderTrNetworkSearchResults(files, truncated){
     networkList.innerHTML = ''
+    resetTrNetworkPick()
     if(!files.length){
       networkList.innerHTML = '<div class="net-modal-empty">No files matched, searched every subfolder.</div>'
       return
@@ -2784,16 +2824,19 @@ document.addEventListener("DOMContentLoaded", function(){
         updateTrNetworkCombineBar()
       })
       row.appendChild(cb)
-      var locationLabel = f.subpath ? f.subpath.replace(/\\/g, ' / ') + ' / ' : ''
+      // Deliberately shows only the filename, not a folder-path prefix --
+      // f.subpath is still tracked and used correctly for fetching/
+      // combining regardless of what's displayed here; this only changes
+      // what's shown on screen.
       var nameSpan = document.createElement('span')
       nameSpan.className = 'row-name'
-      nameSpan.innerHTML = '<span style="opacity:.55;font-size:11px">' + locationLabel + '</span>' + f.name
+      nameSpan.textContent = f.name
       row.appendChild(nameSpan)
       var sizeSpan = document.createElement('span')
       sizeSpan.className = 'row-size'
       sizeSpan.textContent = humanSize(f.size)
       row.appendChild(sizeSpan)
-      row.addEventListener('click', function(){ pickTrNetworkFile(f.name, f.subpath) })
+      row.addEventListener('click', function(){ selectTrNetworkRow(row, f.name, f.subpath) })
       networkList.appendChild(row)
     })
   }

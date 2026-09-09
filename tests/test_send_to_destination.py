@@ -22,6 +22,7 @@ visibly affected only because it already had a filename-based fallback
 for a missing library_id; Send to destination has no such fallback, which
 is what surfaced the bug.
 """
+import os
 import shutil
 import subprocess
 import time
@@ -230,6 +231,70 @@ def _make_destination(delivery_kind='video'):
     return library_db.network_destination_add('TestDest', '\\\\vantage\\ingest', delivery_kind=delivery_kind)
 
 
+@pytest.fixture
+def rendered_trailer_from_network(tmp_path, monkeypatch):
+    """Same real-render shape as rendered_trailer, but the source comes from
+    a staged net_*-prefixed file (mirroring a real Browse Library fetch)
+    rather than a direct upload -- specifically to test source_video_path's
+    survival, which depends on that net_* prefix protecting it from
+    _cleanup_job_temp. rendered_trailer's own direct-upload source does NOT
+    survive cleanup, which is itself the correct, intentional behavior this
+    fixture exists to test the OTHER side of."""
+    if not _ffmpeg_available():
+        pytest.skip('ffmpeg not available in this environment')
+    app = main.app
+    upload_dir = tmp_path / 'uploads'
+    upload_dir.mkdir()
+    monkeypatch.setitem(app.config, 'UPLOAD_FOLDER', str(upload_dir))
+    monkeypatch.setattr(pipeline, 'ALLOW_LOCAL_MEDIA_UPLOAD', True)
+
+    client = app.test_client()
+    csrf_token = 'test-csrf-send-dest-net'
+    with client.session_transaction() as sess:
+        sess['authed'] = True
+        sess['user_id'] = 1
+        sess['username'] = 'admin'
+        sess['role'] = 'admin'
+        sess['csrf_token'] = csrf_token
+    headers = {'X-CSRF-Token': csrf_token}
+
+    src = tmp_path / 'src.mp4'
+    parts = []
+    for i, color in enumerate(['red', 'blue', 'green', 'yellow', 'purple', 'cyan']):
+        part = tmp_path / f'part{i}.mp4'
+        subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi',
+                        '-i', f'color=c={color}:s=320x240:d=6:r=25',
+                        '-f', 'lavfi', '-i', f'sine=frequency={200 + i * 100}:duration=6',
+                        '-c:v', 'libx264', '-c:a', 'aac', '-shortest', str(part)], check=True, timeout=30)
+        parts.append(part)
+    list_file = tmp_path / 'list.txt'
+    list_file.write_text('\n'.join(f"file '{p}'" for p in parts))
+    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0',
+                    '-i', str(list_file), '-c', 'copy', str(src)], check=True, timeout=30)
+
+    staged_name = 'net_1000_src.mp4'
+    shutil.copy(str(src), str(upload_dir / staged_name))
+
+    core._job_submit_limiter.buckets.clear()
+    r = client.post('/api/trailer/generate', data={
+        'network_file': staged_name,
+        'genre': '', 'trailer_length': '15', 'scoring_mode': 'none',
+        'sfx_mode': 'none', 'vo_mode': 'none', 'transition': 'cut',
+    }, headers=headers, content_type='multipart/form-data')
+    assert r.status_code == 200, r.get_data(as_text=True)
+    job_id = r.get_json()['job_id']
+
+    deadline = time.time() + 60
+    d = None
+    while time.time() < deadline:
+        d = client.get(f'/api/trailer/progress/{job_id}', headers=headers).get_json()
+        if d.get('done'):
+            break
+        time.sleep(1)
+    assert d and d.get('error') is None, (d or {}).get('error')
+    return client, headers, (d.get('result') or {})
+
+
 def test_real_render_has_a_library_id_in_its_stored_result(rendered_trailer):
     client, headers, result = rendered_trailer
     assert result.get('library_id') is not None
@@ -274,20 +339,107 @@ def test_send_csv_only_destination_writes_no_video(rendered_trailer):
     assert not any(p.endswith('.mp4') for p in captured)
 
 
+def test_send_csv_video_source_gone_returns_a_clean_error(rendered_trailer):
+    # rendered_trailer's source is a DIRECT upload -- correctly cleaned up
+    # after the render finishes, since nothing protects that path the way
+    # a net_*-prefixed staged file is protected. csv_video must fail
+    # honestly here, not silently substitute the generated promo (which
+    # would defeat the entire point -- the CSV's timecodes describe cuts
+    # into the ORIGINAL source, not into the generated promo's own,
+    # completely different timeline) and must not crash while doing so.
+    client, headers, result = rendered_trailer
+    library_id = result['library_id']
+    dest_id = _make_destination('csv_video')
+    assert result.get('source_video_path')
+    assert not os.path.exists(result['source_video_path'])
+
+    with mock.patch('pipeline.smbclient.open_file'), mock.patch('pipeline.smbclient.register_session'):
+        r = client.post(f'/library/{library_id}/send-to-destination',
+                        json={'destination_id': dest_id, 'format': 'mp4_high'}, headers=headers)
+    assert r.status_code == 410
+    assert 'no longer available' in r.get_json()['error']
+
+
+def test_send_csv_video_sends_the_original_source_not_the_generated_promo(rendered_trailer_from_network):
+    # The actual feature: with a source that DOES survive (net_*-staged,
+    # matching a real Browse Library pick -- this deployment's only real
+    # source type, since direct upload is disabled here), csv_video must
+    # send that original source video, not the generated/edited promo.
+    client, headers, result = rendered_trailer_from_network
+    library_id = result['library_id']
+    dest_id = _make_destination('csv_video')
+    assert result.get('source_video_path')
+    assert os.path.exists(result['source_video_path'])
+
+    captured = []
+    with mock.patch('pipeline.send_file_to_network_destination',
+                    side_effect=lambda p, n, d: captured.append((p, n))), \
+         mock.patch('pipeline.send_bytes_to_network_destination'):
+        r = client.post(f'/library/{library_id}/send-to-destination',
+                        json={'destination_id': dest_id, 'format': 'mp4_high'}, headers=headers)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert len(captured) == 1
+    sent_path, sent_filename = captured[0]
+    assert sent_path == result['source_video_path']
+    generated_trailer_path = os.path.join(main.app.config['UPLOAD_FOLDER'], result['trailer_url'].split('/')[-1])
+    assert sent_path != generated_trailer_path
+    assert sent_filename.endswith('.mp4')  # the source's own format, not a re-encoded delivery format
+
+
+def test_send_csv_video_still_sends_the_csv_alongside_the_source(rendered_trailer_from_network):
+    client, headers, result = rendered_trailer_from_network
+    library_id = result['library_id']
+    dest_id = _make_destination('csv_video')
+
+    sent_files = []
+    def fake_bytes(data, filename, destination):
+        sent_files.append(filename)
+    with mock.patch('pipeline.send_file_to_network_destination'), \
+         mock.patch('pipeline.send_bytes_to_network_destination', side_effect=fake_bytes):
+        r = client.post(f'/library/{library_id}/send-to-destination',
+                        json={'destination_id': dest_id, 'format': 'mp4_high'}, headers=headers)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert len(sent_files) == 1
+    assert sent_files[0].endswith('_scenes.csv')
+
+
+def test_video_only_destination_still_sends_the_generated_promo(rendered_trailer_from_network):
+    # Confirms this change is correctly scoped to csv_video only -- a
+    # plain video-only destination must still get the finished, generated
+    # promo, exactly as before. Uses the network fixture (not the plain
+    # one) specifically to prove the DIFFERENCE is about delivery_kind,
+    # not about which fixture/source type is in play.
+    client, headers, result = rendered_trailer_from_network
+    library_id = result['library_id']
+    dest_id = _make_destination('video')
+
+    captured = []
+    with mock.patch('pipeline.send_file_to_network_destination',
+                    side_effect=lambda p, n, d: captured.append((p, n))):
+        r = client.post(f'/library/{library_id}/send-to-destination',
+                        json={'destination_id': dest_id, 'format': 'mp4_high'}, headers=headers)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert len(captured) == 1
+    sent_path = captured[0][0]
+    assert sent_path != result['source_video_path']
+
+
 def test_send_csv_video_destination_writes_both(rendered_trailer):
     client, headers, result = rendered_trailer
     library_id = result['library_id']
     dest_id = _make_destination('csv_video')
-    captured = []
-    with mock.patch('pipeline.smbclient.open_file', side_effect=lambda p, mode=None, **k: (captured.append(p), BytesIO())[-1]), \
-         mock.patch('pipeline.smbclient.register_session'):
+    # rendered_trailer's source is a direct upload -- already cleaned up by
+    # the time this runs, so csv_video correctly refuses rather than
+    # substituting the generated promo. Superseded by
+    # test_send_csv_video_source_gone_returns_a_clean_error (same case,
+    # clearer name) and test_send_csv_video_sends_the_original_source_not_
+    # the_generated_promo (the actual success path) above -- kept as a
+    # thin pass-through so this historically-named test still exists and
+    # still passes, rather than silently disappearing.
+    with mock.patch('pipeline.smbclient.open_file'), mock.patch('pipeline.smbclient.register_session'):
         r = client.post(f'/library/{library_id}/send-to-destination',
                         json={'destination_id': dest_id, 'format': 'mp4_high'}, headers=headers)
-    assert r.status_code == 200, r.get_data(as_text=True)
-    d = r.get_json()
-    assert len(d['sent']) == 2
-    assert any(p.endswith('.mp4') for p in captured)
-    assert any(p.endswith('_scenes.csv') for p in captured)
+    assert r.status_code == 410
 
 
 def test_send_to_destination_with_a_custom_filename(rendered_trailer):

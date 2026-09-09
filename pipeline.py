@@ -5229,7 +5229,17 @@ def library_send_to_destination(tid):
     custom_name = data.get('filename')
     sent = []
 
-    if destination['delivery_kind'] in ('video', 'csv_video'):
+    row = None
+    if destination['delivery_kind'] in ('csv', 'csv_video'):
+        row = library_get_row(tid)
+        if not row or not _owns_or_admin(row.get('user_id')):
+            return jsonify(ok=False, error='Not found'), 404
+
+    if destination['delivery_kind'] == 'video':
+        # Plain video-only destinations still get the finished, generated
+        # promo -- this branch is unchanged. Only csv_video (below) sends
+        # the original source instead, since that's specifically the case
+        # the CSV's timecodes are meaningful against.
         cache_path, base_name, ext, err, status = _resolve_export_file(tid, fmt_key, custom_name=custom_name)
         if err:
             return jsonify(ok=False, error=err), status
@@ -5240,10 +5250,34 @@ def library_send_to_destination(tid):
             return jsonify(ok=False, error=str(e)), 502
         sent.append(remote_filename)
 
+    elif destination['delivery_kind'] == 'csv_video':
+        # The CSV's timecodes describe cuts into the ORIGINAL (or
+        # already-combined multi-file) source video -- sending the
+        # generated promo alongside it here would be genuinely useless to
+        # a downstream EDL-driven workflow, since the promo's own timeline
+        # has nothing to do with those timecodes. source_video_path is the
+        # exact file that was actually scored and cut from at render time,
+        # recorded specifically for this. Not re-encoded or reformatted --
+        # sent as-is, in its own original format, since this is the raw
+        # material a destination like this needs, not a delivery master.
+        result = json.loads(row['result_json'] or '{}')
+        source_path = result.get('source_video_path')
+        if not source_path or not os.path.exists(source_path):
+            return jsonify(ok=False, error='The original source video for this render is no longer '
+                           'available locally (the working copy may have been cleaned up since the '
+                           'render finished) -- re-generate this promo to make it available again, '
+                           'or use a video-only or CSV-only destination instead.'), 410
+        source_ext = os.path.splitext(source_path)[1].lstrip('.') or 'mp4'
+        base_name = (custom_name or '').strip() or os.path.splitext(row['orig_name'] or row['filename'])[0]
+        base_name = secure_filename(base_name) or 'source'
+        remote_filename = f'{base_name}.{source_ext}'
+        try:
+            send_file_to_network_destination(source_path, remote_filename, destination)
+        except ValueError as e:
+            return jsonify(ok=False, error=str(e)), 502
+        sent.append(remote_filename)
+
     if destination['delivery_kind'] in ('csv', 'csv_video'):
-        row = library_get_row(tid)
-        if not row or not _owns_or_admin(row.get('user_id')):
-            return jsonify(ok=False, error='Not found'), 404
         csv_text = build_scene_list_csv(row)
         base_name = (custom_name or '').strip() or os.path.splitext(row['orig_name'] or row['filename'])[0]
         base_name = secure_filename(base_name) or 'scenes'
@@ -8105,6 +8139,15 @@ def _run_trailer_job(jid, params):
     result = dict(
         status='ok', trailer_url=f'/uploads/{filename}',
         orig_name=orig_name,
+        # The resolved source video actually rendered from -- the single
+        # original HIRES file, or the already-combined multi-file result if
+        # Browse Library's multi-select combine was used. Kept separately
+        # from trailer_url (the GENERATED promo) specifically for Send to
+        # destination's csv_video case: the CSV's timecodes describe cuts
+        # into THIS file, not into the generated promo's own, completely
+        # different timeline, so a destination wanting both needs this one
+        # alongside the CSV, not the edited output.
+        source_video_path=path,
         total_scenes=len(scene_list), selected_scenes=len(selected),
         trailer_duration=round(assembled_duration, 1),
         scenes_duration=round(total_sel, 1),
