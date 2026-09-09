@@ -971,7 +971,7 @@ def _normalize_reference_audio(src_path):
     than hard-failing here)."""
     if not FFMPEG or not os.path.exists(src_path):
         return src_path
-    norm_path = os.path.join(tempfile.gettempdir(), f'ttsref_{uuid.uuid4().hex}.wav')
+    norm_path = os.path.join(app.config['UPLOAD_FOLDER'], f'ttsref_{uuid.uuid4().hex}.wav')
     try:
         r = subprocess.run([FFMPEG, '-y', '-i', src_path, '-ac', '1', '-ar', '16000',
                              '-sample_fmt', 's16', norm_path],
@@ -3025,7 +3025,7 @@ def librosa_load(path, sr=22050, mono=True, duration=None):
     tmp = None
     try:
         if ext not in ('.wav', '.flac', '.ogg', '.aiff', '.aif'):
-            tmp = os.path.join(tempfile.gettempdir(), f'lb_{uuid.uuid4().hex}.wav')
+            tmp = os.path.join(app.config['UPLOAD_FOLDER'], f'lb_{uuid.uuid4().hex}.wav')
             cmd = [FFMPEG, '-y', '-i', path, '-vn', '-ac', '1' if mono else '2',
                    '-ar', str(int(sr)), '-c:a', 'pcm_s16le']
             if duration:
