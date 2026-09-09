@@ -317,7 +317,7 @@ img[src*="prism-logo"],img[src*="logo-mark"],img[src*="branding/logo"]{
 }
 .docs-nav-item{
   text-align:left;border:1px solid transparent;background:transparent;color:var(--ink-dim);
-  font:600 11px 'JetBrains Mono',monospace;letter-spacing:.04em;text-transform:uppercase;
+  font:600 12px 'JetBrains Mono',monospace;letter-spacing:.04em;text-transform:uppercase;
   padding:10px 12px;border-radius:10px;cursor:pointer;transition:background .15s,color .15s,border-color .15s
 }
 .docs-nav-item:hover{color:var(--ink);background:var(--wash-3)}
@@ -480,7 +480,7 @@ img[src*="prism-logo"],img[src*="logo-mark"],img[src*="branding/logo"]{
 }
 .docs-nav-item{
   padding:8px 12px!important;
-  font-size:10px!important;
+  font-size:12px!important;
   white-space:nowrap
 }
 .docs-body{min-width:0;width:100%}
