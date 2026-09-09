@@ -22,6 +22,7 @@ from scenedetect.detectors import ContentDetector, AdaptiveDetector
 from flask import request, jsonify, redirect, url_for, Response, send_from_directory, session
 from werkzeug.utils import secure_filename
 import smbclient  # pip install smbprotocol -- lets the upload panels browse a Windows/SMB network share directly
+from smbprotocol.exceptions import SharingViolation
 
 from core import app, ALLOWED_EXTENSIONS, _job_submit_limiter, _client_ip
 from library_db import (LIBRARY_DIR, _sqlite_connect, library_add, library_list, library_stats, library_get_row, library_delete,
@@ -544,6 +545,19 @@ def list_network_files_recursive(category=DEFAULT_NETWORK_CATEGORY, subpath='', 
     results.sort(key=lambda e: (e['subpath'], e['name'].lower()))
     return root, results, truncated
 
+def _safe_exception_text(e):
+    """str(e), but never raises itself -- some smbprotocol exceptions
+    (SharingViolation included) build their own message lazily from the raw
+    SMB response header, which can itself fail to parse in edge cases.
+    An error message failing while it's being constructed, on top of the
+    original error, would be a worse failure than just losing some detail
+    from it -- so this falls back to the exception's type name alone
+    rather than letting that secondary failure propagate."""
+    try:
+        return str(e)
+    except Exception:
+        return type(e).__name__
+
 def fetch_network_file(name, category=DEFAULT_NETWORK_CATEGORY, subpath=''):
     """Copies `name` from inside `subpath` of the network folder for `category`
     into UPLOAD_FOLDER and returns the local staged filename (prefixed
@@ -574,9 +588,35 @@ def fetch_network_file(name, category=DEFAULT_NETWORK_CATEGORY, subpath=''):
                 raise ValueError(err)
     local_name = f'net_{int(time.time())}_{secure_filename(name)}'
     local_path = os.path.join(app.config['UPLOAD_FOLDER'], local_name)
-    with smbclient.open_file(remote_path, mode='rb') as rf, open(local_path, 'wb') as lf:
-        shutil.copyfileobj(rf, lf)
-    return local_name
+    # A file actively being written by a sync tool (this share's own name
+    # includes "raysync") is often locked for only as long as that write
+    # takes -- typically a few seconds, not indefinitely. A SharingViolation
+    # here is a real, observed production error (NtStatus 0xC0000043): the
+    # file genuinely exists and was found -- that status code is SMB's own
+    # "someone else has this open right now", not "not found" or a
+    # permissions problem, so retrying shortly after is a real fix for the
+    # common case, not a blind hope. Only retries THIS specific exception;
+    # anything else (auth, not-found, network) fails immediately, since
+    # retrying those would just waste time on an error retrying can't help.
+    last_err = None
+    for attempt in range(4):
+        if attempt > 0:
+            time.sleep(1.5)
+        try:
+            with smbclient.open_file(remote_path, mode='rb') as rf, open(local_path, 'wb') as lf:
+                shutil.copyfileobj(rf, lf)
+            return local_name
+        except SharingViolation as e:
+            last_err = e
+            # Clear any partial copy before retrying -- each attempt starts
+            # from a clean local file, not appending onto a truncated one.
+            try:
+                os.remove(local_path)
+            except OSError:
+                pass
+    raise ValueError(f'"{name}" is currently in use by another process on the network share '
+                      f'(often a sync tool actively writing it) -- please try again in a moment. '
+                      f'({_safe_exception_text(last_err)})')
 
 # Back-compat aliases (old names, always the 'hires'/video category, root only).
 def list_network_videos():
