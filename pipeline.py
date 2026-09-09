@@ -22,6 +22,7 @@ from scenedetect.detectors import ContentDetector, AdaptiveDetector
 from flask import request, jsonify, redirect, url_for, Response, send_from_directory, session
 from werkzeug.utils import secure_filename
 import smbclient  # pip install smbprotocol -- lets the upload panels browse a Windows/SMB network share directly
+from smbprotocol.exceptions import SharingViolation
 
 from core import app, ALLOWED_EXTENSIONS, _job_submit_limiter, _client_ip
 from library_db import (LIBRARY_DIR, _sqlite_connect, library_add, library_list, library_stats, library_get_row, library_delete,
@@ -29,7 +30,9 @@ from library_db import (LIBRARY_DIR, _sqlite_connect, library_add, library_list,
     load_branding, save_branding_text, save_branding_color, save_branding_logo, save_branding_favicon,
     clear_branding_logo, clear_branding_favicon, clear_branding_color, BRANDING_DIR,
     load_disabled_services, set_service_disabled, save_branding_theme, THEME_PRESETS,
-    load_network_folders, save_network_folder, NETWORK_CATEGORY_KEYS)
+    load_network_folders, save_network_folder, NETWORK_CATEGORY_KEYS,
+    network_destinations_list, network_destination_get, network_destination_add,
+    network_destination_update, network_destination_remove)
 from auth import require_permission
 
 # ---- Per-show asset templates (SQLite) ----
@@ -542,6 +545,19 @@ def list_network_files_recursive(category=DEFAULT_NETWORK_CATEGORY, subpath='', 
     results.sort(key=lambda e: (e['subpath'], e['name'].lower()))
     return root, results, truncated
 
+def _safe_exception_text(e):
+    """str(e), but never raises itself -- some smbprotocol exceptions
+    (SharingViolation included) build their own message lazily from the raw
+    SMB response header, which can itself fail to parse in edge cases.
+    An error message failing while it's being constructed, on top of the
+    original error, would be a worse failure than just losing some detail
+    from it -- so this falls back to the exception's type name alone
+    rather than letting that secondary failure propagate."""
+    try:
+        return str(e)
+    except Exception:
+        return type(e).__name__
+
 def fetch_network_file(name, category=DEFAULT_NETWORK_CATEGORY, subpath=''):
     """Copies `name` from inside `subpath` of the network folder for `category`
     into UPLOAD_FOLDER and returns the local staged filename (prefixed
@@ -572,9 +588,35 @@ def fetch_network_file(name, category=DEFAULT_NETWORK_CATEGORY, subpath=''):
                 raise ValueError(err)
     local_name = f'net_{int(time.time())}_{secure_filename(name)}'
     local_path = os.path.join(app.config['UPLOAD_FOLDER'], local_name)
-    with smbclient.open_file(remote_path, mode='rb') as rf, open(local_path, 'wb') as lf:
-        shutil.copyfileobj(rf, lf)
-    return local_name
+    # A file actively being written by a sync tool (this share's own name
+    # includes "raysync") is often locked for only as long as that write
+    # takes -- typically a few seconds, not indefinitely. A SharingViolation
+    # here is a real, observed production error (NtStatus 0xC0000043): the
+    # file genuinely exists and was found -- that status code is SMB's own
+    # "someone else has this open right now", not "not found" or a
+    # permissions problem, so retrying shortly after is a real fix for the
+    # common case, not a blind hope. Only retries THIS specific exception;
+    # anything else (auth, not-found, network) fails immediately, since
+    # retrying those would just waste time on an error retrying can't help.
+    last_err = None
+    for attempt in range(4):
+        if attempt > 0:
+            time.sleep(1.5)
+        try:
+            with smbclient.open_file(remote_path, mode='rb') as rf, open(local_path, 'wb') as lf:
+                shutil.copyfileobj(rf, lf)
+            return local_name
+        except SharingViolation as e:
+            last_err = e
+            # Clear any partial copy before retrying -- each attempt starts
+            # from a clean local file, not appending onto a truncated one.
+            try:
+                os.remove(local_path)
+            except OSError:
+                pass
+    raise ValueError(f'"{name}" is currently in use by another process on the network share '
+                      f'(often a sync tool actively writing it) -- please try again in a moment. '
+                      f'({_safe_exception_text(last_err)})')
 
 # Back-compat aliases (old names, always the 'hires'/video category, root only).
 def list_network_videos():
@@ -929,7 +971,7 @@ def _normalize_reference_audio(src_path):
     than hard-failing here)."""
     if not FFMPEG or not os.path.exists(src_path):
         return src_path
-    norm_path = os.path.join(tempfile.gettempdir(), f'ttsref_{uuid.uuid4().hex}.wav')
+    norm_path = os.path.join(app.config['UPLOAD_FOLDER'], f'ttsref_{uuid.uuid4().hex}.wav')
     try:
         r = subprocess.run([FFMPEG, '-y', '-i', src_path, '-ac', '1', '-ar', '16000',
                              '-sample_fmt', 's16', norm_path],
@@ -1661,16 +1703,45 @@ def _detect_silence_intervals(audio_path, noise_db=-30, min_dur=0.3, timeout=120
     """Runs ffmpeg's silencedetect filter and parses stderr for silence_start/silence_end
     pairs. Returns a list of (start, end) SILENT intervals in audio_path. A silence_start
     with no matching silence_end (file ends mid-silence) is dropped rather than guessed at —
-    the caller treats "not explicitly silent" as active, which is the safe default."""
+    the caller treats "not explicitly silent" as active, which is the safe default.
+
+    Runs against a fresh PCM decode of `audio_path`, not the file directly -- a real,
+    observed bug: a loudnorm-processed track re-encoded to AAC (uploaded VO's own prep
+    step does exactly this) made silencedetect stop reliably recognizing genuinely-silent
+    stretches (confirmed by direct sample inspection: RMS and peak both exactly 0 in the
+    region silencedetect was misreading as active) after roughly its first ~0.3s -- the
+    same PCM audio, decoded and analyzed directly with no AAC round-trip in between,
+    detected the real silent interval correctly and completely. This mattered because this
+    function is what determines exactly where BGM/dialogue duck under VO -- silencedetect
+    misreading the silent gap before VO actually starts as "VO already playing" ducks BGM
+    too early, for however long that confusion lasts, not from the real, correct moment
+    the voiceover actually begins."""
+    pcm_path = None
     try:
-        r = subprocess.run([FFMPEG, '-i', audio_path, '-af',
+        pcm_path = os.path.join(app.config['UPLOAD_FOLDER'], f'sildet_{uuid.uuid4().hex}.wav')
+        conv = subprocess.run([FFMPEG, '-y', '-i', audio_path, '-ac', '1', '-ar', '44100',
+                                '-c:a', 'pcm_s16le', pcm_path],
+                               capture_output=True, text=True, timeout=timeout)
+        analyze_path = pcm_path if (os.path.exists(pcm_path) and os.path.getsize(pcm_path) > 0) else audio_path
+        r = subprocess.run([FFMPEG, '-i', analyze_path, '-af',
                              f'silencedetect=noise={noise_db}dB:d={min_dur}', '-f', 'null', '-'],
                             capture_output=True, text=True, timeout=timeout)
     except Exception as e:
         print(f'Silence detection error ({audio_path}): {e}')
         return []
-    starts = [float(m) for m in re.findall(r'silence_start:\s*([\d.]+)', r.stderr)]
-    ends = [float(m) for m in re.findall(r'silence_end:\s*([\d.]+)', r.stderr)]
+    finally:
+        if pcm_path and os.path.exists(pcm_path):
+            try:
+                os.remove(pcm_path)
+            except OSError:
+                pass
+    # -? handles a silence_start ffmpeg itself sometimes reports as slightly
+    # negative right at the very start of a file -- silently dropping the
+    # sign here (the original pattern had no way to match one at all) would
+    # turn an edge-of-file silence into a small POSITIVE timestamp instead,
+    # which is a different, wrong moment, not a harmlessly-rounded one.
+    starts = [float(m) for m in re.findall(r'silence_start:\s*(-?[\d.]+)', r.stderr)]
+    ends = [float(m) for m in re.findall(r'silence_end:\s*(-?[\d.]+)', r.stderr)]
     return list(zip(starts, ends))
 
 def _active_windows_from_silence(silence_intervals, total_duration, content_duration=None):
@@ -2361,10 +2432,15 @@ def generate_tts(text, output_wav_path, rate=175, voice_id=None, reference_audio
         print(f'{engine_label} unavailable: {e}')
         return False, f'{engine_label} unavailable: {e}'
 
-def prepare_bgm_track(genre, scoring_mode, scoring_audio_path, duration, base_ts, fade_in=2.0, fade_out=3.0):
+def prepare_bgm_track(genre, scoring_mode, scoring_audio_path, duration, base_ts, fade_in=2.0, fade_out=3.0,
+                       trim_start=0.0, trim_end=None):
     """Produce a ready-to-mix BGM track (AAC .m4a, faded, trimmed to `duration`).
     Shared by the early beat-sync pass (approximate target duration) and the
     final mix pass (reused as-is if already prepared, else generated fresh).
+    trim_start/trim_end select which portion of an UPLOADED source file to
+    use (ignored for 'generate' mode, which has no source file to trim) --
+    before this, an upload was always read from its own beginning, with no
+    way to pick a different part of a longer track.
     Returns (path_or_None, source) where source is 'uploaded' | 'ai_generated' | 'synth_fallback' | 'none'."""
     bgm_source = 'none'
     if not scoring_audio_path:
@@ -2445,12 +2521,24 @@ def prepare_bgm_track(genre, scoring_mode, scoring_audio_path, duration, base_ts
         return None, 'none'
     else:
         processed_audio = os.path.join(app.config['UPLOAD_FOLDER'], f'score_{base_ts}_{int(time.time()*1000)%100000}.m4a')
-        r = subprocess.run([FFMPEG, '-y', '-i', scoring_audio_path,
-                            '-af', (f'atrim=duration={duration},'
-                                    f'afade=t=in:d={fade_in},'
-                                    f'afade=t=out:st={max(duration - fade_out, 0)}:d={min(fade_out, duration)}'),
-                            '-c:a', 'aac', '-b:a', '192k', '-vn', processed_audio],
-                           capture_output=True, text=True, timeout=60)
+        # Same -ss/-to-before-the-input pattern already used for uploaded VO
+        # trimming: seeking at the input level (not via an -af atrim start=)
+        # is both faster (ffmpeg can skip straight there) and simpler to
+        # combine with the *duration*-based atrim right after it, which
+        # fits whatever portion this selects to the render's actual needed
+        # length -- trim_start/trim_end pick WHICH part of the source to
+        # use, the af filter below decides how much of THAT to keep.
+        cmd = [FFMPEG, '-y']
+        if trim_start > 0 or trim_end is not None:
+            cmd.extend(['-ss', str(trim_start)])
+            if trim_end is not None:
+                cmd.extend(['-to', str(trim_end)])
+        cmd.extend(['-i', scoring_audio_path,
+                    '-af', (f'atrim=duration={duration},'
+                            f'afade=t=in:d={fade_in},'
+                            f'afade=t=out:st={max(duration - fade_out, 0)}:d={min(fade_out, duration)}'),
+                    '-c:a', 'aac', '-b:a', '192k', '-vn', processed_audio])
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         if os.path.exists(processed_audio) and os.path.getsize(processed_audio) > 0:
             return processed_audio, 'uploaded'
         return None, 'none'
@@ -2664,19 +2752,35 @@ def _vo_beats_from_segments(segments):
     return beats
 
 
-def nearest_word_boundary(target, boundaries, max_snap=0.35):
+def nearest_word_boundary(target, boundaries, max_snap=0.35, hard_limit=None):
     """Nearest timestamp in `boundaries` to `target`, but only if within
     `max_snap` seconds — otherwise returns `target` unchanged (no nearby word
-    to snap to, e.g. a silent B-roll clip, so leave the cut point as-is)."""
+    to snap to, e.g. a silent B-roll clip, so leave the cut point as-is),
+    UNLESS `hard_limit` is given.
+
+    `hard_limit` is the furthest this cut point is allowed to move (e.g. the
+    scene's own start/end) -- if nothing is within max_snap, the search
+    widens all the way out to hard_limit before giving up, rather than
+    silently accepting a cut that lands mid-word. A clip running a bit
+    longer or shorter than originally planned is a smaller problem than
+    audibly cutting someone off before they finish a word -- this is what
+    lets a scene's own available footage be used to find a clean cut
+    instead of settling for whatever the untouched target happened to land
+    on. Still always returns the CLOSEST boundary within whatever range
+    ends up being searched, so a nearby word always wins over a distant one
+    even when the wider search is what finds it."""
     if not boundaries:
         return target
     candidates = [b for b in boundaries if abs(b - target) <= max_snap]
+    if not candidates and hard_limit is not None:
+        lo, hi = (target, hard_limit) if hard_limit >= target else (hard_limit, target)
+        candidates = [b for b in boundaries if lo <= b <= hi]
     if not candidates:
         return target
     return min(candidates, key=lambda b: abs(b - target))
 
 def nearest_speech_out(target, phrase_ends, word_ends,
-                       phrase_snap=1.2, word_snap=0.35):
+                       phrase_snap=1.2, word_snap=0.35, hard_limit=None):
     """Best out-point near `target`, preferring the end of a complete phrase
     over the end of a mere word.
 
@@ -2690,12 +2794,18 @@ def nearest_speech_out(target, phrase_ends, word_ends,
 
     Falls back to word boundaries, then to `target` unchanged when there's
     no speech nearby at all (silent B-roll -- nothing to protect, so leave
-    the visual cut point alone)."""
+    the visual cut point alone). `hard_limit`, when given, is tried for
+    both phrase ends and the word-boundary fallback -- see
+    nearest_word_boundary for why widening the search this far is worth it
+    rather than accepting a cut mid-word or mid-sentence."""
     if phrase_ends:
         near = [b for b in phrase_ends if abs(b - target) <= phrase_snap]
+        if not near and hard_limit is not None:
+            lo, hi = (target, hard_limit) if hard_limit >= target else (hard_limit, target)
+            near = [b for b in phrase_ends if lo <= b <= hi]
         if near:
             return min(near, key=lambda b: abs(b - target))
-    return nearest_word_boundary(target, word_ends, max_snap=word_snap)
+    return nearest_word_boundary(target, word_ends, max_snap=word_snap, hard_limit=hard_limit)
 
 def speech_free_slack(clip_start, clip_end, speech_spans, guard=0.12):
     """How much of [clip_start, clip_end) can be trimmed off the END without
@@ -2736,6 +2846,13 @@ _TC_PATTERNS = [
     re.compile(r'\b(\d{1,2}):(\d{2})\b'),                       # MM:SS
 ]
 
+# Multi-part episode scripts commonly label each raw plug file "M1", "M2",
+# etc. (short for "Master 1" / "Master 2"), each timecoded from its own
+# zero -- since combining those files into one source video (see
+# /api/network/combine) is common, a cue naming one needs that segment's
+# own offset added before it means anything against the combined timeline.
+_SEGMENT_PREFIX_RE = re.compile(r'\bM(\d{1,2})\b')
+
 def _parse_timecode_line(line, fps=25.0):
     """First timecode found in `line`, as seconds, plus the remaining text of
     the line as its description. Returns (seconds, description) or None.
@@ -2761,20 +2878,48 @@ def _parse_timecode_line(line, fps=25.0):
         return secs, desc
     return None
 
-def parse_script_cues(text, fps=25.0):
+def parse_script_cues(text, fps=25.0, segment_offsets=None):
     """Every (seconds, description) cue found in a script's text, sorted by
     time. Lines without a recognisable timecode are ignored rather than
     guessed at -- a rundown is mostly prose and column headers, and inventing
-    cues from unparseable lines would quietly skew selection."""
+    cues from unparseable lines would quietly skew selection.
+
+    segment_offsets: optional {segment_number: offset_seconds}, computed
+    from combining multiple source files via Browse Library's multi-select
+    (see /api/network/combine's segment_durations). A cue line naming a
+    segment ("M1 3:33", "M2 00:12") gets that segment's own offset added to
+    its raw time, so a script written against separate files -- each with
+    its own 0:00 start -- still lines up with the single combined video the
+    render actually works with.
+
+    Segment 1 is always treated as offset 0, even with no segment_offsets
+    at all -- covers the common case of a script still labelled "M1" when
+    only one material was actually used that week, which needs no
+    adjustment regardless. Any OTHER segment number named in the script
+    but missing from segment_offsets is dropped rather than guessed at --
+    e.g. a script mentions M2 but only one file was combined (or none at
+    all), so there's no known second segment to offset against. Applying a
+    wrong offset would silently pin the wrong scene, which is worse than
+    not pinning one at all."""
     cues = []
+    segment_offsets = segment_offsets or {}
     for raw_line in (text or '').splitlines():
         line = raw_line.strip()
         if not line:
             continue
         parsed = _parse_timecode_line(line, fps=fps)
-        if parsed:
-            secs, desc = parsed
-            cues.append({'time': secs, 'desc': desc})
+        if not parsed:
+            continue
+        secs, desc = parsed
+        seg_match = _SEGMENT_PREFIX_RE.search(line)
+        if seg_match:
+            seg_num = int(seg_match.group(1))
+            if seg_num in segment_offsets:
+                secs += segment_offsets[seg_num]
+            elif seg_num != 1:
+                continue
+            # seg_num == 1 with no entry in segment_offsets: offset 0, fall through unchanged.
+        cues.append({'time': secs, 'desc': desc})
     cues.sort(key=lambda c: c['time'])
     return cues
 
@@ -2909,7 +3054,7 @@ def librosa_load(path, sr=22050, mono=True, duration=None):
     tmp = None
     try:
         if ext not in ('.wav', '.flac', '.ogg', '.aiff', '.aif'):
-            tmp = os.path.join(tempfile.gettempdir(), f'lb_{uuid.uuid4().hex}.wav')
+            tmp = os.path.join(app.config['UPLOAD_FOLDER'], f'lb_{uuid.uuid4().hex}.wav')
             cmd = [FFMPEG, '-y', '-i', path, '-vn', '-ac', '1' if mono else '2',
                    '-ar', str(int(sr)), '-c:a', 'pcm_s16le']
             if duration:
@@ -3857,13 +4002,29 @@ def api_trailer():
     # job thread, which has no access to request.files.
     priority_prompt = (request.form.get('priority_prompt') or '').strip()
     negative_prompt = (request.form.get('negative_prompt') or '').strip()
+    # Set by the frontend after combining multiple HIRES files via Browse
+    # Library's multi-select -- each segment's own duration, in combine
+    # order, as a JSON list. Turned into {segment_number: cumulative_offset}
+    # so a script's "M1"/"M2" cues can be offset to match the single
+    # combined source video. Absent entirely for the (equally common)
+    # single-material case, which parse_script_cues already treats "M1" as
+    # offset 0 for regardless.
+    segment_offsets = {}
+    try:
+        durations = json.loads(request.form.get('file_segment_durations') or '[]')
+        cumulative = 0.0
+        for i, d in enumerate(durations):
+            segment_offsets[i + 1] = cumulative
+            cumulative += float(d)
+    except (ValueError, TypeError):
+        segment_offsets = {}
     script_cues = []
     script_file = request.files.get('script_file')
     if script_file and script_file.filename:
         text, err = extract_script_text(script_file)
         if err:
             return jsonify(error=err), 400
-        script_cues = parse_script_cues(text)
+        script_cues = parse_script_cues(text, segment_offsets=segment_offsets)
         if not script_cues:
             return jsonify(error='No timecodes were found in that script. Each cue line needs a '
                                  'timecode like 00:01:30:12, 00:01:30, or 1:30 -- lines without '
@@ -3992,6 +4153,21 @@ def api_trailer():
         vo_trim_end = None
     if vo_trim_end is not None and vo_trim_end <= vo_trim_start:
         vo_trim_end = None
+
+    # Same idea, for the uploaded background music track: which portion of
+    # that source file to actually use, rather than always starting from
+    # its own beginning (the only option before this).
+    try:
+        scoring_audio_trim_start = max(0.0, float(request.form.get('scoring_audio_trim_start', 0) or 0))
+    except ValueError:
+        scoring_audio_trim_start = 0.0
+    scoring_audio_trim_end_raw = request.form.get('scoring_audio_trim_end', '').strip()
+    try:
+        scoring_audio_trim_end = float(scoring_audio_trim_end_raw) if scoring_audio_trim_end_raw else None
+    except ValueError:
+        scoring_audio_trim_end = None
+    if scoring_audio_trim_end is not None and scoring_audio_trim_end <= scoring_audio_trim_start:
+        scoring_audio_trim_end = None
 
     # Sync cuts to the beat of the background music (only meaningful when a
     # music track is actually used). Requires prepping the BGM before scene
@@ -4226,6 +4402,7 @@ def api_trailer():
                   vo_rate=vo_rate, vo_start=vo_start, vo_volume=vo_volume, sync_beats=sync_beats, whisper_enhance=whisper_enhance,
                   selection_driver=selection_driver,
                   vo_trim_start=vo_trim_start, vo_trim_end=vo_trim_end,
+                  scoring_audio_trim_start=scoring_audio_trim_start, scoring_audio_trim_end=scoring_audio_trim_end,
                   end_card_path=end_card_path, schedule_card_path=schedule_card_path,
                   title_card_vo_path=title_card_vo_path, title_card_vo_start=title_card_vo_start, title_card_vo_end=title_card_vo_end,
                   end_card_vo_path=end_card_vo_path, end_card_vo_start=end_card_vo_start, end_card_vo_end=end_card_vo_end,
@@ -4982,44 +5159,195 @@ def _resolve_export_file(tid, fmt_key=None, custom_name=None):
             return None, None, None, f'Export to {fmt_key} failed: {r.stderr[-800:]}', 500
     return cache_path, base_name, ext, None, 200
 
-def send_file_to_network_destination(local_path, remote_filename):
-    """Copies an already-exported local file to the configured Config >
-    Network 'destination' share -- the write-side counterpart to
-    fetch_network_file()'s read. Same session/credential handling
-    (_network_session, reused per-server by smbclient itself), just
-    open_file(mode='wb') instead of 'rb'.
+def build_scene_list_csv(row):
+    """Same CSV shape as the client-side downloadSceneListCsv() (used for
+    the manual "Scene list CSV" button), rebuilt server-side from a saved
+    library row's own result_json -- needed here because Send to
+    destination is a server-side SMB write, with no browser involved to
+    build a Blob from data already sitting in a page's memory."""
+    result = json.loads(row['result_json'] or '{}')
+    lines = ['#,Start_s,End_s,Used_s,Score,Description']
+    for s in (result.get('scenes') or []):
+        desc = str(s.get('description', '')).replace('"', '""')
+        lines.append(f"{s.get('scene','')},{s.get('start','')},{s.get('end','')},"
+                     f"{s.get('duration','')},{s.get('quality','')},\"{desc}\"")
+    return '\n'.join(lines) + '\n'
 
-    Raises ValueError with a message safe to show the user (no destination
-    configured, or the write itself failing -- most commonly a permissions
-    or connectivity problem on the destination share) rather than letting a
-    raw smbprotocol exception surface."""
-    root = _network_share_root('destination')
-    if not root:
-        raise ValueError('No destination folder configured yet -- set one in Config > Network.')
-    _network_session('destination')
-    remote_path = root + '\\' + remote_filename
+def send_file_to_network_destination(local_path, remote_filename, destination):
+    """Copies an already-exported local file to `destination` (a
+    network_destinations row) -- the write-side counterpart to
+    fetch_network_file()'s read. Registers its own SMB session directly
+    from the destination's own path/username/password rather than going
+    through _network_session()/load_network_folders(), since a destination
+    is a separate, admin-managed, potentially-multiple set of credentials,
+    not one of the fixed single-value network categories those helpers
+    were built for.
+
+    Raises ValueError with a message safe to show the user (the write
+    itself failing -- most commonly a permissions or connectivity problem
+    on the destination share) rather than letting a raw smbprotocol
+    exception surface."""
+    root = _normalize_unc_path(destination['path'])
+    parts = root.split('\\')
+    host = parts[2] if len(parts) > 2 else ''
     try:
+        smbclient.register_session(host, username=destination.get('username') or '',
+                                    password=destination.get('password') or '', connection_timeout=10)
+        remote_path = root + '\\' + remote_filename
         with open(local_path, 'rb') as lf, smbclient.open_file(remote_path, mode='wb') as rf:
             shutil.copyfileobj(lf, rf)
     except Exception as e:
-        raise ValueError(f'Could not write to the destination share: {e}')
+        raise ValueError(f'Could not write to "{destination["name"]}": {e}')
+
+def send_bytes_to_network_destination(data, remote_filename, destination):
+    """Same as send_file_to_network_destination, but for in-memory content
+    (the generated CSV) rather than an existing local file -- avoids
+    writing the CSV to a throwaway temp file first just to immediately
+    read it back for the SMB upload."""
+    root = _normalize_unc_path(destination['path'])
+    parts = root.split('\\')
+    host = parts[2] if len(parts) > 2 else ''
+    try:
+        smbclient.register_session(host, username=destination.get('username') or '',
+                                    password=destination.get('password') or '', connection_timeout=10)
+        remote_path = root + '\\' + remote_filename
+        with smbclient.open_file(remote_path, mode='wb') as rf:
+            rf.write(data)
+    except Exception as e:
+        raise ValueError(f'Could not write to "{destination["name"]}": {e}')
 
 @app.route('/library/<int:tid>/send-to-destination', methods=['POST'])
 @require_permission('promo_generation')
 def library_send_to_destination(tid):
     data = request.get_json(silent=True) or {}
+    destination_id = data.get('destination_id')
+    destination = network_destination_get(destination_id) if destination_id else None
+    if not destination:
+        return jsonify(ok=False, error='That destination no longer exists -- pick another.'), 400
+
     fmt_key = data.get('format', 'mp4_high')
-    cache_path, base_name, ext, err, status = _resolve_export_file(tid, fmt_key, custom_name=data.get('filename'))
-    if err:
-        return jsonify(ok=False, error=err), status
-    remote_filename = f'{base_name}.{ext}'
-    try:
-        send_file_to_network_destination(cache_path, remote_filename)
-    except ValueError as e:
-        return jsonify(ok=False, error=str(e)), 502
-    audit_log('trailer_send_to_destination', target=remote_filename,
+    custom_name = data.get('filename')
+    sent = []
+
+    row = None
+    if destination['delivery_kind'] in ('csv', 'csv_video'):
+        row = library_get_row(tid)
+        if not row or not _owns_or_admin(row.get('user_id')):
+            return jsonify(ok=False, error='Not found'), 404
+
+    if destination['delivery_kind'] == 'video':
+        # Plain video-only destinations still get the finished, generated
+        # promo -- this branch is unchanged. Only csv_video (below) sends
+        # the original source instead, since that's specifically the case
+        # the CSV's timecodes are meaningful against.
+        cache_path, base_name, ext, err, status = _resolve_export_file(tid, fmt_key, custom_name=custom_name)
+        if err:
+            return jsonify(ok=False, error=err), status
+        remote_filename = f'{base_name}.{ext}'
+        try:
+            send_file_to_network_destination(cache_path, remote_filename, destination)
+        except ValueError as e:
+            return jsonify(ok=False, error=str(e)), 502
+        sent.append(remote_filename)
+
+    elif destination['delivery_kind'] == 'csv_video':
+        # The CSV's timecodes describe cuts into the ORIGINAL (or
+        # already-combined multi-file) source video -- sending the
+        # generated promo alongside it here would be genuinely useless to
+        # a downstream EDL-driven workflow, since the promo's own timeline
+        # has nothing to do with those timecodes. source_video_path is the
+        # exact file that was actually scored and cut from at render time,
+        # recorded specifically for this. Not re-encoded or reformatted --
+        # sent as-is, in its own original format, since this is the raw
+        # material a destination like this needs, not a delivery master.
+        result = json.loads(row['result_json'] or '{}')
+        source_path = result.get('source_video_path')
+        if not source_path or not os.path.exists(source_path):
+            return jsonify(ok=False, error='The original source video for this render is no longer '
+                           'available locally (the working copy may have been cleaned up since the '
+                           'render finished) -- re-generate this promo to make it available again, '
+                           'or use a video-only or CSV-only destination instead.'), 410
+        source_ext = os.path.splitext(source_path)[1].lstrip('.') or 'mp4'
+        base_name = (custom_name or '').strip() or os.path.splitext(row['orig_name'] or row['filename'])[0]
+        base_name = secure_filename(base_name) or 'source'
+        remote_filename = f'{base_name}.{source_ext}'
+        try:
+            send_file_to_network_destination(source_path, remote_filename, destination)
+        except ValueError as e:
+            return jsonify(ok=False, error=str(e)), 502
+        sent.append(remote_filename)
+
+    if destination['delivery_kind'] in ('csv', 'csv_video'):
+        csv_text = build_scene_list_csv(row)
+        base_name = (custom_name or '').strip() or os.path.splitext(row['orig_name'] or row['filename'])[0]
+        base_name = secure_filename(base_name) or 'scenes'
+        csv_filename = f'{base_name}_scenes.csv'
+        try:
+            send_bytes_to_network_destination(csv_text.encode('utf-8'), csv_filename, destination)
+        except ValueError as e:
+            return jsonify(ok=False, error=str(e)), 502
+        sent.append(csv_filename)
+
+    audit_log('trailer_send_to_destination', target=f'{destination["name"]}: {", ".join(sent)}',
               user_id=session.get('user_id'), username=session.get('username'), ip=_client_ip())
-    return jsonify(ok=True, filename=remote_filename)
+    return jsonify(ok=True, filename=sent[0] if len(sent) == 1 else sent, sent=sent, destination=destination['name'])
+
+@app.route('/api/network/destinations', methods=['GET'])
+def api_network_destinations_list():
+    """Available to any signed-in user (not admin-only) -- everyone who can
+    generate a promo needs to see the destination list to pick one from,
+    the same way every user already sees the configured HIRES/music/etc.
+    network categories without needing admin rights. Passwords are never
+    included in this response."""
+    items = network_destinations_list()
+    for d in items:
+        d['has_password'] = bool(d.get('password'))
+        d.pop('password', None)
+    return jsonify(ok=True, items=items)
+
+@app.route('/api/network/destinations', methods=['POST'])
+def api_network_destinations_add():
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='Admin access required.'), 403
+    data = request.get_json(silent=True) or request.form
+    name = (data.get('name') or '').strip()
+    path = (data.get('path') or '').strip()
+    if not name or not path:
+        return jsonify(ok=False, error='Name and network path are both required.'), 400
+    new_id = network_destination_add(
+        name, path, username=data.get('username'), password=data.get('password'),
+        delivery_kind=data.get('delivery_kind', 'video'))
+    audit_log('destination_add', target=name, user_id=session.get('user_id'),
+              username=session.get('username'), ip=_client_ip())
+    return jsonify(ok=True, id=new_id)
+
+@app.route('/api/network/destinations/<int:dest_id>', methods=['POST'])
+def api_network_destinations_update(dest_id):
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='Admin access required.'), 403
+    data = request.get_json(silent=True) or request.form
+    existing = network_destination_get(dest_id)
+    if not existing:
+        return jsonify(ok=False, error='Not found'), 404
+    ok = network_destination_update(
+        dest_id, name=data.get('name'), path=data.get('path'),
+        username=data.get('username'), password=data.get('password') or None,
+        delivery_kind=data.get('delivery_kind'))
+    if ok:
+        audit_log('destination_update', target=existing['name'], user_id=session.get('user_id'),
+                  username=session.get('username'), ip=_client_ip())
+    return jsonify(ok=ok)
+
+@app.route('/api/network/destinations/<int:dest_id>', methods=['DELETE'])
+def api_network_destinations_delete(dest_id):
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='Admin access required.'), 403
+    existing = network_destination_get(dest_id)
+    removed = network_destination_remove(dest_id)
+    if removed and existing:
+        audit_log('destination_remove', target=existing['name'], user_id=session.get('user_id'),
+                  username=session.get('username'), ip=_client_ip())
+    return jsonify(ok=removed)
 
 
 def _monitor_snapshot(filter_user_id=None, include_username=False):
@@ -5312,6 +5640,15 @@ def api_network_combine():
     combined_name = f'net_{int(time.time())}_{threading.get_ident()}_combined{ext}'
     combined_path = os.path.join(app.config['UPLOAD_FOLDER'], combined_name)
     list_path = combined_path + '.txt'
+    # Each segment's own duration, in the order they're being combined --
+    # returned so a script referencing "M1"/"M2" (separate source files,
+    # each timecoded from its own zero) can have those timecodes offset to
+    # match the SINGLE combined file the render actually works with. Probed
+    # before combining rather than after splitting the result back apart,
+    # since ffmpeg's concat-demuxer stream copy doesn't re-encode and so
+    # doesn't reliably preserve exact per-segment boundaries to re-derive
+    # them from the output alone.
+    segment_durations = [get_video_info(p).get('duration_sec', 0) for p in paths]
     try:
         with open(list_path, 'w', encoding='utf-8') as f:
             for p in paths:
@@ -5332,7 +5669,8 @@ def api_network_combine():
             pass
 
     return jsonify(ok=True, filename=combined_name, orig_name=f'{len(names)} files combined{ext}',
-                   size=os.path.getsize(combined_path), url=f'/uploads/{combined_name}')
+                   size=os.path.getsize(combined_path), url=f'/uploads/{combined_name}',
+                   segment_durations=segment_durations)
 
 # ---- Show templates (saved per-show asset bundles) ----
 
@@ -5993,6 +6331,34 @@ def free_disk_mb(path=None):
     except OSError:
         return None
 
+def _remove_job_intermediate(path):
+    """Deletes a per-job intermediate file the render pipeline is finished
+    with -- EXCEPT a shared network-staged file (net_<ts>_<name>), which
+    this must never touch.
+
+    Real bug this fixes: several call sites inside _run_trailer_job deleted
+    an uploaded VO/SFX/card-VO path unconditionally right after using it,
+    completely bypassing the net_* protection _cleanup_job_temp already has
+    a few lines below (added specifically because "the same staged file can
+    legitimately be attached to two concurrent jobs" -- and, just as much,
+    to the SAME job's next render if the user reuses their Browse Library
+    selection without re-picking). Whenever the source was a network pick,
+    this deleted the shared staged copy mid-render, so a second job -- or
+    even a retry of the same one -- would find it gone and fail with
+    "please re-select", even though the file chip still showed it as
+    selected. A direct browser upload's own per-job temp file isn't shared
+    with anything else, so it's still deleted normally; only the shared
+    staging case is protected here, matching _cleanup_job_temp exactly.
+    Silently no-ops if the path is falsy or already gone."""
+    if not path or not os.path.exists(path):
+        return
+    if os.path.basename(path).startswith('net_'):
+        return
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
 def _cleanup_job_temp(jid, params, keep_basename=None):
     """Removes every temp file a job could have created, whatever exit path it took.
 
@@ -6194,7 +6560,7 @@ def select_scenes_vo_led(scenes_data, vo_text, trailer_duration, max_scene_dur, 
         seg_dur = max(0.3, seg_dur)
         seg_start = s['start']
         if transcribe_for_cuts and word_starts:
-            snapped_start = nearest_word_boundary(seg_start, word_starts, max_snap=0.35)
+            snapped_start = nearest_word_boundary(seg_start, word_starts, max_snap=0.35, hard_limit=seg_start + seg_dur)
             if seg_start < snapped_start < seg_start + seg_dur:
                 drift = snapped_start - seg_start
                 seg_start = snapped_start
@@ -6206,7 +6572,7 @@ def select_scenes_vo_led(scenes_data, vo_text, trailer_duration, max_scene_dur, 
             seg_dur = max(0.3, min(scene_end - seg_start, snapped_cut - total_sel))
         if transcribe_for_cuts and (phrase_ends or word_ends) and seg_dur < (scene_end - seg_start):
             target_end = seg_start + seg_dur
-            snapped_end = nearest_speech_out(target_end, phrase_ends, word_ends)
+            snapped_end = nearest_speech_out(target_end, phrase_ends, word_ends, hard_limit=scene_end)
             if seg_start < snapped_end <= scene_end:
                 seg_dur = max(0.3, snapped_end - seg_start)
         s = dict(s)
@@ -6746,7 +7112,9 @@ def _run_trailer_job(jid, params):
         if sync_beats:
             job_set(jid, percent=20, step='Preparing music for beat-synced cuts')
             early_bgm_path, early_bgm_source = prepare_bgm_track(genre, scoring_mode, scoring_audio_path,
-                                                                  base_target, base_ts)
+                                                                  base_target, base_ts,
+                                                                  trim_start=params.get('scoring_audio_trim_start') or 0.0,
+                                                                  trim_end=params.get('scoring_audio_trim_end'))
             if early_bgm_path:
                 beat_times = detect_beat_times(early_bgm_path, base_target)
                 if not beat_times:
@@ -6891,7 +7259,7 @@ def _run_trailer_job(jid, params):
                     # Don't start playback mid-word — nudge the in-point forward to
                     # the start of the nearest word within this scene (capped so we
                     # never drift far from the original visual cut point).
-                    snapped_start = nearest_word_boundary(seg_start, word_starts, max_snap=0.35)
+                    snapped_start = nearest_word_boundary(seg_start, word_starts, max_snap=0.35, hard_limit=seg_start + seg_dur)
                     if seg_start < snapped_start < seg_start + seg_dur:
                         drift = snapped_start - seg_start
                         seg_start = snapped_start
@@ -6915,7 +7283,7 @@ def _run_trailer_job(jid, params):
                     # nearest_speech_out for why that distinction is worth a
                     # wider snap window.
                     target_end = seg_start + seg_dur
-                    snapped_end = nearest_speech_out(target_end, phrase_ends, word_ends)
+                    snapped_end = nearest_speech_out(target_end, phrase_ends, word_ends, hard_limit=scene_end)
                     if seg_start < snapped_end <= scene_end:
                         seg_dur = max(0.3, snapped_end - seg_start)
                 s['trim_start'] = seg_start
@@ -6953,7 +7321,7 @@ def _run_trailer_job(jid, params):
                     # exactly the mid-word cut the rest of this mechanism exists
                     # to prevent.
                     scene_end_abs = last['start'] + last['duration']
-                    snapped = nearest_speech_out(new_end, phrase_ends, word_ends)
+                    snapped = nearest_speech_out(new_end, phrase_ends, word_ends, hard_limit=scene_end_abs)
                     if last['trim_start'] < snapped <= scene_end_abs:
                         new_end = snapped
                 grow = max(0.0, new_end - (last['trim_start'] + last['selected_dur']))
@@ -7517,12 +7885,9 @@ def _run_trailer_job(jid, params):
                 os.remove(sfx_path)
             if os.path.exists(sfx_m4a):
                 os.remove(sfx_m4a)
-    if sfx_upload_path and os.path.exists(sfx_upload_path):
-        os.remove(sfx_upload_path)
-    if title_card_vo_path and os.path.exists(title_card_vo_path):
-        os.remove(title_card_vo_path)
-    if end_card_vo_path and os.path.exists(end_card_vo_path):
-        os.remove(end_card_vo_path)
+    _remove_job_intermediate(sfx_upload_path)
+    _remove_job_intermediate(title_card_vo_path)
+    _remove_job_intermediate(end_card_vo_path)
 
     job_set(jid, percent=80, step='Generating/mixing background music')
     # Prepare background music (ducked under SOT) as its own stem — the actual
@@ -7546,7 +7911,9 @@ def _run_trailer_job(jid, params):
             if os.path.exists(early_bgm_path):
                 os.remove(early_bgm_path)
         else:
-            prepared_bgm, bgm_source = prepare_bgm_track(genre, scoring_mode, scoring_audio_path, scenes_dur, base_ts)
+            prepared_bgm, bgm_source = prepare_bgm_track(genre, scoring_mode, scoring_audio_path, scenes_dur, base_ts,
+                                                           trim_start=params.get('scoring_audio_trim_start') or 0.0,
+                                                           trim_end=params.get('scoring_audio_trim_end'))
 
         # NOTE: independent of sync_beats above, not sequential to it. When
         # sync_beats is also on, cut points were already snapped (during scene
@@ -7641,13 +8008,20 @@ def _run_trailer_job(jid, params):
                     cmd.extend(['-to', str(vo_trim_end)])
             cmd.extend(['-i', vo_raw_path,
                         '-af', f'loudnorm=I={target_loudness}:TP={true_peak}:LRA=7,adelay={ms}|{ms},volume={vo_volume}',
+                        # Forces a standard, well-supported rate (already used
+                        # elsewhere in this app for other audio processing)
+                        # rather than whatever loudnorm+this AAC encoder would
+                        # otherwise pick on their own -- a smaller, separate
+                        # good-practice fix, not the actual fix for silence
+                        # detection misreading this file (see
+                        # _detect_silence_intervals' own docstring for that).
+                        '-ar', '44100',
                         '-c:a', 'aac', '-b:a', '192k', vo_ready_path])
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             if not (os.path.exists(vo_ready_path) and os.path.getsize(vo_ready_path) > 0):
                 print(f'VO prep error: {r.stderr[:500]}')
                 vo_ready_path = None
-        if vo_upload_path and os.path.exists(vo_upload_path):
-            os.remove(vo_upload_path)
+        _remove_job_intermediate(vo_upload_path)
         tts_wav = os.path.join(app.config['UPLOAD_FOLDER'], f'tts_{base_ts}.wav')
         if os.path.exists(tts_wav):
             os.remove(tts_wav)
@@ -7766,6 +8140,15 @@ def _run_trailer_job(jid, params):
     result = dict(
         status='ok', trailer_url=f'/uploads/{filename}',
         orig_name=orig_name,
+        # The resolved source video actually rendered from -- the single
+        # original HIRES file, or the already-combined multi-file result if
+        # Browse Library's multi-select combine was used. Kept separately
+        # from trailer_url (the GENERATED promo) specifically for Send to
+        # destination's csv_video case: the CSV's timecodes describe cuts
+        # into THIS file, not into the generated promo's own, completely
+        # different timeline, so a destination wanting both needs this one
+        # alongside the CSV, not the edited output.
+        source_video_path=path,
         total_scenes=len(scene_list), selected_scenes=len(selected),
         trailer_duration=round(assembled_duration, 1),
         scenes_duration=round(total_sel, 1),
@@ -7781,23 +8164,24 @@ def _run_trailer_job(jid, params):
             'quality': s['total_score'], 'duration': round(s['selected_dur'], 1),
             'description': _scene_desc(s)
         } for i, s in enumerate(selected)])
-    job_set(jid, percent=100, step='Done', done=True, result=result)
+    # library_add() runs BEFORE the job is marked done, not after -- doing it
+    # the other way (mark done, then fix up the result with library_id
+    # afterward) leaves a real window where a client polling progress sees
+    # done=True with no library_id yet, since library_add() does a real file
+    # copy plus a DB insert that takes measurable time. Send to destination
+    # needs a real library_id to target and has no fallback for a missing
+    # one (unlike Download, which already tolerates it via a filename-based
+    # fallback) -- so that window is a real bug, not just a cosmetic gap.
+    # Still wrapped in its own try/except: a failed library save (disk full,
+    # permissions) must not stop the render from being marked done at all --
+    # the user's file is still sitting in UPLOAD_FOLDER and downloadable
+    # either way, just without a permanent library entry.
     try:
         result['library_id'] = library_add(filename, result,
                                             user_id=params.get('user_id'), username=params.get('username'))
-        # job_set() above already persisted `result` -- but that write happens
-        # via JSON serialization at call time, not a live reference, so it
-        # captured `result` BEFORE library_id existed on it. Re-persisting
-        # here means callers reading the job's stored result (like the
-        # frontend, or Send to destination, which needs a real library_id to
-        # target) actually get it. The existing "Download selected format"
-        # button already had a filename-based fallback for exactly this gap,
-        # which is why it was never reported as broken -- Send to destination
-        # doesn't have an equivalent fallback, so this needed fixing rather
-        # than working around.
-        job_set(jid, result=result)
     except Exception as e:
         print(f'Trailer library save failed (job still succeeded): {e}')
+    job_set(jid, percent=100, step='Done', done=True, result=result)
     # No ip here -- this runs in the background render thread, well past the
     # point the original request (which had it) returned. user_id/username
     # are available because they're already threaded through params for

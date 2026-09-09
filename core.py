@@ -30,6 +30,35 @@ if os.environ.get('TRUST_PROXY_HEADERS', '').lower() in ('1', 'true', 'yes'):
 app.config['UPLOAD_FOLDER'] = tempfile.mkdtemp()
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024 * 1024
 
+_upload_temp_dir = os.environ.get('UPLOAD_TEMP_DIR', '').strip()
+if _upload_temp_dir:
+    # A deployment's system drive can genuinely run out of space from this
+    # folder alone -- it holds every uploaded/staged source file plus every
+    # intermediate processing file for as long as a render takes. Explicitly
+    # setting this env var redirects all of that to a chosen drive/folder
+    # (e.g. a data drive with real headroom) instead of wherever the OS
+    # default temp location happens to be, which on Windows is normally on
+    # the system drive regardless of where the app itself is installed.
+    #
+    # Still uses mkdtemp() (a fresh, randomly-named subfolder under the
+    # chosen parent) rather than the chosen folder directly -- preserves the
+    # existing "clean slate every process start" behavior other code
+    # depends on, just relocates WHERE that fresh folder lives.
+    try:
+        os.makedirs(_upload_temp_dir, exist_ok=True)
+        app.config['UPLOAD_FOLDER'] = tempfile.mkdtemp(dir=_upload_temp_dir)
+    except OSError as e:
+        # Deliberately does not fall back silently: silently using the
+        # system temp location anyway is exactly the outcome this setting
+        # exists to prevent, so a misconfigured/inaccessible folder needs to
+        # be loud about it rather than quietly doing the wrong thing.
+        print('=' * 64)
+        print(f' UPLOAD_TEMP_DIR is set to "{_upload_temp_dir}" but could not be')
+        print(f' created or used: {e}')
+        print(f' Falling back to the system temp location for this run --')
+        print(f' fix the path or its permissions, then restart.')
+        print('=' * 64)
+
 _SECRET_KEY_FILE = os.environ.get('SECRET_KEY_FILE',
     os.path.join(os.path.dirname(os.path.abspath(__file__)), '.secret_key'))
 try:

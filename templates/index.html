@@ -408,6 +408,7 @@ p{color:var(--ink-dim);font-size:13px;line-height:1.65;margin:8px 0}
   display:none;align-items:center;gap:6px;font-size:12px;
   background:rgba(52,230,197,.1);border:1px solid rgba(52,230,197,.35);
   color:var(--phosphor);border-radius:7px;padding:5px 10px;max-width:100%;
+  margin-top:8px;
 }
 .net-file-chip .chip-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px}
 .net-file-chip .chip-x{cursor:pointer;opacity:.7;flex-shrink:0}
@@ -437,6 +438,7 @@ p{color:var(--ink-dim);font-size:13px;line-height:1.65;margin:8px 0}
   padding:9px 10px;cursor:pointer;border-radius:7px;
 }
 .net-modal-row:hover{background:rgba(52,230,197,.08)}
+.net-modal-row.selected{background:rgba(52,230,197,.16);outline:1px solid var(--phosphor)}
 .net-modal-row .row-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .net-modal-row .row-size{opacity:.55;flex-shrink:0;font-size:11px}
 .net-multi-check{flex:0 0 auto;width:15px;height:15px;cursor:pointer;accent-color:var(--accent,#4f8cff)}
@@ -721,7 +723,7 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
     <div class="tab{{ ' active' if default_tab == 'p-dashboard' else '' }}" onclick="switchTab('p-dashboard',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg></span><span class=tab-text>Dashboard</span></div>
     <div class="rail-section">Create</div>
     {% if current_role == 'admin' or 'promo_generation' in current_permissions %}
-    <div class="tab{{ ' active' if default_tab == 'p-trailer' else '' }}" onclick="switchTab('p-trailer',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9.5v5l4.5-2.5L10 9.5z"/></svg></span><span class=tab-text>Generate Promo Plug</span></div>
+    <div class="tab{{ ' active' if default_tab == 'p-trailer' else '' }}" onclick="switchTab('p-trailer',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9.5v5l4.5-2.5L10 9.5z"/></svg></span><span class=tab-text>Episodic Plug</span></div>
     {% endif %}
     {% if current_role == 'admin' or 'music_generation' in current_permissions %}
     <div class="tab{{ ' active' if default_tab == 'p-music' else '' }}" onclick="switchTab('p-music',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l11-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg></span><span class=tab-text>Music Generation</span></div>
@@ -771,7 +773,7 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
 </nav>
 <div class="container">
 
-<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadNetworkFolders==='function'&&!networkFoldersLoaded){loadNetworkFolders()}if(id==='p-config'&&typeof loadProductionTab==='function'&&!productionTabLoaded){loadProductionTab()}if(id==='p-config'&&typeof loadTwofaStatus==='function'&&!twofaLoaded){loadTwofaStatus()}if(id==='p-config'&&typeof loadUsersTab==='function'&&!usersTabLoaded){loadUsersTab()}if(id==='p-config'&&typeof loadAuditLog==='function'&&!auditLogLoaded){loadAuditLog()}if(id==='p-music'&&typeof loadAceStepModels==='function'){loadAceStepModels()}if(id==='p-jobs'&&typeof loadAdminJobs==='function'){loadAdminJobs()}if(id==='p-dashboard'&&typeof loadDashboard==='function'){loadDashboard()}try{localStorage.setItem('prism_last_tab',id)}catch(e){}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active');try{var panel=btn.closest('.panel');if(panel)localStorage.setItem('prism_subtab_'+panel.id,id)}catch(e){}}
+<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadNetworkFolders==='function'&&!networkFoldersLoaded){loadNetworkFolders()}if(id==='p-config'&&typeof loadNetworkDestinations==='function'&&!networkDestinationsLoaded){loadNetworkDestinations()}if(id==='p-config'&&typeof loadProductionTab==='function'&&!productionTabLoaded){loadProductionTab()}if(id==='p-config'&&typeof loadTwofaStatus==='function'&&!twofaLoaded){loadTwofaStatus()}if(id==='p-config'&&typeof loadUsersTab==='function'&&!usersTabLoaded){loadUsersTab()}if(id==='p-config'&&typeof loadAuditLog==='function'&&!auditLogLoaded){loadAuditLog()}if(id==='p-music'&&typeof loadAceStepModels==='function'){loadAceStepModels()}if(id==='p-jobs'&&typeof loadAdminJobs==='function'){loadAdminJobs()}if(id==='p-dashboard'&&typeof loadDashboard==='function'){loadDashboard()}try{localStorage.setItem('prism_last_tab',id)}catch(e){}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active');try{var panel=btn.closest('.panel');if(panel)localStorage.setItem('prism_subtab_'+panel.id,id)}catch(e){}}
 document.addEventListener('DOMContentLoaded',function(){
   // Restore the tab (and, within it, the sub-tab) the user was last on,
   // since switchTab()/switchSubTab() only toggle CSS classes client-side
@@ -1053,9 +1055,6 @@ document.addEventListener("DOMContentLoaded", function(){
       Generate a promo
     </button>
     {% endif %}
-    {% if current_role == 'admin' or 'player' in current_permissions %}
-    <button type=button class="btn" style="background:transparent;border:1px solid var(--line);color:var(--ink)" onclick="switchTab('p-tools', document.querySelector('.tab[onclick*=p-tools]'))">Browse saved trailers</button>
-    {% endif %}
   </div>
 
 
@@ -1128,6 +1127,7 @@ document.addEventListener("DOMContentLoaded", function(){
   <div id=tr-dropzone class="dropzone">
     <input type=file name=file id=tr-file-input accept=video/* data-skip-clear-ui="1" style="display:none">
     <input type=hidden name=network_file id=tr-network-file value="">
+    <input type=hidden name=file_segment_durations id=tr-file-segment-durations value="">
     <div id=tr-dropzone-prompt>
       <div style="font-size:28px;line-height:1;margin-bottom:6px">&#8682;</div>
       <div style="font-size:14px;margin-bottom:12px">{% if allow_local_upload %}Drag &amp; drop a video here{% else %}Pick a video from the library{% endif %}</div>
@@ -1157,6 +1157,10 @@ document.addEventListener("DOMContentLoaded", function(){
     </div>
     <div id="tr-network-favorites" class="net-modal-favorites" style="display:none"></div>
     <div id=tr-network-list class="net-modal-list" style="padding:0;max-height:280px">Loading&hellip;</div>
+    <div id="tr-network-pick-bar" style="display:none;padding:10px;border-top:1px solid var(--line);align-items:center;gap:10px">
+      <span id="tr-network-pick-status" style="font-size:12px;flex:1"></span>
+      <button type="button" class="btn btn-primary-promo" id="tr-network-pick-btn">Use this file</button>
+    </div>
     <div id="tr-network-combine-bar" style="display:none;padding:10px;border-top:1px solid var(--line);align-items:center;gap:10px">
       <span id="tr-network-combine-status" style="font-size:12px;flex:1"></span>
       <button type="button" class="btn btn-primary-promo" id="tr-network-combine-btn" onclick="combineTrNetworkSelection()">Combine selected</button>
@@ -1245,15 +1249,15 @@ document.addEventListener("DOMContentLoaded", function(){
         })
       })()
     </script>
-    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0 4px">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:14px 0 4px">
       <button type=button class="browse-btn" onclick="document.getElementById('script-file-input').click()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>Attach script
       </button>
       <input type=file name=script_file id=script-file-input data-skip-clear-ui="1"
              accept=".pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.txt,.md,.csv" style="display:none"
              onchange="scriptFileChosen(this); updateJobSummary()">
-      <span class="net-file-chip" id=script-file-chip style="display:none"><span class=chip-name></span><span class=chip-x onclick="clearScriptFile(); updateJobSummary()">&#10005;</span></span>
     </div>
+    <span class="net-file-chip" id=script-file-chip style="display:none"><span class=chip-name></span><span class=chip-x onclick="clearScriptFile(); updateJobSummary()">&#10005;</span></span>
   <div class="asset-section" id=asset-narration style="margin-top:10px">
     <div class="asset-section-header" onclick="toggleAssetSection(this)">
       <span class="asset-section-title">Narration</span>
@@ -1281,6 +1285,7 @@ document.addEventListener("DOMContentLoaded", function(){
     <input type=hidden id=vo_upload_network name=vo_upload_network value="">
   <input type=hidden id=vo_upload_skip_template name=vo_upload_skip_template value="">
     <span class="net-file-chip" id=vo_upload_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('vo_upload')">&#10005;</span></span>
+    <canvas id="vo_upload_waveform" width="420" height="60" style="display:none;width:100%;max-width:420px;height:60px;background:var(--sunken,#0b1220);border:1px solid var(--line);border-radius:6px;margin:8px 0 0;cursor:pointer"></canvas>
     <audio id="vo_upload_player" controls style="display:none;width:100%;max-width:420px;height:32px;margin:8px 0 4px"></audio>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0">
       <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Trim uploaded audio — start (s):</span>
@@ -1469,7 +1474,8 @@ document.addEventListener("DOMContentLoaded", function(){
   <input type=hidden id=title_card_vo_network name=title_card_vo_network value="">
   <input type=hidden id=title_card_vo_skip_template name=title_card_vo_skip_template value="">
   <span class="net-file-chip" id=title_card_vo_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('title_card_vo')">&#10005;</span></span>
-  <audio id="title_card_vo_player" controls style="display:none;width:100%;max-width:420px;height:32px;margin-bottom:6px"></audio>
+  <canvas id="title_card_vo_waveform" width="420" height="60" style="display:none;width:100%;max-width:420px;height:60px;background:var(--sunken,#0b1220);border:1px solid var(--line);border-radius:6px;margin:8px 0 0;cursor:pointer"></canvas>
+    <audio id="title_card_vo_player" controls style="display:none;width:100%;max-width:420px;height:32px;margin-bottom:6px"></audio>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 12px">
     <button type=button class=btn style="padding:4px 10px;font-size:11px" onclick="cardVoSetPoint('title_card_vo','start')">Set in (player)</button>
     <button type=button class=btn style="padding:4px 10px;font-size:11px" onclick="cardVoSetPoint('title_card_vo','end')">Set out (player)</button>
@@ -1506,7 +1512,8 @@ document.addEventListener("DOMContentLoaded", function(){
   <input type=hidden id=end_card_vo_network name=end_card_vo_network value="">
   <input type=hidden id=end_card_vo_skip_template name=end_card_vo_skip_template value="">
   <span class="net-file-chip" id=end_card_vo_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('end_card_vo')">&#10005;</span></span>
-  <audio id="end_card_vo_player" controls style="display:none;width:100%;max-width:420px;height:32px;margin-bottom:6px"></audio>
+  <canvas id="end_card_vo_waveform" width="420" height="60" style="display:none;width:100%;max-width:420px;height:60px;background:var(--sunken,#0b1220);border:1px solid var(--line);border-radius:6px;margin:8px 0 0;cursor:pointer"></canvas>
+    <audio id="end_card_vo_player" controls style="display:none;width:100%;max-width:420px;height:32px;margin-bottom:6px"></audio>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 12px">
     <button type=button class=btn style="padding:4px 10px;font-size:11px" onclick="cardVoSetPoint('end_card_vo','start')">Set in (player)</button>
     <button type=button class=btn style="padding:4px 10px;font-size:11px" onclick="cardVoSetPoint('end_card_vo','end')">Set out (player)</button>
@@ -1542,12 +1549,24 @@ document.addEventListener("DOMContentLoaded", function(){
   <p id=bgm-gating-note style="display:none;margin-top:6px;margin-bottom:8px;font-size:12px;color:var(--amber)">"Generate music" is unavailable — ACE-Step isn't reachable.</p>
   <div id=scoring-upload-area style="display:none">
     <div class="browse-row">
-      {% if allow_local_upload %}<input type=file name=scoring_audio accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" data-net-field="scoring_audio">{% endif %}
+      {% if allow_local_upload %}<input type=file name=scoring_audio accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" data-net-field="scoring_audio" onchange="cardVoFileChosen(this,'scoring_audio')">{% endif %}
       <button type=button class="browse-btn" onclick="openNetworkBrowser('scoring_audio','music','Music')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
     </div>
     <input type=hidden id=scoring_audio_network name=scoring_audio_network value="">
   <input type=hidden id=scoring_audio_skip_template name=scoring_audio_skip_template value="">
     <span class="net-file-chip" id=scoring_audio_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('scoring_audio')">&#10005;</span></span>
+    <canvas id="scoring_audio_waveform" width="420" height="60" style="display:none;width:100%;max-width:420px;height:60px;background:var(--sunken,#0b1220);border:1px solid var(--line);border-radius:6px;margin:8px 0 0;cursor:pointer"></canvas>
+    <audio id="scoring_audio_player" controls style="display:none;width:100%;max-width:420px;height:32px;margin:8px 0 4px"></audio>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0">
+      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Trim uploaded music — start (s):</span>
+      <input type=number name=scoring_audio_trim_start id="scoring_audio_start" value=0 min=0 step=0.5 style="width:80px"></span>
+      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">end (s, blank=to end):</span>
+      <input type=number name=scoring_audio_trim_end id="scoring_audio_end" min=0 step=0.5 style="width:80px"></span>
+      <button type=button class="btn" style="padding:5px 10px;font-size:12px" onclick="cardVoSetPoint('scoring_audio','start')">Set in from player</button>
+      <button type=button class="btn" style="padding:5px 10px;font-size:12px" onclick="cardVoSetPoint('scoring_audio','end')">Set out from player</button>
+    </div>
+    <span id="scoring_audio_preview_note" style="font-size:12px;opacity:.75;display:block;margin:-2px 0 6px"></span>
+    <p style="margin-top:6px;margin-bottom:8px;font-size:12px;opacity:.75">Selects which portion of the uploaded track to use as background music -- picked up whether the file came from a direct upload or Browse Library.</p>
   </div>
     </div>
   </div>
@@ -1871,7 +1890,27 @@ document.addEventListener("DOMContentLoaded", function(){
     // no-ops in that case, but a clickable button that silently does
     // nothing reads as broken rather than as safe.
     document.getElementById('template-delete-btn').disabled = !tpl
-    if(!tpl){ box.style.display = 'none'; box.innerHTML = ''; return }
+    if(!tpl){
+      box.style.display = 'none'; box.innerHTML = ''
+      // Switching back to "no template" must not leave the PREVIOUS
+      // template's files sitting in the form looking selected -- confirmed
+      // this was a real gap: this used to just hide the summary box and
+      // stop, leaving every template-sourced chip untouched. Only clears
+      // slots the template itself set (chip.dataset.fromTemplate === '1');
+      // anything the person picked by hand stays exactly as they left it,
+      // since that's their own deliberate choice, not the template's.
+      Object.keys(TPL_SLOT_TO_FIELD).forEach(function(slot){
+        var field = TPL_SLOT_TO_FIELD[slot]
+        var chip = document.getElementById(field + '_chip')
+        if(chip && chip.dataset.fromTemplate === '1'){
+          window.clearNetworkField(field)
+          var skip = document.getElementById(field + '_skip_template')
+          if(skip) skip.value = ''  // an empty slot from leaving a template isn't a manual opt-out
+        }
+      })
+      refreshAllAssetSummaries()
+      return
+    }
 
     function row(label, value, dim){
       return '<div style="display:flex;gap:8px;padding:2px 0">' +
@@ -1898,16 +1937,39 @@ document.addEventListener("DOMContentLoaded", function(){
     if(!st.transition && tpl.transition) st.transition = tpl.transition
     if(!st.xfade_dur && tpl.xfade_dur) st.xfade_dur = tpl.xfade_dur
     var seen = {}
-    var settingRows = Object.keys(TPL_SETTING_LABELS).filter(function(k){
-      return st[k] !== undefined && st[k] !== '' && !seen[k] && (seen[k] = 1)
-    }).map(function(k){
+    // Settings that only make sense for one narration mode -- shown
+    // unconditionally before this fix, which is exactly the reported bug:
+    // Voice engine/language/rate (Fish Audio TTS parameters) appeared in a
+    // template's summary even when that template uses uploaded narration,
+    // where those fields were never actually read at render time. VO
+    // trim in/out is the mirror case -- only meaningful for an uploaded
+    // file being cut down, never for freshly-generated TTS audio. vo_start
+    // and vo_volume apply to narration either way, so they're not gated
+    // here; the gate only removes fields tied to ONE specific source.
+    var TTS_ONLY_VO_FIELDS = {vo_engine: 1, vo_voice: 1, vo_language: 1, vo_rate: 1, vo_text: 1}
+    var UPLOAD_ONLY_VO_FIELDS = {vo_trim_start: 1, vo_trim_end: 1}
+    function settingApplies(k){
+      if(st.vo_mode === 'none' && (TTS_ONLY_VO_FIELDS[k] || UPLOAD_ONLY_VO_FIELDS[k] || k === 'vo_start' || k === 'vo_volume')) return false
+      if(st.vo_mode === 'upload' && TTS_ONLY_VO_FIELDS[k]) return false
+      if(st.vo_mode === 'tts' && UPLOAD_ONLY_VO_FIELDS[k]) return false
+      return true
+    }
+    var shownKeys = Object.keys(TPL_SETTING_LABELS).filter(function(k){
+      return st[k] !== undefined && st[k] !== '' && !seen[k] && (seen[k] = 1) && settingApplies(k)
+    })
+    var settingRows = shownKeys.map(function(k){
       return row(TPL_SETTING_LABELS[k], tplSettingValue(k, st[k]), false)
     }).join('')
     // Anything saved that has no label yet still gets shown, so nothing is hidden.
-    var unlabelled = Object.keys(st).filter(function(k){ return !TPL_SETTING_LABELS[k] && st[k] !== '' })
-      .map(function(k){ return row(k, String(st[k]), false) }).join('')
+    var unlabelledKeys = Object.keys(st).filter(function(k){ return !TPL_SETTING_LABELS[k] && st[k] !== '' })
+    var unlabelled = unlabelledKeys.map(function(k){ return row(k, String(st[k]), false) }).join('')
 
-    var nset = Object.keys(st).length
+    // Counts what's actually displayed below, not every key stored on the
+    // template -- otherwise "Settings (17)" would still say 17 even after
+    // the filtering above hides some of them, which reads as a second,
+    // separate inconsistency on top of the original bug.
+    var nset = shownKeys.length + unlabelledKeys.length
+
     box.innerHTML =
       '<div style="font-weight:600;margin-bottom:8px">' + escapeHtmlLite(tpl.name) + '</div>' +
       '<div style="opacity:.6;text-transform:uppercase;letter-spacing:.06em;font-size:10px;margin:8px 0 4px">Settings (' + nset + ')</div>' +
@@ -2231,12 +2293,15 @@ document.addEventListener("DOMContentLoaded", function(){
       var url = URL.createObjectURL(input.files[0])
       cardVoObjectUrls[prefix] = url
       player.src = url
-      player.style.display = ''
+      player.style.display = 'block'
       note.textContent = 'Play the file, pause where you want the cut, then click Set in / Set out.'
+      renderWaveform(prefix, input.files[0])
     } else {
       player.removeAttribute('src')
       player.style.display = 'none'
       note.textContent = ''
+      var canvas = document.getElementById(prefix + '_waveform')
+      if(canvas){ canvas.style.display = 'none'; canvas._peaks = null }
     }
   }
   function cardVoSetPoint(prefix, which){
@@ -2247,6 +2312,124 @@ document.addEventListener("DOMContentLoaded", function(){
     document.getElementById(prefix + (which === 'start' ? '_start' : '_end')).value = t
     note.textContent = (which === 'start' ? 'In' : 'Out') + ' point set to ' + t + 's from the player.'
   }
+
+  // ---- Waveform display for uploaded/browsed audio (VO + narration, music) ----
+  // A plain <audio> element gives no visual sense of where a beat, a pause,
+  // or a line of dialogue actually falls -- finding a good in/out point
+  // meant either scrubbing blind or listening start-to-finish. This decodes
+  // the audio client-side (Web Audio API) and draws its actual shape, with
+  // the played portion filled in as it plays and click-to-seek on the
+  // waveform itself -- the same "see it, then click Set in/out" workflow
+  // the existing buttons already support, just with something to actually
+  // look at while doing it. A real waveform image is a nice-to-have, not
+  // essential to generating a promo, so every failure path here degrades
+  // silently to "no waveform shown" rather than surfacing an error or
+  // blocking the plain <audio> player, which keeps working regardless.
+  // renderWaveform accepts EITHER a real File object (direct upload) or a
+  // URL string (network-browsed file, already reachable at /uploads/...).
+  // This distinction matters, not just convenience: fetch() against a
+  // blob: URL (what a direct upload's own player.src actually is) is
+  // blocked by this app's own Content Security Policy (connect-src
+  // 'self' -- blob: URLs don't satisfy that, even though they're
+  // effectively local) -- confirmed directly by hitting that exact CSP
+  // violation while testing this. Reading the File object's own bytes via
+  // .arrayBuffer() sidesteps fetch (and therefore the CSP) entirely for
+  // that case; a network-browsed file has a real, same-origin HTTP URL,
+  // where fetch works fine and is simpler than needing an extra request
+  // just to get a File object back for one that was never local to begin with.
+  function renderWaveform(prefix, fileOrUrl){
+    var canvas = document.getElementById(prefix + '_waveform')
+    if(!canvas) return
+    canvas.style.display = 'none'
+    var AudioContextClass = window.AudioContext || window.webkitAudioContext
+    if(!AudioContextClass) return
+    var bufferPromise = (fileOrUrl instanceof Blob) ? fileOrUrl.arrayBuffer()
+                       : fetch(fileOrUrl).then(function(r){ return r.arrayBuffer() })
+    bufferPromise
+      .then(function(buf){
+        var ctx = new AudioContextClass()
+        return ctx.decodeAudioData(buf).then(function(audioBuffer){
+          _computeWaveformPeaks(canvas, audioBuffer)
+          canvas.style.display = 'block'
+          _paintWaveform(canvas, 0)
+          ctx.close()
+        })
+      })
+      .catch(function(e){ console.warn('Could not render waveform for ' + prefix + ':', e) })
+  }
+
+  function _computeWaveformPeaks(canvas, audioBuffer){
+    var dpr = window.devicePixelRatio || 1
+    var displayWidth = canvas.clientWidth || 420
+    var displayHeight = canvas.clientHeight || 60
+    canvas.width = displayWidth * dpr
+    canvas.height = displayHeight * dpr
+    var data = audioBuffer.getChannelData(0)  // first channel only -- enough for a visual shape, no need for a full stereo render
+    var barCount = Math.min(300, Math.max(20, Math.floor(displayWidth / 2)))
+    var samplesPerBar = Math.max(1, Math.floor(data.length / barCount))
+    // Sampling a subset of each bucket rather than every single sample --
+    // a multi-minute track at 44.1kHz is millions of samples, and a
+    // waveform's visual shape doesn't need every one of them checked to
+    // look right, just enough to catch real peaks.
+    var step = Math.max(1, Math.floor(samplesPerBar / 50))
+    var peaks = []
+    for(var i = 0; i < barCount; i++){
+      var start = i * samplesPerBar
+      var peak = 0
+      for(var j = 0; j < samplesPerBar; j += step){
+        var v = Math.abs(data[start + j] || 0)
+        if(v > peak) peak = v
+      }
+      peaks.push(peak)
+    }
+    canvas._peaks = peaks
+    canvas._displayWidth = displayWidth
+    canvas._displayHeight = displayHeight
+    canvas._dpr = dpr
+  }
+
+  function _paintWaveform(canvas, progress){
+    var peaks = canvas._peaks
+    if(!peaks) return
+    var displayWidth = canvas._displayWidth, displayHeight = canvas._displayHeight, dpr = canvas._dpr
+    var g = canvas.getContext('2d')
+    g.setTransform(dpr, 0, 0, dpr, 0, 0)
+    g.clearRect(0, 0, displayWidth, displayHeight)
+    var mid = displayHeight / 2
+    var accent = getComputedStyle(document.documentElement).getPropertyValue('--phosphor').trim() || '#34e6c5'
+    var barCount = peaks.length
+    var playedBars = Math.floor((progress || 0) * barCount)
+    for(var i = 0; i < barCount; i++){
+      var barHeight = Math.max(1, peaks[i] * displayHeight)
+      var x = (i / barCount) * displayWidth
+      var barWidth = Math.max(1, displayWidth / barCount - 1)
+      g.fillStyle = i < playedBars ? accent : 'rgba(255,255,255,.25)'
+      g.fillRect(x, mid - barHeight / 2, barWidth, barHeight)
+    }
+  }
+
+  // Wires a waveform canvas to its <audio> player once, for a given prefix
+  // -- keeps the fill in sync during playback, and turns a click on the
+  // waveform into a seek, matching how a real waveform-based scrubber
+  // normally behaves.
+  var _waveformWired = {}
+  function wireWaveformInteraction(prefix){
+    if(_waveformWired[prefix]) return
+    _waveformWired[prefix] = true
+    var canvas = document.getElementById(prefix + '_waveform')
+    var player = document.getElementById(prefix + '_player')
+    if(!canvas || !player) return
+    player.addEventListener('timeupdate', function(){
+      if(player.duration) _paintWaveform(canvas, player.currentTime / player.duration)
+    })
+    canvas.addEventListener('click', function(e){
+      if(!canvas._peaks || !player.duration) return
+      var rect = canvas.getBoundingClientRect()
+      var frac = (e.clientX - rect.left) / rect.width
+      player.currentTime = Math.max(0, Math.min(1, frac)) * player.duration
+    })
+  }
+  ['vo_upload', 'title_card_vo', 'end_card_vo', 'scoring_audio'].forEach(wireWaveformInteraction)
   </script>
   </div><!-- /#generator-settings -->
   <div class="promo-actions">
@@ -2437,6 +2620,15 @@ document.addEventListener("DOMContentLoaded", function(){
   }
 
   function showNetworkPreview(localName, origName, size){
+    // Cleared unconditionally here, not just where a single pick happens to
+    // call this -- every caller of showNetworkPreview funnels through this
+    // one place, so this is the one spot that reliably prevents an earlier
+    // combine's segment durations from silently surviving onto an unrelated
+    // later single-file pick. combineTrNetworkSelection re-populates this
+    // right after its own call to showNetworkPreview, which runs after this
+    // line since it happens later in that function's own flow.
+    var segDurField = document.getElementById('tr-file-segment-durations')
+    if(segDurField) segDurField.value = ''
     // Unlike the local-file path above, this file genuinely IS already
     // staged server-side (that's what got it here) -- so this uses the
     // real /api/media/probe endpoint instead of the browser's own decode.
@@ -2477,6 +2669,8 @@ document.addEventListener("DOMContentLoaded", function(){
   function clearPreview(){
     fileInput.value = ''
     networkFileInput.value = ''
+    var segDurField = document.getElementById('tr-file-segment-durations')
+    if(segDurField) segDurField.value = ''
     preview.classList.remove('shown')
     previewThumb.removeAttribute('src')
     previewThumb.style.display = 'none'
@@ -2499,6 +2693,39 @@ document.addEventListener("DOMContentLoaded", function(){
   // folder than trNetworkSubpath itself, since a recursive search can span
   // many subfolders at once) and shows the picked-file preview.
   var trNetworkFetchAbort = null  // the in-flight /api/network/fetch's AbortController, if any
+
+  // Selecting a row no longer fetches immediately -- a large file over SMB
+  // is a real, sometimes-slow operation, and clicking the wrong row by
+  // accident used to start staging it right away with no chance to back
+  // out first. This mirrors the same "select, then confirm with an
+  // explicit button" shape the multi-select "Combine selected" bar
+  // already uses, just for a single file instead of several.
+  var trNetworkPendingPick = null  // {name, subpath} -- the one row currently armed, or null
+
+  function selectTrNetworkRow(rowEl, name, subpath){
+    document.querySelectorAll('#tr-network-list .net-modal-row.selected').forEach(function(el){
+      el.classList.remove('selected')
+    })
+    rowEl.classList.add('selected')
+    trNetworkPendingPick = {name: name, subpath: subpath || ''}
+    var bar = document.getElementById('tr-network-pick-bar')
+    var status = document.getElementById('tr-network-pick-status')
+    if(bar){ bar.style.display = 'flex' }
+    if(status){ status.textContent = 'Selected: ' + name }
+  }
+
+  function resetTrNetworkPick(){
+    trNetworkPendingPick = null
+    var bar = document.getElementById('tr-network-pick-bar')
+    if(bar) bar.style.display = 'none'
+  }
+
+  var pickBarBtn = document.getElementById('tr-network-pick-btn')
+  if(pickBarBtn) pickBarBtn.addEventListener('click', function(){
+    if(!trNetworkPendingPick) return
+    pickTrNetworkFile(trNetworkPendingPick.name, trNetworkPendingPick.subpath)
+    trNetworkPendingPick = null
+  })
 
   function pickTrNetworkFile(name, subpath){
     // A real fetch of a multi-GB file over SMB can take a while, and until
@@ -2598,6 +2825,13 @@ document.addEventListener("DOMContentLoaded", function(){
             return
           }
           showNetworkPreview(d.filename, d.orig_name, d.size)
+          // Each segment's own duration, in combine order -- lets a
+          // script's "M1"/"M2" cues be offset to the right point in this
+          // now-single combined file. Cleared whenever the source video is
+          // picked any other way (see pickTrNetworkFile / a direct upload's
+          // own change handler), so a stale combine from an earlier pick
+          // never silently applies to an unrelated single file.
+          document.getElementById('tr-file-segment-durations').value = JSON.stringify(d.segment_durations || [])
         }).catch(function(e){
           status.textContent = 'Error combining files: ' + e
           status.style.color = 'var(--tally)'
@@ -2631,6 +2865,7 @@ document.addEventListener("DOMContentLoaded", function(){
   function renderTrNetworkList(folders, files, subpath){
     networkList.innerHTML = ''
     trNetworkSelected = []
+    resetTrNetworkPick()
     updateTrNetworkCombineBar()
     if(subpath){
       var up = document.createElement('div')
@@ -2677,7 +2912,7 @@ document.addEventListener("DOMContentLoaded", function(){
       sizeSpan.className = 'row-size'
       sizeSpan.textContent = humanSize(f.size)
       row.appendChild(sizeSpan)
-      row.addEventListener('click', function(){ pickTrNetworkFile(f.name, subpath) })
+      row.addEventListener('click', function(){ selectTrNetworkRow(row, f.name, subpath) })
       networkList.appendChild(row)
     })
   }
@@ -2686,6 +2921,7 @@ document.addEventListener("DOMContentLoaded", function(){
   // subfolders at once), so each row shows where it actually lives.
   function renderTrNetworkSearchResults(files, truncated){
     networkList.innerHTML = ''
+    resetTrNetworkPick()
     if(!files.length){
       networkList.innerHTML = '<div class="net-modal-empty">No files matched, searched every subfolder.</div>'
       return
@@ -2714,16 +2950,19 @@ document.addEventListener("DOMContentLoaded", function(){
         updateTrNetworkCombineBar()
       })
       row.appendChild(cb)
-      var locationLabel = f.subpath ? f.subpath.replace(/\\/g, ' / ') + ' / ' : ''
+      // Deliberately shows only the filename, not a folder-path prefix --
+      // f.subpath is still tracked and used correctly for fetching/
+      // combining regardless of what's displayed here; this only changes
+      // what's shown on screen.
       var nameSpan = document.createElement('span')
       nameSpan.className = 'row-name'
-      nameSpan.innerHTML = '<span style="opacity:.55;font-size:11px">' + locationLabel + '</span>' + f.name
+      nameSpan.textContent = f.name
       row.appendChild(nameSpan)
       var sizeSpan = document.createElement('span')
       sizeSpan.className = 'row-size'
       sizeSpan.textContent = humanSize(f.size)
       row.appendChild(sizeSpan)
-      row.addEventListener('click', function(){ pickTrNetworkFile(f.name, f.subpath) })
+      row.addEventListener('click', function(){ selectTrNetworkRow(row, f.name, f.subpath) })
       networkList.appendChild(row)
     })
   }
@@ -2843,7 +3082,16 @@ document.addEventListener("DOMContentLoaded", function(){
   }
 
   fileInput.addEventListener('change', function(){
-    if(fileInput.files && fileInput.files[0]) showPreview(fileInput.files[0])
+    if(fileInput.files && fileInput.files[0]){
+      // A direct upload never goes through showNetworkPreview (that's only
+      // for network-staged files), so it needs its own reset of any
+      // earlier combine's segment durations -- otherwise a script's "M2"
+      // cue could get offset against a combine that no longer has anything
+      // to do with the file actually being used.
+      var segDurField = document.getElementById('tr-file-segment-durations')
+      if(segDurField) segDurField.value = ''
+      showPreview(fileInput.files[0])
+    }
   })
   clearBtn.addEventListener('click', clearPreview)
   // browseLink (and the dropzone's own click-to-browse-local behavior) only
@@ -4684,7 +4932,8 @@ function renderTrailerResult(d){
       '</div>'+
       '<div class="delivery-row" style="margin-top:8px">'+
         '<button type="button" class="btn btn-primary-promo" id="tr-download-selected">Download selected format</button>'+
-        '<button type="button" class="btn btn-secondary-promo" id="tr-send-destination-btn">Send to destination</button>'+
+        '<select id="tr-destination-select" style="display:none;font-size:12px;padding:6px 8px;border-radius:7px;border:1px solid var(--line);background:var(--panel);color:var(--ink)"></select>'+
+        '<button type="button" class="btn btn-secondary-promo" id="tr-send-destination-btn" style="display:none">Send to destination</button>'+
         '<span id="tr-send-destination-status" style="font-size:12px;align-self:center"></span>'+
         '<button type="button" class="btn btn-secondary-promo" id="tr-scene-csv-btn">Scene list CSV</button>'+
         '<button type="button" class="btn btn-secondary-promo" onclick="submitTrailer(true)">Re-preview same setup</button>'+
@@ -4723,19 +4972,38 @@ function renderTrailerResult(d){
 
   var sendBtn = document.getElementById('tr-send-destination-btn')
   var sendStatus = document.getElementById('tr-send-destination-status')
+  var destSelect = document.getElementById('tr-destination-select')
+  // The dropdown and Send button both start hidden (see the markup above) --
+  // only shown once we know at least one destination is actually configured,
+  // rather than showing a control that would just fail with "pick a
+  // destination first" every time for anyone who hasn't set one up.
+  fetch('/api/network/destinations').then(function(r){ return r.json() }).then(function(dd){
+    if(!dd.ok || !dd.items.length) return
+    dd.items.forEach(function(dest){
+      var opt = document.createElement('option')
+      opt.value = dest.id
+      opt.textContent = dest.name
+      destSelect.appendChild(opt)
+    })
+    destSelect.style.display = ''
+    sendBtn.style.display = ''
+  }).catch(function(){})
+
   if(sendBtn) sendBtn.addEventListener('click', function(){
     if(!d.library_id){
       sendStatus.textContent = "Couldn't save this render to the library, so there's nothing to send yet."
       sendStatus.style.color = 'var(--tally)'
       return
     }
+    var destId = destSelect.value
+    var destName = destSelect.options[destSelect.selectedIndex] ? destSelect.options[destSelect.selectedIndex].textContent : ''
     openSaveAsModal(suggest, EXPORT_EXTS[currentDeliveryFormat], function(name){
       sendBtn.disabled = true
-      sendStatus.textContent = 'Sending\u2026'
+      sendStatus.textContent = 'Sending to ' + destName + '\u2026'
       sendStatus.style.color = ''
       fetch('/library/' + d.library_id + '/send-to-destination', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({format: currentDeliveryFormat, filename: name})
+        body: JSON.stringify({destination_id: destId, format: currentDeliveryFormat, filename: name})
       }).then(function(r){ return r.json() }).then(function(dd){
         sendBtn.disabled = false
         if(!dd.ok){
@@ -4743,7 +5011,8 @@ function renderTrailerResult(d){
           sendStatus.style.color = 'var(--tally)'
           return
         }
-        sendStatus.textContent = 'Sent ' + dd.filename
+        var sentList = Array.isArray(dd.sent) ? dd.sent.join(', ') : dd.filename
+        sendStatus.textContent = 'Sent ' + sentList + ' to ' + dd.destination
         sendStatus.style.color = 'var(--phosphor)'
       }).catch(function(e){
         sendBtn.disabled = false
@@ -5666,9 +5935,33 @@ function switchDocs(btn){
 </div>
 
 <div id="p-config-network" class="sub-panel">
-<p style="margin-top:6px;color:var(--ink-dim)">Where Browse Library looks for source files (HIRES, cards, music, VO, SFX), plus one write destination: "Send to destination" on a finished render copies it to this folder instead of downloading through the browser — useful for handing a render off to another system (e.g. a Vantage watch folder) without a manual step. Each category is fully independent — its own full network path, username, and password — since these often live on genuinely different volumes with different credentials. Takes effect immediately; no restart needed.</p>
+<p style="margin-top:6px;color:var(--ink-dim)">Where Browse Library looks for source files (HIRES, cards, music, VO, SFX). Each category is fully independent — its own full network path, username, and password — since these often live on genuinely different volumes with different credentials. Takes effect immediately; no restart needed. Delivery destinations for "Send to destination" are managed separately below — a facility can configure several, each with its own name and format.</p>
 <div id="config-network-folders" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:18px;margin-top:16px">
   <!-- cards injected by loadNetworkFolders() -->
+</div>
+
+<h3 style="margin-top:28px">Delivery destinations</h3>
+<p style="margin-top:6px;color:var(--ink-dim)">Named "Send to destination" targets, shown as a dropdown when delivering a finished render — a facility can configure several (e.g. separate Vantage watch folders, or a MAM ingest and a logging system side by side). Each has its own network path, credentials, and delivery format: the rendered video, the scene-list CSV, or both.</p>
+<div id="config-destinations-list" style="display:flex;flex-direction:column;gap:10px;margin-top:12px">
+  <!-- cards injected by loadNetworkDestinations() -->
+</div>
+<div class="net-card" style="border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:14px">
+  <label style="font-size:12px;font-weight:600;display:block;margin-bottom:6px">Add a destination</label>
+  <div style="display:flex;flex-direction:column;gap:6px">
+    <input type=text id=dest-new-name placeholder="Name, e.g. PMC_MAMS_PUBLISHING" style="width:100%;box-sizing:border-box;padding:6px 9px;margin:0;font-size:12px;border:1px solid var(--line);border-radius:6px;background:var(--elevated);color:var(--ink);font-family:inherit">
+    <input type=text id=dest-new-path placeholder="Full network path, e.g. \\10.0.1.130\vantage\ingest" style="width:100%;box-sizing:border-box;padding:6px 9px;margin:0;font-size:12px;border:1px solid var(--line);border-radius:6px;background:var(--elevated);color:var(--ink);font-family:inherit">
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <input type=text id=dest-new-username placeholder="Username" style="flex:1;min-width:130px;box-sizing:border-box;padding:6px 9px;margin:0;font-size:12px;border:1px solid var(--line);border-radius:6px;background:var(--elevated);color:var(--ink);font-family:inherit">
+      <input type=password id=dest-new-password placeholder="Password" style="flex:1;min-width:130px;box-sizing:border-box;padding:6px 9px;margin:0;font-size:12px;border:1px solid var(--line);border-radius:6px;background:var(--elevated);color:var(--ink);font-family:inherit">
+    </div>
+    <select id=dest-new-kind style="width:100%;box-sizing:border-box;padding:6px 9px;margin:0;font-size:12px;border:1px solid var(--line);border-radius:6px;background:var(--elevated);color:var(--ink);font-family:inherit">
+      <option value="video">Sends: video only</option>
+      <option value="csv_video">Sends: video + scene list CSV</option>
+      <option value="csv">Sends: scene list CSV only</option>
+    </select>
+    <div><button type=button class=btn style="padding:4px 10px;font-size:11px" onclick="addNetworkDestination()">Add destination</button>
+    <span id="dest-new-status" style="font-size:11px;margin-left:6px"></span></div>
+  </div>
 </div>
 </div>
 
@@ -6123,8 +6416,9 @@ async function saveProductionTab(){
 }
 window.saveProductionTab = saveProductionTab
 
-var NETWORK_CATEGORY_LABELS = {hires: 'Video (HIRES)', tcard: 'Title card', endcard: 'End card', music: 'Music', vo: 'VO', sfx: 'SFX', destination: 'Delivery destination (Send to destination)'}
+var NETWORK_CATEGORY_LABELS = {hires: 'Video (HIRES)', tcard: 'Title card', endcard: 'End card', music: 'Music', vo: 'VO', sfx: 'SFX'}
 var networkFoldersLoaded = false
+var networkDestinationsLoaded = false
 async function loadNetworkFolders(){
   var container = document.getElementById('config-network-folders')
   container.innerHTML = '<p style="opacity:.7">Loading\u2026</p>'
@@ -6185,6 +6479,123 @@ async function saveNetworkFolder(cat){
   }
 }
 window.saveNetworkFolder = saveNetworkFolder
+
+// ---- Delivery destinations (Config > Network) ----
+// A list of named "Send to <name>" targets, unlike the single-value network
+// categories above -- rendered as editable cards plus a separate "add new"
+// form, matching the same fetch-and-render pattern every Config tab uses.
+var DEST_KIND_LABELS = {video: 'Video only', csv_video: 'Video + scene list CSV', csv: 'Scene list CSV only'}
+
+async function loadNetworkDestinations(){
+  var container = document.getElementById('config-destinations-list')
+  if(!container) return
+  container.innerHTML = '<p style="opacity:.7">Loading\u2026</p>'
+  try{
+    var r = await fetch('/api/network/destinations')
+    var d = await r.json()
+    if(!d.ok){ container.innerHTML = '<p style="color:var(--amber)">Could not load destinations.</p>'; return }
+    container.innerHTML = ''
+    if(!d.items.length){ container.innerHTML = '<p style="opacity:.6;font-size:12px">No destinations configured yet.</p>' }
+    d.items.forEach(function(dest){
+      var fieldStyle = 'width:100%;box-sizing:border-box;padding:6px 9px;margin:0;font-size:12px;border:1px solid var(--line);border-radius:6px;background:var(--elevated);color:var(--ink);font-family:inherit'
+      var wrap = document.createElement('div')
+      wrap.style.cssText = 'border:1px solid var(--line);border-radius:10px;padding:10px 12px'
+      var kindOptions = Object.keys(DEST_KIND_LABELS).map(function(k){
+        return '<option value="' + k + '"' + (k === dest.delivery_kind ? ' selected' : '') + '>' + DEST_KIND_LABELS[k] + '</option>'
+      }).join('')
+      wrap.innerHTML =
+        '<input type=text id="dest-name-' + dest.id + '" value="' + String(dest.name).replace(/"/g,'&quot;') + '" style="' + fieldStyle + ';font-weight:600;margin-bottom:6px">' +
+        '<input type=text id="dest-path-' + dest.id + '" value="' + String(dest.path).replace(/"/g,'&quot;') + '" style="' + fieldStyle + ';margin-bottom:6px">' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:2px">' +
+          '<input type=text id="dest-user-' + dest.id + '" placeholder="Username" value="' + String(dest.username || '').replace(/"/g,'&quot;') + '" style="' + fieldStyle + ';flex:1;min-width:120px">' +
+          '<input type=password id="dest-pass-' + dest.id + '" placeholder="Password" style="' + fieldStyle + ';flex:1;min-width:120px">' +
+        '</div>' +
+        (dest.has_password ? '<div style="font-size:11px;opacity:.65;margin-bottom:6px">A password is already saved for this destination — leave the field above blank to keep it.</div>' : '<div style="margin-bottom:6px"></div>') +
+        '<select id="dest-kind-' + dest.id + '" style="' + fieldStyle + ';margin-bottom:8px">' + kindOptions + '</select>' +
+        '<div><button type=button class=btn style="padding:4px 10px;font-size:11px" onclick="updateNetworkDestination(' + dest.id + ')">Save</button> ' +
+        '<button type=button class=btn style="padding:4px 10px;font-size:11px;color:var(--tally);border-color:var(--tally)" onclick="deleteNetworkDestination(' + dest.id + ',\'' + String(dest.name).replace(/'/g,"\\'") + '\')">Delete</button> ' +
+        '<span id="dest-status-' + dest.id + '" style="font-size:11px;margin-left:6px"></span></div>'
+      container.appendChild(wrap)
+    })
+    networkDestinationsLoaded = true
+  }catch(e){
+    container.innerHTML = '<p style="color:var(--amber)">Error loading destinations: '+e+'</p>'
+  }
+}
+
+async function addNetworkDestination(){
+  var status = document.getElementById('dest-new-status')
+  var name = document.getElementById('dest-new-name').value.trim()
+  var path = document.getElementById('dest-new-path').value.trim()
+  if(!name || !path){
+    status.textContent = 'Name and network path are both required.'
+    status.style.color = 'var(--amber)'
+    return
+  }
+  var payload = {
+    name: name, path: path,
+    username: document.getElementById('dest-new-username').value.trim(),
+    password: document.getElementById('dest-new-password').value,
+    delivery_kind: document.getElementById('dest-new-kind').value,
+  }
+  status.textContent = 'Adding\u2026'; status.style.color = 'var(--ink-dim)'
+  try{
+    var r = await fetch('/api/network/destinations', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)})
+    var d = await r.json()
+    if(d.ok){
+      status.textContent = ''
+      document.getElementById('dest-new-name').value = ''
+      document.getElementById('dest-new-path').value = ''
+      document.getElementById('dest-new-username').value = ''
+      document.getElementById('dest-new-password').value = ''
+      loadNetworkDestinations()
+    }else{
+      status.textContent = 'Failed: ' + (d.error || 'unknown error'); status.style.color = 'var(--amber)'
+    }
+  }catch(e){
+    status.textContent = 'Failed: ' + e; status.style.color = 'var(--amber)'
+  }
+}
+window.addNetworkDestination = addNetworkDestination
+
+async function updateNetworkDestination(id){
+  var status = document.getElementById('dest-status-' + id)
+  var payload = {
+    name: document.getElementById('dest-name-' + id).value.trim(),
+    path: document.getElementById('dest-path-' + id).value.trim(),
+    username: document.getElementById('dest-user-' + id).value.trim(),
+    delivery_kind: document.getElementById('dest-kind-' + id).value,
+  }
+  var pw = document.getElementById('dest-pass-' + id).value
+  if(pw) payload.password = pw   // omitted when blank -- leaves the saved password untouched
+  if(status){ status.textContent = 'Saving\u2026'; status.style.color = 'var(--ink-dim)' }
+  try{
+    var r = await fetch('/api/network/destinations/' + id, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)})
+    var d = await r.json()
+    if(d.ok){
+      if(status){ status.textContent = 'Saved.'; status.style.color = 'var(--phosphor)' }
+      loadNetworkDestinations()
+    }else{
+      if(status){ status.textContent = 'Save failed: ' + (d.error || 'unknown error'); status.style.color = 'var(--amber)' }
+    }
+  }catch(e){
+    if(status){ status.textContent = 'Save failed: ' + e; status.style.color = 'var(--amber)' }
+  }
+}
+window.updateNetworkDestination = updateNetworkDestination
+
+async function deleteNetworkDestination(id, name){
+  if(!confirm('Remove the destination "' + name + '"? This does not affect anything already sent there.')) return
+  try{
+    var r = await fetch('/api/network/destinations/' + id, {method:'DELETE'})
+    var d = await r.json()
+    if(d.ok) loadNetworkDestinations()
+    else alert('Could not remove: ' + (d.error || 'unknown error'))
+  }catch(e){
+    alert('Could not remove: ' + e)
+  }
+}
+window.deleteNetworkDestination = deleteNetworkDestination
 
 // ---- Users & groups (Config > Users) ----
 // Was an <iframe src="/admin/users?embed=1"> to a separate server-rendered
@@ -7079,9 +7490,11 @@ document.addEventListener('DOMContentLoaded', function(){
       var player = document.getElementById(active.fieldName + '_player')
       var note = document.getElementById(active.fieldName + '_preview_note')
       if(player){
-        player.src = '/uploads/' + encodeURIComponent(d.filename)
-        player.style.display = ''
+        var networkUrl = '/uploads/' + encodeURIComponent(d.filename)
+        player.src = networkUrl
+        player.style.display = 'block'
         if(note) note.textContent = 'Play the file, pause where you want the cut, then click Set in / Set out.'
+        renderWaveform(active.fieldName, networkUrl)
       }
       closeModal()
     }).catch(function(e){ listEl.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + e + '</div>' })
@@ -7424,7 +7837,7 @@ function _dashLoadShows(){
     }
     var items = (d.templates || []).slice(0, 5)
     if(!items.length){
-      el.innerHTML = '<p style="opacity:.6;margin:0">No saved shows yet — save one from Generate Promo Plug.</p>'
+      el.innerHTML = '<p style="opacity:.6;margin:0">No saved shows yet — save one from Episodic Plug.</p>'
       return
     }
     el.innerHTML = items.map(function(t){

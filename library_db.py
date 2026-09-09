@@ -59,6 +59,24 @@ def library_db_init():
         created_at REAL NOT NULL,
         UNIQUE(user_id, category, path)
     )''')
+    # Multiple named delivery destinations (e.g. "PMC_MAMS_PUBLISHING", a
+    # Vantage watch folder) -- admin-managed, global like the other network
+    # categories, not per-user like favorites above, since a facility's
+    # delivery targets are shared infrastructure everyone renders into.
+    # delivery_kind controls what "Send to <name>" actually writes there:
+    # the rendered video, the scene-list CSV, or both -- some destinations
+    # (a MAM ingest) want the finished file, others (a logging/scheduling
+    # system, or a Vantage EDL-driven workflow) only need the metadata.
+    conn.execute('''CREATE TABLE IF NOT EXISTS network_destinations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        path TEXT NOT NULL,
+        username TEXT,
+        password TEXT,
+        delivery_kind TEXT NOT NULL DEFAULT 'video',
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL
+    )''')
     conn.execute('''CREATE TABLE IF NOT EXISTS trailers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         orig_name TEXT,
@@ -167,6 +185,75 @@ def network_favorite_remove(user_id, favorite_id):
     ids, without needing a separate ownership check before the delete."""
     conn = _lib_db()
     cur = conn.execute('DELETE FROM network_favorites WHERE id=? AND user_id=?', (favorite_id, user_id))
+    conn.commit()
+    removed = cur.rowcount > 0
+    conn.close()
+    return removed
+
+# ---- Delivery destinations ----
+# Named, admin-managed "Send to <name>" targets. delivery_kind is one of
+# 'video' (the rendered file only), 'csv' (the scene-list CSV only), or
+# 'csv_video' (both) -- validated here, at the one place every write goes
+# through, rather than trusting each caller to only ever pass a good value.
+DELIVERY_KINDS = ('video', 'csv', 'csv_video')
+
+def network_destinations_list():
+    """Every configured destination, oldest first -- stable ordering so a
+    dropdown built from this doesn't reshuffle between page loads. Passwords
+    ARE included here deliberately (unlike a public API response) since this
+    is only ever read server-side to actually connect; the admin-facing
+    config route strips them before sending anything to the browser."""
+    conn = _lib_db()
+    rows = conn.execute('SELECT * FROM network_destinations ORDER BY created_at ASC').fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+def network_destination_get(dest_id):
+    conn = _lib_db()
+    row = conn.execute('SELECT * FROM network_destinations WHERE id=?', (dest_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+def network_destination_add(name, path, username=None, password=None, delivery_kind='video'):
+    if delivery_kind not in DELIVERY_KINDS:
+        delivery_kind = 'video'
+    now = time.time()
+    conn = _lib_db()
+    cur = conn.execute(
+        'INSERT INTO network_destinations (name, path, username, password, delivery_kind, created_at, updated_at) '
+        'VALUES (?,?,?,?,?,?,?)',
+        (name, path, username or None, password or None, delivery_kind, now, now))
+    conn.commit()
+    new_id = cur.lastrowid
+    conn.close()
+    return new_id
+
+def network_destination_update(dest_id, name=None, path=None, username=None, password=None, delivery_kind=None):
+    """Only touches fields explicitly passed -- None means "leave as is", not
+    "clear it", matching how save_network_folder already treats a field
+    that's simply absent from an edit. An admin updating just the name
+    shouldn't have to re-type the path and re-enter the password."""
+    existing = network_destination_get(dest_id)
+    if not existing:
+        return False
+    if delivery_kind is not None and delivery_kind not in DELIVERY_KINDS:
+        delivery_kind = existing['delivery_kind']
+    conn = _lib_db()
+    conn.execute(
+        'UPDATE network_destinations SET name=?, path=?, username=?, password=?, delivery_kind=?, updated_at=? WHERE id=?',
+        (name if name is not None else existing['name'],
+         path if path is not None else existing['path'],
+         username if username is not None else existing['username'],
+         password if password is not None else existing['password'],
+         delivery_kind if delivery_kind is not None else existing['delivery_kind'],
+         time.time(), dest_id))
+    conn.commit()
+    conn.close()
+    return True
+
+def network_destination_remove(dest_id):
+    conn = _lib_db()
+    cur = conn.execute('DELETE FROM network_destinations WHERE id=?', (dest_id,))
     conn.commit()
     removed = cur.rowcount > 0
     conn.close()
@@ -560,7 +647,7 @@ def set_service_disabled(name, disabled):
 # filling this in already knows the exact path and login for each folder,
 # not a "base share" they're subdividing.
 NETWORK_FOLDERS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'network_folders.json')
-NETWORK_CATEGORY_KEYS = ['hires', 'tcard', 'endcard', 'music', 'vo', 'sfx', 'destination']
+NETWORK_CATEGORY_KEYS = ['hires', 'tcard', 'endcard', 'music', 'vo', 'sfx']
 _NETWORK_FOLDER_FIELDS = ('path', 'username', 'password')
 
 def load_network_folders():

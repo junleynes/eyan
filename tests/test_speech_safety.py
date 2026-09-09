@@ -27,6 +27,49 @@ class TestNearestWordBoundary:
         assert pipeline.nearest_word_boundary(5.0, [4.8, 5.1], max_snap=0.35) == 5.1
 
 
+class TestNearestWordBoundaryHardLimit:
+    """hard_limit exists specifically to fix a real reported problem: cuts
+    sometimes landed mid-word, or on a fragment with no real meaning,
+    because the normal 0.35s/1.2s snap windows are deliberately tight (so a
+    cut doesn't drift far from the intended visual moment) -- and when
+    nothing was within that tight window, the old behavior was to silently
+    accept the untouched, potentially mid-word cut point. hard_limit lets
+    the search widen out to what the scene actually has available (its own
+    start/end) before giving up, since a clip running a bit longer or
+    shorter than planned is a smaller problem than an audibly severed word."""
+
+    def test_widens_search_to_hard_limit_when_normal_window_empty(self):
+        # Nothing within max_snap=0.35, but a boundary at 5.8 is within the
+        # hard_limit of 6.0 -- must be found rather than falling back to 5.0.
+        result = pipeline.nearest_word_boundary(5.0, [5.8], max_snap=0.35, hard_limit=6.0)
+        assert result == 5.8
+
+    def test_still_falls_back_to_target_when_nothing_within_hard_limit_either(self):
+        # The only boundary (20.0) is beyond even the widened search range --
+        # genuinely nothing usable, so the original target is kept.
+        result = pipeline.nearest_word_boundary(5.0, [20.0], max_snap=0.35, hard_limit=6.0)
+        assert result == 5.0
+
+    def test_prefers_closer_boundary_even_when_wider_search_is_used(self):
+        # Two candidates once widened (5.5 and 5.9) -- must pick the closer
+        # one (5.5), not jump straight to whichever is found first or to the
+        # hard_limit itself.
+        result = pipeline.nearest_word_boundary(5.0, [5.5, 5.9], max_snap=0.35, hard_limit=6.0)
+        assert result == 5.5
+
+    def test_hard_limit_can_be_before_target_for_in_points(self):
+        # An in-point search moves the cut EARLIER, not later -- hard_limit
+        # below target must still work (searching [hard_limit, target]).
+        result = pipeline.nearest_word_boundary(5.0, [4.2], max_snap=0.35, hard_limit=4.0)
+        assert result == 4.2
+
+    def test_none_hard_limit_preserves_original_behavior(self):
+        # Default (no hard_limit) must behave exactly as before -- no widened
+        # search at all.
+        result = pipeline.nearest_word_boundary(5.0, [5.8], max_snap=0.35, hard_limit=None)
+        assert result == 5.0
+
+
 class TestNearestSpeechOut:
     def test_prefers_phrase_end_over_closer_word_end(self):
         # A phrase end within its wider window wins even when a word end is
@@ -51,6 +94,20 @@ class TestNearestSpeechOut:
         # word-snap window.
         result = pipeline.nearest_speech_out(5.0, phrase_ends=[6.0], word_ends=[])
         assert result == 6.0
+
+    def test_hard_limit_widens_phrase_search_too(self):
+        # A phrase end beyond the normal 1.2s phrase-snap window, but still
+        # within hard_limit, should be found rather than falling through to
+        # the word-boundary fallback (or the untouched target).
+        result = pipeline.nearest_speech_out(5.0, phrase_ends=[7.0], word_ends=[], hard_limit=8.0)
+        assert result == 7.0
+
+    def test_hard_limit_passes_through_to_word_fallback(self):
+        # No usable phrase end even with hard_limit, but a word end within
+        # the widened range should still be found via the word-boundary
+        # fallback, not just abandoned because the phrase search failed.
+        result = pipeline.nearest_speech_out(5.0, phrase_ends=[], word_ends=[5.6], hard_limit=6.0)
+        assert result == 5.6
 
 
 class TestSpeechFreeSlack:
