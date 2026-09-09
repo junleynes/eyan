@@ -1284,6 +1284,7 @@ document.addEventListener("DOMContentLoaded", function(){
     <input type=hidden id=vo_upload_network name=vo_upload_network value="">
   <input type=hidden id=vo_upload_skip_template name=vo_upload_skip_template value="">
     <span class="net-file-chip" id=vo_upload_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('vo_upload')">&#10005;</span></span>
+    <canvas id="vo_upload_waveform" width="420" height="60" style="display:none;width:100%;max-width:420px;height:60px;background:var(--sunken,#0b1220);border:1px solid var(--line);border-radius:6px;margin:8px 0 0;cursor:pointer"></canvas>
     <audio id="vo_upload_player" controls style="display:none;width:100%;max-width:420px;height:32px;margin:8px 0 4px"></audio>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0">
       <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Trim uploaded audio — start (s):</span>
@@ -1472,7 +1473,8 @@ document.addEventListener("DOMContentLoaded", function(){
   <input type=hidden id=title_card_vo_network name=title_card_vo_network value="">
   <input type=hidden id=title_card_vo_skip_template name=title_card_vo_skip_template value="">
   <span class="net-file-chip" id=title_card_vo_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('title_card_vo')">&#10005;</span></span>
-  <audio id="title_card_vo_player" controls style="display:none;width:100%;max-width:420px;height:32px;margin-bottom:6px"></audio>
+  <canvas id="title_card_vo_waveform" width="420" height="60" style="display:none;width:100%;max-width:420px;height:60px;background:var(--sunken,#0b1220);border:1px solid var(--line);border-radius:6px;margin:8px 0 0;cursor:pointer"></canvas>
+    <audio id="title_card_vo_player" controls style="display:none;width:100%;max-width:420px;height:32px;margin-bottom:6px"></audio>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 12px">
     <button type=button class=btn style="padding:4px 10px;font-size:11px" onclick="cardVoSetPoint('title_card_vo','start')">Set in (player)</button>
     <button type=button class=btn style="padding:4px 10px;font-size:11px" onclick="cardVoSetPoint('title_card_vo','end')">Set out (player)</button>
@@ -1509,7 +1511,8 @@ document.addEventListener("DOMContentLoaded", function(){
   <input type=hidden id=end_card_vo_network name=end_card_vo_network value="">
   <input type=hidden id=end_card_vo_skip_template name=end_card_vo_skip_template value="">
   <span class="net-file-chip" id=end_card_vo_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('end_card_vo')">&#10005;</span></span>
-  <audio id="end_card_vo_player" controls style="display:none;width:100%;max-width:420px;height:32px;margin-bottom:6px"></audio>
+  <canvas id="end_card_vo_waveform" width="420" height="60" style="display:none;width:100%;max-width:420px;height:60px;background:var(--sunken,#0b1220);border:1px solid var(--line);border-radius:6px;margin:8px 0 0;cursor:pointer"></canvas>
+    <audio id="end_card_vo_player" controls style="display:none;width:100%;max-width:420px;height:32px;margin-bottom:6px"></audio>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 12px">
     <button type=button class=btn style="padding:4px 10px;font-size:11px" onclick="cardVoSetPoint('end_card_vo','start')">Set in (player)</button>
     <button type=button class=btn style="padding:4px 10px;font-size:11px" onclick="cardVoSetPoint('end_card_vo','end')">Set out (player)</button>
@@ -1551,6 +1554,7 @@ document.addEventListener("DOMContentLoaded", function(){
     <input type=hidden id=scoring_audio_network name=scoring_audio_network value="">
   <input type=hidden id=scoring_audio_skip_template name=scoring_audio_skip_template value="">
     <span class="net-file-chip" id=scoring_audio_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('scoring_audio')">&#10005;</span></span>
+    <canvas id="scoring_audio_waveform" width="420" height="60" style="display:none;width:100%;max-width:420px;height:60px;background:var(--sunken,#0b1220);border:1px solid var(--line);border-radius:6px;margin:8px 0 0;cursor:pointer"></canvas>
     <audio id="scoring_audio_player" controls style="display:none;width:100%;max-width:420px;height:32px;margin:8px 0 4px"></audio>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0">
       <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Trim uploaded music — start (s):</span>
@@ -2290,10 +2294,13 @@ document.addEventListener("DOMContentLoaded", function(){
       player.src = url
       player.style.display = 'block'
       note.textContent = 'Play the file, pause where you want the cut, then click Set in / Set out.'
+      renderWaveform(prefix, input.files[0])
     } else {
       player.removeAttribute('src')
       player.style.display = 'none'
       note.textContent = ''
+      var canvas = document.getElementById(prefix + '_waveform')
+      if(canvas){ canvas.style.display = 'none'; canvas._peaks = null }
     }
   }
   function cardVoSetPoint(prefix, which){
@@ -2304,6 +2311,124 @@ document.addEventListener("DOMContentLoaded", function(){
     document.getElementById(prefix + (which === 'start' ? '_start' : '_end')).value = t
     note.textContent = (which === 'start' ? 'In' : 'Out') + ' point set to ' + t + 's from the player.'
   }
+
+  // ---- Waveform display for uploaded/browsed audio (VO + narration, music) ----
+  // A plain <audio> element gives no visual sense of where a beat, a pause,
+  // or a line of dialogue actually falls -- finding a good in/out point
+  // meant either scrubbing blind or listening start-to-finish. This decodes
+  // the audio client-side (Web Audio API) and draws its actual shape, with
+  // the played portion filled in as it plays and click-to-seek on the
+  // waveform itself -- the same "see it, then click Set in/out" workflow
+  // the existing buttons already support, just with something to actually
+  // look at while doing it. A real waveform image is a nice-to-have, not
+  // essential to generating a promo, so every failure path here degrades
+  // silently to "no waveform shown" rather than surfacing an error or
+  // blocking the plain <audio> player, which keeps working regardless.
+  // renderWaveform accepts EITHER a real File object (direct upload) or a
+  // URL string (network-browsed file, already reachable at /uploads/...).
+  // This distinction matters, not just convenience: fetch() against a
+  // blob: URL (what a direct upload's own player.src actually is) is
+  // blocked by this app's own Content Security Policy (connect-src
+  // 'self' -- blob: URLs don't satisfy that, even though they're
+  // effectively local) -- confirmed directly by hitting that exact CSP
+  // violation while testing this. Reading the File object's own bytes via
+  // .arrayBuffer() sidesteps fetch (and therefore the CSP) entirely for
+  // that case; a network-browsed file has a real, same-origin HTTP URL,
+  // where fetch works fine and is simpler than needing an extra request
+  // just to get a File object back for one that was never local to begin with.
+  function renderWaveform(prefix, fileOrUrl){
+    var canvas = document.getElementById(prefix + '_waveform')
+    if(!canvas) return
+    canvas.style.display = 'none'
+    var AudioContextClass = window.AudioContext || window.webkitAudioContext
+    if(!AudioContextClass) return
+    var bufferPromise = (fileOrUrl instanceof Blob) ? fileOrUrl.arrayBuffer()
+                       : fetch(fileOrUrl).then(function(r){ return r.arrayBuffer() })
+    bufferPromise
+      .then(function(buf){
+        var ctx = new AudioContextClass()
+        return ctx.decodeAudioData(buf).then(function(audioBuffer){
+          _computeWaveformPeaks(canvas, audioBuffer)
+          canvas.style.display = 'block'
+          _paintWaveform(canvas, 0)
+          ctx.close()
+        })
+      })
+      .catch(function(e){ console.warn('Could not render waveform for ' + prefix + ':', e) })
+  }
+
+  function _computeWaveformPeaks(canvas, audioBuffer){
+    var dpr = window.devicePixelRatio || 1
+    var displayWidth = canvas.clientWidth || 420
+    var displayHeight = canvas.clientHeight || 60
+    canvas.width = displayWidth * dpr
+    canvas.height = displayHeight * dpr
+    var data = audioBuffer.getChannelData(0)  // first channel only -- enough for a visual shape, no need for a full stereo render
+    var barCount = Math.min(300, Math.max(20, Math.floor(displayWidth / 2)))
+    var samplesPerBar = Math.max(1, Math.floor(data.length / barCount))
+    // Sampling a subset of each bucket rather than every single sample --
+    // a multi-minute track at 44.1kHz is millions of samples, and a
+    // waveform's visual shape doesn't need every one of them checked to
+    // look right, just enough to catch real peaks.
+    var step = Math.max(1, Math.floor(samplesPerBar / 50))
+    var peaks = []
+    for(var i = 0; i < barCount; i++){
+      var start = i * samplesPerBar
+      var peak = 0
+      for(var j = 0; j < samplesPerBar; j += step){
+        var v = Math.abs(data[start + j] || 0)
+        if(v > peak) peak = v
+      }
+      peaks.push(peak)
+    }
+    canvas._peaks = peaks
+    canvas._displayWidth = displayWidth
+    canvas._displayHeight = displayHeight
+    canvas._dpr = dpr
+  }
+
+  function _paintWaveform(canvas, progress){
+    var peaks = canvas._peaks
+    if(!peaks) return
+    var displayWidth = canvas._displayWidth, displayHeight = canvas._displayHeight, dpr = canvas._dpr
+    var g = canvas.getContext('2d')
+    g.setTransform(dpr, 0, 0, dpr, 0, 0)
+    g.clearRect(0, 0, displayWidth, displayHeight)
+    var mid = displayHeight / 2
+    var accent = getComputedStyle(document.documentElement).getPropertyValue('--phosphor').trim() || '#34e6c5'
+    var barCount = peaks.length
+    var playedBars = Math.floor((progress || 0) * barCount)
+    for(var i = 0; i < barCount; i++){
+      var barHeight = Math.max(1, peaks[i] * displayHeight)
+      var x = (i / barCount) * displayWidth
+      var barWidth = Math.max(1, displayWidth / barCount - 1)
+      g.fillStyle = i < playedBars ? accent : 'rgba(255,255,255,.25)'
+      g.fillRect(x, mid - barHeight / 2, barWidth, barHeight)
+    }
+  }
+
+  // Wires a waveform canvas to its <audio> player once, for a given prefix
+  // -- keeps the fill in sync during playback, and turns a click on the
+  // waveform into a seek, matching how a real waveform-based scrubber
+  // normally behaves.
+  var _waveformWired = {}
+  function wireWaveformInteraction(prefix){
+    if(_waveformWired[prefix]) return
+    _waveformWired[prefix] = true
+    var canvas = document.getElementById(prefix + '_waveform')
+    var player = document.getElementById(prefix + '_player')
+    if(!canvas || !player) return
+    player.addEventListener('timeupdate', function(){
+      if(player.duration) _paintWaveform(canvas, player.currentTime / player.duration)
+    })
+    canvas.addEventListener('click', function(e){
+      if(!canvas._peaks || !player.duration) return
+      var rect = canvas.getBoundingClientRect()
+      var frac = (e.clientX - rect.left) / rect.width
+      player.currentTime = Math.max(0, Math.min(1, frac)) * player.duration
+    })
+  }
+  ['vo_upload', 'title_card_vo', 'end_card_vo', 'scoring_audio'].forEach(wireWaveformInteraction)
   </script>
   </div><!-- /#generator-settings -->
   <div class="promo-actions">
@@ -7362,9 +7487,11 @@ document.addEventListener('DOMContentLoaded', function(){
       var player = document.getElementById(active.fieldName + '_player')
       var note = document.getElementById(active.fieldName + '_preview_note')
       if(player){
-        player.src = '/uploads/' + encodeURIComponent(d.filename)
+        var networkUrl = '/uploads/' + encodeURIComponent(d.filename)
+        player.src = networkUrl
         player.style.display = 'block'
         if(note) note.textContent = 'Play the file, pause where you want the cut, then click Set in / Set out.'
+        renderWaveform(active.fieldName, networkUrl)
       }
       closeModal()
     }).catch(function(e){ listEl.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + e + '</div>' })
