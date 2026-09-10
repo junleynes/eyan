@@ -5222,7 +5222,20 @@ function renderTrailerResult(d){
   // destination first" every time for anyone who hasn't set one up.
   fetch('/api/network/destinations').then(function(r){ return r.json() }).then(function(dd){
     if(!dd.ok || !dd.items.length) return
-    dd.items.forEach(function(dest){
+    // A csv/csv_video destination's whole point is sending the scene-list
+    // CSV alongside the source video -- that CSV describes exactly the
+    // selection a person reviewed (and could still edit: drop/swap scenes)
+    // via Preview the cut, so offering it for an unreviewed "Generate
+    // without preview" render would hand off a cut nobody actually looked
+    // at as if it had been checked. A plain video destination is the
+    // mirror case: meant specifically for the direct, no-review path, so
+    // hidden once a render WAS reviewed via preview. went_through_preview
+    // comes from the backend (see api_generate/api_trailer_render's own
+    // result), not guessed at here.
+    var wantKinds = d.went_through_preview ? {csv: 1, csv_video: 1} : {video: 1}
+    var items = dd.items.filter(function(dest){ return wantKinds[dest.delivery_kind] })
+    if(!items.length) return
+    items.forEach(function(dest){
       var opt = document.createElement('option')
       opt.value = dest.id
       opt.textContent = dest.name

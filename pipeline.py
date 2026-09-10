@@ -8173,6 +8173,19 @@ def _run_trailer_job(jid, params):
         # different timeline, so a destination wanting both needs this one
         # alongside the CSV, not the edited output.
         source_video_path=path,
+        # True only for a render reached via /api/trailer/render -- i.e.
+        # "Preview the cut" first, with the scene selection actually
+        # reviewed (and possibly edited: scenes dropped/swapped) by a
+        # person before this render ran. False for "Generate without
+        # preview", a direct one-shot render with no review step at all.
+        # preview_total_scenes is only ever set by that one route (see
+        # api_trailer_render), so its presence is a reliable signal of
+        # which path produced this specific result -- used by the frontend
+        # to decide which Send to destination delivery kinds to offer:
+        # csv/csv_video destinations (the CSV describes exactly the
+        # reviewed selection) only for a reviewed render; a plain video
+        # destination only for an unreviewed one.
+        went_through_preview=bool(params.get('preview_total_scenes')),
         total_scenes=len(scene_list), selected_scenes=len(selected),
         trailer_duration=round(assembled_duration, 1),
         scenes_duration=round(total_sel, 1),
