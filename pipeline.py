@@ -638,6 +638,34 @@ def fetch_network_file(name, category=DEFAULT_NETWORK_CATEGORY, subpath=''):
                 os.remove(local_path)
             except OSError:
                 pass
+    # A second, real, reported scenario: THIS app is what's still holding
+    # the file, not an external sync tool -- a fetch that was picked but
+    # never actually used (the browser tab was refreshed/closed before
+    # generating, so nothing about the pick was ever submitted) can leave
+    # smbclient's own pooled connection to this server in a state the
+    # remote host still considers to have the file open, and a later
+    # attempt to pick that same file again hits a sharing violation that
+    # 4 quick retries against the SAME stale connection can't recover
+    # from, since the thing holding the lock (this process's own pooled
+    # session) never actually changes between them. One last attempt
+    # after resetting smbclient's entire connection pool and establishing
+    # a genuinely fresh session covers this specific case -- deliberately
+    # NOT looped or retried further after this, since a violation that
+    # survives a full connection reset really is external (another
+    # process, not this one) and no amount of additional retrying from
+    # here would change that.
+    try:
+        smbclient.reset_connection_cache()
+        _network_session(category)
+        with smbclient.open_file(remote_path, mode='rb') as rf, open(local_path, 'wb') as lf:
+            shutil.copyfileobj(rf, lf)
+        return local_name
+    except SharingViolation as e:
+        last_err = e
+        try:
+            os.remove(local_path)
+        except OSError:
+            pass
     raise ValueError(f'"{name}" is currently in use by another process on the network share '
                       f'(often a sync tool actively writing it) -- please try again in a moment. '
                       f'({_safe_exception_text(last_err)})')

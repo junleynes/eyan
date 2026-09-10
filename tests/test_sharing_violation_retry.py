@@ -21,12 +21,17 @@ import pipeline
 def _fake_env(open_file_side_effect):
     """Common patches every test here needs -- an SMB layer standing in for
     a real share, with sleep mocked out so tests run instantly rather than
-    waiting through real retry delays."""
+    waiting through real retry delays. reset_connection_cache is also
+    mocked (as a real, callable no-op) so tests exercising the
+    persistent-failure path -- which always reaches the reset-and-one-more-
+    try step -- don't actually touch smbclient's real, process-wide
+    connection pool."""
     return (
         mock.patch('pipeline.smbclient.open_file', side_effect=open_file_side_effect),
         mock.patch('pipeline.smbclient.register_session'),
         mock.patch('pipeline._network_share_root', return_value='\\\\server\\share'),
         mock.patch('pipeline.time.sleep'),
+        mock.patch('pipeline.smbclient.reset_connection_cache'),
     )
 
 
@@ -39,10 +44,35 @@ def test_succeeds_after_a_transient_sharing_violation(tmp_path):
         return io.BytesIO(b'fake file content')
 
     patches = _fake_env(flaky)
-    with patches[0], patches[1], patches[2], patches[3], \
+    with patches[0], patches[1], patches[2], patches[3], patches[4], \
          mock.patch('pipeline.app.config', {'UPLOAD_FOLDER': str(tmp_path)}):
         result = pipeline.fetch_network_file('test.wav', category='music')
     assert call_count[0] == 2
+    assert (tmp_path / result).exists()
+
+
+def test_reset_connection_cache_recovers_a_lock_this_app_itself_still_holds(tmp_path):
+    # The second, real, reported scenario this exists for: a file picked
+    # via Browse Library but never actually used (the browser was
+    # refreshed/closed before generating) can leave THIS app's own pooled
+    # SMB connection in a state the remote server still considers to have
+    # the file open -- retrying against that same stale connection can
+    # never succeed, since the thing holding the lock doesn't change
+    # between retries. A fresh connection (after reset_connection_cache)
+    # is what actually resolves this case.
+    call_count = [0]
+    def locked_until_reset(path, mode=None):
+        call_count[0] += 1
+        if call_count[0] <= 4:
+            raise SharingViolation(mock.MagicMock())
+        return io.BytesIO(b'succeeded once a genuinely fresh connection was used')
+
+    patches = _fake_env(locked_until_reset)
+    with patches[0], patches[1], patches[2], patches[3], patches[4] as mock_reset, \
+         mock.patch('pipeline.app.config', {'UPLOAD_FOLDER': str(tmp_path)}):
+        result = pipeline.fetch_network_file('test.wav', category='music')
+    assert call_count[0] == 5  # the normal 4 attempts, then 1 more after the reset
+    assert mock_reset.called
     assert (tmp_path / result).exists()
 
 
@@ -53,12 +83,16 @@ def test_gives_up_after_repeated_sharing_violations_with_a_clear_message(tmp_pat
         raise SharingViolation(mock.MagicMock())
 
     patches = _fake_env(always_locked)
-    with patches[0], patches[1], patches[2], patches[3] as mock_sleep, \
+    with patches[0], patches[1], patches[2], patches[3] as mock_sleep, patches[4] as mock_reset, \
          mock.patch('pipeline.app.config', {'UPLOAD_FOLDER': str(tmp_path)}):
         with pytest.raises(ValueError, match='currently in use'):
             pipeline.fetch_network_file('test.wav', category='music')
-    assert call_count[0] == 4  # 1 initial + 3 retries
+    # 4 normal attempts (1 initial + 3 retries) plus 1 final attempt after
+    # a full connection reset -- a violation that survives even that is
+    # treated as genuinely external, not retried further.
+    assert call_count[0] == 5
     assert mock_sleep.call_count == 3
+    assert mock_reset.call_count == 1
 
 
 def test_a_broken_exception_message_does_not_crash_error_reporting(tmp_path):
@@ -71,7 +105,7 @@ def test_a_broken_exception_message_does_not_crash_error_reporting(tmp_path):
         raise SharingViolation(mock.MagicMock())
 
     patches = _fake_env(always_locked)
-    with patches[0], patches[1], patches[2], patches[3], \
+    with patches[0], patches[1], patches[2], patches[3], patches[4], \
          mock.patch('pipeline.app.config', {'UPLOAD_FOLDER': str(tmp_path)}):
         with pytest.raises(ValueError, match='currently in use'):
             pipeline.fetch_network_file('test.wav', category='music')
@@ -103,7 +137,7 @@ def test_partial_local_file_is_cleaned_up_between_retries(tmp_path):
         return io.BytesIO(b'the real, complete file')
 
     patches = _fake_env(flaky_partial_write)
-    with patches[0], patches[1], patches[2], patches[3], \
+    with patches[0], patches[1], patches[2], patches[3], patches[4], \
          mock.patch('pipeline.app.config', {'UPLOAD_FOLDER': str(tmp_path)}):
         result = pipeline.fetch_network_file('test.wav', category='music')
     content = (tmp_path / result).read_bytes()
