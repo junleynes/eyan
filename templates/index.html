@@ -1437,7 +1437,7 @@ document.addEventListener("DOMContentLoaded", function(){
       <option value=30>30 sec</option>
       <option value=45>45 sec</option>
       <option value=60>60 sec</option>
-    </select>
+    </select><br>
     <label>Genre</label><br>
     <select name=genre id=genre-select onchange="updateJobSummary(); if(typeof updateGenreManualVisibility==='function') updateGenreManualVisibility()">
     <option value="">Custom (manual settings below)</option>
@@ -1456,14 +1456,14 @@ document.addEventListener("DOMContentLoaded", function(){
     <option value=thriller>Thriller</option>
     <option value=war>War</option>
     <option value=western>Western</option>
-  </select>
-    <label>Delivery format</label>
+  </select><br>
+    <label>Delivery format</label><br>
     <select name=delivery_format id=delivery-format-select onchange="updateJobSummary()">
       <option value=mp4_high selected>MP4 (H.264 High Profile)</option>
       <option value=prores_hq_2997>Apple ProRes 422 HQ — 29.97fps</option>
       <option value=prores_hq_2398>Apple ProRes 422 HQ — 23.976fps</option>
       <option value=avci100i>AVC-Intra 100i (approximation)</option>
-    </select>
+    </select><br>
   </div><!-- /.promo-essentials -->
 
   <div id=generator-settings>
