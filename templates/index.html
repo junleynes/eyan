@@ -1431,14 +1431,14 @@ document.addEventListener("DOMContentLoaded", function(){
   </div>
 
   <div class="promo-essentials">
-    <label>Promo length</label>
+    <label>Promo length</label><br>
     <select name=trailer_length id=trailer-length-select onchange="updateJobSummary()">
       <option value=15 selected>15 sec</option>
       <option value=30>30 sec</option>
       <option value=45>45 sec</option>
       <option value=60>60 sec</option>
     </select>
-    <label>Genre</label>
+    <label>Genre</label><br>
     <select name=genre id=genre-select onchange="updateJobSummary(); if(typeof updateGenreManualVisibility==='function') updateGenreManualVisibility()">
     <option value="">Custom (manual settings below)</option>
     <option value=action>Action</option>
