@@ -1588,10 +1588,10 @@ document.addEventListener("DOMContentLoaded", function(){
     <div class="asset-section-body">
   <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:8px 0">
     <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
-      <input type=radio name=scoring_mode value=generate data-requires="ace_step" checked> Generate music
+      <input type=radio name=scoring_mode value=generate data-requires="ace_step"> Generate music
     </label>
     <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
-      <input type=radio name=scoring_mode value=none> None
+      <input type=radio name=scoring_mode value=none checked> None
     </label>
     <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
       <input type=radio name=scoring_mode value=upload> Upload
@@ -1613,9 +1613,9 @@ document.addEventListener("DOMContentLoaded", function(){
         <span class="player-time" id="scoring_audio_time">0:00 / 0:00</span>
         <span class="player-io-group">
           <button type=button class="player-io-btn" onclick="cardVoSetPoint('scoring_audio','start')">IN</button>
-          <input type=number name=scoring_audio_trim_start id="scoring_audio_start" value=0 min=0 step=0.5 class="player-io-input">
+          <input type=number name=scoring_audio_trim_start id="scoring_audio_start" value=0 min=0 step=0.5 class="player-io-input" style="display:none">
           <button type=button class="player-io-btn" onclick="cardVoSetPoint('scoring_audio','end')">OUT</button>
-          <input type=number name=scoring_audio_trim_end id="scoring_audio_end" min=0 step=0.5 class="player-io-input" placeholder="end">
+          <input type=number name=scoring_audio_trim_end id="scoring_audio_end" min=0 step=0.5 class="player-io-input" placeholder="end" style="display:none">
         </span>
       </div>
     </div>
@@ -2520,6 +2520,11 @@ document.addEventListener("DOMContentLoaded", function(){
     g.clearRect(0, 0, displayWidth, displayHeight)
     var mid = displayHeight / 2
     var accent = getComputedStyle(document.documentElement).getPropertyValue('--phosphor').trim() || '#34e6c5'
+    // Used for the not-yet-played (but selected) bars below -- only safe to
+    // hand-append an alpha suffix to a plain 6-digit hex color, so fall back
+    // to a fixed rgba if --phosphor is ever set to something else (rgb(),
+    // a named color, etc).
+    var accentDim = /^#[0-9a-fA-F]{6}$/.test(accent) ? accent + '55' : 'rgba(251,146,60,.35)'
     var barCount = peaks.length
     var playedBars = Math.floor((progress || 0) * barCount)
     var selStart = selStartFrac == null ? 0 : selStartFrac
@@ -2532,7 +2537,14 @@ document.addEventListener("DOMContentLoaded", function(){
       if(barFrac < selStart || barFrac >= selEnd){
         g.fillStyle = 'rgba(255,255,255,.08)'
       } else {
-        g.fillStyle = i < playedBars ? accent : 'rgba(255,255,255,.25)'
+        // Both played and not-yet-played bars stay in the accent color
+        // family here (previously the not-yet-played state was plain
+        // white) -- the selected IN/OUT range needs to read as one
+        // consistent color at a glance, with played-vs-not just a
+        // brightness difference within it, since that color is the only
+        // indicator of the trim selection once the numeric fields are
+        // hidden.
+        g.fillStyle = i < playedBars ? accent : accentDim
       }
       g.fillRect(x, mid - barHeight / 2, barWidth, barHeight)
     }
@@ -7692,7 +7704,7 @@ document.addEventListener('DOMContentLoaded', function(){
   // used so clearing a template-filled chip for one of these three doesn't leave
   // the mode stuck on "Upload" with nothing actually attached to it.
   var MODE_FIELD_DEFAULTS = {
-    scoring_audio: ['scoring_mode', 'generate'],
+    scoring_audio: ['scoring_mode', 'none'],
     sfx_upload: ['sfx_mode', 'none'],
     vo_upload: ['vo_mode', 'none'],
   }
