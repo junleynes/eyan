@@ -2367,6 +2367,11 @@ document.addEventListener("DOMContentLoaded", function(){
     var t = Math.round(player.currentTime * 10) / 10
     document.getElementById(prefix + (which === 'start' ? '_start' : '_end')).value = t
     note.textContent = (which === 'start' ? 'In' : 'Out') + ' point set to ' + t + 's from the player.'
+    // Setting .value directly doesn't fire the input listener that repaints
+    // on manual typing -- the waveform's selection highlight needs its own
+    // explicit refresh here so it doesn't look stale relative to the field
+    // it's showing.
+    if(typeof _repaintWaveform === 'function') _repaintWaveform(prefix)
   }
   // Play/pause for the unified player card -- the native <audio controls>
   // UI was removed in favor of one compact custom button here, shared with
@@ -2439,8 +2444,13 @@ document.addEventListener("DOMContentLoaded", function(){
         return ctx.decodeAudioData(buf).then(function(audioBuffer){
           _computeWaveformPeaks(canvas, audioBuffer)
           canvas.style.display = 'block'
-          _paintWaveform(canvas, 0)
+          // Uses _repaintWaveform (not a bare _paintWaveform(canvas, 0)) so
+          // the very first paint already reflects any trim values already
+          // present in the fields -- a template that pre-fills VO trim
+          // points, for instance, would otherwise show an untrimmed-looking
+          // waveform until the next playback tick or field edit repainted it.
           if(card) card.style.display = 'block'
+          _repaintWaveform(prefix)
           ctx.close()
         })
       })
@@ -2480,7 +2490,15 @@ document.addEventListener("DOMContentLoaded", function(){
     canvas._dpr = dpr
   }
 
-  function _paintWaveform(canvas, progress){
+  // paints three visual states per bar rather than two: outside the
+  // current IN/OUT selection (dimmest -- won't be used regardless of
+  // whether it's been played), inside the selection but not yet played
+  // (dim white, as before), and inside the selection and already played
+  // (accent color, as before). selStartFrac/selEndFrac default to the
+  // full 0-1 range so callers that don't care about selection (there are
+  // none left, but this keeps the function safe to call either way) still
+  // work exactly as before.
+  function _paintWaveform(canvas, progress, selStartFrac, selEndFrac){
     var peaks = canvas._peaks
     if(!peaks) return
     var displayWidth = canvas._displayWidth, displayHeight = canvas._displayHeight, dpr = canvas._dpr
@@ -2491,20 +2509,51 @@ document.addEventListener("DOMContentLoaded", function(){
     var accent = getComputedStyle(document.documentElement).getPropertyValue('--phosphor').trim() || '#34e6c5'
     var barCount = peaks.length
     var playedBars = Math.floor((progress || 0) * barCount)
+    var selStart = selStartFrac == null ? 0 : selStartFrac
+    var selEnd = selEndFrac == null ? 1 : selEndFrac
     for(var i = 0; i < barCount; i++){
       var barHeight = Math.max(1, peaks[i] * displayHeight)
       var x = (i / barCount) * displayWidth
       var barWidth = Math.max(1, displayWidth / barCount - 1)
-      g.fillStyle = i < playedBars ? accent : 'rgba(255,255,255,.25)'
+      var barFrac = i / barCount
+      if(barFrac < selStart || barFrac >= selEnd){
+        g.fillStyle = 'rgba(255,255,255,.08)'
+      } else {
+        g.fillStyle = i < playedBars ? accent : 'rgba(255,255,255,.25)'
+      }
       g.fillRect(x, mid - barHeight / 2, barWidth, barHeight)
     }
   }
 
+  // Recomputes everything _paintWaveform needs (playback progress, and the
+  // current IN/OUT selection as fractions of the real duration) and
+  // repaints -- the one function every trigger for a repaint (playback,
+  // typing a new trim value, clicking Set in/out) should call, rather than
+  // each of them separately recomputing the same things.
+  function _repaintWaveform(prefix){
+    var canvas = document.getElementById(prefix + '_waveform')
+    var player = document.getElementById(prefix + '_player')
+    if(!canvas || !player || !canvas._peaks) return
+    var duration = player.duration
+    var progress = duration ? player.currentTime / duration : 0
+    var selStartFrac = 0, selEndFrac = 1
+    if(duration){
+      var startInput = document.getElementById(prefix + '_start')
+      var endInput = document.getElementById(prefix + '_end')
+      var startVal = startInput ? parseFloat(startInput.value) : NaN
+      var endVal = endInput ? parseFloat(endInput.value) : NaN
+      if(!isNaN(startVal) && startVal > 0) selStartFrac = Math.min(1, startVal / duration)
+      if(!isNaN(endVal) && endVal > 0) selEndFrac = Math.min(1, endVal / duration)
+    }
+    _paintWaveform(canvas, progress, selStartFrac, selEndFrac)
+  }
+
   // Wires a waveform canvas and the compact play/time controls to their
   // shared <audio> player once, for a given prefix -- keeps the waveform
-  // fill, the play/pause icon, and the time readout all in sync during
-  // playback, and turns a click on the waveform into a seek, matching how
-  // a real waveform-based scrubber normally behaves.
+  // fill (including the current IN/OUT selection), the play/pause icon,
+  // and the time readout all in sync during playback, and turns a click
+  // on the waveform into a seek, matching how a real waveform-based
+  // scrubber normally behaves.
   var _waveformWired = {}
   function wireWaveformInteraction(prefix){
     if(_waveformWired[prefix]) return
@@ -2513,10 +2562,13 @@ document.addEventListener("DOMContentLoaded", function(){
     var player = document.getElementById(prefix + '_player')
     if(!canvas || !player) return
     player.addEventListener('timeupdate', function(){
-      if(player.duration) _paintWaveform(canvas, player.currentTime / player.duration)
+      _repaintWaveform(prefix)
       _updatePlayerTime(prefix)
     })
-    player.addEventListener('loadedmetadata', function(){ _updatePlayerTime(prefix) })
+    player.addEventListener('loadedmetadata', function(){
+      _updatePlayerTime(prefix)
+      _repaintWaveform(prefix)  // duration just became known -- selection fractions were wrong (or 0/1) until now
+    })
     player.addEventListener('play', function(){ _setPlayIcon(prefix, true) })
     player.addEventListener('pause', function(){ _setPlayIcon(prefix, false) })
     player.addEventListener('ended', function(){ _setPlayIcon(prefix, false) })
@@ -2526,6 +2578,13 @@ document.addEventListener("DOMContentLoaded", function(){
       var frac = (e.clientX - rect.left) / rect.width
       player.currentTime = Math.max(0, Math.min(1, frac)) * player.duration
     })
+    // Typing a trim value directly (not just clicking Set in/out) should
+    // also repaint immediately -- the selection is exactly what's being
+    // edited, so it should never look stale relative to the fields.
+    var startInput = document.getElementById(prefix + '_start')
+    var endInput = document.getElementById(prefix + '_end')
+    if(startInput) startInput.addEventListener('input', function(){ _repaintWaveform(prefix) })
+    if(endInput) endInput.addEventListener('input', function(){ _repaintWaveform(prefix) })
   }
   ['vo_upload', 'title_card_vo', 'end_card_vo', 'scoring_audio'].forEach(wireWaveformInteraction)
   </script>
