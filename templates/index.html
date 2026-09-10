@@ -1441,14 +1441,14 @@ document.addEventListener("DOMContentLoaded", function(){
   </div>
 
   <div class="promo-essentials">
-    <label>Promo length</label>
+    <label>Promo length</label><br>
     <select name=trailer_length id=trailer-length-select onchange="updateJobSummary()">
       <option value=15 selected>15 sec</option>
       <option value=30>30 sec</option>
       <option value=45>45 sec</option>
       <option value=60>60 sec</option>
-    </select>
-    <label>Genre</label>
+    </select><br>
+    <label>Genre</label><br>
     <select name=genre id=genre-select onchange="updateJobSummary(); if(typeof updateGenreManualVisibility==='function') updateGenreManualVisibility()">
     <option value="">Custom (manual settings below)</option>
     <option value=action>Action</option>
@@ -1466,14 +1466,14 @@ document.addEventListener("DOMContentLoaded", function(){
     <option value=thriller>Thriller</option>
     <option value=war>War</option>
     <option value=western>Western</option>
-  </select>
-    <label>Delivery format</label>
+  </select><br>
+    <label>Delivery format</label><br>
     <select name=delivery_format id=delivery-format-select onchange="updateJobSummary()">
       <option value=mp4_high selected>MP4 (H.264 High Profile)</option>
       <option value=prores_hq_2997>Apple ProRes 422 HQ — 29.97fps</option>
       <option value=prores_hq_2398>Apple ProRes 422 HQ — 23.976fps</option>
       <option value=avci100i>AVC-Intra 100i (approximation)</option>
-    </select>
+    </select><br>
   </div><!-- /.promo-essentials -->
 
   <div id=generator-settings>
@@ -6070,12 +6070,12 @@ job. Configured via env vars:
 <div class="sub-tabs">
   <button type="button" class="docs-tab docs-nav-item active" data-docs="docs-overview" onclick="switchDocs(this)">Overview</button>
   <button type="button" class="docs-tab docs-nav-item" data-docs="docs-workflow" onclick="switchDocs(this)">Workflow</button>
-  <button type="button" class="docs-tab docs-nav-item" data-docs="docs-media" onclick="switchDocs(this)">Media &amp; library</button>
+  <button type="button" class="docs-tab docs-nav-item" data-docs="docs-media" onclick="switchDocs(this)">Media &amp; Library</button>
   <button type="button" class="docs-tab docs-nav-item" data-docs="docs-tools" onclick="switchDocs(this)">Tools</button>
   <button type="button" class="docs-tab docs-nav-item" data-docs="docs-templates" onclick="switchDocs(this)">Templates</button>
-  <button type="button" class="docs-tab docs-nav-item" data-docs="docs-genres" onclick="switchDocs(this)">Genre presets</button>
+  <button type="button" class="docs-tab docs-nav-item" data-docs="docs-genres" onclick="switchDocs(this)">Genre Presets</button>
   <button type="button" class="docs-tab docs-nav-item" data-docs="docs-music" onclick="switchDocs(this)">Music &amp; VO tips</button>
-  <button type="button" class="docs-tab docs-nav-item" data-docs="docs-access" onclick="switchDocs(this)">Access &amp; theme</button>
+  <button type="button" class="docs-tab docs-nav-item" data-docs="docs-access" onclick="switchDocs(this)">Access &amp; Theme</button>
 </div>
   <div class="docs-body">
     <div class="docs-pane active" id="docs-overview">
@@ -6086,7 +6086,7 @@ job. Configured via env vars:
           <span>From scene detection to export, step by step.</span>
         </button>
         <button type="button" class="docs-card" onclick="switchDocs(document.querySelector('[data-docs=docs-media]'))">
-          <strong>Media &amp; library</strong>
+          <strong>Media &amp; Library</strong>
           <span>Uploads, network folders, job monitor, player.</span>
         </button>
         <button type="button" class="docs-card" onclick="switchDocs(document.querySelector('[data-docs=docs-tools]'))">
@@ -6098,7 +6098,7 @@ job. Configured via env vars:
           <span>Save and reuse per-show setups.</span>
         </button>
         <button type="button" class="docs-card" onclick="switchDocs(document.querySelector('[data-docs=docs-genres]'))">
-          <strong>Genre presets</strong>
+          <strong>Genre Presets</strong>
           <span>Transitions, SFX defaults, music themes.</span>
         </button>
         <button type="button" class="docs-card" onclick="switchDocs(document.querySelector('[data-docs=docs-music]'))">
@@ -6179,13 +6179,13 @@ job. Configured via env vars:
     </div>
 
     <div class="docs-pane" id="docs-media">
-      <h3 style="margin-top:0">Media &amp; library</h3>
+      <h3 style="margin-top:0">Media &amp; Library</h3>
       <h3>Upload or network folder</h3>
       <p>Every media input can be a direct upload or <strong>Browse library</strong> on the configured Windows/SMB share:</p>
       <table>
       <tr><th>Field</th><th>Network folder</th><th>File types</th></tr>
       <tr><td>Main video, title/end card</td><td><code>HIRES</code></td><td>Video</td></tr>
-      <tr><td>Background music</td><td><code>MUSIC</code></td><td>Audio</td></tr>
+      <tr><td>Background Music</td><td><code>MUSIC</code></td><td>Audio</td></tr>
       <tr><td>VO / narration, card VO</td><td><code>VO</code></td><td>Audio</td></tr>
       <tr><td>SFX</td><td><code>SFX</code></td><td>Audio</td></tr>
       </table>
@@ -6225,7 +6225,7 @@ POST /api/trailer/generate + template_id</pre>
     </div>
 
     <div class="docs-pane" id="docs-genres">
-      <h3 style="margin-top:0">Genre presets</h3>
+      <h3 style="margin-top:0">Genre Presets</h3>
       <p>Each genre sets a default transition, crossfade, SFX-at-cuts, and AI music/SFX themes.</p>
       <div class="docs-table-wrap">
       <table>
@@ -6259,7 +6259,7 @@ This is [emphasis] the one you cannot miss.</pre>
     </div>
 
     <div class="docs-pane" id="docs-access">
-      <h3 style="margin-top:0">Access &amp; theme</h3>
+      <h3 style="margin-top:0">Access &amp; Theme</h3>
       <h3>Theme</h3>
       <p>Rail controls: light / dark / auto (follows OS). Stored in <code>aimp_theme</code> localStorage per browser.</p>
       <h3>Access control</h3>
