@@ -431,6 +431,31 @@ p{color:var(--ink-dim);font-size:13px;line-height:1.65;margin:8px 0}
   font-size:11px;padding:0;line-height:1;
 }
 .player-play-btn:hover{background:rgba(52,230,197,.12)}
+.player-stop-btn{
+  width:22px;height:22px;border-radius:4px;flex-shrink:0;
+  border:1px solid var(--line);background:transparent;color:var(--ink-dim);
+  cursor:pointer;display:flex;align-items:center;justify-content:center;
+  font-size:9px;padding:0;line-height:1;
+}
+.player-stop-btn:hover{color:var(--ink);border-color:var(--ink-dim)}
+.player-volume{display:flex;align-items:center;gap:4px;flex-shrink:0}
+.player-volume-icon{
+  background:transparent;border:none;color:var(--ink-dim);cursor:pointer;
+  padding:0;font-size:12px;display:flex;align-items:center;
+}
+.player-volume-icon:hover{color:var(--ink)}
+.player-volume-slider{
+  width:56px;height:3px;-webkit-appearance:none;appearance:none;
+  background:var(--line);border-radius:2px;outline:none;cursor:pointer;
+}
+.player-volume-slider::-webkit-slider-thumb{
+  -webkit-appearance:none;appearance:none;width:10px;height:10px;border-radius:50%;
+  background:var(--phosphor);cursor:pointer;
+}
+.player-volume-slider::-moz-range-thumb{
+  width:10px;height:10px;border-radius:50%;border:none;
+  background:var(--phosphor);cursor:pointer;
+}
 .player-time{font-size:11px;opacity:.65;min-width:76px;white-space:nowrap;font-variant-numeric:tabular-nums}
 .player-io-group{display:flex;align-items:center;gap:3px;margin-left:auto}
 .player-io-btn{
@@ -1333,8 +1358,10 @@ document.addEventListener("DOMContentLoaded", function(){
     <div class="audio-player-card" id="vo_upload_card">
       <canvas id="vo_upload_waveform" width="420" height="68" style="display:none;width:100%;height:68px;cursor:pointer"></canvas>
       <div class="audio-player-controls">
+        <button type=button class="player-stop-btn" id="vo_upload_stopbtn" onclick="cardVoStop('vo_upload')" title="Stop">&#9632;</button>
         <button type=button class="player-play-btn" id="vo_upload_playbtn" onclick="cardVoTogglePlay('vo_upload')">&#9654;</button>
         <span class="player-time" id="vo_upload_time">0:00 / 0:00</span>
+        <span class="player-volume"><button type=button class="player-volume-icon" id="vo_upload_volicon" onclick="cardVoToggleMute('vo_upload')" title="Mute">&#128266;</button><input type=range class="player-volume-slider" id="vo_upload_volume" min=0 max=100 value=100 oninput="cardVoSetVolume('vo_upload', this.value)"></span>
         <span class="player-io-group">
           <button type=button class="player-io-btn" onclick="cardVoSetPoint('vo_upload','start')">IN</button>
           <input type=number name=vo_trim_start id="vo_upload_start" value=0 min=0 step=0.5 class="player-io-input">
@@ -1516,8 +1543,10 @@ document.addEventListener("DOMContentLoaded", function(){
   <div class="audio-player-card" id="title_card_vo_card">
     <canvas id="title_card_vo_waveform" width="420" height="68" style="display:none;width:100%;height:68px;cursor:pointer"></canvas>
     <div class="audio-player-controls">
+      <button type=button class="player-stop-btn" id="title_card_vo_stopbtn" onclick="cardVoStop('title_card_vo')" title="Stop">&#9632;</button>
       <button type=button class="player-play-btn" id="title_card_vo_playbtn" onclick="cardVoTogglePlay('title_card_vo')">&#9654;</button>
       <span class="player-time" id="title_card_vo_time">0:00 / 0:00</span>
+      <span class="player-volume"><button type=button class="player-volume-icon" id="title_card_vo_volicon" onclick="cardVoToggleMute('title_card_vo')" title="Mute">&#128266;</button><input type=range class="player-volume-slider" id="title_card_vo_volume" min=0 max=100 value=100 oninput="cardVoSetVolume('title_card_vo', this.value)"></span>
       <span class="player-io-group">
         <button type=button class="player-io-btn" onclick="cardVoSetPoint('title_card_vo','start')">IN</button>
         <input type=number id="title_card_vo_start" name=title_card_vo_start value=0 min=0 step=0.1 class="player-io-input">
@@ -1560,8 +1589,10 @@ document.addEventListener("DOMContentLoaded", function(){
   <div class="audio-player-card" id="end_card_vo_card">
     <canvas id="end_card_vo_waveform" width="420" height="68" style="display:none;width:100%;height:68px;cursor:pointer"></canvas>
     <div class="audio-player-controls">
+      <button type=button class="player-stop-btn" id="end_card_vo_stopbtn" onclick="cardVoStop('end_card_vo')" title="Stop">&#9632;</button>
       <button type=button class="player-play-btn" id="end_card_vo_playbtn" onclick="cardVoTogglePlay('end_card_vo')">&#9654;</button>
       <span class="player-time" id="end_card_vo_time">0:00 / 0:00</span>
+      <span class="player-volume"><button type=button class="player-volume-icon" id="end_card_vo_volicon" onclick="cardVoToggleMute('end_card_vo')" title="Mute">&#128266;</button><input type=range class="player-volume-slider" id="end_card_vo_volume" min=0 max=100 value=100 oninput="cardVoSetVolume('end_card_vo', this.value)"></span>
       <span class="player-io-group">
         <button type=button class="player-io-btn" onclick="cardVoSetPoint('end_card_vo','start')">IN</button>
         <input type=number id="end_card_vo_start" name=end_card_vo_start value=0 min=0 step=0.1 class="player-io-input">
@@ -1609,8 +1640,10 @@ document.addEventListener("DOMContentLoaded", function(){
     <div class="audio-player-card" id="scoring_audio_card">
       <canvas id="scoring_audio_waveform" width="420" height="68" style="display:none;width:100%;height:68px;cursor:pointer"></canvas>
       <div class="audio-player-controls">
+        <button type=button class="player-stop-btn" id="scoring_audio_stopbtn" onclick="cardVoStop('scoring_audio')" title="Stop">&#9632;</button>
         <button type=button class="player-play-btn" id="scoring_audio_playbtn" onclick="cardVoTogglePlay('scoring_audio')">&#9654;</button>
         <span class="player-time" id="scoring_audio_time">0:00 / 0:00</span>
+        <span class="player-volume"><button type=button class="player-volume-icon" id="scoring_audio_volicon" onclick="cardVoToggleMute('scoring_audio')" title="Mute">&#128266;</button><input type=range class="player-volume-slider" id="scoring_audio_volume" min=0 max=100 value=100 oninput="cardVoSetVolume('scoring_audio', this.value)"></span>
         <span class="player-io-group">
           <button type=button class="player-io-btn" onclick="cardVoSetPoint('scoring_audio','start')">IN</button>
           <input type=number name=scoring_audio_trim_start id="scoring_audio_start" value=0 min=0 step=0.5 class="player-io-input" style="display:none">
@@ -2383,6 +2416,38 @@ document.addEventListener("DOMContentLoaded", function(){
     if(!player || !player.src) return
     if(player.paused) player.play(); else player.pause()
   }
+  // Stop (distinct from pause): halts playback AND resets to the very
+  // start of the file, matching standard media-player convention -- not
+  // the trim IN point, since "stop" and "jump back to my selection" are
+  // different actions a person might want separately.
+  function cardVoStop(prefix){
+    var player = document.getElementById(prefix + '_player')
+    if(!player || !player.src) return
+    player.pause()
+    player.currentTime = 0
+  }
+  function cardVoToggleMute(prefix){
+    var player = document.getElementById(prefix + '_player')
+    if(!player || !player.src) return
+    player.muted = !player.muted
+    _updateVolumeIcon(prefix)
+  }
+  function cardVoSetVolume(prefix, value){
+    var player = document.getElementById(prefix + '_player')
+    if(!player) return
+    player.volume = Math.max(0, Math.min(100, value)) / 100
+    // Dragging the slider itself always un-mutes -- a muted player whose
+    // volume the person is actively raising back up should audibly
+    // reflect that, not stay silently muted underneath.
+    if(player.volume > 0) player.muted = false
+    _updateVolumeIcon(prefix)
+  }
+  function _updateVolumeIcon(prefix){
+    var player = document.getElementById(prefix + '_player')
+    var icon = document.getElementById(prefix + '_volicon')
+    if(!player || !icon) return
+    icon.innerHTML = (player.muted || player.volume === 0) ? '&#128263;' : '&#128266;'
+  }
   function _setPlayIcon(prefix, isPlaying){
     var btn = document.getElementById(prefix + '_playbtn')
     if(btn) btn.innerHTML = isPlaying ? '&#10074;&#10074;' : '&#9654;'
@@ -2560,6 +2625,23 @@ document.addEventListener("DOMContentLoaded", function(){
     g.fillStyle = accent
     g.fillRect(startX - 1.5, 0, 3, displayHeight)
     g.fillRect(endX - 1.5, 0, 3, displayHeight)
+    // A distinct playhead marker for the current playback position --
+    // separate from the played/unplayed color fill above, which shows
+    // roughly where things stand but isn't a precise, glanceable "you are
+    // here" line the way a real waveform-based scrubber has. Drawn last so
+    // it sits on top of both the bars and the IN/OUT handles, and in plain
+    // white (not the accent color used for played bars and the handles)
+    // specifically so it stays visually distinct from those regardless of
+    // where it currently sits.
+    var playheadX = (progress || 0) * displayWidth
+    g.fillStyle = '#fff'
+    g.fillRect(playheadX - 1, 0, 2, displayHeight)
+    g.beginPath()
+    g.moveTo(playheadX - 4, 0)
+    g.lineTo(playheadX + 4, 0)
+    g.lineTo(playheadX, 6)
+    g.closePath()
+    g.fill()
   }
 
   // Recomputes everything _paintWaveform needs (playback progress, and the
