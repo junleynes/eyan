@@ -487,8 +487,18 @@ p{color:var(--ink-dim);font-size:13px;line-height:1.65;margin:8px 0}
   padding:16px 18px;border-bottom:1px solid var(--line);
 }
 .net-modal-head strong{font-size:14px}
-.net-modal-head small{display:block;opacity:.6;font-size:11px;margin-top:2px;font-weight:400}
-.net-modal-close{cursor:pointer;font-size:16px;opacity:.7;padding:2px 6px;border-radius:5px}
+/* min-width:0 overrides a flex item's default refusal to shrink below its
+   content's own intrinsic width -- without it, a long, space-free network
+   path (a Windows UNC path has none until a folder name happens to
+   contain one) pushes this whole block wider than the modal itself
+   rather than wrapping within the space actually available, spilling
+   past the modal's own edge/border instead of staying inside it. */
+.net-modal-head > div{min-width:0;flex:1}
+.net-modal-head small{
+  display:block;opacity:.6;font-size:11px;margin-top:2px;font-weight:400;
+  overflow-wrap:break-word;word-break:break-all;
+}
+.net-modal-close{cursor:pointer;font-size:16px;opacity:.7;padding:2px 6px;border-radius:5px;flex-shrink:0}
 .net-modal-close:hover{opacity:1;background:var(--wash-4)}
 .net-modal-list{overflow-y:auto;padding:8px;font-size:13px}
 .net-modal-row{
@@ -1210,11 +1220,11 @@ document.addEventListener("DOMContentLoaded", function(){
   </div>
   <div id=tr-network-panel class=card style="display:none;text-align:left;padding:14px">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <div>
+      <div style="min-width:0;flex:1">
         <strong style="font-size:13px" id=tr-network-title>Video (HIRES) folder</strong>
-        <div id=tr-network-path style="font-size:11px;opacity:.6;margin-top:2px"></div>
+        <div id=tr-network-path style="font-size:11px;opacity:.6;margin-top:2px;overflow-wrap:break-word;word-break:break-all"></div>
       </div>
-      <span class="net-modal-close" id=tr-network-cancel title="Cancel">&#10005;</span>
+      <span class="net-modal-close" id=tr-network-cancel title="Cancel" style="flex-shrink:0">&#10005;</span>
     </div>
     <div style="display:flex;justify-content:flex-end;margin:-6px 0 4px">
       <button type="button" id="tr-network-fav-toggle" class="net-fav-star" title="Favorite this folder" onclick="toggleTrNetworkFavorite()">&#9734;</button>
