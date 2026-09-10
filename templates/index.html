@@ -457,17 +457,23 @@ p{color:var(--ink-dim);font-size:13px;line-height:1.65;margin:8px 0}
   background:var(--phosphor);cursor:pointer;
 }
 .player-time{font-size:11px;opacity:.65;min-width:76px;white-space:nowrap;font-variant-numeric:tabular-nums}
-.player-io-group{display:flex;align-items:center;gap:3px;margin-left:auto}
-.player-io-btn{
-  padding:3px 8px;font-size:11px;font-weight:600;border-radius:5px;
-  border:1px solid var(--line);background:transparent;color:var(--ink-dim);cursor:pointer;
+.player-io-group{display:flex;align-items:center;gap:4px;margin-left:auto}
+/* Bracket-style IN/OUT buttons -- replaces the earlier text "IN"/"OUT"
+   buttons plus their visible numeric fields, matching the reference
+   design's opening/closing-bracket icons alongside the transport
+   controls. The underlying number inputs (still the real, submitted
+   form fields, and still what the drag handles and typing read/write)
+   are hidden entirely now rather than shown next to these -- the
+   waveform's own visual selection is the value, so a separate visible
+   number restating it is no longer needed. */
+.player-bracket-btn{
+  width:22px;height:22px;border-radius:5px;flex-shrink:0;
+  border:1px solid var(--line);background:transparent;color:var(--ink-dim);
+  cursor:pointer;display:flex;align-items:center;justify-content:center;
+  font-size:13px;font-weight:700;font-family:monospace;padding:0;line-height:1;
 }
-.player-io-btn:hover{color:var(--phosphor);border-color:var(--phosphor)}
-.player-io-input{
-  width:52px;font-size:11px;padding:3px 4px;border-radius:5px;
-  border:1px solid var(--line);background:var(--panel-2);color:var(--ink);
-  text-align:center;
-}
+.player-bracket-btn:hover{color:var(--phosphor);border-color:var(--phosphor)}
+.player-io-input{display:none}
 .net-file-chip .chip-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px}
 .net-file-chip .chip-x{cursor:pointer;opacity:.7;flex-shrink:0}
 .net-file-chip .chip-x:hover{opacity:1}
@@ -1373,9 +1379,9 @@ document.addEventListener("DOMContentLoaded", function(){
         <span class="player-time" id="vo_upload_time">0:00 / 0:00</span>
         <span class="player-volume"><button type=button class="player-volume-icon" id="vo_upload_volicon" onclick="cardVoToggleMute('vo_upload')" title="Mute">&#128266;</button><input type=range class="player-volume-slider" id="vo_upload_volume" min=0 max=100 value=100 oninput="cardVoSetVolume('vo_upload', this.value)"></span>
         <span class="player-io-group">
-          <button type=button class="player-io-btn" onclick="cardVoSetPoint('vo_upload','start')">IN</button>
+          <button type=button class="player-bracket-btn" onclick="cardVoSetPoint('vo_upload','start')" title="Set IN point">[</button>
           <input type=number name=vo_trim_start id="vo_upload_start" value=0 min=0 step=0.5 class="player-io-input">
-          <button type=button class="player-io-btn" onclick="cardVoSetPoint('vo_upload','end')">OUT</button>
+          <button type=button class="player-bracket-btn" onclick="cardVoSetPoint('vo_upload','end')" title="Set OUT point">]</button>
           <input type=number name=vo_trim_end id="vo_upload_end" min=0 step=0.5 class="player-io-input" placeholder="end">
         </span>
       </div>
@@ -1558,9 +1564,9 @@ document.addEventListener("DOMContentLoaded", function(){
       <span class="player-time" id="title_card_vo_time">0:00 / 0:00</span>
       <span class="player-volume"><button type=button class="player-volume-icon" id="title_card_vo_volicon" onclick="cardVoToggleMute('title_card_vo')" title="Mute">&#128266;</button><input type=range class="player-volume-slider" id="title_card_vo_volume" min=0 max=100 value=100 oninput="cardVoSetVolume('title_card_vo', this.value)"></span>
       <span class="player-io-group">
-        <button type=button class="player-io-btn" onclick="cardVoSetPoint('title_card_vo','start')">IN</button>
+        <button type=button class="player-bracket-btn" onclick="cardVoSetPoint('title_card_vo','start')" title="Set IN point">[</button>
         <input type=number id="title_card_vo_start" name=title_card_vo_start value=0 min=0 step=0.1 class="player-io-input">
-        <button type=button class="player-io-btn" onclick="cardVoSetPoint('title_card_vo','end')">OUT</button>
+        <button type=button class="player-bracket-btn" onclick="cardVoSetPoint('title_card_vo','end')" title="Set OUT point">]</button>
         <input type=number id="title_card_vo_end" name=title_card_vo_end min=0 step=0.1 class="player-io-input" placeholder="end">
       </span>
     </div>
@@ -1604,9 +1610,9 @@ document.addEventListener("DOMContentLoaded", function(){
       <span class="player-time" id="end_card_vo_time">0:00 / 0:00</span>
       <span class="player-volume"><button type=button class="player-volume-icon" id="end_card_vo_volicon" onclick="cardVoToggleMute('end_card_vo')" title="Mute">&#128266;</button><input type=range class="player-volume-slider" id="end_card_vo_volume" min=0 max=100 value=100 oninput="cardVoSetVolume('end_card_vo', this.value)"></span>
       <span class="player-io-group">
-        <button type=button class="player-io-btn" onclick="cardVoSetPoint('end_card_vo','start')">IN</button>
+        <button type=button class="player-bracket-btn" onclick="cardVoSetPoint('end_card_vo','start')" title="Set IN point">[</button>
         <input type=number id="end_card_vo_start" name=end_card_vo_start value=0 min=0 step=0.1 class="player-io-input">
-        <button type=button class="player-io-btn" onclick="cardVoSetPoint('end_card_vo','end')">OUT</button>
+        <button type=button class="player-bracket-btn" onclick="cardVoSetPoint('end_card_vo','end')" title="Set OUT point">]</button>
         <input type=number id="end_card_vo_end" name=end_card_vo_end min=0 step=0.1 class="player-io-input" placeholder="end">
       </span>
     </div>
@@ -1655,9 +1661,9 @@ document.addEventListener("DOMContentLoaded", function(){
         <span class="player-time" id="scoring_audio_time">0:00 / 0:00</span>
         <span class="player-volume"><button type=button class="player-volume-icon" id="scoring_audio_volicon" onclick="cardVoToggleMute('scoring_audio')" title="Mute">&#128266;</button><input type=range class="player-volume-slider" id="scoring_audio_volume" min=0 max=100 value=100 oninput="cardVoSetVolume('scoring_audio', this.value)"></span>
         <span class="player-io-group">
-          <button type=button class="player-io-btn" onclick="cardVoSetPoint('scoring_audio','start')">IN</button>
+          <button type=button class="player-bracket-btn" onclick="cardVoSetPoint('scoring_audio','start')" title="Set IN point">[</button>
           <input type=number name=scoring_audio_trim_start id="scoring_audio_start" value=0 min=0 step=0.5 class="player-io-input" style="display:none">
-          <button type=button class="player-io-btn" onclick="cardVoSetPoint('scoring_audio','end')">OUT</button>
+          <button type=button class="player-bracket-btn" onclick="cardVoSetPoint('scoring_audio','end')" title="Set OUT point">]</button>
           <input type=number name=scoring_audio_trim_end id="scoring_audio_end" min=0 step=0.5 class="player-io-input" placeholder="end" style="display:none">
         </span>
       </div>
