@@ -421,6 +421,19 @@ img[src*="prism-logo"],img[src*="logo-mark"],img[src*="branding/logo"]{
   background:color-mix(in srgb,var(--amber) 10%,transparent);color:var(--amber)
 }
 .result-head{font-size:13px;line-height:1.5}
+.production-summary{margin-top:10px;font-size:12px}
+.production-summary summary{
+  cursor:pointer;color:var(--ink-dim);padding:4px 0;user-select:none;
+}
+.production-summary summary:hover{color:var(--ink)}
+.production-summary-table{margin-top:6px;border-collapse:collapse;width:100%}
+.production-summary-table td{
+  padding:4px 10px 4px 0;font-size:12px;vertical-align:top;
+  border-bottom:1px solid var(--line);
+}
+.production-summary-table td:first-child{
+  color:var(--ink-dim);white-space:nowrap;width:1%;font-weight:600;
+}
 .job-error{padding:4px 2px}
 .job-error-title{
   font:700 13px 'JetBrains Mono',monospace;letter-spacing:.04em;text-transform:uppercase;

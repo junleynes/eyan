@@ -5114,10 +5114,36 @@ function renderTrailerResult(d){
     ? '<ul class="qa-gates">'+gates.map(function(g){ return '<li>'+esc(g)+'</li>' }).join('')+'</ul>'
     : ''
 
+  // Production summary: everything that actually went into this specific
+  // render -- transition, title/schedule cards, VO/music source files,
+  // the prompts and script used -- collected in one place since
+  // previously reconstructing "what did I use for this one" after the
+  // fact meant remembering it or re-opening the original job. Only shows
+  // fields that are actually set; an unused field isn't shown as "None"
+  // clutter, it's just left out.
+  var ps = d.production_summary || {}
+  var psRows = []
+  if(d.orig_name) psRows.push(['HIRES source', esc(d.orig_name)])
+  if(ps.transition) psRows.push(['Transition', ps.transition + (ps.transition_matte ? ' (matte: ' + esc(ps.transition_matte) + ')' : '')])
+  if(ps.title_card) psRows.push(['Title card', esc(ps.title_card)])
+  if(ps.schedule_card) psRows.push(['Schedule card', esc(ps.schedule_card)])
+  if(ps.vo_file) psRows.push(['VO file', esc(ps.vo_file)])
+  if(ps.vo_text) psRows.push(['VO script (TTS)', esc(ps.vo_text.length > 140 ? ps.vo_text.slice(0, 140) + '\u2026' : ps.vo_text)])
+  if(ps.music_file) psRows.push(['Music file', esc(ps.music_file)])
+  if(ps.priority_prompt) psRows.push(['Feature prompt', esc(ps.priority_prompt)])
+  if(ps.negative_prompt) psRows.push(['Avoid prompt', esc(ps.negative_prompt)])
+  if(ps.script_cue_count) psRows.push(['Attached script', ps.script_cue_count + ' timecoded cue' + (ps.script_cue_count === 1 ? '' : 's')])
+  var psHtml = psRows.length
+    ? '<details class="production-summary"><summary>Production summary (' + psRows.length + ')</summary><table class="production-summary-table">' +
+      psRows.map(function(r){ return '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td></tr>' }).join('') +
+      '</table></details>'
+    : ''
+
   document.getElementById('tr-stats').innerHTML =
     '<div class="result-head"><strong>Promo ready</strong> \u00b7 '+d.trailer_duration+'s (target '+d.trailer_length+'s) \u00b7 '+
     d.selected_scenes+'/'+d.total_scenes+' scenes \u00b7 source '+d.video_duration+'s'+audioNote+'</div>'+
     gatesHtml +
+    psHtml +
     (fallbackUsed?'<div class="qa-warn">AI music/SFX service was unavailable; a lower-fidelity placeholder was used.</div>':'')
 
   var dlFilename = d.trailer_url.split('/').pop()

@@ -569,6 +569,42 @@ def list_network_files_recursive(category=DEFAULT_NETWORK_CATEGORY, subpath='', 
     results.sort(key=lambda e: (e['subpath'], not e.get('is_dir'), e['name'].lower()))
     return root, results, truncated
 
+def _asset_display_name(path):
+    """A clean, human-readable name for a resolved asset path, for the
+    production summary shown alongside a finished render -- not something
+    to feed back into any actual file operation, purely for a person to
+    read. A network-staged file's local name is always net_<timestamp>_
+    <original name> (see fetch_network_file); a combined multi-file
+    result's local name ends in _combined<ext> with no way to recover the
+    individual original names from the path alone, so that case is left
+    as-is rather than guessed at. A direct upload's local name has no such
+    prefix at all -- it's field_name_timestamp_threadid.ext with the real
+    original name discarded entirely (see _resolve_upload) -- so for that
+    case this only produces something readable when the caller already
+    resolved the real name via _upload_orig_name and this is just
+    tidying a network-staged one instead."""
+    if not path:
+        return None
+    base = os.path.basename(path)
+    m = re.match(r'^net_\d+_(.+)$', base)
+    return m.group(1) if m else base
+
+def _upload_orig_name(field_name):
+    """The real, original filename for an optional media field resolved via
+    _resolve_upload -- needed because that function's own local path
+    throws the original name away entirely for a direct upload (see its
+    own docstring), unlike load_video()'s path/orig_name pair for the main
+    source video. Checks the direct-upload case first (request.files still
+    has the browser's own original filename at this point in the request),
+    falling back to _asset_display_name for a network-staged pick, whose
+    local name still has the original name embedded in it after the
+    net_<timestamp>_ prefix."""
+    f = request.files.get(field_name)
+    if f and f.filename:
+        return secure_filename(f.filename) or None
+    staged = (request.form.get(field_name + '_network') or '').strip()
+    return _asset_display_name(staged) if staged else None
+
 def _safe_exception_text(e):
     """str(e), but never raises itself -- some smbprotocol exceptions
     (SharingViolation included) build their own message lazily from the raw
@@ -4156,8 +4192,11 @@ def api_trailer():
     if vo_mode not in ('none', 'upload', 'tts'):
         vo_mode = 'none'
     vo_upload_path = None
+    vo_upload_orig_name = None
     if vo_mode == 'upload':
         vo_upload_path = _resolve_upload('vo_upload', AUDIO_EXTENSIONS)
+        if vo_upload_path:
+            vo_upload_orig_name = _upload_orig_name('vo_upload')
     if vo_mode == 'upload' and not vo_upload_path:
         vo_mode = 'none'
     vo_text = request.form.get('vo_text', '').strip()
@@ -4234,12 +4273,17 @@ def api_trailer():
     end_card_path = None
     schedule_card_path = None
     scoring_audio_path = None
+    scoring_audio_orig_name = None
     if scoring_mode == 'upload':
         scoring_audio_path = _resolve_upload('scoring_audio', AUDIO_EXTENSIONS)
+        if scoring_audio_path:
+            scoring_audio_orig_name = _upload_orig_name('scoring_audio')
     if scoring_mode == 'generate':
         scoring_audio_path = 'GENERATE'  # flag to generate ambient
     end_card_path = _resolve_upload('end_card_video', ALLOWED_EXTENSIONS)
+    end_card_orig_name = _upload_orig_name('end_card_video') if end_card_path else None
     schedule_card_path = _resolve_upload('schedule_video', ALLOWED_EXTENSIONS)
+    schedule_card_orig_name = _upload_orig_name('schedule_video') if schedule_card_path else None
 
     # Optional VO tracks for the title card ("end_card_video" field, despite the
     # name) and end card ("schedule_video" field) — each can have its own
@@ -4449,16 +4493,19 @@ def api_trailer():
                   transition=transition, xfade_dur=xfade_dur, transition_matte_path=transition_matte_path,
                   target_loudness=target_loudness, true_peak=true_peak, music_duck_db=music_duck_db, duck_depth_db=duck_depth_db, duck_release_hold=duck_release_hold, beat_match=beat_match, broadcast_stereo=broadcast_stereo, model=model,
                   sfx_mode=sfx_mode, sfx_upload_path=sfx_upload_path,
-                  vo_mode=vo_mode, vo_upload_path=vo_upload_path, vo_text=vo_text, vo_voice=vo_voice,
+                  vo_mode=vo_mode, vo_upload_path=vo_upload_path, vo_upload_orig_name=vo_upload_orig_name,
+                  vo_text=vo_text, vo_voice=vo_voice,
                   vo_language=vo_language, vo_engine=vo_engine, vo_ref_upload_path=vo_ref_upload_path,
                   vo_rate=vo_rate, vo_start=vo_start, vo_volume=vo_volume, sync_beats=sync_beats, whisper_enhance=whisper_enhance,
                   selection_driver=selection_driver,
                   vo_trim_start=vo_trim_start, vo_trim_end=vo_trim_end,
                   scoring_audio_trim_start=scoring_audio_trim_start, scoring_audio_trim_end=scoring_audio_trim_end,
-                  end_card_path=end_card_path, schedule_card_path=schedule_card_path,
+                  end_card_path=end_card_path, end_card_orig_name=end_card_orig_name,
+                  schedule_card_path=schedule_card_path, schedule_card_orig_name=schedule_card_orig_name,
                   title_card_vo_path=title_card_vo_path, title_card_vo_start=title_card_vo_start, title_card_vo_end=title_card_vo_end,
                   end_card_vo_path=end_card_vo_path, end_card_vo_start=end_card_vo_start, end_card_vo_end=end_card_vo_end,
-                  scoring_audio_path=scoring_audio_path, prompt=prompt,
+                  scoring_audio_path=scoring_audio_path, scoring_audio_orig_name=scoring_audio_orig_name,
+                  prompt=prompt,
                   template_applied=template_applied,
                   # Stop after scene selection and hand back a reviewable cut
                   # instead of rendering. See the preview block in _run_trailer_job.
@@ -8224,6 +8271,28 @@ def _run_trailer_job(jid, params):
         vo_source=vo_source, vo_error=vo_error, sync_beats=sync_beats,
         whisper_enhance=whisper_enhance,
         template_applied=params.get('template_applied'),
+        # A single, complete production summary -- what actually went into
+        # this specific render, not just the edited output itself. Every
+        # value here already existed somewhere in params; this just
+        # collects them into one place a person can actually read after
+        # the fact, since previously reconstructing "what did I use for
+        # this one" meant remembering it or re-opening the original job.
+        production_summary=dict(
+            transition=params.get('transition'),
+            transition_matte=_asset_display_name(params.get('transition_matte_path')),
+            title_card=params.get('end_card_orig_name') or _asset_display_name(params.get('end_card_path')),
+            schedule_card=params.get('schedule_card_orig_name') or _asset_display_name(params.get('schedule_card_path')),
+            vo_file=(params.get('vo_upload_orig_name') or _asset_display_name(params.get('vo_upload_path'))) if params.get('vo_mode') == 'upload' else None,
+            vo_text=params.get('vo_text') if params.get('vo_mode') == 'tts' else None,
+            music_file=(params.get('scoring_audio_orig_name') or _asset_display_name(params.get('scoring_audio_path'))) if params.get('scoring_mode') == 'upload' else None,
+            priority_prompt=params.get('priority_prompt') or None,
+            negative_prompt=params.get('negative_prompt') or None,
+            # Count, not the raw cues themselves -- a script can carry many
+            # timecoded lines, and the point here is confirming a script
+            # WAS attached and roughly how much of it mattered, not
+            # reproducing the whole thing a second time in a summary.
+            script_cue_count=len(params.get('script_cues') or []) or None,
+        ),
         scenes=[{
             'scene': i+1, 'start': round(s['start'], 1), 'end': round(s['end'], 1),
             'quality': s['total_score'], 'duration': round(s['selected_dur'], 1),
