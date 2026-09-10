@@ -1331,7 +1331,7 @@ document.addEventListener("DOMContentLoaded", function(){
   <input type=hidden id=vo_upload_skip_template name=vo_upload_skip_template value="">
     <span class="net-file-chip" id=vo_upload_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('vo_upload')">&#10005;</span></span>
     <div class="audio-player-card" id="vo_upload_card">
-      <canvas id="vo_upload_waveform" width="420" height="48" style="display:none;width:100%;height:48px;cursor:pointer"></canvas>
+      <canvas id="vo_upload_waveform" width="420" height="68" style="display:none;width:100%;height:68px;cursor:pointer"></canvas>
       <div class="audio-player-controls">
         <button type=button class="player-play-btn" id="vo_upload_playbtn" onclick="cardVoTogglePlay('vo_upload')">&#9654;</button>
         <span class="player-time" id="vo_upload_time">0:00 / 0:00</span>
@@ -1514,7 +1514,7 @@ document.addEventListener("DOMContentLoaded", function(){
   <input type=hidden id=title_card_vo_skip_template name=title_card_vo_skip_template value="">
   <span class="net-file-chip" id=title_card_vo_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('title_card_vo')">&#10005;</span></span>
   <div class="audio-player-card" id="title_card_vo_card">
-    <canvas id="title_card_vo_waveform" width="420" height="48" style="display:none;width:100%;height:48px;cursor:pointer"></canvas>
+    <canvas id="title_card_vo_waveform" width="420" height="68" style="display:none;width:100%;height:68px;cursor:pointer"></canvas>
     <div class="audio-player-controls">
       <button type=button class="player-play-btn" id="title_card_vo_playbtn" onclick="cardVoTogglePlay('title_card_vo')">&#9654;</button>
       <span class="player-time" id="title_card_vo_time">0:00 / 0:00</span>
@@ -1558,7 +1558,7 @@ document.addEventListener("DOMContentLoaded", function(){
   <input type=hidden id=end_card_vo_skip_template name=end_card_vo_skip_template value="">
   <span class="net-file-chip" id=end_card_vo_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('end_card_vo')">&#10005;</span></span>
   <div class="audio-player-card" id="end_card_vo_card">
-    <canvas id="end_card_vo_waveform" width="420" height="48" style="display:none;width:100%;height:48px;cursor:pointer"></canvas>
+    <canvas id="end_card_vo_waveform" width="420" height="68" style="display:none;width:100%;height:68px;cursor:pointer"></canvas>
     <div class="audio-player-controls">
       <button type=button class="player-play-btn" id="end_card_vo_playbtn" onclick="cardVoTogglePlay('end_card_vo')">&#9654;</button>
       <span class="player-time" id="end_card_vo_time">0:00 / 0:00</span>
@@ -1607,7 +1607,7 @@ document.addEventListener("DOMContentLoaded", function(){
   <input type=hidden id=scoring_audio_skip_template name=scoring_audio_skip_template value="">
     <span class="net-file-chip" id=scoring_audio_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('scoring_audio')">&#10005;</span></span>
     <div class="audio-player-card" id="scoring_audio_card">
-      <canvas id="scoring_audio_waveform" width="420" height="48" style="display:none;width:100%;height:48px;cursor:pointer"></canvas>
+      <canvas id="scoring_audio_waveform" width="420" height="68" style="display:none;width:100%;height:68px;cursor:pointer"></canvas>
       <div class="audio-player-controls">
         <button type=button class="player-play-btn" id="scoring_audio_playbtn" onclick="cardVoTogglePlay('scoring_audio')">&#9654;</button>
         <span class="player-time" id="scoring_audio_time">0:00 / 0:00</span>
@@ -2442,14 +2442,27 @@ document.addEventListener("DOMContentLoaded", function(){
       .then(function(buf){
         var ctx = new AudioContextClass()
         return ctx.decodeAudioData(buf).then(function(audioBuffer){
-          _computeWaveformPeaks(canvas, audioBuffer)
+          // Card and canvas must be shown BEFORE measuring the canvas's own
+          // width in _computeWaveformPeaks -- a real, confirmed bug found
+          // while testing the draggable handles: with the parent card still
+          // display:none at measurement time, canvas.clientWidth reads 0,
+          // silently falling back to a hardcoded 420 there. The canvas
+          // itself, drawn at that wrong internal resolution but then
+          // CSS-stretched to its real, much wider rendered width, LOOKED
+          // fine -- but every pixel coordinate computed afterward (the
+          // drag handles' hit-test positions specifically) was calculated
+          // in that stale 420-wide space while the actual click/drag
+          // coordinates arrive in the real, current width's space, so nothing
+          // lined up. Confirmed directly: displayWidth read 420 against an
+          // actual rendered width of 704 in the environment this was found in.
+          if(card) card.style.display = 'block'
           canvas.style.display = 'block'
+          _computeWaveformPeaks(canvas, audioBuffer)
           // Uses _repaintWaveform (not a bare _paintWaveform(canvas, 0)) so
           // the very first paint already reflects any trim values already
           // present in the fields -- a template that pre-fills VO trim
           // points, for instance, would otherwise show an untrimmed-looking
           // waveform until the next playback tick or field edit repainted it.
-          if(card) card.style.display = 'block'
           _repaintWaveform(prefix)
           ctx.close()
         })
@@ -2523,13 +2536,25 @@ document.addEventListener("DOMContentLoaded", function(){
       }
       g.fillRect(x, mid - barHeight / 2, barWidth, barHeight)
     }
+    // Draggable IN/OUT handles: a full-height accent line at each boundary,
+    // wide enough to actually grab with a mouse -- without something drawn
+    // here, there'd be no visual sign the boundary is interactive at all,
+    // let alone where exactly to click. Positions cached on the canvas so
+    // the mousedown handler below can hit-test against the same pixels
+    // just drawn, not a separately-recomputed (and potentially
+    // out-of-sync) value.
+    var startX = selStart * displayWidth, endX = selEnd * displayWidth
+    canvas._handleX = {start: startX, end: endX}
+    g.fillStyle = accent
+    g.fillRect(startX - 1.5, 0, 3, displayHeight)
+    g.fillRect(endX - 1.5, 0, 3, displayHeight)
   }
 
   // Recomputes everything _paintWaveform needs (playback progress, and the
   // current IN/OUT selection as fractions of the real duration) and
   // repaints -- the one function every trigger for a repaint (playback,
-  // typing a new trim value, clicking Set in/out) should call, rather than
-  // each of them separately recomputing the same things.
+  // typing a new trim value, clicking Set in/out, dragging a handle) should
+  // call, rather than each of them separately recomputing the same things.
   function _repaintWaveform(prefix){
     var canvas = document.getElementById(prefix + '_waveform')
     var player = document.getElementById(prefix + '_player')
@@ -2551,9 +2576,13 @@ document.addEventListener("DOMContentLoaded", function(){
   // Wires a waveform canvas and the compact play/time controls to their
   // shared <audio> player once, for a given prefix -- keeps the waveform
   // fill (including the current IN/OUT selection), the play/pause icon,
-  // and the time readout all in sync during playback, and turns a click
-  // on the waveform into a seek, matching how a real waveform-based
-  // scrubber normally behaves.
+  // and the time readout all in sync during playback. The canvas supports
+  // three drag behaviors depending on where a drag starts: near the IN
+  // handle drags the trim start, near the OUT handle drags the trim end,
+  // and anywhere else scrubs playback continuously (not just a single
+  // click-to-seek) -- matching how a real waveform-based trim editor
+  // normally behaves, rather than requiring Set in/out button clicks for
+  // every adjustment.
   var _waveformWired = {}
   function wireWaveformInteraction(prefix){
     if(_waveformWired[prefix]) return
@@ -2572,17 +2601,58 @@ document.addEventListener("DOMContentLoaded", function(){
     player.addEventListener('play', function(){ _setPlayIcon(prefix, true) })
     player.addEventListener('pause', function(){ _setPlayIcon(prefix, false) })
     player.addEventListener('ended', function(){ _setPlayIcon(prefix, false) })
-    canvas.addEventListener('click', function(e){
-      if(!canvas._peaks || !player.duration) return
-      var rect = canvas.getBoundingClientRect()
-      var frac = (e.clientX - rect.left) / rect.width
-      player.currentTime = Math.max(0, Math.min(1, frac)) * player.duration
-    })
-    // Typing a trim value directly (not just clicking Set in/out) should
-    // also repaint immediately -- the selection is exactly what's being
-    // edited, so it should never look stale relative to the fields.
+
     var startInput = document.getElementById(prefix + '_start')
     var endInput = document.getElementById(prefix + '_end')
+    var HANDLE_GRAB_PX = 8  // generous enough to actually grab a 3px-wide line with a mouse
+    var dragMode = null  // null | 'start' | 'end' | 'seek'
+
+    function fracFromEvent(e){
+      var rect = canvas.getBoundingClientRect()
+      return Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+    }
+    canvas.addEventListener('mousedown', function(e){
+      if(!canvas._peaks || !player.duration) return
+      var rect = canvas.getBoundingClientRect()
+      var xPx = e.clientX - rect.left
+      var hx = canvas._handleX || {start: 0, end: rect.width}
+      if(Math.abs(xPx - hx.start) <= HANDLE_GRAB_PX){
+        dragMode = 'start'
+      } else if(Math.abs(xPx - hx.end) <= HANDLE_GRAB_PX){
+        dragMode = 'end'
+      } else {
+        dragMode = 'seek'
+        player.currentTime = fracFromEvent(e) * player.duration
+      }
+      e.preventDefault()
+    })
+    document.addEventListener('mousemove', function(e){
+      if(!dragMode || !player.duration) return
+      var frac = fracFromEvent(e)
+      if(dragMode === 'seek'){
+        player.currentTime = frac * player.duration
+      } else if(startInput && endInput){
+        var t = Math.round(frac * player.duration * 10) / 10
+        var otherVal = parseFloat(dragMode === 'start' ? endInput.value : startInput.value)
+        if(dragMode === 'start'){
+          // Never let IN cross past OUT (when OUT is actually set) -- a
+          // dragged-past handle would otherwise silently invert the
+          // selection into something the backend interprets differently
+          // (or not at all) from what's visually shown.
+          if(!isNaN(otherVal) && otherVal > 0) t = Math.min(t, otherVal - 0.1)
+          startInput.value = Math.max(0, t)
+        } else {
+          if(!isNaN(otherVal) && otherVal > 0) t = Math.max(t, otherVal + 0.1)
+          endInput.value = Math.max(0, t)
+        }
+        _repaintWaveform(prefix)
+      }
+    })
+    document.addEventListener('mouseup', function(){ dragMode = null })
+    // Typing a trim value directly (not just clicking Set in/out or
+    // dragging a handle) should also repaint immediately -- the selection
+    // is exactly what's being edited, so it should never look stale
+    // relative to the fields.
     if(startInput) startInput.addEventListener('input', function(){ _repaintWaveform(prefix) })
     if(endInput) endInput.addEventListener('input', function(){ _repaintWaveform(prefix) })
   }
