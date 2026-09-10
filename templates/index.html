@@ -5205,6 +5205,7 @@ function renderTrailerResult(d){
         '<button type="button" class="btn btn-secondary-promo" id="tr-send-destination-btn" style="display:none">Send to destination</button>'+
         '<span id="tr-send-destination-status" style="font-size:12px;align-self:center"></span>'+
         '<button type="button" class="btn btn-secondary-promo" id="tr-scene-csv-btn">Scene list CSV</button>'+
+        '<button type="button" class="btn btn-secondary-promo" id="tr-fcpxml-btn" style="display:none">FCP XML</button>'+
         '<button type="button" class="btn btn-secondary-promo" onclick="submitTrailer(true)">Re-preview same setup</button>'+
       '</div>'+
     '</div>'
@@ -5222,6 +5223,23 @@ function renderTrailerResult(d){
   })
   var csvBtn = document.getElementById('tr-scene-csv-btn')
   if(csvBtn) csvBtn.addEventListener('click', function(){ downloadSceneListCsv(d) })
+
+  // FCP XML needs a real, saved source video on the server to reference
+  // and probe (see build_fcpxml's own error cases) -- only shown once
+  // this render is actually saved to the library, matching the same
+  // d.library_id guard Send to destination already uses, since both
+  // depend on the same saved row existing.
+  var fcpxmlBtn = document.getElementById('tr-fcpxml-btn')
+  if(fcpxmlBtn && d.library_id){
+    fcpxmlBtn.style.display = ''
+    fcpxmlBtn.addEventListener('click', function(){
+      // A real navigation, not fetch() -- same reasoning as the main
+      // download button below: the browser's native download handling
+      // (Content-Disposition, save dialog) only fires for an actual
+      // navigation, not an in-page request.
+      window.location.href = '/library/' + d.library_id + '/fcpxml'
+    })
+  }
 
   var downloadBtn = document.getElementById('tr-download-selected')
   if(downloadBtn) downloadBtn.addEventListener('click', function(){

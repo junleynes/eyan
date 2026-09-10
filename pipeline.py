@@ -15,6 +15,7 @@ the AI services, ffmpeg, and real footage can actually be exercised --
 not blind in a sandbox that has none of those available.
 """
 import os, cv2, numpy as np, tempfile, threading, time, pathlib, base64, json, requests, subprocess, shutil, re, sqlite3, uuid, secrets, io, mimetypes, hashlib
+from xml.sax.saxutils import escape as xml_escape
 from concurrent.futures import ThreadPoolExecutor
 from collections import deque
 from scenedetect import open_video, SceneManager
@@ -5210,6 +5211,21 @@ def library_download(tid):
     resp.headers['Content-Disposition'] = f'attachment; filename="{base_name}.{ext}"'
     return resp
 
+@app.route('/library/<int:tid>/fcpxml')
+@require_permission('promo_generation')
+def library_fcpxml(tid):
+    row = library_get_row(tid)
+    if not row or not _owns_or_admin(row.get('user_id')):
+        return jsonify(error='Not found'), 404
+    try:
+        xml_text = build_fcpxml(row)
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+    base_name = os.path.splitext(row['orig_name'] or row['filename'])[0]
+    resp = Response(xml_text, mimetype='application/xml')
+    resp.headers['Content-Disposition'] = f'attachment; filename="{secure_filename(base_name)}_cut.xml"'
+    return resp
+
 def _resolve_export_file(tid, fmt_key=None, custom_name=None):
     """Resolves (generating and caching if needed) the exported delivery file
     for a library trailer. Shared by the browser-download route and the
@@ -5257,6 +5273,156 @@ def _resolve_export_file(tid, fmt_key=None, custom_name=None):
         if not (os.path.exists(cache_path) and os.path.getsize(cache_path) > 0):
             return None, None, None, f'Export to {fmt_key} failed: {r.stderr[-800:]}', 500
     return cache_path, base_name, ext, None, 200
+
+def _fps_to_timebase_ntsc(fps):
+    """Maps a real, measured frame rate to the nearest FCP XML
+    timebase/ntsc pair. This distinction is the single most fragile part
+    of legacy FCP XML: <timebase>24</timebase><ntsc>FALSE</ntsc> means
+    true 24.000fps, while the same <timebase>24</timebase> with
+    <ntsc>TRUE</ntsc> means 23.976fps instead -- get this wrong and every
+    timecode in the file is silently off by a factor of 1000/1001,
+    drifting further apart the longer the sequence runs (this exact
+    confusion is a real, commonly-reported problem when NLEs round-trip
+    FCP XML with each other). Snaps to the nearest of the handful of
+    frame rates FCP XML actually has names for, rather than embedding an
+    arbitrary measured value like "29.94" that isn't a real broadcast
+    standard and that an NLE has no defined way to interpret."""
+    if fps <= 0:
+        return 25, False  # an unreadable fps (0) shouldn't happen, but guessing a common broadcast rate beats crashing
+    candidates = [
+        (23.976, 24, True), (24.0, 24, False),
+        (25.0, 25, False),
+        (29.97, 30, True), (30.0, 30, False),
+        (50.0, 50, False),
+        (59.94, 60, True), (60.0, 60, False),
+    ]
+    _, timebase, ntsc = min(candidates, key=lambda c: abs(c[0] - fps))
+    return timebase, ntsc
+
+def _path_to_file_url(path):
+    """A file:// URL an NLE on the same network/server can resolve back to
+    the real source file. Windows paths (this app's own deployment) use
+    backslashes, which the file:// scheme doesn't recognize as
+    separators, so those are converted to forward slashes; the leading
+    drive letter (C:/...) is kept as-is and just needs a single leading
+    slash before it, matching the widely-supported file://localhost/C:/...
+    convention rather than the three-slash file:///C:/... form, since
+    NLEs vary in which of the two they parse most reliably."""
+    normalized = path.replace('\\', '/')
+    if not normalized.startswith('/'):
+        normalized = '/' + normalized
+    return 'file://localhost' + normalized
+
+def build_fcpxml(row):
+    """Legacy "Final Cut Pro XML Interchange Format" (xmeml version 5) --
+    deliberately NOT modern FCPXML (Final Cut Pro X's own, structurally
+    different and incompatible format). Chose the older dialect on
+    purpose: Premiere Pro and DaVinci Resolve both read this one, while
+    Premiere cannot import modern FCPXML at all without a paid
+    third-party converter -- for a facility where editors may use
+    different NLEs, the old format is the one that's actually broadly
+    useful, "legacy" status notwithstanding.
+
+    Builds one clipitem per selected scene, all referencing the same
+    original HIRES source file (single file, or an already-combined
+    multi-file result -- whichever source_video_path already points to,
+    matching what a csv_video Send to destination sends alongside its
+    CSV) at that scene's real in/out points against the source's own,
+    actually-measured frame rate -- a rough-cut sequence an editor drops
+    into a real timeline and refines by hand, not the generated promo's
+    own, already-edited output as a single flattened clip.
+
+    Raises ValueError (safe to show the user) if there's no recorded
+    scene selection, no recorded source path, or the source file no
+    longer exists on disk to probe its real dimensions/frame rate from
+    -- a direct upload is cleaned up after rendering and won't be
+    available here; only a network-staged source survives (see
+    fetch_network_file/library_send_to_destination's own csv_video
+    handling, which relies on the same survival)."""
+    result = json.loads(row['result_json'] or '{}')
+    scenes = result.get('scenes') or []
+    source_path = result.get('source_video_path')
+    if not scenes:
+        raise ValueError('This trailer has no recorded scene selection to export.')
+    if not source_path:
+        raise ValueError('This trailer has no recorded source video to reference.')
+    if not os.path.exists(source_path):
+        raise ValueError('The original source video is no longer available on this server '
+                          '(direct uploads are cleaned up after rendering; only a '
+                          'network-staged source is kept).')
+
+    cap = cv2.VideoCapture(source_path)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1920
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1080
+    real_fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    cap.release()
+    timebase, ntsc = _fps_to_timebase_ntsc(real_fps)
+    fps = timebase * (1000.0 / 1001.0) if ntsc else float(timebase)
+
+    source_name = xml_escape(result.get('orig_name') or os.path.basename(source_path))
+    file_url = xml_escape(_path_to_file_url(source_path))
+    rate_block = f'<rate><timebase>{timebase}</timebase><ntsc>{"TRUE" if ntsc else "FALSE"}</ntsc></rate>'
+
+    clip_items = []
+    cursor = 0  # sequence-timeline position, in frames, of the next clip -- these are placed back to back with no gaps, matching a straight cut-together assembly
+    for i, s in enumerate(scenes):
+        start_s = float(s.get('start') or 0)
+        end_s = float(s.get('end') or 0)
+        in_frame = max(0, round(start_s * fps))
+        out_frame = max(in_frame + 1, round(end_s * fps))  # at least 1 frame -- a zero-length clipitem is invalid
+        seq_start, seq_end = cursor, cursor + (out_frame - in_frame)
+        cursor = seq_end
+        # The id-attribute inheritance convention: only the FIRST clipitem
+        # referencing this source carries the full <file> definition
+        # (name/pathurl/rate/dimensions); every later one just references
+        # it by the same id via a self-closing tag, exactly matching how
+        # a real FCP/Premiere export represents "many clips, one source
+        # file" rather than repeating the same file metadata dozens of
+        # times.
+        if i == 0:
+            file_block = (
+                f'<file id="file-1"><name>{source_name}</name>'
+                f'<pathurl>{file_url}</pathurl>{rate_block}'
+                f'<media><video><samplecharacteristics>{rate_block}'
+                f'<width>{width}</width><height>{height}</height>'
+                f'</samplecharacteristics></video>'
+                f'<audio><samplecharacteristics><depth>16</depth><samplerate>48000</samplerate>'
+                f'</samplecharacteristics><channelcount>2</channelcount></audio></media></file>'
+            )
+        else:
+            file_block = '<file id="file-1"/>'
+        desc = xml_escape(str(s.get('description') or ''))
+        clip_items.append(
+            f'<clipitem id="clipitem-{i+1}"><masterclipid>masterclip-1</masterclipid>'
+            f'<name>{source_name} - Scene {xml_escape(str(s.get("scene", i+1)))}</name>'
+            f'<enabled>TRUE</enabled><duration>{out_frame - in_frame}</duration>{rate_block}'
+            f'<start>{seq_start}</start><end>{seq_end}</end>'
+            f'<in>{in_frame}</in><out>{out_frame}</out>{file_block}'
+            f'<logginginfo><description>{desc}</description></logginginfo>'
+            f'</clipitem>'
+        )
+
+    total_frames = cursor
+    base_name = os.path.splitext(row['orig_name'] or row['filename'])[0]
+    seq_name = xml_escape(base_name + '_cut')
+
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE xmeml>\n'
+        '<xmeml version="5">\n'
+        '<sequence>\n'
+        f'<name>{seq_name}</name>\n'
+        f'<duration>{total_frames}</duration>\n'
+        f'{rate_block}\n'
+        '<media><video><format><samplecharacteristics>\n'
+        f'{rate_block}\n'
+        f'<width>{width}</width><height>{height}</height>\n'
+        '</samplecharacteristics></format>\n'
+        '<track>\n' + '\n'.join(clip_items) + '\n</track>\n'
+        '</video></media>\n'
+        '</sequence>\n'
+        '</xmeml>\n'
+    )
 
 def build_scene_list_csv(row):
     """Same CSV shape as the client-side downloadSceneListCsv() (used for
