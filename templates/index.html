@@ -3161,6 +3161,24 @@ document.addEventListener("DOMContentLoaded", function(){
     files.forEach(function(f){
       var row = document.createElement('div')
       row.className = 'net-modal-row'
+      if(f.is_dir){
+        // A matching FOLDER (not a file) -- searching used to only ever
+        // check filenames, silently skipping folder names entirely, so
+        // searching for a show's own folder came back empty even when it
+        // genuinely existed right there. No checkbox (a folder can't be
+        // combined) and no size; clicking navigates into it via the same
+        // loadNetworkList() a normal folder row already uses, rather than
+        // treating it as something to select/fetch.
+        var folderNameSpan = document.createElement('span')
+        folderNameSpan.className = 'row-name'
+        folderNameSpan.textContent = '\uD83D\uDCC1 ' + f.name
+        row.appendChild(folderNameSpan)
+        row.addEventListener('click', function(){
+          loadNetworkList(f.subpath ? f.subpath + '\\' + f.name : f.name)
+        })
+        networkList.appendChild(row)
+        return
+      }
       var cb = document.createElement('input')
       cb.type = 'checkbox'
       cb.className = 'net-multi-check'
@@ -7783,6 +7801,20 @@ document.addEventListener('DOMContentLoaded', function(){
       var row = document.createElement('div')
       row.className = 'net-modal-row'
       var locationLabel = f.subpath ? f.subpath.replace(/\\/g, ' / ') + ' / ' : ''
+      if(f.is_dir){
+        // A matching FOLDER (not a file) -- searching used to only ever
+        // check filenames, silently skipping folder names entirely, so
+        // searching for a show's own folder came back empty even when it
+        // genuinely existed right there. Clicking it navigates into it,
+        // exactly like a normal (non-search) folder row, rather than
+        // trying to fetch it as if it were a file.
+        row.innerHTML = '<span class="row-name"><span style="opacity:.55;font-size:11px">' + locationLabel + '</span>&#128193; ' + f.name + '</span>'
+        row.addEventListener('click', function(){
+          loadFolder(f.subpath ? f.subpath + '\\' + f.name : f.name)
+        })
+        listEl.appendChild(row)
+        return
+      }
       row.innerHTML = '<span class="row-name"><span style="opacity:.55;font-size:11px">' + locationLabel + '</span>' + f.name +
                       '</span><span class="row-size">' + humanSize(f.size) + '</span>'
       row.addEventListener('click', function(){ pickNetworkFile(f.name, f.subpath, f.size) })

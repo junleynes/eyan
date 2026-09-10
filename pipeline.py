@@ -493,14 +493,24 @@ NETWORK_RECURSIVE_MAX_DEPTH = int(os.environ.get('NETWORK_RECURSIVE_MAX_DEPTH', 
 
 def list_network_files_recursive(category=DEFAULT_NETWORK_CATEGORY, subpath='', query=''):
     """Walks every subfolder under `subpath` (relative to `category`'s
-    configured root) and returns every matching file found at any depth,
-    each annotated with its own subpath so the caller knows where it
-    actually lives and can fetch it correctly -- results from different
-    folders are otherwise indistinguishable once flattened. `query`
-    (case-insensitive substring against the filename) is optional; blank
-    means every file, which is a reasonable search on its own ("show me
-    everything under here" instead of clicking through folders one at a
-    time).
+    configured root) and returns every matching file OR folder found at any
+    depth, each annotated with its own subpath so the caller knows where it
+    actually lives -- results from different folders are otherwise
+    indistinguishable once flattened. `query` (case-insensitive substring
+    against the name) is optional; blank means every file, which is a
+    reasonable search on its own ("show me everything under here" instead
+    of clicking through folders one at a time).
+
+    A matching folder is returned alongside matching files (each item
+    carries is_dir so the caller can tell them apart and act
+    accordingly -- fetch a file, navigate into a folder) -- searching used
+    to only ever look at filenames, silently skipping folder names
+    entirely, so searching for a show's own folder name (rather than a
+    specific file inside it) came back empty even when that folder
+    genuinely existed right there. A folder is still queued for its own
+    recursive search regardless of whether it matched, since files inside
+    it may match even when its own name doesn't, and vice versa a matching
+    folder's own contents should still surface normally by browsing into it.
 
     Breadth-first rather than recursive Python calls -- straightforward to
     cap depth/result count cleanly, and avoids any recursion-depth concern
@@ -528,6 +538,16 @@ def list_network_files_recursive(category=DEFAULT_NETWORK_CATEGORY, subpath='', 
             continue
         for entry in entries:
             if entry.is_dir():
+                # A blank query already means "every file" for the file
+                # branch below -- matching that same "show everything"
+                # behavior here too, rather than blank query silently
+                # excluding every folder while blank-query file results
+                # already include everything at every depth.
+                if not q or q in entry.name.lower():
+                    results.append({'name': entry.name, 'subpath': cur_sub, 'is_dir': True})
+                    if len(results) >= NETWORK_RECURSIVE_MAX_RESULTS:
+                        truncated = True
+                        break
                 if depth < NETWORK_RECURSIVE_MAX_DEPTH:
                     queue.append((cur_sub + '\\' + entry.name if cur_sub else entry.name, depth + 1))
                 continue
@@ -536,13 +556,17 @@ def list_network_files_recursive(category=DEFAULT_NETWORK_CATEGORY, subpath='', 
             if q and q not in entry.name.lower():
                 continue
             st = entry.stat()
-            results.append({'name': entry.name, 'subpath': cur_sub, 'size': st.st_size, 'mtime': st.st_mtime})
+            results.append({'name': entry.name, 'subpath': cur_sub, 'size': st.st_size, 'mtime': st.st_mtime, 'is_dir': False})
             if len(results) >= NETWORK_RECURSIVE_MAX_RESULTS:
                 truncated = True
                 break
         if truncated:
             break
-    results.sort(key=lambda e: (e['subpath'], e['name'].lower()))
+    # Folders sort before files within the same subpath, matching how the
+    # non-search folder browser already lists folders before files -- a
+    # search shouldn't rearrange that convention just because it flattens
+    # multiple subpaths together.
+    results.sort(key=lambda e: (e['subpath'], not e.get('is_dir'), e['name'].lower()))
     return root, results, truncated
 
 def _safe_exception_text(e):
