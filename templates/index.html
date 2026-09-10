@@ -410,6 +410,39 @@ p{color:var(--ink-dim);font-size:13px;line-height:1.65;margin:8px 0}
   color:var(--phosphor);border-radius:7px;padding:5px 10px;max-width:100%;
   margin-top:8px;
 }
+/* Unified audio player card: waveform + play/pause + time + in/out, one
+   compact interface instead of a waveform, a separate native <audio>
+   with its own visible controls, and a separate row of "Set in/out from
+   player" buttons below it -- three things doing overlapping jobs (the
+   native player's own scrubber duplicated what the waveform's
+   click-to-seek already did). Deliberately kept to the two rows below
+   (waveform, one control row) rather than the fuller layout of the
+   reference design this was modeled on -- "simple and not big" was the
+   ask, and this app's forms are already dense. */
+.audio-player-card{
+  border:1px solid var(--line);border-radius:10px;padding:8px 10px;
+  margin-top:8px;background:var(--sunken,#0b1220);display:none;
+}
+.audio-player-controls{display:flex;align-items:center;gap:8px;margin-top:8px}
+.player-play-btn{
+  width:26px;height:26px;border-radius:50%;flex-shrink:0;
+  border:1px solid var(--phosphor);background:transparent;color:var(--phosphor);
+  cursor:pointer;display:flex;align-items:center;justify-content:center;
+  font-size:11px;padding:0;line-height:1;
+}
+.player-play-btn:hover{background:rgba(52,230,197,.12)}
+.player-time{font-size:11px;opacity:.65;min-width:76px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.player-io-group{display:flex;align-items:center;gap:3px;margin-left:auto}
+.player-io-btn{
+  padding:3px 8px;font-size:11px;font-weight:600;border-radius:5px;
+  border:1px solid var(--line);background:transparent;color:var(--ink-dim);cursor:pointer;
+}
+.player-io-btn:hover{color:var(--phosphor);border-color:var(--phosphor)}
+.player-io-input{
+  width:52px;font-size:11px;padding:3px 4px;border-radius:5px;
+  border:1px solid var(--line);background:var(--panel-2);color:var(--ink);
+  text-align:center;
+}
 .net-file-chip .chip-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px}
 .net-file-chip .chip-x{cursor:pointer;opacity:.7;flex-shrink:0}
 .net-file-chip .chip-x:hover{opacity:1}
@@ -1297,17 +1330,21 @@ document.addEventListener("DOMContentLoaded", function(){
     <input type=hidden id=vo_upload_network name=vo_upload_network value="">
   <input type=hidden id=vo_upload_skip_template name=vo_upload_skip_template value="">
     <span class="net-file-chip" id=vo_upload_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('vo_upload')">&#10005;</span></span>
-    <canvas id="vo_upload_waveform" width="420" height="60" style="display:none;width:100%;max-width:420px;height:60px;background:var(--sunken,#0b1220);border:1px solid var(--line);border-radius:6px;margin:8px 0 0;cursor:pointer"></canvas>
-    <audio id="vo_upload_player" controls style="display:none;width:100%;max-width:420px;height:32px;margin:8px 0 4px"></audio>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0">
-      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Trim uploaded audio — start (s):</span>
-      <input type=number name=vo_trim_start id="vo_upload_start" value=0 min=0 step=0.5 style="width:80px"></span>
-      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">end (s, blank=to end):</span>
-      <input type=number name=vo_trim_end id="vo_upload_end" min=0 step=0.5 style="width:80px"></span>
-      <button type=button class="btn" style="padding:5px 10px;font-size:12px" onclick="cardVoSetPoint('vo_upload','start')">Set in from player</button>
-      <button type=button class="btn" style="padding:5px 10px;font-size:12px" onclick="cardVoSetPoint('vo_upload','end')">Set out from player</button>
+    <div class="audio-player-card" id="vo_upload_card">
+      <canvas id="vo_upload_waveform" width="420" height="48" style="display:none;width:100%;height:48px;cursor:pointer"></canvas>
+      <div class="audio-player-controls">
+        <button type=button class="player-play-btn" id="vo_upload_playbtn" onclick="cardVoTogglePlay('vo_upload')">&#9654;</button>
+        <span class="player-time" id="vo_upload_time">0:00 / 0:00</span>
+        <span class="player-io-group">
+          <button type=button class="player-io-btn" onclick="cardVoSetPoint('vo_upload','start')">IN</button>
+          <input type=number name=vo_trim_start id="vo_upload_start" value=0 min=0 step=0.5 class="player-io-input">
+          <button type=button class="player-io-btn" onclick="cardVoSetPoint('vo_upload','end')">OUT</button>
+          <input type=number name=vo_trim_end id="vo_upload_end" min=0 step=0.5 class="player-io-input" placeholder="end">
+        </span>
+      </div>
     </div>
-    <span id="vo_upload_preview_note" style="font-size:12px;opacity:.75;display:block;margin:-2px 0 6px"></span>
+    <audio id="vo_upload_player" style="display:none"></audio>
+    <span id="vo_upload_preview_note" style="font-size:12px;opacity:.75;display:block;margin:4px 0 6px"></span>
   </div>
   <div id=vo-tts-area style="display:none">
     <textarea name=vo_text id=vo-text-input class=input-box rows=3 placeholder="Type the narration script here..."></textarea>
@@ -1476,15 +1513,21 @@ document.addEventListener("DOMContentLoaded", function(){
   <input type=hidden id=title_card_vo_network name=title_card_vo_network value="">
   <input type=hidden id=title_card_vo_skip_template name=title_card_vo_skip_template value="">
   <span class="net-file-chip" id=title_card_vo_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('title_card_vo')">&#10005;</span></span>
-  <canvas id="title_card_vo_waveform" width="420" height="60" style="display:none;width:100%;max-width:420px;height:60px;background:var(--sunken,#0b1220);border:1px solid var(--line);border-radius:6px;margin:8px 0 0;cursor:pointer"></canvas>
-    <audio id="title_card_vo_player" controls style="display:none;width:100%;max-width:420px;height:32px;margin-bottom:6px"></audio>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 12px">
-    <button type=button class=btn style="padding:4px 10px;font-size:11px" onclick="cardVoSetPoint('title_card_vo','start')">Set in (player)</button>
-    <button type=button class=btn style="padding:4px 10px;font-size:11px" onclick="cardVoSetPoint('title_card_vo','end')">Set out (player)</button>
-    <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">or manually - start (s):</span>
-    <input type=number id="title_card_vo_start" name=title_card_vo_start value=0 min=0 step=0.1 style="width:70px"></span>
-    <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">end (s, blank=to end):</span>
-    <input type=number id="title_card_vo_end" name=title_card_vo_end min=0 step=0.1 style="width:70px"></span>
+  <div class="audio-player-card" id="title_card_vo_card">
+    <canvas id="title_card_vo_waveform" width="420" height="48" style="display:none;width:100%;height:48px;cursor:pointer"></canvas>
+    <div class="audio-player-controls">
+      <button type=button class="player-play-btn" id="title_card_vo_playbtn" onclick="cardVoTogglePlay('title_card_vo')">&#9654;</button>
+      <span class="player-time" id="title_card_vo_time">0:00 / 0:00</span>
+      <span class="player-io-group">
+        <button type=button class="player-io-btn" onclick="cardVoSetPoint('title_card_vo','start')">IN</button>
+        <input type=number id="title_card_vo_start" name=title_card_vo_start value=0 min=0 step=0.1 class="player-io-input">
+        <button type=button class="player-io-btn" onclick="cardVoSetPoint('title_card_vo','end')">OUT</button>
+        <input type=number id="title_card_vo_end" name=title_card_vo_end min=0 step=0.1 class="player-io-input" placeholder="end">
+      </span>
+    </div>
+  </div>
+  <audio id="title_card_vo_player" style="display:none"></audio>
+  <div style="margin:2px 0 12px">
     <span id="title_card_vo_preview_note" style="font-size:11px;opacity:.7"></span>
   </div>
   </div>
@@ -1514,15 +1557,21 @@ document.addEventListener("DOMContentLoaded", function(){
   <input type=hidden id=end_card_vo_network name=end_card_vo_network value="">
   <input type=hidden id=end_card_vo_skip_template name=end_card_vo_skip_template value="">
   <span class="net-file-chip" id=end_card_vo_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('end_card_vo')">&#10005;</span></span>
-  <canvas id="end_card_vo_waveform" width="420" height="60" style="display:none;width:100%;max-width:420px;height:60px;background:var(--sunken,#0b1220);border:1px solid var(--line);border-radius:6px;margin:8px 0 0;cursor:pointer"></canvas>
-    <audio id="end_card_vo_player" controls style="display:none;width:100%;max-width:420px;height:32px;margin-bottom:6px"></audio>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 12px">
-    <button type=button class=btn style="padding:4px 10px;font-size:11px" onclick="cardVoSetPoint('end_card_vo','start')">Set in (player)</button>
-    <button type=button class=btn style="padding:4px 10px;font-size:11px" onclick="cardVoSetPoint('end_card_vo','end')">Set out (player)</button>
-    <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">or manually - start (s):</span>
-    <input type=number id="end_card_vo_start" name=end_card_vo_start value=0 min=0 step=0.1 style="width:70px"></span>
-    <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">end (s, blank=to end):</span>
-    <input type=number id="end_card_vo_end" name=end_card_vo_end min=0 step=0.1 style="width:70px"></span>
+  <div class="audio-player-card" id="end_card_vo_card">
+    <canvas id="end_card_vo_waveform" width="420" height="48" style="display:none;width:100%;height:48px;cursor:pointer"></canvas>
+    <div class="audio-player-controls">
+      <button type=button class="player-play-btn" id="end_card_vo_playbtn" onclick="cardVoTogglePlay('end_card_vo')">&#9654;</button>
+      <span class="player-time" id="end_card_vo_time">0:00 / 0:00</span>
+      <span class="player-io-group">
+        <button type=button class="player-io-btn" onclick="cardVoSetPoint('end_card_vo','start')">IN</button>
+        <input type=number id="end_card_vo_start" name=end_card_vo_start value=0 min=0 step=0.1 class="player-io-input">
+        <button type=button class="player-io-btn" onclick="cardVoSetPoint('end_card_vo','end')">OUT</button>
+        <input type=number id="end_card_vo_end" name=end_card_vo_end min=0 step=0.1 class="player-io-input" placeholder="end">
+      </span>
+    </div>
+  </div>
+  <audio id="end_card_vo_player" style="display:none"></audio>
+  <div style="margin:2px 0 12px">
     <span id="end_card_vo_preview_note" style="font-size:11px;opacity:.7"></span>
   </div>
   </div>
@@ -1557,17 +1606,21 @@ document.addEventListener("DOMContentLoaded", function(){
     <input type=hidden id=scoring_audio_network name=scoring_audio_network value="">
   <input type=hidden id=scoring_audio_skip_template name=scoring_audio_skip_template value="">
     <span class="net-file-chip" id=scoring_audio_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('scoring_audio')">&#10005;</span></span>
-    <canvas id="scoring_audio_waveform" width="420" height="60" style="display:none;width:100%;max-width:420px;height:60px;background:var(--sunken,#0b1220);border:1px solid var(--line);border-radius:6px;margin:8px 0 0;cursor:pointer"></canvas>
-    <audio id="scoring_audio_player" controls style="display:none;width:100%;max-width:420px;height:32px;margin:8px 0 4px"></audio>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0">
-      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Trim uploaded music — start (s):</span>
-      <input type=number name=scoring_audio_trim_start id="scoring_audio_start" value=0 min=0 step=0.5 style="width:80px"></span>
-      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">end (s, blank=to end):</span>
-      <input type=number name=scoring_audio_trim_end id="scoring_audio_end" min=0 step=0.5 style="width:80px"></span>
-      <button type=button class="btn" style="padding:5px 10px;font-size:12px" onclick="cardVoSetPoint('scoring_audio','start')">Set in from player</button>
-      <button type=button class="btn" style="padding:5px 10px;font-size:12px" onclick="cardVoSetPoint('scoring_audio','end')">Set out from player</button>
+    <div class="audio-player-card" id="scoring_audio_card">
+      <canvas id="scoring_audio_waveform" width="420" height="48" style="display:none;width:100%;height:48px;cursor:pointer"></canvas>
+      <div class="audio-player-controls">
+        <button type=button class="player-play-btn" id="scoring_audio_playbtn" onclick="cardVoTogglePlay('scoring_audio')">&#9654;</button>
+        <span class="player-time" id="scoring_audio_time">0:00 / 0:00</span>
+        <span class="player-io-group">
+          <button type=button class="player-io-btn" onclick="cardVoSetPoint('scoring_audio','start')">IN</button>
+          <input type=number name=scoring_audio_trim_start id="scoring_audio_start" value=0 min=0 step=0.5 class="player-io-input">
+          <button type=button class="player-io-btn" onclick="cardVoSetPoint('scoring_audio','end')">OUT</button>
+          <input type=number name=scoring_audio_trim_end id="scoring_audio_end" min=0 step=0.5 class="player-io-input" placeholder="end">
+        </span>
+      </div>
     </div>
-    <span id="scoring_audio_preview_note" style="font-size:12px;opacity:.75;display:block;margin:-2px 0 6px"></span>
+    <audio id="scoring_audio_player" style="display:none"></audio>
+    <span id="scoring_audio_preview_note" style="font-size:12px;opacity:.75;display:block;margin:4px 0 6px"></span>
   </div>
     </div>
   </div>
@@ -2292,16 +2345,20 @@ document.addEventListener("DOMContentLoaded", function(){
       var url = URL.createObjectURL(input.files[0])
       cardVoObjectUrls[prefix] = url
       player.src = url
-      player.style.display = 'block'
-      note.textContent = 'Play the file, pause where you want the cut, then click Set in / Set out.'
+      note.textContent = ''
       renderWaveform(prefix, input.files[0])
     } else {
       player.removeAttribute('src')
-      player.style.display = 'none'
       note.textContent = ''
-      var canvas = document.getElementById(prefix + '_waveform')
-      if(canvas){ canvas.style.display = 'none'; canvas._peaks = null }
+      _hideAudioPlayerCard(prefix)
     }
+  }
+  function _hideAudioPlayerCard(prefix){
+    var card = document.getElementById(prefix + '_card')
+    if(card) card.style.display = 'none'
+    var canvas = document.getElementById(prefix + '_waveform')
+    if(canvas){ canvas.style.display = 'none'; canvas._peaks = null }
+    _setPlayIcon(prefix, false)
   }
   function cardVoSetPoint(prefix, which){
     var player = document.getElementById(prefix + '_player')
@@ -2311,19 +2368,47 @@ document.addEventListener("DOMContentLoaded", function(){
     document.getElementById(prefix + (which === 'start' ? '_start' : '_end')).value = t
     note.textContent = (which === 'start' ? 'In' : 'Out') + ' point set to ' + t + 's from the player.'
   }
+  // Play/pause for the unified player card -- the native <audio controls>
+  // UI was removed in favor of one compact custom button here, shared with
+  // the waveform's own click-to-seek and the in/out buttons in the same
+  // row, rather than three separate controls (a native scrubber, a
+  // waveform, and set-in/out buttons) all acting on the same file.
+  function cardVoTogglePlay(prefix){
+    var player = document.getElementById(prefix + '_player')
+    if(!player || !player.src) return
+    if(player.paused) player.play(); else player.pause()
+  }
+  function _setPlayIcon(prefix, isPlaying){
+    var btn = document.getElementById(prefix + '_playbtn')
+    if(btn) btn.innerHTML = isPlaying ? '&#10074;&#10074;' : '&#9654;'
+  }
+  function _formatPlayerTime(secs){
+    if(!isFinite(secs) || secs < 0) secs = 0
+    var m = Math.floor(secs / 60), s = Math.floor(secs % 60)
+    return m + ':' + (s < 10 ? '0' : '') + s
+  }
+  function _updatePlayerTime(prefix){
+    var player = document.getElementById(prefix + '_player')
+    var timeEl = document.getElementById(prefix + '_time')
+    if(!player || !timeEl) return
+    timeEl.textContent = _formatPlayerTime(player.currentTime) + ' / ' + _formatPlayerTime(player.duration)
+  }
 
   // ---- Waveform display for uploaded/browsed audio (VO + narration, music) ----
-  // A plain <audio> element gives no visual sense of where a beat, a pause,
+  // A plain <audio> element gave no visual sense of where a beat, a pause,
   // or a line of dialogue actually falls -- finding a good in/out point
   // meant either scrubbing blind or listening start-to-finish. This decodes
   // the audio client-side (Web Audio API) and draws its actual shape, with
   // the played portion filled in as it plays and click-to-seek on the
-  // waveform itself -- the same "see it, then click Set in/out" workflow
-  // the existing buttons already support, just with something to actually
-  // look at while doing it. A real waveform image is a nice-to-have, not
-  // essential to generating a promo, so every failure path here degrades
-  // silently to "no waveform shown" rather than surfacing an error or
-  // blocking the plain <audio> player, which keeps working regardless.
+  // waveform itself. Combined with a compact custom play button and time
+  // readout into one .audio-player-card -- the waveform, playback, and
+  // set-in/out controls now act as one interface instead of three separate
+  // pieces (a native <audio controls> player, a waveform, and a button row)
+  // all operating on the same file with overlapping jobs. A real waveform
+  // image is a nice-to-have, not essential to generating a promo, so every
+  // failure path here degrades to "no waveform, card stays hidden" rather
+  // than surfacing an error -- the underlying <audio> element and its
+  // Set in/out buttons still work from typed values either way.
   // renderWaveform accepts EITHER a real File object (direct upload) or a
   // URL string (network-browsed file, already reachable at /uploads/...).
   // This distinction matters, not just convenience: fetch() against a
@@ -2338,10 +2423,14 @@ document.addEventListener("DOMContentLoaded", function(){
   // just to get a File object back for one that was never local to begin with.
   function renderWaveform(prefix, fileOrUrl){
     var canvas = document.getElementById(prefix + '_waveform')
+    var card = document.getElementById(prefix + '_card')
     if(!canvas) return
     canvas.style.display = 'none'
     var AudioContextClass = window.AudioContext || window.webkitAudioContext
-    if(!AudioContextClass) return
+    if(!AudioContextClass){
+      if(card) card.style.display = 'block'  // still show play/IN/OUT controls even with no waveform
+      return
+    }
     var bufferPromise = (fileOrUrl instanceof Blob) ? fileOrUrl.arrayBuffer()
                        : fetch(fileOrUrl).then(function(r){ return r.arrayBuffer() })
     bufferPromise
@@ -2351,16 +2440,20 @@ document.addEventListener("DOMContentLoaded", function(){
           _computeWaveformPeaks(canvas, audioBuffer)
           canvas.style.display = 'block'
           _paintWaveform(canvas, 0)
+          if(card) card.style.display = 'block'
           ctx.close()
         })
       })
-      .catch(function(e){ console.warn('Could not render waveform for ' + prefix + ':', e) })
+      .catch(function(e){
+        console.warn('Could not render waveform for ' + prefix + ':', e)
+        if(card) card.style.display = 'block'  // controls still usable without a waveform
+      })
   }
 
   function _computeWaveformPeaks(canvas, audioBuffer){
     var dpr = window.devicePixelRatio || 1
     var displayWidth = canvas.clientWidth || 420
-    var displayHeight = canvas.clientHeight || 60
+    var displayHeight = canvas.clientHeight || 48
     canvas.width = displayWidth * dpr
     canvas.height = displayHeight * dpr
     var data = audioBuffer.getChannelData(0)  // first channel only -- enough for a visual shape, no need for a full stereo render
@@ -2407,10 +2500,11 @@ document.addEventListener("DOMContentLoaded", function(){
     }
   }
 
-  // Wires a waveform canvas to its <audio> player once, for a given prefix
-  // -- keeps the fill in sync during playback, and turns a click on the
-  // waveform into a seek, matching how a real waveform-based scrubber
-  // normally behaves.
+  // Wires a waveform canvas and the compact play/time controls to their
+  // shared <audio> player once, for a given prefix -- keeps the waveform
+  // fill, the play/pause icon, and the time readout all in sync during
+  // playback, and turns a click on the waveform into a seek, matching how
+  // a real waveform-based scrubber normally behaves.
   var _waveformWired = {}
   function wireWaveformInteraction(prefix){
     if(_waveformWired[prefix]) return
@@ -2420,7 +2514,12 @@ document.addEventListener("DOMContentLoaded", function(){
     if(!canvas || !player) return
     player.addEventListener('timeupdate', function(){
       if(player.duration) _paintWaveform(canvas, player.currentTime / player.duration)
+      _updatePlayerTime(prefix)
     })
+    player.addEventListener('loadedmetadata', function(){ _updatePlayerTime(prefix) })
+    player.addEventListener('play', function(){ _setPlayIcon(prefix, true) })
+    player.addEventListener('pause', function(){ _setPlayIcon(prefix, false) })
+    player.addEventListener('ended', function(){ _setPlayIcon(prefix, false) })
     canvas.addEventListener('click', function(e){
       if(!canvas._peaks || !player.duration) return
       var rect = canvas.getBoundingClientRect()
@@ -7435,8 +7534,9 @@ document.addEventListener('DOMContentLoaded', function(){
     var note = document.getElementById(fieldName + '_preview_note')
     var fileInput = document.querySelector('input[name="' + fieldName + '"]')
     if(player && !(fileInput && fileInput.files && fileInput.files[0])){
-      player.removeAttribute('src'); player.style.display = 'none'
+      player.removeAttribute('src')
       if(note) note.textContent = ''
+      if(typeof _hideAudioPlayerCard === 'function') _hideAudioPlayerCard(fieldName)
     }
     refreshAllAssetSummaries()
   }
@@ -7508,8 +7608,7 @@ document.addEventListener('DOMContentLoaded', function(){
       if(player){
         var networkUrl = '/uploads/' + encodeURIComponent(d.filename)
         player.src = networkUrl
-        player.style.display = 'block'
-        if(note) note.textContent = 'Play the file, pause where you want the cut, then click Set in / Set out.'
+        if(note) note.textContent = ''
         renderWaveform(active.fieldName, networkUrl)
       }
       closeModal()
