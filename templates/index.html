@@ -1361,6 +1361,12 @@ document.addEventListener("DOMContentLoaded", function(){
              onchange="scriptFileChosen(this); updateJobSummary()">
     </div>
     <span class="net-file-chip" id=script-file-chip style="display:none"><span class=chip-name></span><span class=chip-x onclick="clearScriptFile(); updateJobSummary()">&#10005;</span></span>
+    <div id=script-validate-panel style="display:none;margin:8px 0 4px;padding:10px 12px;border-radius:8px;border:1px solid var(--border,#333);background:var(--panel-2,#1a1a1a);font-size:13px;line-height:1.45">
+      <div id=script-validate-summary style="font-weight:600;margin-bottom:6px"></div>
+      <div id=script-validate-warnings style="color:#e6b84d;margin-bottom:6px"></div>
+      <div id=script-validate-cues style="max-height:180px;overflow:auto;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;opacity:.95"></div>
+      <div id=script-validate-skipped style="margin-top:6px;color:#c88;font-size:12px;max-height:100px;overflow:auto"></div>
+    </div>
   <div class="asset-section" id=asset-narration style="margin-top:10px">
     <div class="asset-section-header" onclick="toggleAssetSection(this)">
       <span class="asset-section-title">Narration</span>
@@ -2282,21 +2288,96 @@ document.addEventListener("DOMContentLoaded", function(){
 
   document.querySelector('select[name=genre]').addEventListener('change', updateGenreManualVisibility)
   document.querySelector('select[name=transition]').addEventListener('change', updateTransitionMatteVisibility)
+  function hideScriptValidatePanel(){
+    var panel = document.getElementById('script-validate-panel')
+    if(panel) panel.style.display = 'none'
+  }
+  function showScriptValidatePanel(data, errorMsg){
+    var panel = document.getElementById('script-validate-panel')
+    var sum = document.getElementById('script-validate-summary')
+    var warn = document.getElementById('script-validate-warnings')
+    var cuesEl = document.getElementById('script-validate-cues')
+    var skipEl = document.getElementById('script-validate-skipped')
+    if(!panel) return
+    panel.style.display = 'block'
+    if(errorMsg){
+      sum.style.color = '#e88'
+      sum.textContent = errorMsg
+      warn.textContent = ''
+      cuesEl.textContent = ''
+      skipEl.textContent = ''
+      return
+    }
+    sum.style.color = data.ok ? '#8c8' : '#e88'
+    sum.textContent = data.summary || (data.ok ? 'Script OK' : 'No usable cues')
+    warn.innerHTML = (data.warnings || []).map(function(w){ return '• ' + w }).join('<br>')
+    if(data.cues && data.cues.length){
+      cuesEl.innerHTML = data.cues.map(function(c){
+        var mat = c.material ? (' [' + c.material + ']') : ''
+        var note = c.note ? (' — ' + c.note) : ''
+        var desc = c.desc ? ('  ' + c.desc) : ''
+        return '<div>' + c.timecode + mat + desc + note + '</div>'
+      }).join('')
+    } else {
+      cuesEl.textContent = ''
+    }
+    if(data.skipped && data.skipped.length){
+      skipEl.innerHTML = data.skipped.map(function(s){
+        return '<div>Skipped: ' + (s.line || '') + ' — ' + (s.reason || '') + '</div>'
+      }).join('')
+    } else {
+      skipEl.textContent = ''
+    }
+  }
   function scriptFileChosen(input){
     var chip = document.getElementById('script-file-chip')
-    var name = (input.files && input.files[0]) ? input.files[0].name : ''
-    if(!name){ chip.style.display = 'none'; return }
-    chip.querySelector('.chip-name').textContent = name
+    var file = (input.files && input.files[0]) ? input.files[0] : null
+    if(!file){
+      chip.style.display = 'none'
+      hideScriptValidatePanel()
+      return
+    }
+    chip.querySelector('.chip-name').textContent = file.name
     // 'inline-flex', not '' -- .net-file-chip's own rule is display:none, so
     // clearing the inline style just falls back to that and the chip stays
     // invisible. Matches what setChip() does for every other file chip.
     chip.style.display = 'inline-flex'
+    // Validate immediately so the user sees what will be used before generate.
+    var panel = document.getElementById('script-validate-panel')
+    if(panel){
+      panel.style.display = 'block'
+      document.getElementById('script-validate-summary').style.color = ''
+      document.getElementById('script-validate-summary').textContent = 'Reading script…'
+      document.getElementById('script-validate-warnings').textContent = ''
+      document.getElementById('script-validate-cues').textContent = ''
+      document.getElementById('script-validate-skipped').textContent = ''
+    }
+    var fd = new FormData()
+    fd.append('script_file', file)
+    try {
+      var seg = window._fileSegmentDurations
+      if(seg && seg.length) fd.append('file_segment_durations', JSON.stringify(seg))
+    } catch(e){}
+    fetch('/api/trailer/validate_script', { method: 'POST', body: fd, credentials: 'same-origin' })
+      .then(function(r){ return r.json().then(function(j){ return { status: r.status, body: j } }) })
+      .then(function(res){
+        var b = res.body || {}
+        if(b.summary || (b.cues && b.cues.length) || b.warnings){
+          showScriptValidatePanel(b, null)
+        } else {
+          showScriptValidatePanel(null, b.error || ('Could not read script (HTTP ' + res.status + ')'))
+        }
+      })
+      .catch(function(e){
+        showScriptValidatePanel(null, 'Script validation failed: ' + e)
+      })
   }
   window.scriptFileChosen = scriptFileChosen
   function clearScriptFile(){
     var input = document.getElementById('script-file-input')
     input.value = ''
     document.getElementById('script-file-chip').style.display = 'none'
+    hideScriptValidatePanel()
   }
   window.clearScriptFile = clearScriptFile
 

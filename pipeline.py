@@ -812,8 +812,8 @@ PRODUCTION_DEFAULT_SPEC = {
                           'help': 'How far the music sits below full scale before any ducking is applied.'},
     'duck_depth_db':     {'default': -15.0, 'type': 'float', 'label': 'Duck depth (dB)',
                           'help': 'How far the music drops underneath dialogue and narration.'},
-    'duck_release_hold': {'default': 0.4, 'type': 'float', 'label': 'Duck hold (seconds)',
-                          'help': 'How long the music stays ducked after a line ends before coming back up.'},
+    'duck_release_hold': {'default': 0.7, 'type': 'float', 'label': 'Duck hold (seconds)',
+                          'help': 'How long the music stays ducked after a line ends before coming back up. Higher values prevent music from swelling back during short pauses or while a speaker is still finishing a thought.'},
     'broadcast_stereo':  {'default': False, 'type': 'bool', 'label': 'Broadcast dual-mono',
                           'help': 'Force all audio identical in L/R -- required by some broadcast delivery specs.'},
     'scene_threshold':   {'default': 30.0, 'type': 'float', 'label': 'Cut sensitivity',
@@ -1788,11 +1788,15 @@ def build_ai_vision_prompt(base_prompt, genre, priority_prompt=None, negative_pr
                      f"noticeably lower than scenes that don't.")
     return ai_prompt
 
-def _detect_silence_intervals(audio_path, noise_db=-30, min_dur=0.3, timeout=120):
+def _detect_silence_intervals(audio_path, noise_db=-35, min_dur=0.35, timeout=120):
     """Runs ffmpeg's silencedetect filter and parses stderr for silence_start/silence_end
     pairs. Returns a list of (start, end) SILENT intervals in audio_path. A silence_start
     with no matching silence_end (file ends mid-silence) is dropped rather than guessed at —
     the caller treats "not explicitly silent" as active, which is the safe default.
+
+    Defaults are intentionally conservative (noise_db=-35, min_dur=0.35) so that
+    quiet speech, breathy delivery, and short trailing syllables are still treated
+    as "active". This prevents music from recovering while someone is still talking.
 
     Runs against a fresh PCM decode of `audio_path`, not the file directly -- a real,
     observed bug: a loudnorm-processed track re-encoded to AAC (uploaded VO's own prep
@@ -1891,8 +1895,13 @@ def _merge_windows_with_hold(windows, hold_sec):
             merged.append([s, e])
     return [(s, e) for s, e in merged]
 
-DUCK_ATTACK = float(os.environ.get('DUCK_ATTACK', 0.08))    # seconds to duck down
-DUCK_RELEASE = float(os.environ.get('DUCK_RELEASE', 0.45))  # seconds to come back up
+DUCK_ATTACK = float(os.environ.get('DUCK_ATTACK', 0.12))    # seconds to duck down (slightly longer = smoother, less abrupt)
+DUCK_RELEASE = float(os.environ.get('DUCK_RELEASE', 0.55))  # seconds to come back up
+# Extra guard time added after the last detected speech before music is allowed to rise.
+# Prevents music recovering while a speaker is still finishing a word or taking a short breath.
+DUCK_POST_SPEECH_GUARD = float(os.environ.get('DUCK_POST_SPEECH_GUARD', 0.18))
+# How far before the detected start of speech to begin ducking (anticipatory duck).
+DUCK_PRE_ROLL = float(os.environ.get('DUCK_PRE_ROLL', 0.10))
 
 def _build_duck_volume_expr(duck_windows, duck_depth_db, attack=None, release=None):
     """ffmpeg volume expression that ducks by duck_depth_db across duck_windows,
@@ -2841,7 +2850,7 @@ def _vo_beats_from_segments(segments):
     return beats
 
 
-def nearest_word_boundary(target, boundaries, max_snap=0.35, hard_limit=None):
+def nearest_word_boundary(target, boundaries, max_snap=0.45, hard_limit=None):
     """Nearest timestamp in `boundaries` to `target`, but only if within
     `max_snap` seconds — otherwise returns `target` unchanged (no nearby word
     to snap to, e.g. a silent B-roll clip, so leave the cut point as-is),
@@ -2869,17 +2878,23 @@ def nearest_word_boundary(target, boundaries, max_snap=0.35, hard_limit=None):
     return min(candidates, key=lambda b: abs(b - target))
 
 def nearest_speech_out(target, phrase_ends, word_ends,
-                       phrase_snap=1.2, word_snap=0.35, hard_limit=None):
+                       phrase_snap=1.6, word_snap=0.45, hard_limit=None,
+                       breath_after=0.08):
     """Best out-point near `target`, preferring the end of a complete phrase
     over the end of a mere word.
 
     Landing on a word boundary is enough to avoid severing a syllable, but
     a cut at "...and then she |" is still audibly clipped -- the sentence
     just stops. A phrase end ("...and then she left. |") sounds finished.
-    So phrase ends get a much wider snap window (1.2s vs 0.35s): it's worth
+    So phrase ends get a much wider snap window (1.6s vs 0.45s): it's worth
     moving the cut a noticeably longer way to land somewhere that sounds
     deliberate, where a word boundary is only worth a small nudge since it
     buys much less.
+
+    When a phrase end is chosen we also push the cut a short `breath_after`
+    (default 80 ms) past the last phoneme so the cut does not land flush on
+    the final consonant. This is the most common cause of "mid-word" sounding
+    cuts even when the mathematical boundary was correct.
 
     Falls back to word boundaries, then to `target` unchanged when there's
     no speech nearby at all (silent B-roll -- nothing to protect, so leave
@@ -2893,10 +2908,15 @@ def nearest_speech_out(target, phrase_ends, word_ends,
             lo, hi = (target, hard_limit) if hard_limit >= target else (hard_limit, target)
             near = [b for b in phrase_ends if lo <= b <= hi]
         if near:
-            return min(near, key=lambda b: abs(b - target))
+            best = min(near, key=lambda b: abs(b - target))
+            # Prefer landing just after the phrase so the final syllable is fully heard.
+            candidate = best + max(0.0, breath_after)
+            if hard_limit is not None:
+                candidate = min(candidate, hard_limit)
+            return candidate
     return nearest_word_boundary(target, word_ends, max_snap=word_snap, hard_limit=hard_limit)
 
-def speech_free_slack(clip_start, clip_end, speech_spans, guard=0.12):
+def speech_free_slack(clip_start, clip_end, speech_spans, guard=0.18):
     """How much of [clip_start, clip_end) can be trimmed off the END without
     touching speech, given `speech_spans` [(start, end), ...].
 
@@ -2935,12 +2955,29 @@ _TC_PATTERNS = [
     re.compile(r'\b(\d{1,2}):(\d{2})\b'),                       # MM:SS
 ]
 
-# Multi-part episode scripts commonly label each raw plug file "M1", "M2",
-# etc. (short for "Master 1" / "Master 2"), each timecoded from its own
-# zero -- since combining those files into one source video (see
-# /api/network/combine) is common, a cue naming one needs that segment's
-# own offset added before it means anything against the combined timeline.
-_SEGMENT_PREFIX_RE = re.compile(r'\bM(\d{1,2})\b')
+# Optional material / segment labels on a cue line. Scripts are NOT standardised:
+# some writers use "M1", others "mats1", "mat 2", "material 1", "master 2",
+# "reel 1", etc. When present AND the user combined multiple source files
+# (segment_offsets provided), the matching segment's start offset is added so
+# per-file relative timecodes still land on the combined timeline.
+# When no label is present, the timecode is used as-is (the common case).
+_SEGMENT_PREFIX_RE = re.compile(
+    r'\b(?:mats?|materials?|masters?|reels?|parts?|segs?|segments?|m)'
+    r'[\s._-]*(\d{1,2})\b',
+    re.IGNORECASE,
+)
+
+def _seconds_to_tc(secs, fps=25.0):
+    """Format seconds as HH:MM:SS:FF for display in selection transparency."""
+    try:
+        secs = max(0.0, float(secs))
+    except (TypeError, ValueError):
+        return '00:00:00:00'
+    h = int(secs // 3600)
+    m = int((secs % 3600) // 60)
+    s = int(secs % 60)
+    f = int(round((secs - int(secs)) * max(fps, 1))) % max(int(fps), 1)
+    return f'{h:02d}:{m:02d}:{s:02d}:{f:02d}'
 
 def _parse_timecode_line(line, fps=25.0):
     """First timecode found in `line`, as seconds, plus the remaining text of
@@ -2975,21 +3012,16 @@ def parse_script_cues(text, fps=25.0, segment_offsets=None):
 
     segment_offsets: optional {segment_number: offset_seconds}, computed
     from combining multiple source files via Browse Library's multi-select
-    (see /api/network/combine's segment_durations). A cue line naming a
-    segment ("M1 3:33", "M2 00:12") gets that segment's own offset added to
-    its raw time, so a script written against separate files -- each with
-    its own 0:00 start -- still lines up with the single combined video the
-    render actually works with.
+    (see /api/network/combine's segment_durations).
 
-    Segment 1 is always treated as offset 0, even with no segment_offsets
-    at all -- covers the common case of a script still labelled "M1" when
-    only one material was actually used that week, which needs no
-    adjustment regardless. Any OTHER segment number named in the script
-    but missing from segment_offsets is dropped rather than guessed at --
-    e.g. a script mentions M2 but only one file was combined (or none at
-    all), so there's no known second segment to offset against. Applying a
-    wrong offset would silently pin the wrong scene, which is worse than
-    not pinning one at all."""
+    Most scripts have plain absolute (or single-file relative) timecodes and
+    no material label at all -- those are used unchanged. Material labels are
+    optional and non-standard: writers variously write M1, mats1, mat 2,
+    material 1, master 2, reel 1, etc. When a recognised label is present
+    AND segment_offsets is provided, that segment's start offset is added.
+    Segment 1 always maps to offset 0. A label for a segment that was not
+    actually combined (e.g. "mats2" but only one file uploaded) causes that
+    cue to be skipped rather than mis-applied."""
     cues = []
     segment_offsets = segment_offsets or {}
     for raw_line in (text or '').splitlines():
@@ -3000,14 +3032,18 @@ def parse_script_cues(text, fps=25.0, segment_offsets=None):
         if not parsed:
             continue
         secs, desc = parsed
+        # Material labels are optional. Only adjust when the line clearly names
+        # a segment AND we know the offsets from a multi-file combine.
         seg_match = _SEGMENT_PREFIX_RE.search(line)
-        if seg_match:
+        if seg_match and segment_offsets:
             seg_num = int(seg_match.group(1))
             if seg_num in segment_offsets:
                 secs += segment_offsets[seg_num]
             elif seg_num != 1:
+                # Named a segment we don't have -- skip rather than pin wrong.
                 continue
-            # seg_num == 1 with no entry in segment_offsets: offset 0, fall through unchanged.
+            # seg_num == 1 missing from map: offset 0, keep the cue.
+        # No label, or single-file job with no offsets: use timecode as written.
         cues.append({'time': secs, 'desc': desc})
     cues.sort(key=lambda c: c['time'])
     return cues
@@ -4011,6 +4047,127 @@ def api_chat_clear():
 
 # ---- Trailer Generator (ffmpeg) ----
 
+@app.route('/api/trailer/validate_script', methods=['POST'])
+@require_permission('promo_generation')
+def api_validate_script():
+    """Parse an uploaded script/rundown and return what the app can use.
+
+    Called as soon as the user attaches a file (before any full job runs) so
+    they can see extracted timecodes, optional material labels, and clear
+    warnings when nothing usable was found -- without waiting for scene
+    detection.
+    """
+    script_file = request.files.get('script_file')
+    if not script_file or not script_file.filename:
+        return jsonify(ok=False, error='No script file was uploaded.'), 400
+
+    # Optional multi-file combine offsets (same shape as generate).
+    segment_offsets = {}
+    try:
+        durations = json.loads(request.form.get('file_segment_durations') or '[]')
+        cumulative = 0.0
+        for i, d in enumerate(durations):
+            segment_offsets[i + 1] = cumulative
+            cumulative += float(d)
+    except (ValueError, TypeError):
+        segment_offsets = {}
+
+    text, err = extract_script_text(script_file)
+    if err:
+        return jsonify(ok=False, error=err), 400
+    if not (text or '').strip():
+        return jsonify(ok=False, error='That file has no readable text.'), 400
+
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    cues = parse_script_cues(text, segment_offsets=segment_offsets or None)
+
+    # Per-line diagnostics so the UI can show what was kept vs skipped.
+    kept = []
+    skipped = []
+    for line in lines:
+        parsed = _parse_timecode_line(line)
+        if not parsed:
+            # Only report lines that look like they *tried* to be cues
+            # (contain digits + colon) so we don't spam prose.
+            if re.search(r'\d:\d', line):
+                skipped.append({
+                    'line': line[:160],
+                    'reason': 'No recognisable timecode (use 00:01:30:12, 00:01:30, or 1:30)',
+                })
+            continue
+        secs, desc = parsed
+        seg_match = _SEGMENT_PREFIX_RE.search(line)
+        material = None
+        adjusted = secs
+        status = 'usable'
+        note = None
+        if seg_match:
+            seg_num = int(seg_match.group(1))
+            material = seg_match.group(0)
+            if segment_offsets:
+                if seg_num in segment_offsets:
+                    adjusted = secs + segment_offsets[seg_num]
+                    note = f'Material {seg_num} offset +{segment_offsets[seg_num]:.1f}s (combined sources)'
+                elif seg_num != 1:
+                    status = 'skipped'
+                    note = f'Material {seg_num} named but that segment was not combined — cue ignored'
+                    skipped.append({'line': line[:160], 'reason': note})
+                    continue
+                else:
+                    note = 'Material 1 (offset 0)'
+            else:
+                note = f'Label “{material}” seen but ignored (single source / no combine offsets)'
+        kept.append({
+            'time': round(adjusted, 3),
+            'timecode': _seconds_to_tc(adjusted),
+            'raw_time': round(secs, 3),
+            'raw_timecode': _seconds_to_tc(secs),
+            'desc': (desc or '')[:160],
+            'material': material,
+            'status': status,
+            'note': note,
+            'line': line[:160],
+        })
+
+    warnings = []
+    if not kept:
+        warnings.append(
+            'No usable timecodes found. Each cue line needs a timecode like '
+            '00:01:30:12, 00:01:30, or 1:30. Lines without one are ignored.'
+        )
+    if skipped:
+        warnings.append(f'{len(skipped)} line(s) looked like cues but could not be used.')
+    if segment_offsets and len(segment_offsets) > 1:
+        warnings.append(
+            f'Multi-file combine active ({len(segment_offsets)} segments). '
+            'Material labels (mats1, M2, material 1, …) will shift those cues onto the combined timeline.'
+        )
+    elif any(c.get('material') for c in kept):
+        warnings.append(
+            'Material labels were found but only one source is loaded — labels are recorded but times are used as written.'
+        )
+
+    summary = (
+        f'Extracted {len(kept)} usable cue(s) from {len(lines)} non-empty line(s).'
+        if kept else
+        f'No usable cues from {len(lines)} non-empty line(s).'
+    )
+
+    return jsonify(
+        ok=bool(kept),
+        summary=summary,
+        cues_count=len(kept),
+        lines_scanned=len(lines),
+        skipped_count=len(skipped),
+        cues=kept[:60],
+        skipped=skipped[:30],
+        warnings=warnings,
+        has_segment_offsets=bool(segment_offsets),
+        segment_count=len(segment_offsets) or 0,
+        text_preview=(text[:500] + ('…' if len(text) > 500 else '')),
+    )
+
+
 @app.route('/api/trailer/generate', methods=['POST'])
 @require_permission('promo_generation')
 def api_trailer():
@@ -4093,11 +4250,9 @@ def api_trailer():
     negative_prompt = (request.form.get('negative_prompt') or '').strip()
     # Set by the frontend after combining multiple HIRES files via Browse
     # Library's multi-select -- each segment's own duration, in combine
-    # order, as a JSON list. Turned into {segment_number: cumulative_offset}
-    # so a script's "M1"/"M2" cues can be offset to match the single
-    # combined source video. Absent entirely for the (equally common)
-    # single-material case, which parse_script_cues already treats "M1" as
-    # offset 0 for regardless.
+    # order, as a JSON list. Turned into {segment_number: cumulative_offset}.
+    # Only used when a script cue optionally names a material (mats1, M2,
+    # material 1, etc.); plain timecode scripts ignore this entirely.
     segment_offsets = {}
     try:
         durations = json.loads(request.form.get('file_segment_durations') or '[]')
@@ -4562,16 +4717,40 @@ def api_trailer_preview_get(preview_id):
         return jsonify(ok=False, error='That preview has expired. Run the analysis again.'), 404
     if not _owns_or_admin(p.get('params', {}).get('user_id')):
         return jsonify(ok=False, error='That preview belongs to a different account.'), 403
+    def _why(s):
+        reasons = []
+        if s.get('vo_beat'):
+            beat_txt = (s.get('vo_beat') or '')[:80]
+            match_txt = (f" (match {s.get('vo_match'):.0%})" if s.get('vo_match') is not None else '')
+            reasons.append(f'VO beat: "{beat_txt}"{match_txt}')
+        if s.get('script_boost'):
+            desc_txt = (s.get('script_desc') or 'matched timecode')[:80]
+            reasons.append(f'Script cue (+{float(s.get("script_boost") or 0):.1f}): "{desc_txt}"')
+        if s.get('vision_score'):
+            reasons.append(f"AI vision {s.get('vision_score')}")
+        if s.get('has_face'):
+            reasons.append('face present')
+        if not reasons:
+            reasons.append(f"score {s.get('total_score', 0):.1f}")
+        return reasons
+
     return jsonify(ok=True, preview_id=preview_id, total_scenes=p['total_scenes'],
                    video_filename=os.path.basename(p['params']['path']),
+                   selection=p.get('selection'),
                    scenes=[{'scene': i + 1, 'start': round(s['start'], 1),
                             'end': round(s['end'], 1), 'quality': s['total_score'],
                             'duration': round(s['selected_dur'], 1),
+                            'vo_beat': s.get('vo_beat'), 'vo_match': s.get('vo_match'),
+                            'script_boost': round(s.get('script_boost') or 0, 2) or None,
+                            'script_desc': s.get('script_desc') or None,
+                            'why': _why(s),
                             'description': _scene_desc(s), 'thumb': p['thumbs'][i]}
                            for i, s in enumerate(p['selected'])],
                    alternates=[{'alt': i + 1, 'start': round(s['start'], 1),
                                 'end': round(s['end'], 1), 'quality': s['total_score'],
                                 'duration': round(s['selected_dur'], 1),
+                                'script_boost': round(s.get('script_boost') or 0, 2) or None,
+                                'script_desc': s.get('script_desc') or None,
                                 'description': _scene_desc(s), 'thumb': (p.get('alt_thumbs') or [None]*99)[i]}
                                for i, s in enumerate(p.get('alternates') or [])])
 
@@ -5906,12 +6085,12 @@ def api_network_combine():
     combined_path = os.path.join(app.config['UPLOAD_FOLDER'], combined_name)
     list_path = combined_path + '.txt'
     # Each segment's own duration, in the order they're being combined --
-    # returned so a script referencing "M1"/"M2" (separate source files,
-    # each timecoded from its own zero) can have those timecodes offset to
-    # match the SINGLE combined file the render actually works with. Probed
-    # before combining rather than after splitting the result back apart,
-    # since ffmpeg's concat-demuxer stream copy doesn't re-encode and so
-    # doesn't reliably preserve exact per-segment boundaries to re-derive
+    # returned so optional material labels on script cues (mats1, M2,
+    # material 1, etc. — naming is not standardised) can be offset onto the
+    # single combined file. Scripts with plain absolute timecodes ignore this.
+    # Probed before combining rather than after splitting the result back
+    # apart, since ffmpeg's concat-demuxer stream copy doesn't re-encode and
+    # so doesn't reliably preserve exact per-segment boundaries to re-derive
     # them from the output alone.
     segment_durations = [get_video_info(p).get('duration_sec', 0) for p in paths]
     try:
@@ -6825,7 +7004,7 @@ def select_scenes_vo_led(scenes_data, vo_text, trailer_duration, max_scene_dur, 
         seg_dur = max(0.3, seg_dur)
         seg_start = s['start']
         if transcribe_for_cuts and word_starts:
-            snapped_start = nearest_word_boundary(seg_start, word_starts, max_snap=0.35, hard_limit=seg_start + seg_dur)
+            snapped_start = nearest_word_boundary(seg_start, word_starts, max_snap=0.45, hard_limit=seg_start + seg_dur)
             if seg_start < snapped_start < seg_start + seg_dur:
                 drift = snapped_start - seg_start
                 seg_start = snapped_start
@@ -6869,7 +7048,7 @@ def _run_trailer_job(jid, params):
     target_loudness = params['target_loudness']; true_peak = params['true_peak']
     music_duck_db = params.get('music_duck_db', -3)
     duck_depth_db = params.get('duck_depth_db', -15)
-    duck_release_hold = params.get('duck_release_hold', 0.4)
+    duck_release_hold = params.get('duck_release_hold', 0.7)
     broadcast_stereo = params.get('broadcast_stereo', False)
     beat_match = params['beat_match']; model = params['model']
     sfx_mode = params['sfx_mode']; sfx_upload_path = params['sfx_upload_path']
@@ -7398,8 +7577,13 @@ def _run_trailer_job(jid, params):
         script_cues = params.get('script_cues') or []
         if script_cues:
             matched = apply_script_priority(scenes_data, script_cues)
-            job_set(jid, step=f'Applied script priority ({matched}/{len(script_cues)} cues matched)')
-            if not matched:
+            if matched:
+                job_set(jid, step=f'Script priority applied: {matched}/{len(script_cues)} cues matched to scenes')
+            else:
+                # Surface this clearly in the progress UI -- previously it was only a
+                # server log line, so users had no idea their script was ignored.
+                job_set(jid, step=f'Script parsed ({len(script_cues)} cues) but NONE matched the video timeline '
+                                  f'({video_duration:.0f}s) — check timecodes / segment offsets')
                 print(f'Script priority: none of the {len(script_cues)} cue timecodes fell inside '
                       f'a detected scene (video is {video_duration:.0f}s) -- script may be for a '
                       f'different cut of this episode.')
@@ -7524,7 +7708,7 @@ def _run_trailer_job(jid, params):
                     # Don't start playback mid-word — nudge the in-point forward to
                     # the start of the nearest word within this scene (capped so we
                     # never drift far from the original visual cut point).
-                    snapped_start = nearest_word_boundary(seg_start, word_starts, max_snap=0.35, hard_limit=seg_start + seg_dur)
+                    snapped_start = nearest_word_boundary(seg_start, word_starts, max_snap=0.45, hard_limit=seg_start + seg_dur)
                     if seg_start < snapped_start < seg_start + seg_dur:
                         drift = snapped_start - seg_start
                         seg_start = snapped_start
@@ -7718,12 +7902,15 @@ def _run_trailer_job(jid, params):
         def _slim(rows):
             # Only the fields the render half consumes -- frames and other
             # non-serializable analysis state are deliberately dropped.
+            # script_boost / script_desc / vo_beat kept so re-fetched previews
+            # and the UI can still show why each scene was chosen.
             return [{'start': s['start'], 'end': s['end'], 'duration': s['duration'],
                      'selected_dur': s['selected_dur'], 'trim_start': s.get('trim_start', s['start']),
                      'total_score': s['total_score'], 'quality_score': s.get('quality_score', 0),
                      'vision_score': s.get('vision_score'), 'speech_score': s.get('speech_score', 0),
                      'ai_desc': s.get('ai_desc', ''), 'has_face': s.get('has_face', False),
                      'vo_beat': s.get('vo_beat'), 'vo_match': s.get('vo_match'),
+                     'script_boost': s.get('script_boost'), 'script_desc': s.get('script_desc'),
                      'edge_ratio': s.get('edge_ratio', 0), 'mean_hue': s.get('mean_hue', 0)}
                     for s in rows]
 
@@ -7733,10 +7920,56 @@ def _run_trailer_job(jid, params):
         # preview grid's Play buttons can play a selected scene straight from
         # /uploads/<name> -- same file the render step itself reads from.
         video_filename = os.path.basename(params['path'])
+
+        # ---- Selection transparency (why each scene was chosen) ----
+        # Lets the UI show whether VO-led, script cues, or priority prompt
+        # actually influenced the cut, instead of leaving the user guessing.
+        script_cues = params.get('script_cues') or []
+        script_matched = sum(1 for s in selected if s.get('script_boost'))
+        selection_info = {
+            'driver': used_driver,  # 'vo' | 'score'
+            'driver_label': (
+                'Narration-led (VO/script text matched to scenes)' if used_driver == 'vo'
+                else 'Best-score (quality + AI vision + speech + script boosts)'
+            ),
+            'priority_prompt': (params.get('priority_prompt') or '').strip() or None,
+            'negative_prompt': (params.get('negative_prompt') or '').strip() or None,
+            'script_cues_parsed': len(script_cues),
+            'script_cues_matched': script_matched,
+            'script_cues': [
+                {
+                    'time': round(c['time'], 2),
+                    'timecode': _seconds_to_tc(c['time']),
+                    'desc': (c.get('desc') or '')[:160],
+                }
+                for c in script_cues[:40]  # cap for response size
+            ],
+            'vo_beats_used': sum(1 for s in selected if s.get('vo_beat')),
+        }
+
+        def _scene_why(s):
+            """Human-readable reason this scene made the cut."""
+            reasons = []
+            if s.get('vo_beat'):
+                beat_txt = (s.get('vo_beat') or '')[:80]
+                match_txt = (f" (match {s.get('vo_match'):.0%})" if s.get('vo_match') is not None else '')
+                reasons.append(f'VO beat: "{beat_txt}"{match_txt}')
+            if s.get('script_boost'):
+                desc_txt = (s.get('script_desc') or 'matched timecode')[:80]
+                reasons.append(f'Script cue (+{s.get("script_boost"):.1f}): "{desc_txt}"')
+            if s.get('vision_score'):
+                reasons.append(f"AI vision {s.get('vision_score')}")
+            if s.get('has_face'):
+                reasons.append('face present')
+            if not reasons:
+                reasons.append(f"score {s.get('total_score', 0):.1f}")
+            return reasons
+
         preview_store(pid, {'params': params, 'selected': slim, 'thumbs': thumbs,
                             'alternates': slim_alt, 'alt_thumbs': alt_thumbs,
                             'total_scenes': len(scene_list), 'video_duration': video_duration,
-                            'total_card_dur': total_card_dur})
+                            'total_card_dur': total_card_dur,
+                            'selection': selection_info})
         result = dict(
             status='preview', preview=True, preview_id=pid,
             orig_name=orig_name, total_scenes=len(scene_list), selected_scenes=len(selected),
@@ -7744,6 +7977,7 @@ def _run_trailer_job(jid, params):
             scenes_duration=round(total_sel, 1),
             estimated_duration=round(total_sel + total_card_dur - max(0, len(selected) + len(card_files) - 1) * xfade_dur, 1),
             video_filename=video_filename,
+            selection=selection_info,
             scenes=[{'scene': i + 1, 'start': round(s['start'], 1), 'end': round(s['end'], 1),
                      'quality': s['total_score'], 'duration': round(s['selected_dur'], 1),
                      'quality_score': s.get('quality_score', 0),
@@ -7752,6 +7986,9 @@ def _run_trailer_job(jid, params):
                      'has_face': bool(s.get('has_face')),
                      'vo_beat': s.get('vo_beat'),
                      'vo_match': s.get('vo_match'),
+                     'script_boost': round(s.get('script_boost') or 0, 2) or None,
+                     'script_desc': s.get('script_desc') or None,
+                     'why': _scene_why(s),
                      'description': _scene_desc(s), 'thumb': thumbs[i]}
                     for i, s in enumerate(selected)],
             alternates=[{'alt': i + 1, 'start': round(s['start'], 1), 'end': round(s['end'], 1),
@@ -7760,6 +7997,8 @@ def _run_trailer_job(jid, params):
                          'vision_score': s.get('vision_score'),
                          'speech_score': s.get('speech_score', 0),
                          'has_face': bool(s.get('has_face')),
+                         'script_boost': round(s.get('script_boost') or 0, 2) or None,
+                         'script_desc': s.get('script_desc') or None,
                          'description': _scene_desc(s), 'thumb': alt_thumbs[i]}
                         for i, s in enumerate(alternates)])
         job_set(jid, percent=100, step='Preview ready', done=True, result=result)
@@ -8340,6 +8579,17 @@ def _run_trailer_job(jid, params):
                 vo_windows = _active_windows_from_silence(vo_silence, assembled_duration,
                                                            content_duration=vo_real_dur)
             combined = _union_windows([sot_windows, vo_windows])
+            # Expand each active-speech window so music starts ducking slightly
+            # before speech and stays down a short guard after speech ends.
+            # This is the main fix for "music recovers while someone is still talking".
+            if combined:
+                expanded = []
+                for s, e in combined:
+                    expanded.append((
+                        max(0.0, s - DUCK_PRE_ROLL),
+                        e + DUCK_POST_SPEECH_GUARD
+                    ))
+                combined = _union_windows([expanded])
             duck_windows = _merge_windows_with_hold(combined, duck_release_hold)
             bgm_duck_expr = _build_duck_volume_expr(duck_windows, duck_depth_db)
             if bgm_duck_expr is None:
