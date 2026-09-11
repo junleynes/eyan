@@ -1467,7 +1467,7 @@ document.addEventListener("DOMContentLoaded", function(){
 
   <div class="promo-essentials">
     <div>
-      <label>Promo length</label>
+      <label>Plug length</label>
       <select name=trailer_length id=trailer-length-select onchange="updateJobSummary()">
         <option value=15 selected>15 sec</option>
         <option value=30>30 sec</option>
@@ -1508,44 +1508,52 @@ document.addEventListener("DOMContentLoaded", function(){
   </div><!-- /.promo-essentials -->
 
   <div id=generator-settings>
+  <div class="promo-essentials">
+    <div class="adv-only">
+      <label>Max clip length (s):</label>
+      <input type=number name=max_scene_dur value=3 placeholder="no limit" min=0.5 step=0.5 style="width:100px">
+    </div>
+    <div class="genre-manual-transition" style="display:none">
+      <label>Transition:</label>
+      <select name=transition>
+        <option value=fade selected>Fade</option>
+        <option value=dissolve>Dissolve</option>
+        <option value=fadeblack>Fade to Black</option>
+        <option value=fadewhite>Fade to White</option>
+        <option value=slideleft>Slide Left</option>
+        <option value=slideright>Slide Right</option>
+        <option value=wipeleft>Wipe Left</option>
+        <option value=wiperight>Wipe Right</option>
+        <option value=wipeup>Wipe Up</option>
+        <option value=wipedown>Wipe Down</option>
+        <option value=circleopen>Circle Open</option>
+        <option value=circleclose>Circle Close</option>
+        <option value=radial>Radial</option>
+        <option value=zoomin>Zoom In</option>
+        <option value=pixelize>Pixelize</option>
+        <option value=smoothleft>Smooth Left</option>
+        <option value=smoothright>Smooth Right</option>
+        <option value=horzopen>Horizontal Open</option>
+        <option value=horzclose>Horizontal Close</option>
+        <option value=squeezeh>Squeeze Horizontal</option>
+        <option value=squeezev>Squeeze Vertical</option>
+        <option value=custom_matte>Custom (upload matte)</option>
+      </select>
+    </div>
+    <div class="adv-only">
+      <label>Transition duration (s):</label>
+      <input type=number name=xfade_dur value=0.3 min=0.1 max=2 step=0.1 style="width:100px">
+    </div>
+  </div><!-- /.promo-essentials -->
   <div class="adv-only">
-  <label>Max clip length (s):</label>
-  <input type=number name=max_scene_dur value=3 placeholder="no limit" min=0.5 step=0.5 style="width:100px">
   <p style="margin-bottom:8px;font-size:12px;opacity:.6">Cut detector settings live in <strong>Config &gt; Production</strong>.</p>
   </div>
   <div class="genre-manual-transition" style="display:none">
-  <label>Transition:</label>
-  <select name=transition>
-    <option value=fade selected>Fade</option>
-    <option value=dissolve>Dissolve</option>
-    <option value=fadeblack>Fade to Black</option>
-    <option value=fadewhite>Fade to White</option>
-    <option value=slideleft>Slide Left</option>
-    <option value=slideright>Slide Right</option>
-    <option value=wipeleft>Wipe Left</option>
-    <option value=wiperight>Wipe Right</option>
-    <option value=wipeup>Wipe Up</option>
-    <option value=wipedown>Wipe Down</option>
-    <option value=circleopen>Circle Open</option>
-    <option value=circleclose>Circle Close</option>
-    <option value=radial>Radial</option>
-    <option value=zoomin>Zoom In</option>
-    <option value=pixelize>Pixelize</option>
-    <option value=smoothleft>Smooth Left</option>
-    <option value=smoothright>Smooth Right</option>
-    <option value=horzopen>Horizontal Open</option>
-    <option value=horzclose>Horizontal Close</option>
-    <option value=squeezeh>Squeeze Horizontal</option>
-    <option value=squeezev>Squeeze Vertical</option>
-    <option value=custom_matte>Custom (upload matte)</option>
-  </select>
   <div id=transition-matte-area style="display:none;margin-top:8px">
     <input type=file name=transition_matte accept="video/*,image/*">
   </div>
   </div>
   <div class="adv-only">
-  <label>Transition duration (s):</label>
-  <input type=number name=xfade_dur value=0.3 min=0.1 max=2 step=0.1 style="width:100px">
   <label>Audio &amp; beat sync:</label>
   <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0">
     <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
