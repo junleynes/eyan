@@ -1902,6 +1902,20 @@ DUCK_RELEASE = float(os.environ.get('DUCK_RELEASE', 0.55))  # seconds to come ba
 DUCK_POST_SPEECH_GUARD = float(os.environ.get('DUCK_POST_SPEECH_GUARD', 0.18))
 # How far before the detected start of speech to begin ducking (anticipatory duck).
 DUCK_PRE_ROLL = float(os.environ.get('DUCK_PRE_ROLL', 0.10))
+# How far a beat-synced cut point may be nudged from its already-computed,
+# word/phrase-aware target when "Sync cuts to beat" is also on. Deliberately
+# tight -- a real, reported problem: the beat search used to span the whole
+# remaining scene, so a cut carefully placed at a VO word boundary could get
+# dragged seconds away to the nearest music beat, landing mid-word or
+# mid-phrase. nearest_speech_out() (the safety net that runs after this) only
+# searches a similarly tight window of its own (~0.45s for a word end, ~1.2s
+# for a phrase end) -- if the beat nudge moves the target further than that,
+# the speech-safety pass can't find anything nearby to correct it and simply
+# falls back to the (now wrong) beat-shifted point unchanged. Keeping this
+# nudge within that same scale means beat-sync can still land a cut cleanly
+# on a very close beat, but never far enough away to escape the safety net
+# behind it.
+BEAT_SYNC_MAX_NUDGE = float(os.environ.get('BEAT_SYNC_MAX_NUDGE', 0.4))
 
 def _build_duck_volume_expr(duck_windows, duck_depth_db, attack=None, release=None):
     """ffmpeg volume expression that ducks by duck_depth_db across duck_windows,
@@ -7061,7 +7075,14 @@ def select_scenes_vo_led(scenes_data, vo_text, trailer_duration, max_scene_dur, 
         scene_end = s['start'] + s['duration']
         if sync_beats and beat_times:
             target_cut = total_sel + seg_dur
-            snapped_cut = nearest_beat(target_cut, beat_times, total_sel + 0.3, total_sel + (scene_end - seg_start))
+            # Constrained to a tight window around the already-computed,
+            # word-boundary-aware target (see BEAT_SYNC_MAX_NUDGE) -- not the
+            # whole remaining scene. A beat outside this range is too far to
+            # snap to without risking a mid-word/mid-phrase cut that the
+            # speech-safety pass below won't be able to find and correct.
+            nudge_lo = max(total_sel + 0.3, target_cut - BEAT_SYNC_MAX_NUDGE)
+            nudge_hi = min(total_sel + (scene_end - seg_start), target_cut + BEAT_SYNC_MAX_NUDGE)
+            snapped_cut = nearest_beat(target_cut, beat_times, nudge_lo, nudge_hi)
             seg_dur = max(0.3, min(scene_end - seg_start, snapped_cut - total_sel))
         if transcribe_for_cuts and (phrase_ends or word_ends) and seg_dur < (scene_end - seg_start):
             target_end = seg_start + seg_dur
@@ -7765,9 +7786,16 @@ def _run_trailer_job(jid, params):
                 scene_end = s['start'] + s['duration']
                 if sync_beats and beat_times:
                     # Nudge this segment's end so the *cumulative* cut point lands on
-                    # the nearest beat, within what this scene can actually supply.
+                    # the nearest beat, within what this scene can actually supply --
+                    # but only within a tight window around the already-computed,
+                    # word-boundary-aware target (see BEAT_SYNC_MAX_NUDGE), not the
+                    # whole remaining scene. A beat outside this range is too far to
+                    # snap to without risking a mid-word/mid-phrase cut the
+                    # speech-safety pass below won't be able to find and correct.
                     target_cut = total_sel + seg_dur
-                    snapped_cut = nearest_beat(target_cut, beat_times, total_sel + 0.3, total_sel + (scene_end - seg_start))
+                    nudge_lo = max(total_sel + 0.3, target_cut - BEAT_SYNC_MAX_NUDGE)
+                    nudge_hi = min(total_sel + (scene_end - seg_start), target_cut + BEAT_SYNC_MAX_NUDGE)
+                    snapped_cut = nearest_beat(target_cut, beat_times, nudge_lo, nudge_hi)
                     seg_dur = max(0.3, min(scene_end - seg_start, snapped_cut - total_sel))
                 if transcribe_for_cuts and (phrase_ends or word_ends) and seg_dur < (scene_end - seg_start):
                     # This is a separate `if`, not `elif` -- beat-sync above (when
