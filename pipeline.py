@@ -2979,49 +2979,63 @@ def _seconds_to_tc(secs, fps=25.0):
     f = int(round((secs - int(secs)) * max(fps, 1))) % max(int(fps), 1)
     return f'{h:02d}:{m:02d}:{s:02d}:{f:02d}'
 
-def _parse_timecode_line(line, fps=25.0):
-    """First timecode found in `line`, as seconds, plus the remaining text of
-    the line as its description. Returns (seconds, description) or None.
+def _match_to_seconds(m, pat_idx, fps=25.0):
+    """Convert a regex match from _TC_PATTERNS[pat_idx] into seconds."""
+    g = m.groups()
+    if pat_idx == 0:
+        h, mnt, s, frac = int(g[0]), int(g[1]), int(g[2]), g[3]
+        # HH:MM:SS.mmm → milliseconds; HH:MM:SS:FF → frames at fps
+        raw = m.group(0)
+        sep = raw[8] if len(raw) > 8 else ':'
+        sub = int(frac) / 1000.0 if sep == '.' else int(frac) / max(fps, 1)
+        return h * 3600 + mnt * 60 + s + sub
+    if pat_idx == 1:
+        return int(g[0]) * 3600 + int(g[1]) * 60 + int(g[2])
+    return int(g[0]) * 60 + int(g[1])
 
-    The 4th group is frames for SMPTE (HH:MM:SS:FF) but milliseconds when
-    separated by a dot (HH:MM:SS.mmm) -- treated accordingly rather than
-    assuming one, since both show up in real rundowns and mixing them up
-    would put a cue up to a second out."""
+def _parse_timecode_line(line, fps=25.0):
+    """Parse timecode(s) on a script line for scene selection.
+
+    Returns (in_seconds, description, meta) or None.
+    meta may include out_seconds when the line has an in/out pair.
+
+    A **single** timecode is enough: it marks the moment to prefer when
+    selecting a scene. An in/out pair (two timecodes on one line) still
+    selects from the **in** point; the out is kept only for display. Lines
+    with no recognisable timecode return None and are ignored.
+    """
     for idx, pat in enumerate(_TC_PATTERNS):
-        m = pat.search(line)
-        if not m:
+        matches = list(pat.finditer(line))
+        if not matches:
             continue
-        g = m.groups()
-        if idx == 0:
-            h, mnt, s, frac = int(g[0]), int(g[1]), int(g[2]), g[3]
-            sub = int(frac) / 1000.0 if m.group(0)[8] == '.' else int(frac) / max(fps, 1)
-            secs = h * 3600 + mnt * 60 + s + sub
-        elif idx == 1:
-            secs = int(g[0]) * 3600 + int(g[1]) * 60 + int(g[2])
-        else:
-            secs = int(g[0]) * 60 + int(g[1])
-        desc = (line[:m.start()] + ' ' + line[m.end():]).strip(' \t-–—:|.')
-        return secs, desc
+        in_secs = _match_to_seconds(matches[0], idx, fps=fps)
+        out_secs = None
+        if len(matches) >= 2:
+            out_secs = _match_to_seconds(matches[1], idx, fps=fps)
+            if out_secs <= in_secs:
+                out_secs = None  # not a sensible range; treat as single
+        # Strip every matched TC span from the description text
+        desc = line
+        for m in reversed(matches):
+            desc = (desc[:m.start()] + ' ' + desc[m.end():])
+        desc = re.sub(r'\s+', ' ', desc).strip(' \t-–—:|./')
+        meta = {'out': out_secs, 'tc_count': len(matches)}
+        return in_secs, desc, meta
     return None
 
 def parse_script_cues(text, fps=25.0, segment_offsets=None):
-    """Every (seconds, description) cue found in a script's text, sorted by
-    time. Lines without a recognisable timecode are ignored rather than
-    guessed at -- a rundown is mostly prose and column headers, and inventing
-    cues from unparseable lines would quietly skew selection.
+    """Every scene-selection cue found in a script, sorted by time.
 
-    segment_offsets: optional {segment_number: offset_seconds}, computed
-    from combining multiple source files via Browse Library's multi-select
-    (see /api/network/combine's segment_durations).
+    Each cue is a single point on the timeline (the in-point). A line needs
+    only one timecode — that alone is enough to boost the matching scene.
+    In/out pairs are accepted too: the in-point is used for selection; out
+    is optional metadata. Lines without any recognisable timecode are
+    ignored (rundowns are mostly prose and headers).
 
-    Most scripts have plain absolute (or single-file relative) timecodes and
-    no material label at all -- those are used unchanged. Material labels are
-    optional and non-standard: writers variously write M1, mats1, mat 2,
-    material 1, master 2, reel 1, etc. When a recognised label is present
-    AND segment_offsets is provided, that segment's start offset is added.
-    Segment 1 always maps to offset 0. A label for a segment that was not
-    actually combined (e.g. "mats2" but only one file uploaded) causes that
-    cue to be skipped rather than mis-applied."""
+    segment_offsets: optional {segment_number: offset_seconds} from multi-file
+    combine. Material labels (mats1, M2, material 1, …) are optional; when
+    present with offsets, that segment's start is added. Unknown segment
+    numbers (other than 1) are skipped rather than mis-applied."""
     cues = []
     segment_offsets = segment_offsets or {}
     for raw_line in (text or '').splitlines():
@@ -3031,7 +3045,7 @@ def parse_script_cues(text, fps=25.0, segment_offsets=None):
         parsed = _parse_timecode_line(line, fps=fps)
         if not parsed:
             continue
-        secs, desc = parsed
+        secs, desc, meta = parsed
         # Material labels are optional. Only adjust when the line clearly names
         # a segment AND we know the offsets from a multi-file combine.
         seg_match = _SEGMENT_PREFIX_RE.search(line)
@@ -3040,7 +3054,10 @@ def parse_script_cues(text, fps=25.0, segment_offsets=None):
             if seg_num == 1:
                 pass  # segment 1 always maps to offset 0, regardless of whether segment_offsets was even provided
             elif seg_num in segment_offsets:
-                secs += segment_offsets[seg_num]
+                off = segment_offsets[seg_num]
+                secs += off
+                if meta.get('out') is not None:
+                    meta['out'] = meta['out'] + off
             else:
                 # Named a segment we don't have -- either segment_offsets
                 # doesn't cover it, or no combine happened at all (segment_offsets
@@ -3053,8 +3070,10 @@ def parse_script_cues(text, fps=25.0, segment_offsets=None):
                 # meant relative to a segment that was never combined into
                 # this job at all.
                 continue
-        # No label, or single-file job with no offsets: use timecode as written.
-        cues.append({'time': secs, 'desc': desc})
+        cue = {'time': secs, 'desc': desc}
+        if meta.get('out') is not None:
+            cue['out'] = meta['out']
+        cues.append(cue)
     cues.sort(key=lambda c: c['time'])
     return cues
 
@@ -4092,6 +4111,7 @@ def api_validate_script():
     cues = parse_script_cues(text, segment_offsets=segment_offsets or None)
 
     # Per-line diagnostics so the UI can show what was kept vs skipped.
+    # A single timecode is enough to select a scene; in/out pairs use the in-point.
     kept = []
     skipped = []
     for line in lines:
@@ -4102,48 +4122,65 @@ def api_validate_script():
             if re.search(r'\d:\d', line):
                 skipped.append({
                     'line': line[:160],
-                    'reason': 'No recognisable timecode (use 00:01:30:12, 00:01:30, or 1:30)',
+                    'reason': 'No recognisable timecode (use 00:01:30:12, 00:01:30, or 1:30). '
+                              'A single time is enough — in/out pairs are not required.',
                 })
             continue
-        secs, desc = parsed
+        secs, desc, meta = parsed
         seg_match = _SEGMENT_PREFIX_RE.search(line)
         material = None
         adjusted = secs
         status = 'usable'
-        note = None
+        note_parts = []
+        if meta.get('out') is not None:
+            note_parts.append(
+                f'In/out pair → selecting scene at in-point '
+                f'(out {_seconds_to_tc(meta["out"])} noted only)'
+            )
+        else:
+            note_parts.append('Single timecode → will select the scene at this moment')
         if seg_match:
             seg_num = int(seg_match.group(1))
             material = seg_match.group(0)
-            if segment_offsets:
-                if seg_num in segment_offsets:
-                    adjusted = secs + segment_offsets[seg_num]
-                    note = f'Material {seg_num} offset +{segment_offsets[seg_num]:.1f}s (combined sources)'
-                elif seg_num != 1:
-                    status = 'skipped'
-                    note = f'Material {seg_num} named but that segment was not combined — cue ignored'
-                    skipped.append({'line': line[:160], 'reason': note})
-                    continue
-                else:
-                    note = 'Material 1 (offset 0)'
+            if seg_num == 1:
+                note_parts.append('Material 1 (offset 0)')
+            elif seg_num in segment_offsets:
+                adjusted = secs + segment_offsets[seg_num]
+                note_parts.append(
+                    f'Material {seg_num} offset +{segment_offsets[seg_num]:.1f}s (combined sources)'
+                )
             else:
-                note = f'Label “{material}” seen but ignored (single source / no combine offsets)'
+                # Named a segment we don't have -- either segment_offsets
+                # doesn't cover it, or no combine happened at all -- must be
+                # reported (and treated) as skipped here too, matching what
+                # parse_script_cues itself actually does with this same
+                # line: showing this as "usable" in the validation preview
+                # while the real parse silently drops it would be a
+                # confusing, misleading mismatch between what a person is
+                # shown and what actually happens when they generate.
+                status = 'skipped'
+                note = f'Material {seg_num} named but that segment was not combined — cue ignored'
+                skipped.append({'line': line[:160], 'reason': note})
+                continue
         kept.append({
             'time': round(adjusted, 3),
             'timecode': _seconds_to_tc(adjusted),
             'raw_time': round(secs, 3),
             'raw_timecode': _seconds_to_tc(secs),
+            'out_timecode': _seconds_to_tc(meta['out']) if meta.get('out') is not None else None,
             'desc': (desc or '')[:160],
             'material': material,
             'status': status,
-            'note': note,
+            'note': ' · '.join(note_parts),
             'line': line[:160],
         })
 
     warnings = []
     if not kept:
         warnings.append(
-            'No usable timecodes found. Each cue line needs a timecode like '
-            '00:01:30:12, 00:01:30, or 1:30. Lines without one are ignored.'
+            'No usable timecodes found. Each cue line needs at least one timecode like '
+            '00:01:30:12, 00:01:30, or 1:30. A single time is enough to select a scene — '
+            'an in/out pair is optional. Lines without any timecode are ignored.'
         )
     if skipped:
         warnings.append(f'{len(skipped)} line(s) looked like cues but could not be used.')
@@ -4158,7 +4195,8 @@ def api_validate_script():
         )
 
     summary = (
-        f'Extracted {len(kept)} usable cue(s) from {len(lines)} non-empty line(s).'
+        f'Extracted {len(kept)} scene-selection cue(s) from {len(lines)} non-empty line(s). '
+        f'Each cue picks the scene at that time (single TC or in-point of a pair).'
         if kept else
         f'No usable cues from {len(lines)} non-empty line(s).'
     )
@@ -4280,9 +4318,10 @@ def api_trailer():
             return jsonify(error=err), 400
         script_cues = parse_script_cues(text, segment_offsets=segment_offsets)
         if not script_cues:
-            return jsonify(error='No timecodes were found in that script. Each cue line needs a '
-                                 'timecode like 00:01:30:12, 00:01:30, or 1:30 -- lines without '
-                                 'one are ignored.'), 400
+            return jsonify(error='No timecodes were found in that script. Each cue line needs at '
+                                 'least one timecode like 00:01:30:12, 00:01:30, or 1:30. A single '
+                                 'time is enough to select a scene — in/out pairs are optional. '
+                                 'Lines without any timecode are ignored.'), 400
 
     transition = request.form.get('transition', 'fade')
     transition_matte_path = None
