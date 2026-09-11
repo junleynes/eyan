@@ -349,7 +349,7 @@ img[src*="prism-logo"],img[src*="logo-mark"],img[src*="branding/logo"]{
 }
 .promo-mode-hint{font-size:12px;color:var(--ink-dim);opacity:.8}
 .promo-essentials{
-  display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;margin:0 0 12px
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px 14px;margin:0 0 12px
 }
 .promo-essentials label{margin-top:0}
 .job-summary{

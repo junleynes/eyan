@@ -1466,39 +1466,45 @@ document.addEventListener("DOMContentLoaded", function(){
   </div>
 
   <div class="promo-essentials">
-    <label>Promo length</label>
-    <select name=trailer_length id=trailer-length-select onchange="updateJobSummary()">
-      <option value=15 selected>15 sec</option>
-      <option value=30>30 sec</option>
-      <option value=45>45 sec</option>
-      <option value=60>60 sec</option>
+    <div>
+      <label>Promo length</label>
+      <select name=trailer_length id=trailer-length-select onchange="updateJobSummary()">
+        <option value=15 selected>15 sec</option>
+        <option value=30>30 sec</option>
+        <option value=45>45 sec</option>
+        <option value=60>60 sec</option>
+      </select>
+    </div>
+    <div>
+      <label>Genre</label>
+      <select name=genre id=genre-select onchange="updateJobSummary(); if(typeof updateGenreManualVisibility==='function') updateGenreManualVisibility()">
+      <option value="">Custom (manual settings below)</option>
+      <option value=action>Action</option>
+      <option value=adventure>Adventure</option>
+      <option value=comedy>Comedy</option>
+      <option value=documentary>Documentary</option>
+      <option value=drama>Drama</option>
+      <option value=fantasy>Fantasy</option>
+      <option value=horror>Horror</option>
+      <option value=mystery>Mystery</option>
+      <option value=noir>Noir</option>
+      <option value=romance>Romance</option>
+      <option value=scifi>Sci-Fi</option>
+      <option value=sports>Sports</option>
+      <option value=thriller>Thriller</option>
+      <option value=war>War</option>
+      <option value=western>Western</option>
     </select>
-    <label>Genre</label>
-    <select name=genre id=genre-select onchange="updateJobSummary(); if(typeof updateGenreManualVisibility==='function') updateGenreManualVisibility()">
-    <option value="">Custom (manual settings below)</option>
-    <option value=action>Action</option>
-    <option value=adventure>Adventure</option>
-    <option value=comedy>Comedy</option>
-    <option value=documentary>Documentary</option>
-    <option value=drama>Drama</option>
-    <option value=fantasy>Fantasy</option>
-    <option value=horror>Horror</option>
-    <option value=mystery>Mystery</option>
-    <option value=noir>Noir</option>
-    <option value=romance>Romance</option>
-    <option value=scifi>Sci-Fi</option>
-    <option value=sports>Sports</option>
-    <option value=thriller>Thriller</option>
-    <option value=war>War</option>
-    <option value=western>Western</option>
-  </select>
-    <label>Delivery format</label>
-    <select name=delivery_format id=delivery-format-select onchange="updateJobSummary()">
-      <option value=mp4_high selected>MP4 (H.264 High Profile)</option>
-      <option value=prores_hq_2997>Apple ProRes 422 HQ — 29.97fps</option>
-      <option value=prores_hq_2398>Apple ProRes 422 HQ — 23.976fps</option>
-      <option value=avci100i>AVC-Intra 100i (approximation)</option>
-    </select>
+    </div>
+    <div>
+      <label>Delivery format</label>
+      <select name=delivery_format id=delivery-format-select onchange="updateJobSummary()">
+        <option value=mp4_high selected>MP4 (H.264 High Profile)</option>
+        <option value=prores_hq_2997>Apple ProRes 422 HQ — 29.97fps</option>
+        <option value=prores_hq_2398>Apple ProRes 422 HQ — 23.976fps</option>
+        <option value=avci100i>AVC-Intra 100i (approximation)</option>
+      </select>
+    </div>
   </div><!-- /.promo-essentials -->
 
   <div id=generator-settings>
@@ -1549,8 +1555,6 @@ document.addEventListener("DOMContentLoaded", function(){
       <input type=checkbox name=sync_beats checked> Sync cuts to beat
     </label>
   </div>
-  <p style="margin-top:6px;margin-bottom:8px;font-size:12px;color:var(--amber)">These are independent, not sequential — "Sync cuts to beat" snaps cut points to the music's original beat grid; "Beat match" separately time-stretches that same music afterward to match the video's tempo, which shifts where its beats actually land. Using both together can pull cuts slightly off the beat they were synced to. If exact sync matters most, leave Beat match off.</p>
-  <p style="margin-bottom:8px;font-size:12px;opacity:.6">Loudness target, true peak, music level, ducking, and broadcast dual-mono are set once for this deployment in <strong>Config &gt; Production</strong> — they're delivery-spec values that should be identical on every promo, not per-job choices.</p>
   </div>
   <div class="asset-section" id=asset-title-card>
     <div class="asset-section-header" onclick="toggleAssetSection(this)">
