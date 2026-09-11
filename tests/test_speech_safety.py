@@ -75,8 +75,10 @@ class TestNearestSpeechOut:
         # A phrase end within its wider window wins even when a word end is
         # numerically closer -- landing on a finished sentence is worth
         # traveling further for than landing mid-sentence at a bare word gap.
+        # +0.08 is breath_after's default: the cut lands just past the phrase
+        # end, not flush on it, so the final syllable is fully heard.
         result = pipeline.nearest_speech_out(5.0, phrase_ends=[5.5], word_ends=[4.9])
-        assert result == 5.5
+        assert result == 5.58
 
     def test_falls_back_to_word_end_when_no_phrase_in_range(self):
         result = pipeline.nearest_speech_out(5.0, phrase_ends=[20.0], word_ends=[5.1])
@@ -91,16 +93,18 @@ class TestNearestSpeechOut:
     def test_phrase_window_wider_than_word_window(self):
         # A phrase end 1.0s away should be reachable (within the wider
         # phrase-snap window) even though that's well outside the tighter
-        # word-snap window.
+        # word-snap window. +0.08 is breath_after's default (see above).
         result = pipeline.nearest_speech_out(5.0, phrase_ends=[6.0], word_ends=[])
-        assert result == 6.0
+        assert result == 6.08
 
     def test_hard_limit_widens_phrase_search_too(self):
         # A phrase end beyond the normal 1.2s phrase-snap window, but still
         # within hard_limit, should be found rather than falling through to
-        # the word-boundary fallback (or the untouched target).
+        # the word-boundary fallback (or the untouched target). +0.08 is
+        # breath_after's default; still well under hard_limit=8.0, so it
+        # isn't clamped back down.
         result = pipeline.nearest_speech_out(5.0, phrase_ends=[7.0], word_ends=[], hard_limit=8.0)
-        assert result == 7.0
+        assert result == 7.08
 
     def test_hard_limit_passes_through_to_word_fallback(self):
         # No usable phrase end even with hard_limit, but a word end within
@@ -123,10 +127,10 @@ class TestSpeechFreeSlack:
 
     def test_partial_tail_after_guard(self):
         spans = [(0.0, 3.0)]
-        # Speech ends at 3.0, guard is 0.12 by default -> safe zone starts at
-        # 3.12, clip runs to 8.0 -> 4.88s of genuinely speech-free tail.
+        # Speech ends at 3.0, guard is 0.18 by default -> safe zone starts at
+        # 3.18, clip runs to 8.0 -> 4.82s of genuinely speech-free tail.
         result = pipeline.speech_free_slack(0.0, 8.0, spans)
-        assert abs(result - 4.88) < 1e-9
+        assert abs(result - 4.82) < 1e-9
 
     def test_no_speech_spans_at_all_is_fully_available(self):
         assert pipeline.speech_free_slack(0.0, 10.0, []) == 10.0

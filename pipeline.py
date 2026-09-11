@@ -3035,14 +3035,24 @@ def parse_script_cues(text, fps=25.0, segment_offsets=None):
         # Material labels are optional. Only adjust when the line clearly names
         # a segment AND we know the offsets from a multi-file combine.
         seg_match = _SEGMENT_PREFIX_RE.search(line)
-        if seg_match and segment_offsets:
+        if seg_match:
             seg_num = int(seg_match.group(1))
-            if seg_num in segment_offsets:
+            if seg_num == 1:
+                pass  # segment 1 always maps to offset 0, regardless of whether segment_offsets was even provided
+            elif seg_num in segment_offsets:
                 secs += segment_offsets[seg_num]
-            elif seg_num != 1:
-                # Named a segment we don't have -- skip rather than pin wrong.
+            else:
+                # Named a segment we don't have -- either segment_offsets
+                # doesn't cover it, or no combine happened at all (segment_offsets
+                # empty/absent) -- skip rather than pin wrong. Checking this
+                # regardless of whether segment_offsets is truthy is the fix:
+                # a script line naming "M2" on an ordinary single-file job (no
+                # segment_offsets at all) still means a segment 2 that doesn't
+                # exist here, not "use this timecode as written" -- silently
+                # keeping it would place the cue using a timecode the writer
+                # meant relative to a segment that was never combined into
+                # this job at all.
                 continue
-            # seg_num == 1 missing from map: offset 0, keep the cue.
         # No label, or single-file job with no offsets: use timecode as written.
         cues.append({'time': secs, 'desc': desc})
     cues.sort(key=lambda c: c['time'])
