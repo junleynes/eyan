@@ -2972,6 +2972,18 @@ _TC_PATTERNS = [
     re.compile(r'\b(\d{1,2}):(\d{2})\b'),                       # MM:SS
 ]
 
+# A real video timecode never carries an AM/PM suffix -- that's exclusively
+# how a wall-clock broadcast time slot is written ("GMA 8:50 PM", "SECOND
+# TELECAST GTV 10:30 PM"). A rundown's own promo/schedule text sitting in the
+# same column as real M1/M2 cues (not a separate column-mixing problem --
+# this text is genuinely positioned alongside real cues in the source
+# document) can otherwise read exactly like a plausible MM:SS timecode to
+# _TC_PATTERNS, and get accepted as a spurious scene-selection cue. Checked
+# against whatever immediately follows a candidate match (past optional
+# whitespace/punctuation); a real timecode is never followed by this, so
+# rejecting on it never costs a genuine cue.
+_CLOCK_TIME_SUFFIX_RE = re.compile(r'^[\s.,:-]*[AaPp]\.?[Mm]\.?\b')
+
 # Optional material / segment labels on a cue line. Scripts are NOT standardised:
 # some writers use "M1", others "mats1", "mat 2", "material 1", "master 2",
 # "reel 1", etc. When present AND the user combined multiple source files
@@ -3022,7 +3034,7 @@ def _parse_timecode_line(line, fps=25.0):
     with no recognisable timecode return None and are ignored.
     """
     for idx, pat in enumerate(_TC_PATTERNS):
-        matches = list(pat.finditer(line))
+        matches = [m for m in pat.finditer(line) if not _CLOCK_TIME_SUFFIX_RE.match(line[m.end():])]
         if not matches:
             continue
         in_secs = _match_to_seconds(matches[0], idx, fps=fps)
@@ -3204,6 +3216,47 @@ def _detect_two_column_split(rows, page_width):
         return sum(best_cluster) / len(best_cluster)
     return None
 
+def _split_row_at_column_gap(row, global_split_x, page_width):
+    """Given one row's words and the page's globally-detected column split
+    position, decides which of THIS row's own words are left-column.
+
+    Deliberately not "cut every row at global_split_x" (blind, uniform) or
+    "look for any locally-large gap near the expected position" (too loose
+    -- both were tried and both produced real, demonstrated bugs): checks
+    specifically whether a gap actually STRADDLES the global split -- one
+    word's own right edge (x1) ends before it and another word's own left
+    edge (x0) starts after it, with real empty space between those two
+    specific words. That's what an actual column gap in this row looks
+    like. A locally-large gap elsewhere in the row (ordinary word spacing
+    around a shorter word, unrelated to the column boundary) doesn't
+    straddle the expected split position and is correctly left alone; a
+    left-column line simply longer than most others, with no right-column
+    content on that specific row at all, has nothing straddling the split
+    to find and is kept whole rather than truncated."""
+    before = [w for w in row if w['x0'] < global_split_x]
+    at_or_after = [w for w in row if w['x0'] >= global_split_x]
+    if not before:
+        # Nothing on this row starts left of the split at all -- this row
+        # is purely right-column (audio/SOT) content and must be excluded
+        # entirely, not kept: an earlier version of this check conflated
+        # this with the opposite case below and returned the whole
+        # right-column-only row unchanged, defeating the point of this
+        # function for any row with no left-column words on it at all.
+        return []
+    if not at_or_after:
+        # Nothing on this row starts at/after the split -- purely
+        # left-column content (which may simply be a longer line than
+        # most others around it). Nothing to split here; keep it whole.
+        return row
+    last_before_x1 = max(w.get('x1', w['x0']) for w in before)
+    first_after_x0 = min(w['x0'] for w in at_or_after)
+    if first_after_x0 - last_before_x1 > 0.04 * page_width:
+        return before
+    # An "after" word this close to the split's left-side content is more
+    # likely still part of the same left-column line than genuine
+    # right-column text -- keep the row whole rather than guessing a cut.
+    return row
+
 def _extract_pdf_video_column_only(raw):
     """When a PDF looks like a two-column rundown (narrow video-timecode
     column on the left, wider audio/SOT script text on the right), returns
@@ -3228,7 +3281,8 @@ def _extract_pdf_video_column_only(raw):
         return None, False
     try:
         any_split_found = False
-        page_rows = []
+        page_rows = []      # kept (left-column) rows per page
+        excluded_lines = []  # text that would be DROPPED by the split, across the whole doc
         with pdfplumber.open(io.BytesIO(raw)) as pdf:
             for page in pdf.pages:
                 words = page.extract_words(keep_blank_chars=False)
@@ -3241,9 +3295,37 @@ def _extract_pdf_video_column_only(raw):
                     page_rows.append(rows)
                 else:
                     any_split_found = True
-                    page_rows.append([[w for w in row if w['x0'] < split_x] for row in rows])
+                    kept_rows = []
+                    for row in rows:
+                        kept = _split_row_at_column_gap(row, split_x, page.width)
+                        kept_ids = {id(w) for w in kept}
+                        dropped = [w for w in row if id(w) not in kept_ids]
+                        if dropped:
+                            excluded_lines.append(' '.join(w['text'] for w in dropped))
+                        kept_rows.append(kept)
+                    page_rows.append(kept_rows)
         if not any_split_found:
             return None, False
+        # Safety check: if what this split WOULD discard itself contains a
+        # real, labeled cue (a material tag plus its own timecode -- not
+        # just any number that happens to look timecode-shaped), this
+        # document doesn't follow the "video timecodes stay in one column"
+        # convention this feature assumes at all -- a real, demonstrated
+        # case: M1/M2 cues genuinely interspersed with dialogue throughout
+        # BOTH sides of the page, not confined to one column. Applying the
+        # split there would silently drop real cues, which is worse than
+        # the column-mixing problem this feature exists to prevent. Back
+        # off entirely and let the (separately fixed) AM/PM-aware
+        # full-text parsing handle it instead.
+        #
+        # Checked directly per line (not via parse_script_cues) since that
+        # function's own material-availability filtering would itself
+        # silently drop an M2+ cue before this check ever saw it, when
+        # called without a real available_materials set -- exactly the
+        # kind of cue this check most needs to catch.
+        for excluded_line in excluded_lines:
+            if _SEGMENT_PREFIX_RE.search(excluded_line) and _parse_timecode_line(excluded_line):
+                return None, False
         lines = []
         for rows in page_rows:
             for row in rows:
