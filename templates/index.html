@@ -3090,6 +3090,12 @@ document.addEventListener("DOMContentLoaded", function(){
   var currentObjectUrl = null
 
   function humanSize(bytes){
+    // null/undefined (no meaningful single size -- e.g. a multi-material
+    // selection covering several separate files) must return null, not a
+    // string: `null < 1024` still evaluates true, so this used to fall
+    // straight into the first branch and return the literal string
+    // "null B" -- a real, reported bug shown right in the preview.
+    if(bytes == null) return null
     if(bytes < 1024) return bytes + ' B'
     if(bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB'
     if(bytes < 1024*1024*1024) return (bytes/(1024*1024)).toFixed(1) + ' MB'
@@ -3206,7 +3212,13 @@ document.addEventListener("DOMContentLoaded", function(){
     if(currentObjectUrl){ URL.revokeObjectURL(currentObjectUrl); currentObjectUrl = null }
     networkFileInput.value = localName
     previewName.textContent = origName
-    previewMeta.textContent = humanSize(size) + ' — reading video info…'
+    // size is null for a multi-material selection (several separate files,
+    // no single meaningful size to show) -- sizeText is null in that case
+    // (see humanSize's own fix above) and every prefix below is built
+    // conditionally so the meta line reads e.g. "reading video info…" on
+    // its own instead of the literal, broken "null — reading video info…".
+    var sizeText = humanSize(size)
+    previewMeta.textContent = (sizeText ? sizeText + ' — ' : '') + 'reading video info…'
     setPreviewThumbLoading()
     networkPanel.style.display = 'none'
     dropzone.style.display = 'none'
@@ -3216,15 +3228,15 @@ document.addEventListener("DOMContentLoaded", function(){
       var fd = new FormData(); fd.append('filename', localName); return fd
     })()}).then(function(r){ return r.json() }).then(function(d){
       if(!d.ok){
-        previewMeta.textContent = humanSize(size) + ' · ' + (d.error || 'could not read video info')
+        previewMeta.textContent = (sizeText ? sizeText + ' · ' : '') + (d.error || 'could not read video info')
         setPreviewThumbUnavailable('No preview')
         return
       }
-      previewMeta.textContent = humanSize(size) + ' · ' + humanDuration(d.duration) +
+      previewMeta.textContent = (sizeText ? sizeText + ' · ' : '') + humanDuration(d.duration) +
         ' · ' + d.width + '\u00d7' + d.height
       setPreviewThumbImage(d.thumbnail_url)
     }).catch(function(e){
-      previewMeta.textContent = humanSize(size) + ' · could not read video info: ' + e
+      previewMeta.textContent = (sizeText ? sizeText + ' · ' : '') + 'could not read video info: ' + e
       setPreviewThumbUnavailable('No preview')
     })
   }
@@ -3361,13 +3373,23 @@ document.addEventListener("DOMContentLoaded", function(){
     var staged = []
     function fetchNext(i){
       if(i >= items.length){
-        var matsField = document.getElementById('tr-materials-network')
-        if(matsField) matsField.value = JSON.stringify(staged)
         var segField = document.getElementById('tr-file-segment-durations')
         if(segField) segField.value = ''
         window._fileSegmentDurations = []
         var label = items.map(function(it, idx){ return (idx + 1) + ': ' + it.name }).join(' \u00b7 ')
+        // showNetworkPreview() itself unconditionally clears
+        // tr-materials-network first (it's meant to wipe any stale
+        // multi-material list left over from a PREVIOUS pick when the
+        // person is now choosing a single file instead) -- so setting this
+        // field has to happen AFTER that call returns, not before, or the
+        // materials list this function just built gets wiped out the
+        // instant showNetworkPreview runs. This was a real, confirmed bug:
+        // selecting two materials still submitted an empty materials list,
+        // so every M2-labeled script cue was treated as referencing a
+        // source that was never loaded at all.
         showNetworkPreview(staged[0], label, null)
+        var matsField = document.getElementById('tr-materials-network')
+        if(matsField) matsField.value = JSON.stringify(staged)
         var meta = document.getElementById('tr-file-preview-meta')
         if(meta) meta.textContent = staged.length + ' sources loaded \u00b7 script times match each file separately'
         status.textContent = staged.length + ' sources ready.'
@@ -8084,6 +8106,10 @@ document.addEventListener('DOMContentLoaded', function(){
   var searchDebounceTimer = null
 
   function humanSize(bytes){
+    // See the same fix's comment on the other humanSize() earlier in this
+    // file -- null must return null, not fall into the first branch and
+    // produce the literal string "null B".
+    if(bytes == null) return null
     if(bytes < 1024) return bytes + ' B'
     if(bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB'
     if(bytes < 1024*1024*1024) return (bytes/(1024*1024)).toFixed(1) + ' MB'
