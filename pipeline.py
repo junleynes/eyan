@@ -4817,6 +4817,110 @@ def api_trailer_preview_get(preview_id):
                                 'description': _scene_desc(s), 'thumb': (p.get('alt_thumbs') or [None]*99)[i]}
                                for i, s in enumerate(p.get('alternates') or [])])
 
+def _rebalance_selected_durations(selected, target_duration, min_seg_dur=0.8):
+    """Redistributes each scene's selected_dur (in place, on copies) so the
+    total again matches target_duration, after the preview's original
+    selection has been edited (scenes dropped and/or alternates added).
+
+    Real, reported bug this fixes: dropping or adding a clip in "Preview the
+    cut" left every remaining scene's selected_dur exactly as the original
+    preview computed it -- correct for THAT selection, but wrong the moment
+    it changed, since removing a 3s clip leaves the total 3s short of the
+    target with nothing making up the difference, and adding an alternate
+    (sized independently, for a different remaining-budget context than the
+    one it's now landing in) can just as easily push the total over.
+
+    Scales every scene's selected_dur by the same factor first (proportional,
+    not "dump the whole gap on the last clip"), then clamps each to what
+    that scene can actually supply: at least min_seg_dur, at most the real
+    footage remaining from its own trim_start to its own end
+    (start + duration). Clamped scenes stop absorbing more than one pass
+    can fix in a single shot -- e.g. a short clip already near its floor
+    can't shrink much further even if the target needs it to -- so this
+    repeats a few times, redistributing only the leftover gap across
+    scenes that still have room, rather than assuming one linear scale
+    gets every scene to a valid value in one step.
+
+    Returns a new list (the input is not mutated) with the same scenes in
+    the same order, only selected_dur changed. If selected is empty, or the
+    current total is already within half a second of target_duration (the
+    same tolerance the original selection pass itself uses for "close
+    enough"), the scenes are returned unchanged."""
+    if not selected:
+        return selected
+    scenes = [dict(s) for s in selected]
+    current_total = sum(s['selected_dur'] for s in scenes)
+    if current_total <= 0 or abs(current_total - target_duration) <= 0.5:
+        return scenes
+
+    bounds = []
+    for s in scenes:
+        max_avail = max(min_seg_dur, (s['start'] + s['duration']) - s.get('trim_start', s['start']))
+        bounds.append((min_seg_dur, max_avail))
+
+    for _ in range(6):
+        current_total = sum(s['selected_dur'] for s in scenes)
+        gap = target_duration - current_total
+        if abs(gap) <= 0.15:
+            break
+        # Only scenes with real room to move (not already sitting on the
+        # bound we'd be pushing them toward) absorb this pass's share of
+        # the gap -- otherwise a clip already at its floor/ceiling would
+        # get asked for more room it doesn't have, over and over, without
+        # the remaining gap ever reaching a scene that could actually supply it.
+        movable = [
+            i for i, s in enumerate(scenes)
+            if (gap > 0 and s['selected_dur'] < bounds[i][1] - 1e-6)
+            or (gap < 0 and s['selected_dur'] > bounds[i][0] + 1e-6)
+        ]
+        if not movable:
+            break
+        movable_total = sum(scenes[i]['selected_dur'] for i in movable)
+        if movable_total <= 0:
+            break
+        for i in movable:
+            share = scenes[i]['selected_dur'] / movable_total
+            lo, hi = bounds[i]
+            scenes[i]['selected_dur'] = max(lo, min(hi, scenes[i]['selected_dur'] + gap * share))
+    return scenes
+
+def _autofill_short_selection_from_alternates(selected, alternates, already_used_alt_numbers, target_duration, min_gap=1.0):
+    """When rebalancing alone still leaves the total meaningfully short of
+    target_duration -- the case _rebalance_selected_durations can't fully
+    fix on its own, because every remaining scene is already using all the
+    footage it actually has (a short, fully-used scene has no slack to
+    stretch into) -- pulls in additional, not-already-used alternates from
+    the same preview's own runner-up pool to make up the difference,
+    highest-scoring first, the same ordering the original selection itself
+    would have preferred them in.
+
+    A candidate is skipped if it overlaps or sits too close (min_gap) to
+    any already-selected scene's own start time in the source timeline --
+    the same kind of spacing the original selection enforces, so this
+    doesn't reintroduce a near-duplicate clip right next to one already
+    picked. Returns a new list (rebalancing afterward, to fit the newly
+    added scene(s) precisely, is the caller's job -- this only decides
+    which scenes to add)."""
+    current_total = sum(s['selected_dur'] for s in selected)
+    shortfall = target_duration - current_total
+    if shortfall <= 1.0:
+        return list(selected)
+    candidates = [
+        (i, alt) for i, alt in enumerate(alternates, start=1)
+        if i not in already_used_alt_numbers
+    ]
+    candidates.sort(key=lambda pair: pair[1].get('total_score', 0), reverse=True)
+    result = list(selected)
+    for _, alt in candidates:
+        if shortfall <= 0.5:
+            break
+        if any(abs(alt['start'] - s['start']) < min_gap for s in result):
+            continue
+        result.append(alt)
+        shortfall -= alt['selected_dur']
+    result.sort(key=lambda s: s['start'])
+    return result
+
 @app.route('/api/trailer/render', methods=['POST'])
 @require_permission('promo_generation')
 def api_trailer_render():
@@ -4862,6 +4966,28 @@ def api_trailer_render():
 
     if not selected:
         return jsonify(error='You dropped every scene — keep at least one, or add an alternate.'), 400
+
+    # Dropping and/or adding scenes above changes the total duration away
+    # from what the original preview analysis computed -- rebalance so the
+    # render still lands on the target length instead of silently drifting
+    # over or under it by however much the edited clip(s) were worth. Only
+    # actually adjusts anything when drop/add were used at all AND the
+    # resulting total has drifted (see the function's own tolerance) --
+    # an unedited "render exactly what I previewed" still renders exactly
+    # that, unchanged.
+    if drop or added:
+        target = p['params'].get('trailer_length', 15)
+        selected = _rebalance_selected_durations(selected, target)
+        # Rebalancing alone can't close every gap: a short scene that's
+        # already using all the footage it has simply has nothing left to
+        # stretch into. When that leaves a real shortfall, pull in more of
+        # the same preview's own runner-up alternates (not already used)
+        # rather than shipping a render that's still short -- then
+        # rebalance once more so the newly-added scene(s) fit precisely
+        # rather than just being appended at their own original length.
+        selected = _autofill_short_selection_from_alternates(
+            selected, p.get('alternates') or [], added, target)
+        selected = _rebalance_selected_durations(selected, target)
 
     params = dict(p['params'])
     params['preview_only'] = False
