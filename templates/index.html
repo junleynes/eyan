@@ -7311,15 +7311,16 @@ function renderUsersTab(d){
         '<button type=button class=btn-sm data-action="2fa-reset" data-uid="'+u.id+'" data-username="'+escapeHtmlLite(u.username)+'" style="padding:3px 7px;font-size:10px">Reset</button>'
     return '<tr>' +
       '<td>'+escapeHtmlLite(u.username)+(u.is_you?' <span style="color:var(--phosphor);font-size:11px">(you)</span>':'')+'</td>' +
-      '<td><select data-role-select data-uid="'+u.id+'"'+(u.is_you?' disabled':'')+'>' +
+      '<td><select data-role-select data-uid="'+u.id+'" data-original-value="'+u.role+'"'+(u.is_you?' disabled':'')+'>' +
         '<option value=user'+(u.role==='user'?' selected':'')+'>user</option>' +
         '<option value=admin'+(u.role==='admin'?' selected':'')+'>admin</option></select></td>' +
-      '<td><select data-group-select data-uid="'+u.id+'">'+thisGroupOptions+'</select></td>' +
+      '<td><select data-group-select data-uid="'+u.id+'" data-original-value="'+(u.group_id!=null?u.group_id:'')+'">'+thisGroupOptions+'</select></td>' +
       '<td>'+(u.is_active?'active':'disabled')+'</td>' +
       '<td>'+twofaCell+'</td>' +
       '<td>'+created+'</td>' +
       '<td>'+lastLogin+'</td>' +
       '<td><div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center">' +
+        '<button type=button class="btn-sm" style="display:none;color:var(--phosphor);border-color:var(--phosphor);font-weight:600;height:23px;box-sizing:border-box" data-action="save-role-group" data-uid="'+u.id+'">Save</button>' +
         '<button type=button class=btn-sm style="height:23px;box-sizing:border-box" data-action="toggle" data-uid="'+u.id+'"'+(u.is_you?' disabled':'')+'>'+(u.is_active?'Disable':'Enable')+'</button>' +
         '<input type=password data-pw-input data-uid="'+u.id+'" placeholder="New password" minlength=12 class=input-box style="width:150px;margin-bottom:0;padding:0 9px;font-size:11px;border-radius:6px;height:23px;box-sizing:border-box">' +
         '<button type=button class=btn-sm style="height:23px;box-sizing:border-box" data-action="set-password" data-uid="'+u.id+'">Set</button>' +
@@ -7411,16 +7412,43 @@ document.addEventListener('click', function(e){
     if(!confirm('Delete group '+btn.getAttribute('data-name')+'? Members fall back to unrestricted access, not locked out.')) return
     return usersAction('/admin/api/groups/'+gid+'/delete', {})
   }
+  if(action === 'save-role-group') return saveUserRoleAndGroup(uid)
 })
+// Role/group changes are staged, not applied the moment a different option
+// is picked -- selecting a value only shows this row's own Save button
+// (kept hidden otherwise) when it actually differs from what the server
+// last had; switching back to the original value hides it again rather
+// than leaving a stale "unsaved" indicator showing for a no-op edit.
 document.addEventListener('change', function(e){
   var container = document.getElementById('config-users-rows')
   if(!container || !container.contains(e.target)) return
-  if(e.target.matches('[data-role-select]')){
-    usersAction('/admin/api/users/'+e.target.getAttribute('data-uid')+'/role', {role: e.target.value})
-  }else if(e.target.matches('[data-group-select]')){
-    usersAction('/admin/api/users/'+e.target.getAttribute('data-uid')+'/group', {group_id: e.target.value})
+  if(e.target.matches('[data-role-select]') || e.target.matches('[data-group-select]')){
+    var uid = e.target.getAttribute('data-uid')
+    var roleSel = document.querySelector('[data-role-select][data-uid="'+uid+'"]')
+    var groupSel = document.querySelector('[data-group-select][data-uid="'+uid+'"]')
+    var changed = (roleSel && roleSel.value !== roleSel.getAttribute('data-original-value')) ||
+                  (groupSel && groupSel.value !== groupSel.getAttribute('data-original-value'))
+    var saveBtn = document.querySelector('[data-action="save-role-group"][data-uid="'+uid+'"]')
+    if(saveBtn) saveBtn.style.display = changed ? '' : 'none'
   }
 })
+async function saveUserRoleAndGroup(uid){
+  var roleSel = document.querySelector('[data-role-select][data-uid="'+uid+'"]')
+  var groupSel = document.querySelector('[data-group-select][data-uid="'+uid+'"]')
+  // Only the field(s) that actually changed are sent -- a Save click after
+  // only touching the group dropdown doesn't also re-submit an unrelated,
+  // unchanged role, and vice versa.
+  if(roleSel && roleSel.value !== roleSel.getAttribute('data-original-value')){
+    var roleResult = await usersActionQuiet('/admin/api/users/'+uid+'/role', {role: roleSel.value})
+    if(roleResult && roleResult.error){ usersStatus(roleResult.error, true); return }
+  }
+  if(groupSel && groupSel.value !== groupSel.getAttribute('data-original-value')){
+    var groupResult = await usersActionQuiet('/admin/api/users/'+uid+'/group', {group_id: groupSel.value})
+    if(groupResult && groupResult.error){ usersStatus(groupResult.error, true); return }
+  }
+  usersStatus('Saved.', false)
+  loadUsersTab()
+}
 async function usersAction(url, body){
   try{
     var r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
@@ -7428,6 +7456,17 @@ async function usersAction(url, body){
     if(d.ok){ usersStatus(d.notice || '', false); loadUsersTab() }
     else{ usersStatus(d.error || 'Action failed.', true) }
   }catch(e){ usersStatus('Action failed: ' + e, true) }
+}
+// Same request as usersAction, but returns the parsed result instead of
+// showing its own status message or reloading the table -- used by
+// saveUserRoleAndGroup, which can make up to two of these calls (role,
+// then group) for a single Save click and wants one combined status/reload
+// at the end, not two separate flickers of "Saved" mid-click.
+async function usersActionQuiet(url, body){
+  try{
+    var r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)})
+    return await r.json()
+  }catch(e){ return {ok: false, error: 'Action failed: ' + e} }
 }
 async function createUser(){
   var username = document.getElementById('cu-username').value
