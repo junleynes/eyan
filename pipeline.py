@@ -4222,29 +4222,22 @@ def api_validate_script():
             seg_num = int(seg_match.group(1))
             material = seg_match.group(0)
             if available is not None:
-                if seg_num in available:
-                    note_parts.append(
-                        f'Material {seg_num} — time is local to that source (no combine offset)'
-                    )
-                else:
+                if seg_num not in available:
                     status = 'skipped'
                     skipped.append({
                         'line': line[:160],
-                        'reason': f'Material {seg_num} named but only '
-                                  f'{materials_count} source(s) loaded — cue ignored',
+                        'reason': 'Referenced a source that was not loaded — cue ignored',
                     })
                     continue
             elif seg_num == 1:
-                note_parts.append('Material 1')
+                pass
             elif seg_num in segment_offsets:
-                note_parts.append(
-                    f'Material {seg_num} offset +{segment_offsets[seg_num]:.1f}s (legacy combined sources)'
-                )
+                pass  # legacy combine still offsets inside parse_script_cues
             else:
                 status = 'skipped'
                 skipped.append({
                     'line': line[:160],
-                    'reason': f'Material {seg_num} named but that source was not loaded — cue ignored',
+                    'reason': 'Referenced a source that was not loaded — cue ignored',
                 })
                 continue
         kept.append({
@@ -4271,18 +4264,15 @@ def api_validate_script():
         warnings.append(f'{len(skipped)} line(s) looked like cues but could not be used.')
     if available is not None and materials_count > 1:
         warnings.append(
-            f'{materials_count} separate materials loaded. M1/M2 times stay on their own '
-            'source (no combine, no offset).'
+            f'{materials_count} sources loaded. Timecodes are matched to each source separately.'
         )
     elif segment_offsets and len(segment_offsets) > 1 and available is None:
         warnings.append(
-            f'Legacy multi-file combine active ({len(segment_offsets)} segments). '
-            'Material labels will shift those cues onto the combined timeline.'
+            f'{len(segment_offsets)} sources were combined into one timeline for this job.'
         )
     elif any(c.get('material') for c in kept) and (materials_count or 0) <= 1 and not segment_offsets:
         warnings.append(
-            'Material labels were found but only one source is loaded — '
-            'cues for other materials are ignored until those sources are uploaded.'
+            'Some cues reference additional sources that were not loaded and will be ignored.'
         )
 
     summary = (
@@ -7490,7 +7480,7 @@ def _run_trailer_job(jid, params):
         scene_list = []  # (start, end, material_num, source_path)
         for mi, mpath in enumerate(materials):
             mat_num = mi + 1
-            job_set(jid, step=f'Detecting scene cuts (material {mat_num}/{len(materials)})')
+            job_set(jid, step=f'Detecting scene cuts (source {mat_num}/{len(materials)})')
             sl = detect_scenes(mpath, threshold=scene_threshold,
                                min_scene_len_sec=min_scene_len_sec, downscale=2,
                                detector=detector, adaptive_threshold=adaptive_threshold)

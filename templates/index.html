@@ -2368,10 +2368,9 @@ document.addEventListener("DOMContentLoaded", function(){
     warn.innerHTML = (data.warnings || []).map(function(w){ return '• ' + w }).join('<br>')
     if(data.cues && data.cues.length){
       cuesEl.innerHTML = data.cues.map(function(c){
-        var mat = c.material ? (' [' + c.material + ']') : ''
         var note = c.note ? (' — ' + c.note) : ''
         var desc = c.desc ? ('  ' + c.desc) : ''
-        return '<div>' + c.timecode + mat + desc + note + '</div>'
+        return '<div>' + c.timecode + desc + note + '</div>'
       }).join('')
     } else {
       cuesEl.textContent = ''
@@ -2395,7 +2394,7 @@ document.addEventListener("DOMContentLoaded", function(){
   }
   function requireTrailerSourceForScript(){
     if(trailerSourceSelected()) return true
-    var msg = 'Select source video first (Browse files or Browse library — multi-select for M1/M2), then attach the script so material labels map to the right file.'
+    var msg = 'Select a source video first (Browse files or Browse library), then attach the script.'
     if(typeof showScriptValidatePanel === 'function'){
       showScriptValidatePanel(null, msg)
       var panel = document.getElementById('script-validate-panel')
@@ -3346,7 +3345,7 @@ document.addEventListener("DOMContentLoaded", function(){
     if(trNetworkSelected.length < 2){ bar.style.display = 'none'; return }
     bar.style.display = 'flex'
     if(matsBtn) matsBtn.disabled = false
-    status.textContent = trNetworkSelected.length + ' files selected \u00b7 order = M1, M2, \u2026 \u2014 times stay on each source'
+    status.textContent = trNetworkSelected.length + ' files selected \u00b7 first selected is source 1, then source 2, \u2026'
     status.style.color = ''
   }
 
@@ -3367,18 +3366,18 @@ document.addEventListener("DOMContentLoaded", function(){
         var segField = document.getElementById('tr-file-segment-durations')
         if(segField) segField.value = ''
         window._fileSegmentDurations = []
-        var label = items.map(function(it, idx){ return 'M' + (idx + 1) + ': ' + it.name }).join(' \u00b7 ')
+        var label = items.map(function(it, idx){ return (idx + 1) + ': ' + it.name }).join(' \u00b7 ')
         showNetworkPreview(staged[0], label, null)
         var meta = document.getElementById('tr-file-preview-meta')
-        if(meta) meta.textContent = staged.length + ' separate materials (M1\u2013M' + staged.length + ') \u00b7 script times stay on each source'
-        status.textContent = staged.length + ' materials ready.'
+        if(meta) meta.textContent = staged.length + ' sources loaded \u00b7 script times match each file separately'
+        status.textContent = staged.length + ' sources ready.'
         status.style.color = 'var(--phosphor)'
         if(matsBtn) matsBtn.disabled = false
         var overlay = document.getElementById('tr-network-overlay')
         if(overlay) overlay.classList.remove('open')
         return
       }
-      status.textContent = 'Fetching material ' + (i + 1) + ' of ' + items.length + '\u2026'
+      status.textContent = 'Fetching source ' + (i + 1) + ' of ' + items.length + '\u2026'
       fetch('/api/network/fetch', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({name: items[i].name, category: 'hires', subpath: items[i].subpath || ''})
@@ -3432,7 +3431,7 @@ document.addEventListener("DOMContentLoaded", function(){
       var cb = document.createElement('input')
       cb.type = 'checkbox'
       cb.className = 'net-multi-check'
-      cb.title = 'Select as material (order = M1, M2, \u2026)'
+      cb.title = 'Select as source (order = source 1, 2, \u2026)'
       cb.addEventListener('click', function(e){ e.stopPropagation() })
       cb.addEventListener('change', function(){
         if(cb.checked){
@@ -3496,7 +3495,7 @@ document.addEventListener("DOMContentLoaded", function(){
       var cb = document.createElement('input')
       cb.type = 'checkbox'
       cb.className = 'net-multi-check'
-      cb.title = 'Select as material (order = M1, M2, \u2026)'
+      cb.title = 'Select as source (order = source 1, 2, \u2026)'
       cb.addEventListener('click', function(e){ e.stopPropagation() })
       cb.addEventListener('change', function(){
         if(cb.checked){
