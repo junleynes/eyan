@@ -1231,6 +1231,7 @@ document.addEventListener("DOMContentLoaded", function(){
     <input type=file name=file id=tr-file-input accept=video/* data-skip-clear-ui="1" style="display:none">
     <input type=hidden name=network_file id=tr-network-file value="">
     <input type=hidden name=file_segment_durations id=tr-file-segment-durations value="">
+    <input type=hidden name=materials_network id=tr-materials-network value="">
     <div id=tr-dropzone-prompt>
       <div style="font-size:28px;line-height:1;margin-bottom:6px">&#8682;</div>
       <div style="font-size:14px;margin-bottom:12px">{% if allow_local_upload %}Drag &amp; drop a video here{% else %}Pick a video from the library{% endif %}</div>
@@ -1264,9 +1265,9 @@ document.addEventListener("DOMContentLoaded", function(){
       <span id="tr-network-pick-status" style="font-size:12px;flex:1"></span>
       <button type="button" class="btn btn-primary-promo" id="tr-network-pick-btn">Use this file</button>
     </div>
-    <div id="tr-network-combine-bar" style="display:none;padding:10px;border-top:1px solid var(--line);align-items:center;gap:10px">
-      <span id="tr-network-combine-status" style="font-size:12px;flex:1"></span>
-      <button type="button" class="btn btn-primary-promo" id="tr-network-combine-btn" onclick="combineTrNetworkSelection()">Combine selected</button>
+    <div id="tr-network-combine-bar" style="display:none;padding:10px;border-top:1px solid var(--line);align-items:center;gap:10px;flex-wrap:wrap">
+      <span id="tr-network-combine-status" style="font-size:12px;flex:1;min-width:140px"></span>
+      <button type="button" class="btn btn-primary-promo" id="tr-network-materials-btn" onclick="useSeparateMaterialsSelection()">Use selected materials</button>
     </div>
   </div>
   <div id=tr-file-preview class="growing-preview">
@@ -2394,7 +2395,7 @@ document.addEventListener("DOMContentLoaded", function(){
   }
   function requireTrailerSourceForScript(){
     if(trailerSourceSelected()) return true
-    var msg = 'Select or combine a source video first (Browse files or Browse library), then attach the script so material labels (M1/M2) can be offset correctly.'
+    var msg = 'Select source video first (Browse files or Browse library — multi-select for M1/M2), then attach the script so material labels map to the right file.'
     if(typeof showScriptValidatePanel === 'function'){
       showScriptValidatePanel(null, msg)
       var panel = document.getElementById('script-validate-panel')
@@ -2472,6 +2473,14 @@ document.addEventListener("DOMContentLoaded", function(){
       var segRaw = (document.getElementById('tr-file-segment-durations') || {}).value || ''
       var seg = segRaw ? JSON.parse(segRaw) : (window._fileSegmentDurations || [])
       if(seg && seg.length) fd.append('file_segment_durations', JSON.stringify(seg))
+      var matsRaw = (document.getElementById('tr-materials-network') || {}).value || ''
+      if(matsRaw){
+        fd.append('materials_network', matsRaw)
+        try {
+          var mats = JSON.parse(matsRaw)
+          if(mats && mats.length) fd.append('materials_count', String(mats.length))
+        } catch(e2){}
+      }
     } catch(e){}
     fetch('/api/trailer/validate_script', { method: 'POST', body: fd, credentials: 'same-origin' })
       .then(function(r){ return r.json().then(function(j){ return { status: r.status, body: j } }) })
@@ -3177,13 +3186,13 @@ document.addEventListener("DOMContentLoaded", function(){
     // Cleared unconditionally here, not just where a single pick happens to
     // call this -- every caller of showNetworkPreview funnels through this
     // one place, so this is the one spot that reliably prevents an earlier
-    // combine's segment durations from silently surviving onto an unrelated
-    // later single-file pick. combineTrNetworkSelection re-populates this
-    // right after its own call to showNetworkPreview, which runs after this
-    // line since it happens later in that function's own flow.
+    // Clear any prior multi-material list / legacy segment durations so a
+    // single-file pick never inherits M2 offsets or a stale materials list.
     var segDurField = document.getElementById('tr-file-segment-durations')
     if(segDurField) segDurField.value = ''
     window._fileSegmentDurations = []
+    var matsField = document.getElementById('tr-materials-network')
+    if(matsField) matsField.value = ''
     // Unlike the local-file path above, this file genuinely IS already
     // staged server-side (that's what got it here) -- so this uses the
     // real /api/media/probe endpoint instead of the browser's own decode.
@@ -3227,6 +3236,8 @@ document.addEventListener("DOMContentLoaded", function(){
     var segDurField = document.getElementById('tr-file-segment-durations')
     if(segDurField) segDurField.value = ''
     window._fileSegmentDurations = []
+    var matsField = document.getElementById('tr-materials-network')
+    if(matsField) matsField.value = ''
     preview.classList.remove('shown')
     previewThumb.removeAttribute('src')
     previewThumb.style.display = 'none'
@@ -3330,75 +3341,44 @@ document.addEventListener("DOMContentLoaded", function(){
   function updateTrNetworkCombineBar(){
     var bar = document.getElementById('tr-network-combine-bar')
     var status = document.getElementById('tr-network-combine-status')
-    var btn = document.getElementById('tr-network-combine-btn')
+    var matsBtn = document.getElementById('tr-network-materials-btn')
     if(!bar) return
     if(trNetworkSelected.length < 2){ bar.style.display = 'none'; return }
     bar.style.display = 'flex'
-    var exts = trNetworkSelected.map(function(f){ return f.name.slice(f.name.lastIndexOf('.')).toLowerCase() })
-    var sameFormat = exts.every(function(e){ return e === exts[0] })
-    if(sameFormat){
-      status.textContent = trNetworkSelected.length + ' files selected \u00b7 same format \u2014 will be combined in the order shown'
-      status.style.color = ''
-      btn.disabled = false
-    }else{
-      status.textContent = trNetworkSelected.length + ' files selected, but formats differ (' +
-        Array.from(new Set(exts)).join(', ') + ') \u2014 select files of the same format to combine'
-      status.style.color = 'var(--tally)'
-      btn.disabled = true
-    }
+    if(matsBtn) matsBtn.disabled = false
+    status.textContent = trNetworkSelected.length + ' files selected \u00b7 order = M1, M2, \u2026 \u2014 times stay on each source'
+    status.style.color = ''
   }
 
-  function combineTrNetworkSelection(){
-    if(trNetworkSelected.length < 2) return
+  // Multi-select only path: each file is its own material (M1, M2, …).
+  // Selection order = material order. No combine, no TC offset.
+  function useSeparateMaterialsSelection(){
+    if(trNetworkSelected.length < 1) return
     var status = document.getElementById('tr-network-combine-status')
-    // Each selection carries its OWN subpath now, not just a name -- needed
-    // because search results (see renderTrNetworkSearchResults) can span
-    // multiple different subfolders, unlike a normal single-folder listing
-    // where every file shares the current trNetworkSubpath. Fetching by
-    // name alone with one shared subpath would silently grab the wrong
-    // file (or fail) for anything selected outside the current folder.
     var items = trNetworkSelected.slice()
-    status.textContent = 'Fetching ' + items.length + ' files\u2026'
-    document.getElementById('tr-network-combine-btn').disabled = true
-
-    // Each file has to actually be staged (copied off the network share)
-    // before the server can combine them -- /api/network/fetch already does
-    // exactly that for a single pick, so this just calls it once per
-    // selected file, in order, then hands the resulting staged names to
-    // /api/network/combine.
+    status.textContent = 'Fetching ' + items.length + ' materials\u2026'
+    var matsBtn = document.getElementById('tr-network-materials-btn')
+    if(matsBtn) matsBtn.disabled = true
     var staged = []
     function fetchNext(i){
       if(i >= items.length){
-        status.textContent = 'Combining\u2026'
-        fetch('/api/network/combine', {
-          method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({files: staged})
-        }).then(function(r){ return r.json() }).then(function(d){
-          if(!d.ok){
-            status.textContent = d.error || 'Could not combine the selected files.'
-            status.style.color = 'var(--tally)'
-            document.getElementById('tr-network-combine-btn').disabled = false
-            return
-          }
-          showNetworkPreview(d.filename, d.orig_name, d.size)
-          // Each segment's own duration, in combine order -- lets a
-          // script's "M1"/"M2" cues be offset to the right point in this
-          // now-single combined file. Cleared whenever the source video is
-          // picked any other way (see pickTrNetworkFile / a direct upload's
-          // own change handler), so a stale combine from an earlier pick
-          // never silently applies to an unrelated single file.
-          var segs = d.segment_durations || []
-          document.getElementById('tr-file-segment-durations').value = JSON.stringify(segs)
-          // Keep in sync for script validate (and any other client-side readers).
-          window._fileSegmentDurations = segs
-        }).catch(function(e){
-          status.textContent = 'Error combining files: ' + e
-          status.style.color = 'var(--tally)'
-          document.getElementById('tr-network-combine-btn').disabled = false
-        })
+        var matsField = document.getElementById('tr-materials-network')
+        if(matsField) matsField.value = JSON.stringify(staged)
+        var segField = document.getElementById('tr-file-segment-durations')
+        if(segField) segField.value = ''
+        window._fileSegmentDurations = []
+        var label = items.map(function(it, idx){ return 'M' + (idx + 1) + ': ' + it.name }).join(' \u00b7 ')
+        showNetworkPreview(staged[0], label, null)
+        var meta = document.getElementById('tr-file-preview-meta')
+        if(meta) meta.textContent = staged.length + ' separate materials (M1\u2013M' + staged.length + ') \u00b7 script times stay on each source'
+        status.textContent = staged.length + ' materials ready.'
+        status.style.color = 'var(--phosphor)'
+        if(matsBtn) matsBtn.disabled = false
+        var overlay = document.getElementById('tr-network-overlay')
+        if(overlay) overlay.classList.remove('open')
         return
       }
-      status.textContent = 'Fetching ' + (i+1) + ' of ' + items.length + '\u2026'
+      status.textContent = 'Fetching material ' + (i + 1) + ' of ' + items.length + '\u2026'
       fetch('/api/network/fetch', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({name: items[i].name, category: 'hires', subpath: items[i].subpath || ''})
@@ -3406,7 +3386,7 @@ document.addEventListener("DOMContentLoaded", function(){
         if(!d.ok){
           status.textContent = 'Could not fetch ' + items[i].name + ': ' + d.error
           status.style.color = 'var(--tally)'
-          document.getElementById('tr-network-combine-btn').disabled = false
+          if(matsBtn) matsBtn.disabled = false
           return
         }
         staged.push(d.filename)
@@ -3414,12 +3394,12 @@ document.addEventListener("DOMContentLoaded", function(){
       }).catch(function(e){
         status.textContent = 'Error fetching ' + items[i].name + ': ' + e
         status.style.color = 'var(--tally)'
-        document.getElementById('tr-network-combine-btn').disabled = false
+        if(matsBtn) matsBtn.disabled = false
       })
     }
     fetchNext(0)
   }
-  window.combineTrNetworkSelection = combineTrNetworkSelection
+  window.useSeparateMaterialsSelection = useSeparateMaterialsSelection
 
   function renderTrNetworkList(folders, files, subpath){
     networkList.innerHTML = ''
@@ -3452,7 +3432,7 @@ document.addEventListener("DOMContentLoaded", function(){
       var cb = document.createElement('input')
       cb.type = 'checkbox'
       cb.className = 'net-multi-check'
-      cb.title = 'Select to combine with other files'
+      cb.title = 'Select as material (order = M1, M2, \u2026)'
       cb.addEventListener('click', function(e){ e.stopPropagation() })
       cb.addEventListener('change', function(){
         if(cb.checked){
@@ -3516,7 +3496,7 @@ document.addEventListener("DOMContentLoaded", function(){
       var cb = document.createElement('input')
       cb.type = 'checkbox'
       cb.className = 'net-multi-check'
-      cb.title = 'Select to combine with other files'
+      cb.title = 'Select as material (order = M1, M2, \u2026)'
       cb.addEventListener('click', function(e){ e.stopPropagation() })
       cb.addEventListener('change', function(){
         if(cb.checked){
@@ -3668,6 +3648,8 @@ document.addEventListener("DOMContentLoaded", function(){
       var segDurField = document.getElementById('tr-file-segment-durations')
       if(segDurField) segDurField.value = ''
       window._fileSegmentDurations = []
+      var matsField = document.getElementById('tr-materials-network')
+      if(matsField) matsField.value = ''
       showPreview(fileInput.files[0])
     }
   })
