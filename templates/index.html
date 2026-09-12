@@ -1406,10 +1406,10 @@ document.addEventListener("DOMContentLoaded", function(){
       <input type=radio name=vo_mode value=upload> Upload
     </label>
     <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
-      <input type=radio name=vo_mode value=tts data-requires="fish_audio"> Narration (AI voice)
+      <input type=radio name=vo_mode value=tts data-requires="fish_audio"> Generation (AI Voice)
     </label>
   </div>
-  <p id=vo-gating-note style="display:none;margin-top:6px;margin-bottom:8px;font-size:12px;color:var(--amber)">"Narration (AI voice)" is unavailable — the Fish Audio server is not reachable.</p>
+  <p id=vo-gating-note style="display:none;margin-top:6px;margin-bottom:8px;font-size:12px;color:var(--amber)">"Generation (AI Voice)" is unavailable — the Fish Audio server is not reachable.</p>
   <div id=vo-upload-area style="display:none">
     <div class="browse-row">
       {% if allow_local_upload %}<input type=file name=vo_upload accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" data-net-field="vo_upload" onchange="cardVoFileChosen(this,'vo_upload')">{% endif %}
@@ -7846,8 +7846,8 @@ window.toggleServiceDisabled = toggleServiceDisabled
 document.querySelector('.tab[onclick*="p-api"]').addEventListener('click', function(){
   if(!document.getElementById('health-results').innerHTML) runHealthCheck()
 })
-// Run once automatically at load so the "Generate music" / "From genre" SFX /
-// "Narration (AI voice)" options are already greyed out if their service is
+// Run once automatically at load so the "Generate (AI Music)" / "From genre" SFX /
+// "Generation (AI Voice)" options are already greyed out if their service is
 // down, before the person even opens the API tab. Re-run periodically after
 // that (not just on load/API-tab-click) so a service going down -- or an
 // admin disabling one -- while someone's already on e.g. the Music
