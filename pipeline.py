@@ -3040,7 +3040,7 @@ def _parse_timecode_line(line, fps=25.0):
         return in_secs, desc, meta
     return None
 
-def parse_script_cues(text, fps=25.0, segment_offsets=None):
+def parse_script_cues(text, fps=25.0, segment_offsets=None, available_materials=None):
     """Every scene-selection cue found in a script, sorted by time.
 
     Each cue is a single point on the timeline (the in-point). A line needs
@@ -3049,12 +3049,18 @@ def parse_script_cues(text, fps=25.0, segment_offsets=None):
     is optional metadata. Lines without any recognisable timecode are
     ignored (rundowns are mostly prose and headers).
 
-    segment_offsets: optional {segment_number: offset_seconds} from multi-file
-    combine. Material labels (mats1, M2, material 1, …) are optional; when
-    present with offsets, that segment's start is added. Unknown segment
-    numbers (other than 1) are skipped rather than mis-applied."""
+    Material labels (mats1, M2, material 1, …) mean "time on that source
+    file", not a point on a combined timeline. Times are kept as written
+    (no offset). available_materials is the set of material numbers that
+    were actually uploaded (e.g. {1, 2}); cues naming a missing material
+    are skipped. segment_offsets is retained only for legacy combine jobs
+    and is ignored when available_materials is provided.
+    """
     cues = []
     segment_offsets = segment_offsets or {}
+    # Prefer multi-material mode when the job lists discrete sources.
+    multi = available_materials is not None
+    available_materials = set(available_materials or [])
     for raw_line in (text or '').splitlines():
         line = raw_line.strip()
         if not line:
@@ -3063,35 +3069,36 @@ def parse_script_cues(text, fps=25.0, segment_offsets=None):
         if not parsed:
             continue
         secs, desc, meta = parsed
-        # Material labels are optional. Only adjust when the line clearly names
-        # a segment AND we know the offsets from a multi-file combine.
+        material = None
         seg_match = _SEGMENT_PREFIX_RE.search(line)
         if seg_match:
             seg_num = int(seg_match.group(1))
-            if seg_num == 1:
-                pass  # segment 1 always maps to offset 0, regardless of whether segment_offsets was even provided
-            elif seg_num in segment_offsets:
-                off = segment_offsets[seg_num]
-                secs += off
-                if meta.get('out') is not None:
-                    meta['out'] = meta['out'] + off
+            material = seg_num
+            if multi:
+                # Time stays local to that material; only keep if we have it.
+                if seg_num not in available_materials:
+                    continue
             else:
-                # Named a segment we don't have -- either segment_offsets
-                # doesn't cover it, or no combine happened at all (segment_offsets
-                # empty/absent) -- skip rather than pin wrong. Checking this
-                # regardless of whether segment_offsets is truthy is the fix:
-                # a script line naming "M2" on an ordinary single-file job (no
-                # segment_offsets at all) still means a segment 2 that doesn't
-                # exist here, not "use this timecode as written" -- silently
-                # keeping it would place the cue using a timecode the writer
-                # meant relative to a segment that was never combined into
-                # this job at all.
-                continue
+                # Legacy combine path: optional offset onto one joined file.
+                if seg_num == 1:
+                    pass
+                elif seg_num in segment_offsets:
+                    off = segment_offsets[seg_num]
+                    secs += off
+                    if meta.get('out') is not None:
+                        meta['out'] = meta['out'] + off
+                else:
+                    continue
+        elif multi and available_materials and 1 not in available_materials:
+            # Unlabeled cue with only M2+ loaded is ambiguous — skip.
+            continue
         cue = {'time': secs, 'desc': desc}
+        if material is not None:
+            cue['material'] = material
         if meta.get('out') is not None:
             cue['out'] = meta['out']
         cues.append(cue)
-    cues.sort(key=lambda c: c['time'])
+    cues.sort(key=lambda c: (c.get('material') or 1, c['time']))
     return cues
 
 def _script_file_from_request():
@@ -3205,6 +3212,10 @@ def extract_script_text(file_storage):
 def apply_script_priority(scenes_data, cues, window=2.5, boost=8.0):
     """Boosts scenes that line up with a script cue's timecode.
 
+    When a cue carries `material` (M1/M2/…), only scenes from that same
+    material are considered — times are local to each source, not a
+    combined timeline. Unlabeled cues match any scene (single-source jobs).
+
     `boost` is deliberately large relative to the scoring components it
     competes with (quality 1-3, vision 1-5, speech 1-2, so ~10 combined at
     the absolute maximum): if a script explicitly calls for a moment, that
@@ -3224,7 +3235,10 @@ def apply_script_priority(scenes_data, cues, window=2.5, boost=8.0):
     matched = 0
     for c in cues:
         best, best_dist = None, None
+        cue_mat = c.get('material')
         for s in scenes_data:
+            if cue_mat is not None and s.get('material') is not None and s.get('material') != cue_mat:
+                continue
             centre = s['start'] + s['duration'] / 2.0
             if s['start'] - window <= c['time'] <= s['start'] + s['duration'] + window:
                 dist = abs(centre - c['time'])
@@ -4136,7 +4150,19 @@ def api_validate_script():
     if src_err:
         return jsonify(ok=False, error=src_err), 400
 
-    # Optional multi-file combine offsets (same shape as generate).
+    # Discrete materials (preferred): JSON list of staged names, order = M1, M2, …
+    # Legacy combine: file_segment_durations still offsets onto one timeline.
+    materials_count = 0
+    try:
+        mat_list = json.loads(request.form.get('materials_network') or '[]')
+        if isinstance(mat_list, list):
+            materials_count = len([x for x in mat_list if x])
+    except (ValueError, TypeError):
+        materials_count = 0
+    try:
+        materials_count = max(materials_count, int(request.form.get('materials_count') or 0))
+    except (ValueError, TypeError):
+        pass
     segment_offsets = {}
     try:
         durations = json.loads(request.form.get('file_segment_durations') or '[]')
@@ -4147,6 +4173,10 @@ def api_validate_script():
     except (ValueError, TypeError):
         segment_offsets = {}
 
+    available = set(range(1, materials_count + 1)) if materials_count >= 1 else None
+    # If only combine durations were posted (legacy), available stays None so
+    # parse_script_cues uses the offset path.
+
     text, err = extract_script_text(script_file)
     if err:
         return jsonify(ok=False, error=err), 400
@@ -4154,7 +4184,11 @@ def api_validate_script():
         return jsonify(ok=False, error='That file has no readable text.'), 400
 
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    cues = parse_script_cues(text, segment_offsets=segment_offsets or None)
+    cues = parse_script_cues(
+        text,
+        segment_offsets=(None if available is not None else (segment_offsets or None)),
+        available_materials=available,
+    )
 
     # Per-line diagnostics so the UI can show what was kept vs skipped.
     # A single timecode is enough to select a scene; in/out pairs use the in-point.
@@ -4175,7 +4209,6 @@ def api_validate_script():
         secs, desc, meta = parsed
         seg_match = _SEGMENT_PREFIX_RE.search(line)
         material = None
-        adjusted = secs
         status = 'usable'
         note_parts = []
         if meta.get('out') is not None:
@@ -4188,29 +4221,35 @@ def api_validate_script():
         if seg_match:
             seg_num = int(seg_match.group(1))
             material = seg_match.group(0)
-            if seg_num == 1:
-                note_parts.append('Material 1 (offset 0)')
+            if available is not None:
+                if seg_num in available:
+                    note_parts.append(
+                        f'Material {seg_num} — time is local to that source (no combine offset)'
+                    )
+                else:
+                    status = 'skipped'
+                    skipped.append({
+                        'line': line[:160],
+                        'reason': f'Material {seg_num} named but only '
+                                  f'{materials_count} source(s) loaded — cue ignored',
+                    })
+                    continue
+            elif seg_num == 1:
+                note_parts.append('Material 1')
             elif seg_num in segment_offsets:
-                adjusted = secs + segment_offsets[seg_num]
                 note_parts.append(
-                    f'Material {seg_num} offset +{segment_offsets[seg_num]:.1f}s (combined sources)'
+                    f'Material {seg_num} offset +{segment_offsets[seg_num]:.1f}s (legacy combined sources)'
                 )
             else:
-                # Named a segment we don't have -- either segment_offsets
-                # doesn't cover it, or no combine happened at all -- must be
-                # reported (and treated) as skipped here too, matching what
-                # parse_script_cues itself actually does with this same
-                # line: showing this as "usable" in the validation preview
-                # while the real parse silently drops it would be a
-                # confusing, misleading mismatch between what a person is
-                # shown and what actually happens when they generate.
                 status = 'skipped'
-                note = f'Material {seg_num} named but that segment was not combined — cue ignored'
-                skipped.append({'line': line[:160], 'reason': note})
+                skipped.append({
+                    'line': line[:160],
+                    'reason': f'Material {seg_num} named but that source was not loaded — cue ignored',
+                })
                 continue
         kept.append({
-            'time': round(adjusted, 3),
-            'timecode': _seconds_to_tc(adjusted),
+            'time': round(secs, 3),
+            'timecode': _seconds_to_tc(secs),
             'raw_time': round(secs, 3),
             'raw_timecode': _seconds_to_tc(secs),
             'out_timecode': _seconds_to_tc(meta['out']) if meta.get('out') is not None else None,
@@ -4230,14 +4269,20 @@ def api_validate_script():
         )
     if skipped:
         warnings.append(f'{len(skipped)} line(s) looked like cues but could not be used.')
-    if segment_offsets and len(segment_offsets) > 1:
+    if available is not None and materials_count > 1:
         warnings.append(
-            f'Multi-file combine active ({len(segment_offsets)} segments). '
-            'Material labels (mats1, M2, material 1, …) will shift those cues onto the combined timeline.'
+            f'{materials_count} separate materials loaded. M1/M2 times stay on their own '
+            'source (no combine, no offset).'
         )
-    elif any(c.get('material') for c in kept):
+    elif segment_offsets and len(segment_offsets) > 1 and available is None:
         warnings.append(
-            'Material labels were found but only one source is loaded — labels are recorded but times are used as written.'
+            f'Legacy multi-file combine active ({len(segment_offsets)} segments). '
+            'Material labels will shift those cues onto the combined timeline.'
+        )
+    elif any(c.get('material') for c in kept) and (materials_count or 0) <= 1 and not segment_offsets:
+        warnings.append(
+            'Material labels were found but only one source is loaded — '
+            'cues for other materials are ignored until those sources are uploaded.'
         )
 
     summary = (
@@ -4356,6 +4401,25 @@ def api_trailer():
             cumulative += float(d)
     except (ValueError, TypeError):
         segment_offsets = {}
+
+    # Discrete materials (M1, M2, …): staged network filenames in order.
+    # Prefer this over combine+offset when the form posts materials_network.
+    materials_paths = []
+    try:
+        raw_mats = json.loads(request.form.get('materials_network') or '[]')
+        if isinstance(raw_mats, list):
+            for name in raw_mats:
+                safe = secure_filename(str(name or ''))
+                if not safe or not safe.startswith('net_'):
+                    continue
+                p = os.path.join(app.config['UPLOAD_FOLDER'], safe)
+                if os.path.isfile(p):
+                    materials_paths.append(p)
+    except (ValueError, TypeError):
+        materials_paths = []
+
+    available_materials = set(range(1, len(materials_paths) + 1)) if materials_paths else None
+
     script_cues = []
     script_file, _script_src_err = _script_file_from_request()
     # Missing script is fine (optional); only error when something was
@@ -4364,7 +4428,11 @@ def api_trailer():
         text, err = extract_script_text(script_file)
         if err:
             return jsonify(error=err), 400
-        script_cues = parse_script_cues(text, segment_offsets=segment_offsets)
+        script_cues = parse_script_cues(
+            text,
+            segment_offsets=(None if available_materials is not None else segment_offsets),
+            available_materials=available_materials,
+        )
         if not script_cues:
             return jsonify(error='No timecodes were found in that script. Each cue line needs at '
                                  'least one timecode like 00:01:30:12, 00:01:30, or 1:30. A single '
@@ -4732,7 +4800,14 @@ def api_trailer():
 
     jid = job_new(user_id=session.get('user_id'), username=session.get('username'))
     job_set_orig_name(jid, orig_name)
+    # If discrete materials were staged, use the first as primary path for
+    # display / legacy single-source helpers; all materials go on the job.
+    if materials_paths:
+        path = materials_paths[0]
+        if not orig_name:
+            orig_name = os.path.basename(path)
     params = dict(path=path, orig_name=orig_name, mode=mode, genre=genre, scoring_mode=scoring_mode,
+                  materials_paths=materials_paths or None,
                   # Captured here (inside the request, where `session` exists) rather
                   # than inside the background thread that actually renders --
                   # threads don't have a Flask session/request context at all, so
@@ -7405,16 +7480,29 @@ def _run_trailer_job(jid, params):
         phrase_ends = []
     else:
         job_set(jid, percent=8, step='Detecting scene cuts')
-        # Detect scenes via PySceneDetect. downscale=2 speeds up detection on large
-        # source files (frames are only scaled down for the detector's own
-        # analysis; returned timecodes are unaffected).
-        scene_list = detect_scenes(path, threshold=scene_threshold,
-                                    min_scene_len_sec=min_scene_len_sec, downscale=2,
-                                    detector=detector, adaptive_threshold=adaptive_threshold)
+        # Detect scenes via PySceneDetect. When multiple materials are loaded
+        # (M1/M2/… without combine), detect each source separately and keep
+        # times local to that file — script cues match by material + time.
+        materials = params.get('materials_paths') or [path]
+        materials = [p for p in materials if p and os.path.isfile(p)]
+        if not materials:
+            materials = [path]
+        scene_list = []  # (start, end, material_num, source_path)
+        for mi, mpath in enumerate(materials):
+            mat_num = mi + 1
+            job_set(jid, step=f'Detecting scene cuts (material {mat_num}/{len(materials)})')
+            sl = detect_scenes(mpath, threshold=scene_threshold,
+                               min_scene_len_sec=min_scene_len_sec, downscale=2,
+                               detector=detector, adaptive_threshold=adaptive_threshold)
+            if not sl:
+                continue
+            for start, end in sl:
+                scene_list.append((start, end, mat_num, mpath))
         if not scene_list:
             job_set(jid, error='No scene changes detected. Try a video with clear cuts, or lower the detection threshold.')
             return
-        if len(scene_list) == 1 and (tc_seconds(scene_list[0][1]) - tc_seconds(scene_list[0][0])) > video_duration * 0.95:
+        if len(materials) == 1 and len(scene_list) == 1 and (
+                tc_seconds(scene_list[0][1]) - tc_seconds(scene_list[0][0])) > video_duration * 0.95:
             # PySceneDetect's own fallback: no real cuts found, so it returned one
             # scene spanning the whole video. Selecting from a single "scene" isn't
             # meaningful — surface this clearly instead of silently treating the
@@ -7425,13 +7513,14 @@ def _run_trailer_job(jid, params):
         job_set(jid, percent=15, step=f'Rating {len(scene_list)} scenes (sharpness/brightness)')
         # Score scenes
         from statistics import median
-        def _score_one_scene(start, end):
+        def _score_one_scene(item):
+            start, end, mat_num, src_path = item
             # Each worker opens its own VideoCapture — cv2.VideoCapture is not safe to
             # share across threads (concurrent .set()/.read() calls on one handle can
             # corrupt each other's seeks), but independent handles on the same file
             # decode concurrently just fine and this is what actually lets scene
             # scoring use more than one CPU core.
-            local_cap = cv2.VideoCapture(path)
+            local_cap = cv2.VideoCapture(src_path)
             try:
                 mid_f = int((tc_frames(start) + tc_frames(end)) / 2)
                 local_cap.set(cv2.CAP_PROP_POS_FRAMES, mid_f)
@@ -7465,12 +7554,13 @@ def _run_trailer_job(jid, params):
                     'edge_ratio': round(edge_ratio, 3), 'mean_hue': round(mean_hue, 1),
                     'mean_sat': round(mean_sat, 1), 'mean_val': round(mean_val, 1),
                     'has_face': has_face, 'frame': frame, 'frame_idx': mid_f,
+                    'material': mat_num, 'source_path': src_path,
                 }
             finally:
                 local_cap.release()
 
         with ThreadPoolExecutor(max_workers=min(8, len(scene_list) or 1)) as ex:
-            scored = list(ex.map(lambda se: _score_one_scene(se[0], se[1]), scene_list))
+            scored = list(ex.map(_score_one_scene, scene_list))
         scenes_data = [r for r in scored if r is not None]
         if not scenes_data:
             job_set(jid, error='No frames could be read.')
@@ -8265,7 +8355,10 @@ def _run_trailer_job(jid, params):
             # fast_seek puts -ss before -i (input seeking: quick, but can land
             # awkwardly relative to keyframes). The retry puts it after -i
             # (output seeking: decodes from the start, slower but exact).
-            pre = ['-ss', str(trim_start), '-i', path] if fast_seek else ['-i', path, '-ss', str(trim_start)]
+            # Multi-material jobs store the correct source on each scene so
+            # M2 clips are cut from material 2, not the primary path.
+            src = seg.get('source_path') or path
+            pre = ['-ss', str(trim_start), '-i', src] if fast_seek else ['-i', src, '-ss', str(trim_start)]
             return [FFMPEG, '-y'] + pre + [
                 '-t', str(seg['selected_dur']),
                 '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '28', '-pix_fmt', 'yuv420p',
