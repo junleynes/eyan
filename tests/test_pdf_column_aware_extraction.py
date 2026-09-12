@@ -154,3 +154,112 @@ def test_varying_line_lengths_on_a_single_column_page_do_not_false_positive():
     text, used = pipeline._extract_pdf_video_column_only(raw)
     assert used is False
     assert text is None
+
+
+def _build_mixed_pdf(left_lines, right_lines):
+    """Places left_lines and right_lines at fixed row positions (by index,
+    not paired) -- mirrors a real rundown where the two sides don't line
+    up row-for-row, including rows where only one side has any content."""
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.pagesizes import letter
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=letter)
+    c.setFont("Helvetica", 10)
+    width, height = letter
+    y = height - 60
+    for line in left_lines:
+        if line:
+            c.drawString(50, y, line)
+        y -= 20
+    y = height - 60
+    for line in right_lines:
+        if line:
+            c.drawString(300, y, line)
+        y -= 20
+    c.save()
+    return buf.getvalue()
+
+
+def test_a_long_left_column_line_is_not_truncated_by_a_shorter_global_split():
+    # Regression guard for a real bug caught during development: the
+    # column split position is computed from several rows' own gaps, but
+    # was then applied as one blind, uniform cutoff to every row. A
+    # left-column line simply longer than the rows used to compute that
+    # split (its own last word landing just past the global cutoff) had
+    # that word silently dropped even though nothing on the right side was
+    # anywhere near it. The real-world case: a promo/schedule line ending
+    # in "10:30 PM" losing exactly the "PM" that made the AM/PM rejection
+    # (see test_script_parsing.py) able to catch it at all.
+    raw = _build_mixed_pdf(
+        left_lines=[
+            "M1 3:33-37 HABOL TACKLE",
+            "M2 00:35-42 BUNOT",
+            "SECOND TELECAST GTV 10:30 PM",
+        ],
+        right_lines=[
+            "Short dialogue line here.",
+            "Another short dialogue line.",
+        ],
+    )
+    text, used = pipeline._extract_pdf_video_column_only(raw)
+    assert used is True
+    assert "SECOND TELECAST GTV 10:30 PM" in text
+
+
+def test_real_cues_genuinely_present_on_the_excluded_side_abandon_column_splitting():
+    # The core finding from the actual reported document: M1/M2 cues can
+    # be genuinely interspersed with dialogue on BOTH sides of the page,
+    # not confined to one "video" column at all -- this rundown's own
+    # convention tags each dialogue block with which material it belongs
+    # to, wherever that block naturally falls. Splitting by column here
+    # would silently drop real cues from the excluded side, which is worse
+    # than the spurious-cue problem this feature exists to prevent, so it
+    # must back off entirely rather than apply the split.
+    raw = _build_mixed_pdf(
+        left_lines=[
+            "M1 3:33-37 HABOL TACKLE",
+            "M2 00:35-42 BUNOT",
+        ],
+        right_lines=[
+            "(VO TONE: MAANGAS",
+            "M1 3:38-43",
+            "M2 00:12-20",
+        ],
+    )
+    text, used = pipeline._extract_pdf_video_column_only(raw)
+    assert used is False
+    assert text is None
+
+
+def test_the_actual_reported_document_end_to_end():
+    # As close as reportlab allows to the real, uploaded document's own
+    # layout: M1/M2 cues on both sides, a schedule/promo block on the left
+    # containing wall-clock time mentions, and a second, separate
+    # wall-clock mention on the right. The correct outcome combines BOTH
+    # fixes: falling back to full-text (not column-only) extraction because
+    # real cues exist on both sides, and the AM/PM rejection correctly
+    # skipping every wall-clock mention regardless of which side it's on.
+    raw = _build_mixed_pdf(
+        left_lines=[
+            "M1 3:33-37 HABOL TACKLE",
+            "M2 00:35-42 BUNOT",
+            "TASKFORCE FIREWALL",
+            "GMA 8:50 PM",
+            "SECOND TELECAST GTV 10:30 PM",
+        ],
+        right_lines=[
+            "(VO TONE: MAANGAS",
+            "M1 3:38-43",
+            "M2 00:12-20",
+            "M2 00:43-46",
+            "TASKFORCE FIREWALL",
+            "8:50PM ON GMA PRIME",
+        ],
+    )
+    fs = FileStorage(stream=io.BytesIO(raw), filename="rundown.pdf")
+    text, err = pipeline.extract_script_text(fs)
+    assert err is None
+    cues = pipeline.parse_script_cues(text, available_materials={1, 2})
+    assert len(cues) == 5
+    descs = [c['desc'] for c in cues]
+    assert not any('GMA' in d or 'TELECAST' in d or 'PRIME' in d or 'FIREWALL' in d for d in descs)

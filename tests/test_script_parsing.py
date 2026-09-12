@@ -50,6 +50,61 @@ class TestParseScriptCues:
         assert 'Kitchen confrontation' in cues[0]['desc']
 
 
+class TestClockTimeVsTimecode:
+    """A real, user-reported bug: a rundown's own schedule/promo text (e.g.
+    "GMA 8:50 PM", "SECOND TELECAST GTV 10:30 PM") sat in the same part of
+    the document as real M1/M2 cues -- not a column-mixing problem, this
+    text is genuinely positioned alongside real cues in the source PDF --
+    and _TC_PATTERNS' own MM:SS pattern had no way to tell "8:50" (a
+    wall-clock time slot) apart from a real MM:SS video timecode, so it
+    was accepted as a spurious scene-selection cue. A real video timecode
+    is never followed by AM/PM; a wall-clock time slot always is when
+    written this way, which is what _CLOCK_TIME_SUFFIX_RE checks for."""
+
+    def test_pm_suffixed_time_is_not_a_timecode(self):
+        assert pipeline._parse_timecode_line("GMA 8:50 PM") is None
+        assert pipeline._parse_timecode_line("SECOND TELECAST GTV 10:30 PM") is None
+
+    def test_am_suffixed_time_is_not_a_timecode(self):
+        assert pipeline._parse_timecode_line("Airs weekdays 6:00 AM") is None
+
+    def test_lowercase_and_dotted_am_pm_are_also_rejected(self):
+        assert pipeline._parse_timecode_line("Rerun at 9:15 pm") is None
+        assert pipeline._parse_timecode_line("Morning block 7:00 a.m.") is None
+        assert pipeline._parse_timecode_line("Evening slot 7:00 P.M.") is None
+
+    def test_real_timecode_on_the_same_line_as_a_clock_time_mention_is_still_kept(self):
+        # A real cue and an incidental wall-clock mention can share one
+        # line -- only the clock-time match should be rejected, not the
+        # whole line.
+        result = pipeline._parse_timecode_line("M1 3:33 airs at 8:50 PM tonight")
+        assert result is not None
+        in_secs, desc, meta = result
+        assert in_secs == 213.0  # 3:33 == 3*60+33
+
+    def test_real_rundown_lines_from_the_actual_reported_document(self):
+        # The exact lines from the user's own script: 5 genuine M1/M2 cues
+        # plus the two schedule-text lines that were being misread as cues.
+        text = "\n".join([
+            "M1 3:33\u201437 HABOL TACKLE",
+            "M2 00:35\u201442 BUNOT",
+            "GMA 8:50 PM",
+            "SECOND TELECAST GTV 10:30 PM",
+            "M1 3:38\u201443",
+            "M2 00:12\u201420",
+            "M2 00:43\u201446",
+        ])
+        cues = pipeline.parse_script_cues(text, available_materials={1, 2})
+        assert len(cues) == 5
+        times = sorted(c['time'] for c in cues)
+        # M1 3:33 (213s), M2 0:35 (35s), M1 3:38 (218s), M2 0:12 (12s), M2 0:43 (43s)
+        assert times == [12.0, 35.0, 43.0, 213.0, 218.0]
+        # The other, equally real assertion: neither spurious schedule-text
+        # line produced a cue at all.
+        descs = [c['desc'] for c in cues]
+        assert not any('GMA' in d or 'TELECAST' in d or 'PRIME' in d for d in descs)
+
+
 class TestApplyScriptPriority:
     def test_boosts_scene_matching_a_cue_timecode(self):
         scenes = [
