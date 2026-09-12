@@ -3130,6 +3130,130 @@ def _script_file_from_request():
     display = staged.split('_', 2)[-1] if staged.count('_') >= 2 else staged
     return _StagedScript(path, display), None
 
+def _group_words_into_rows(words, y_tolerance=3):
+    """Groups words into visual rows by vertical (top) position. Used both
+    to detect a column split (a real gutter must recur at roughly the same
+    x-position across SEVERAL rows, not just show up as a coincidental gap
+    somewhere in one row's own word spacing) and, once a split is found, to
+    rebuild each kept row's words back into a left-to-right line."""
+    if not words:
+        return []
+    rows = []
+    for w in sorted(words, key=lambda w: (w['top'], w['x0'])):
+        placed = False
+        for row in rows:
+            if abs(row[0]['top'] - w['top']) <= y_tolerance:
+                row.append(w)
+                placed = True
+                break
+        if not placed:
+            rows.append([w])
+    for row in rows:
+        row.sort(key=lambda w: w['x0'])
+    return rows
+
+def _detect_two_column_split(rows, page_width):
+    """Looks for a column gutter that recurs at roughly the same
+    x-position across SEVERAL rows -- a real two-column layout (narrow
+    video-timecode column on the left, wider audio/SOT column on the
+    right) has its gutter fall in the same place row after row. Returns
+    the gutter's x-coordinate (averaged across the rows that agree on it)
+    or None if nothing consistent is found.
+
+    Deliberately per-row, not pooled across the whole page: an earlier
+    version looked for one gap across every word's x0 on the page at
+    once, which produced a false positive on an ordinary single-column
+    page where one line was short and the next was long -- their own
+    words' start positions happened to leave a gap in the pooled,
+    page-wide list purely by coincidence, with no real column behind it
+    at all. Requiring several rows to independently agree on nearly the
+    same gutter position is what a genuine, repeated column boundary
+    actually looks like, and a one-off coincidence in a single row's own
+    spacing can't produce that agreement.
+
+    The centered-band check (12%-48% of page width) matters too: a narrow
+    left column for timecodes sits well left of page-center, so
+    restricting candidates to that band avoids treating a stray, large
+    inter-word space anywhere else in a row as a column break."""
+    candidate_mids = []
+    for row in rows:
+        if len(row) < 2:
+            continue
+        xs = sorted(w['x0'] for w in row)
+        best_gap, best_mid = 0.0, None
+        for i in range(1, len(xs)):
+            gap = xs[i] - xs[i - 1]
+            mid = (xs[i] + xs[i - 1]) / 2
+            if 0.12 * page_width < mid < 0.48 * page_width and gap > best_gap and gap > 0.08 * page_width:
+                best_gap, best_mid = gap, mid
+        if best_mid is not None:
+            candidate_mids.append(best_mid)
+    if len(candidate_mids) < 2:
+        return None
+    # Cluster candidates within a tolerance band and require the largest
+    # cluster to cover a real majority of the rows that could have shown a
+    # gutter at all -- not just "at least two happened to roughly agree".
+    candidate_mids.sort()
+    tolerance = 0.05 * page_width
+    best_cluster = []
+    for m in candidate_mids:
+        cluster = [x for x in candidate_mids if abs(x - m) <= tolerance]
+        if len(cluster) > len(best_cluster):
+            best_cluster = cluster
+    if len(best_cluster) >= max(2, (len(candidate_mids) + 1) // 2):
+        return sum(best_cluster) / len(best_cluster)
+    return None
+
+def _extract_pdf_video_column_only(raw):
+    """When a PDF looks like a two-column rundown (narrow video-timecode
+    column on the left, wider audio/SOT script text on the right), returns
+    (text, True) built from ONLY the left column's words on every page that
+    shows that layout -- so a position-blind flatten of the whole page
+    never lets a time-of-day mention buried in the audio/SOT column (e.g.
+    "airs at 8:50PM on GMA Prime") get misread as a scene-selection video
+    timecode purely because it happened to land early in the extracted
+    text stream.
+
+    Returns (None, False) -- a clean "doesn't apply here", not an error --
+    when pdfplumber isn't installed, the PDF can't be opened, or NO page in
+    the whole document shows a confident two-column layout at all: an
+    ordinary single-column script must be read exactly as it always was,
+    via the existing pypdf path in extract_script_text, completely
+    unaffected by this function's existence. A page within an otherwise
+    two-column document that doesn't itself show a split (e.g. a cover
+    page) keeps all of its own words rather than being blanked out."""
+    try:
+        import pdfplumber
+    except ImportError:
+        return None, False
+    try:
+        any_split_found = False
+        page_rows = []
+        with pdfplumber.open(io.BytesIO(raw)) as pdf:
+            for page in pdf.pages:
+                words = page.extract_words(keep_blank_chars=False)
+                rows = _group_words_into_rows(words)
+                if not rows:
+                    page_rows.append([])
+                    continue
+                split_x = _detect_two_column_split(rows, page.width)
+                if split_x is None:
+                    page_rows.append(rows)
+                else:
+                    any_split_found = True
+                    page_rows.append([[w for w in row if w['x0'] < split_x] for row in rows])
+        if not any_split_found:
+            return None, False
+        lines = []
+        for rows in page_rows:
+            for row in rows:
+                if row:
+                    lines.append(' '.join(w['text'] for w in row))
+        text = '\n'.join(lines)
+        return (text, True) if text.strip() else (None, False)
+    except Exception:
+        return None, False
+
 def extract_script_text(file_storage):
     """Plain text from an uploaded script. Returns (text, error).
 
@@ -3159,6 +3283,14 @@ def extract_script_text(file_storage):
             return None, f'Could not read text from that image: {e}'
 
     if ext == '.pdf':
+        # Tried first, and only actually used when a real two-column layout
+        # is confidently detected somewhere in the document -- a genuine
+        # single-column script (the common case) never triggers this at
+        # all and falls straight through to the existing pypdf extraction
+        # below, completely unchanged from before this existed.
+        column_text, used_columns = _extract_pdf_video_column_only(raw)
+        if used_columns and column_text:
+            return column_text, None
         try:
             import pypdf
         except ImportError:

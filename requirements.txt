@@ -19,6 +19,13 @@ requests==2.33.1
 scenedetect==0.7.1
 smbprotocol==1.17.0
 pypdf==5.9.0
+# Position-aware PDF text extraction (word-level bounding boxes) -- used to
+# detect a two-column rundown layout (video timecode left, audio/SOT text
+# right) so a time-of-day mention in the right column can't be misread as a
+# scene-selection timecode. Optional at runtime (extract_script_text falls
+# back to pypdf's plain extraction if this isn't installed), but included
+# here so a fresh install gets the real, working feature by default.
+pdfplumber==0.11.9
 msgpack>=1.0
 waitress>=3.0
 # Two-factor authentication (TOTP). pyotp does the actual verification;
