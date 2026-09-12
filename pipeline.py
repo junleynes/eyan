@@ -372,6 +372,8 @@ def fish_tag_catalogue():
 # whoever's filling this in already knows the exact path and login for each
 # folder rather than thinking of them as subdivisions of one base share.
 AUDIO_EXTENSIONS = {'mp3', 'wav', 'm4a', 'flac', 'ogg', 'aac', 'wma'}
+# Rundown / script files accepted by Attach script (and the script network folder).
+SCRIPT_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg', 'webp', 'bmp', 'tif', 'tiff', 'txt', 'md', 'csv'}
 
 # ---- Media upload policy ----
 # When off (the default), media can ONLY come from the configured network
@@ -422,6 +424,7 @@ def _network_categories():
         'music': {'exts': AUDIO_EXTENSIONS, 'label': 'Music'},
         'vo':    {'exts': AUDIO_EXTENSIONS, 'label': 'VO'},
         'sfx':   {'exts': AUDIO_EXTENSIONS, 'label': 'SFX'},
+        'script': {'exts': SCRIPT_EXTENSIONS, 'label': 'Script / rundown'},
     }
 
 def _network_category(category):
@@ -3091,6 +3094,35 @@ def parse_script_cues(text, fps=25.0, segment_offsets=None):
     cues.sort(key=lambda c: c['time'])
     return cues
 
+def _script_file_from_request():
+    """Local upload or Browse-library staged script. Returns (file-like, error).
+
+    file-like has .filename and .read() like Werkzeug's FileStorage so
+    extract_script_text can treat both paths the same.
+    """
+    script_file = request.files.get('script_file')
+    if script_file and script_file.filename:
+        return script_file, None
+    staged = (request.form.get('script_file_network') or '').strip()
+    if not staged:
+        return None, 'No script file was uploaded.'
+    # Only allow names we staged ourselves (net_<ts>_… from fetch_network_file).
+    safe = secure_filename(staged)
+    if not safe or safe != staged or not staged.startswith('net_'):
+        return None, 'Invalid staged script filename.'
+    path = os.path.join(app.config['UPLOAD_FOLDER'], safe)
+    if not os.path.isfile(path):
+        return None, 'That library script is no longer available. Pick it again.'
+    class _StagedScript:
+        def __init__(self, p, name):
+            self.filename = name
+            self._path = p
+        def read(self):
+            with open(self._path, 'rb') as f:
+                return f.read()
+    display = staged.split('_', 2)[-1] if staged.count('_') >= 2 else staged
+    return _StagedScript(path, display), None
+
 def extract_script_text(file_storage):
     """Plain text from an uploaded script. Returns (text, error).
 
@@ -4100,9 +4132,9 @@ def api_validate_script():
     warnings when nothing usable was found -- without waiting for scene
     detection.
     """
-    script_file = request.files.get('script_file')
-    if not script_file or not script_file.filename:
-        return jsonify(ok=False, error='No script file was uploaded.'), 400
+    script_file, src_err = _script_file_from_request()
+    if src_err:
+        return jsonify(ok=False, error=src_err), 400
 
     # Optional multi-file combine offsets (same shape as generate).
     segment_offsets = {}
@@ -4325,8 +4357,10 @@ def api_trailer():
     except (ValueError, TypeError):
         segment_offsets = {}
     script_cues = []
-    script_file = request.files.get('script_file')
-    if script_file and script_file.filename:
+    script_file, _script_src_err = _script_file_from_request()
+    # Missing script is fine (optional); only error when something was
+    # provided but unreadable / invalid.
+    if script_file:
         text, err = extract_script_text(script_file)
         if err:
             return jsonify(error=err), 400
@@ -4336,6 +4370,8 @@ def api_trailer():
                                  'least one timecode like 00:01:30:12, 00:01:30, or 1:30. A single '
                                  'time is enough to select a scene — in/out pairs are optional. '
                                  'Lines without any timecode are ignored.'), 400
+    elif (request.form.get('script_file_network') or '').strip():
+        return jsonify(error=_script_src_err or 'Could not load the library script.'), 400
 
     transition = request.form.get('transition', 'fade')
     transition_matte_path = None

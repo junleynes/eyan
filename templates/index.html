@@ -1353,12 +1353,16 @@ document.addEventListener("DOMContentLoaded", function(){
       })()
     </script>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:14px 0 4px">
-      <button type=button class="browse-btn" onclick="document.getElementById('script-file-input').click()">
+      <button type=button class="browse-btn" onclick="attachScriptLocal()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>Attach script
+      </button>
+      <button type=button class="browse-btn" onclick="attachScriptFromLibrary()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library
       </button>
       <input type=file name=script_file id=script-file-input data-skip-clear-ui="1"
              accept=".pdf,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff,.txt,.md,.csv" style="display:none"
              onchange="scriptFileChosen(this); updateJobSummary()">
+      <input type=hidden name=script_file_network id=script_file_network value="">
     </div>
     <span class="net-file-chip" id=script-file-chip style="display:none"><span class=chip-name></span><span class=chip-x onclick="clearScriptFile(); updateJobSummary()">&#10005;</span></span>
     <div id=script-validate-panel style="display:none;margin:8px 0 4px;padding:10px 12px;border-radius:8px;border:1px solid var(--border,#333);background:var(--panel-2,#1a1a1a);font-size:13px;line-height:1.45">
@@ -2337,6 +2341,41 @@ document.addEventListener("DOMContentLoaded", function(){
       skipEl.textContent = ''
     }
   }
+  function trailerSourceSelected(){
+    var fi = document.getElementById('tr-file-input')
+    if(fi && fi.files && fi.files[0]) return true
+    var net = document.getElementById('tr-network-file')
+    if(net && net.value) return true
+    var preview = document.getElementById('tr-file-preview')
+    if(preview && preview.classList.contains('shown')) return true
+    return false
+  }
+  function requireTrailerSourceForScript(){
+    if(trailerSourceSelected()) return true
+    var msg = 'Select or combine a source video first (Browse files or Browse library), then attach the script so material labels (M1/M2) can be offset correctly.'
+    if(typeof showScriptValidatePanel === 'function'){
+      showScriptValidatePanel(null, msg)
+      var panel = document.getElementById('script-validate-panel')
+      if(panel) panel.style.display = 'block'
+    } else {
+      alert(msg)
+    }
+    return false
+  }
+  function attachScriptLocal(){
+    if(!requireTrailerSourceForScript()) return
+    document.getElementById('script-file-input').click()
+  }
+  function attachScriptFromLibrary(){
+    if(!requireTrailerSourceForScript()) return
+    if(typeof openNetworkBrowser === 'function'){
+      openNetworkBrowser('script_file', 'script', 'Script / rundown')
+    } else {
+      alert('Library browser is not available on this page.')
+    }
+  }
+  window.attachScriptLocal = attachScriptLocal
+  window.attachScriptFromLibrary = attachScriptFromLibrary
   function scriptFileChosen(input){
     var chip = document.getElementById('script-file-chip')
     var file = (input.files && input.files[0]) ? input.files[0] : null
@@ -2345,6 +2384,14 @@ document.addEventListener("DOMContentLoaded", function(){
       hideScriptValidatePanel()
       return
     }
+    if(!requireTrailerSourceForScript()){
+      input.value = ''
+      chip.style.display = 'none'
+      return
+    }
+    // Local file pick clears any prior library staging for this slot.
+    var netHidden = document.getElementById('script_file_network')
+    if(netHidden) netHidden.value = ''
     chip.querySelector('.chip-name').textContent = file.name
     // 'inline-flex', not '' -- .net-file-chip's own rule is display:none, so
     // clearing the inline style just falls back to that and the chip stays
@@ -2362,8 +2409,12 @@ document.addEventListener("DOMContentLoaded", function(){
     }
     var fd = new FormData()
     fd.append('script_file', file)
+    // Same segment list the generate form posts: written when Browse Library
+    // multi-select combines files (M1=first, M2=second, …). Without this,
+    // validate treats every source as a single file and skips M2+ cues.
     try {
-      var seg = window._fileSegmentDurations
+      var segRaw = (document.getElementById('tr-file-segment-durations') || {}).value || ''
+      var seg = segRaw ? JSON.parse(segRaw) : (window._fileSegmentDurations || [])
       if(seg && seg.length) fd.append('file_segment_durations', JSON.stringify(seg))
     } catch(e){}
     fetch('/api/trailer/validate_script', { method: 'POST', body: fd, credentials: 'same-origin' })
@@ -2384,6 +2435,8 @@ document.addEventListener("DOMContentLoaded", function(){
   function clearScriptFile(){
     var input = document.getElementById('script-file-input')
     input.value = ''
+    var netHidden = document.getElementById('script_file_network')
+    if(netHidden) netHidden.value = ''
     document.getElementById('script-file-chip').style.display = 'none'
     hideScriptValidatePanel()
   }
@@ -3072,6 +3125,7 @@ document.addEventListener("DOMContentLoaded", function(){
     // line since it happens later in that function's own flow.
     var segDurField = document.getElementById('tr-file-segment-durations')
     if(segDurField) segDurField.value = ''
+    window._fileSegmentDurations = []
     // Unlike the local-file path above, this file genuinely IS already
     // staged server-side (that's what got it here) -- so this uses the
     // real /api/media/probe endpoint instead of the browser's own decode.
@@ -3114,6 +3168,7 @@ document.addEventListener("DOMContentLoaded", function(){
     networkFileInput.value = ''
     var segDurField = document.getElementById('tr-file-segment-durations')
     if(segDurField) segDurField.value = ''
+    window._fileSegmentDurations = []
     preview.classList.remove('shown')
     previewThumb.removeAttribute('src')
     previewThumb.style.display = 'none'
@@ -3274,7 +3329,10 @@ document.addEventListener("DOMContentLoaded", function(){
           // picked any other way (see pickTrNetworkFile / a direct upload's
           // own change handler), so a stale combine from an earlier pick
           // never silently applies to an unrelated single file.
-          document.getElementById('tr-file-segment-durations').value = JSON.stringify(d.segment_durations || [])
+          var segs = d.segment_durations || []
+          document.getElementById('tr-file-segment-durations').value = JSON.stringify(segs)
+          // Keep in sync for script validate (and any other client-side readers).
+          window._fileSegmentDurations = segs
         }).catch(function(e){
           status.textContent = 'Error combining files: ' + e
           status.style.color = 'var(--tally)'
@@ -3551,6 +3609,7 @@ document.addEventListener("DOMContentLoaded", function(){
       // to do with the file actually being used.
       var segDurField = document.getElementById('tr-file-segment-durations')
       if(segDurField) segDurField.value = ''
+      window._fileSegmentDurations = []
       showPreview(fileInput.files[0])
     }
   })
@@ -6958,7 +7017,7 @@ async function saveProductionTab(){
 }
 window.saveProductionTab = saveProductionTab
 
-var NETWORK_CATEGORY_LABELS = {hires: 'Video (HIRES)', tcard: 'Title card', endcard: 'End card', music: 'Music', vo: 'VO', sfx: 'SFX'}
+var NETWORK_CATEGORY_LABELS = {hires: 'Video (HIRES)', tcard: 'Title card', endcard: 'End card', music: 'Music', vo: 'VO', sfx: 'SFX', script: 'Script / rundown'}
 var networkFoldersLoaded = false
 var networkDestinationsLoaded = false
 async function loadNetworkFolders(){
@@ -8095,6 +8154,56 @@ document.addEventListener('DOMContentLoaded', function(){
         // work with if the browser can't decode this format natively.
         window.showPlayer(d.url, d.orig_name, d.filename)
         closeModal()
+        return
+      }
+      if(active.fieldName === 'script_file'){
+        // Script slot: stage the network copy, also mirror into the file
+        // input so validate/generate keep working via request.files, and
+        // run the same validate panel path as a local attach.
+        var scriptNet = document.getElementById('script_file_network')
+        if(scriptNet) scriptNet.value = d.filename
+        var scriptInput = document.getElementById('script-file-input')
+        var scriptChip = document.getElementById('script-file-chip')
+        if(scriptChip){
+          scriptChip.querySelector('.chip-name').textContent = d.orig_name
+          scriptChip.style.display = 'inline-flex'
+        }
+        closeModal()
+        fetch('/uploads/' + encodeURIComponent(d.filename))
+          .then(function(r){ return r.blob() })
+          .then(function(blob){
+            if(scriptInput && typeof DataTransfer !== 'undefined'){
+              try {
+                var file = new File([blob], d.orig_name || 'script', { type: blob.type || 'application/octet-stream' })
+                var dt = new DataTransfer()
+                dt.items.add(file)
+                scriptInput.files = dt.files
+                if(typeof scriptFileChosen === 'function') scriptFileChosen(scriptInput)
+                if(typeof updateJobSummary === 'function') updateJobSummary()
+                return
+              } catch(e){}
+            }
+            // Fallback: validate via staged name only (no File constructor).
+            var fd = new FormData()
+            fd.append('script_file_network', d.filename)
+            try {
+              var segRaw = (document.getElementById('tr-file-segment-durations') || {}).value || ''
+              var seg = segRaw ? JSON.parse(segRaw) : []
+              if(seg && seg.length) fd.append('file_segment_durations', JSON.stringify(seg))
+            } catch(e2){}
+            fetch('/api/trailer/validate_script', { method: 'POST', body: fd, credentials: 'same-origin' })
+              .then(function(r){ return r.json() })
+              .then(function(b){
+                if(typeof showScriptValidatePanel === 'function'){
+                  if(b.summary || (b.cues && b.cues.length) || b.warnings) showScriptValidatePanel(b, null)
+                  else showScriptValidatePanel(null, b.error || 'Could not read script')
+                }
+              })
+          })
+          .catch(function(e){
+            if(typeof showScriptValidatePanel === 'function')
+              showScriptValidatePanel(null, 'Could not load library script: ' + e)
+          })
         return
       }
       var hidden = document.getElementById(active.fieldName + '_network')
