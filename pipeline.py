@@ -3267,6 +3267,15 @@ def _extract_pdf_video_column_only(raw):
     timecode purely because it happened to land early in the extracted
     text stream.
 
+    The right column is audio/SOT/dialogue text, full stop -- confirmed
+    directly by the person providing this feature's own real source
+    documents: a material tag (M1/M2) appearing THERE marks which audio
+    take that dialogue line was recorded against, not a video
+    scene-selection point. It is correctly excluded even when it carries
+    its own material label and its own parseable timecode, exactly like
+    any other right-column text -- there is no "but this one looks like a
+    real cue" exception, because from this column it never is one.
+
     Returns (None, False) -- a clean "doesn't apply here", not an error --
     when pdfplumber isn't installed, the PDF can't be opened, or NO page in
     the whole document shows a confident two-column layout at all: an
@@ -3281,8 +3290,7 @@ def _extract_pdf_video_column_only(raw):
         return None, False
     try:
         any_split_found = False
-        page_rows = []      # kept (left-column) rows per page
-        excluded_lines = []  # text that would be DROPPED by the split, across the whole doc
+        page_rows = []
         with pdfplumber.open(io.BytesIO(raw)) as pdf:
             for page in pdf.pages:
                 words = page.extract_words(keep_blank_chars=False)
@@ -3295,37 +3303,9 @@ def _extract_pdf_video_column_only(raw):
                     page_rows.append(rows)
                 else:
                     any_split_found = True
-                    kept_rows = []
-                    for row in rows:
-                        kept = _split_row_at_column_gap(row, split_x, page.width)
-                        kept_ids = {id(w) for w in kept}
-                        dropped = [w for w in row if id(w) not in kept_ids]
-                        if dropped:
-                            excluded_lines.append(' '.join(w['text'] for w in dropped))
-                        kept_rows.append(kept)
-                    page_rows.append(kept_rows)
+                    page_rows.append([_split_row_at_column_gap(row, split_x, page.width) for row in rows])
         if not any_split_found:
             return None, False
-        # Safety check: if what this split WOULD discard itself contains a
-        # real, labeled cue (a material tag plus its own timecode -- not
-        # just any number that happens to look timecode-shaped), this
-        # document doesn't follow the "video timecodes stay in one column"
-        # convention this feature assumes at all -- a real, demonstrated
-        # case: M1/M2 cues genuinely interspersed with dialogue throughout
-        # BOTH sides of the page, not confined to one column. Applying the
-        # split there would silently drop real cues, which is worse than
-        # the column-mixing problem this feature exists to prevent. Back
-        # off entirely and let the (separately fixed) AM/PM-aware
-        # full-text parsing handle it instead.
-        #
-        # Checked directly per line (not via parse_script_cues) since that
-        # function's own material-availability filtering would itself
-        # silently drop an M2+ cue before this check ever saw it, when
-        # called without a real available_materials set -- exactly the
-        # kind of cue this check most needs to catch.
-        for excluded_line in excluded_lines:
-            if _SEGMENT_PREFIX_RE.search(excluded_line) and _parse_timecode_line(excluded_line):
-                return None, False
         lines = []
         for rows in page_rows:
             for row in rows:
