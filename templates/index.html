@@ -1694,22 +1694,22 @@ document.addEventListener("DOMContentLoaded", function(){
   <div class="asset-section" id=asset-bgm>
     <div class="asset-section-header" onclick="toggleAssetSection(this)">
       <span class="asset-section-title">Background music</span>
-      <span class="asset-section-summary" id=summary-bgm>Generate music</span>
+      <span class="asset-section-summary" id=summary-bgm>None</span>
       <span class="asset-section-chevron">&#9656;</span>
     </div>
     <div class="asset-section-body">
   <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:8px 0">
-    <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
-      <input type=radio name=scoring_mode value=generate data-requires="ace_step"> Generate music
-    </label>
     <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
       <input type=radio name=scoring_mode value=none checked> None
     </label>
     <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
       <input type=radio name=scoring_mode value=upload> Upload
     </label>
+    <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
+      <input type=radio name=scoring_mode value=generate data-requires="ace_step"> Generate (AI Music)
+    </label>
   </div>
-  <p id=bgm-gating-note style="display:none;margin-top:6px;margin-bottom:8px;font-size:12px;color:var(--amber)">"Generate music" is unavailable — ACE-Step isn't reachable.</p>
+  <p id=bgm-gating-note style="display:none;margin-top:6px;margin-bottom:8px;font-size:12px;color:var(--amber)">"Generate (AI Music)" is unavailable — ACE-Step isn't reachable.</p>
   <div id=scoring-upload-area style="display:none">
     <div class="browse-row">
       {% if allow_local_upload %}<input type=file name=scoring_audio accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" data-net-field="scoring_audio" onchange="cardVoFileChosen(this,'scoring_audio')">{% endif %}
@@ -1818,7 +1818,7 @@ document.addEventListener("DOMContentLoaded", function(){
       var bgmMode = document.querySelector('input[name=scoring_mode]:checked')
       bgmMode = bgmMode ? bgmMode.value : 'generate'
       if(bgmMode === 'none') s.textContent = 'None'
-      else if(bgmMode === 'generate') s.textContent = 'Generate music'
+      else if(bgmMode === 'generate') s.textContent = 'Generate (AI Music)'
       else { var f = _fileFieldSummary('scoring_audio'); s.textContent = f ? 'Upload: ' + f : 'Upload (no file yet)' }
     }
 
