@@ -3040,6 +3040,16 @@ def _match_to_seconds(m, pat_idx, fps=25.0):
         return int(g[0]) * 3600 + int(g[1]) * 60 + int(g[2])
     return int(g[0]) * 60 + int(g[1])
 
+# Shorthand range notation a rundown commonly uses instead of writing the
+# out-point as a full second timecode: "3:33—37" or "00:35--42" means "in at
+# 3:33, out at 3:37" / "in at 0:35, out at 0:42" -- the trailing 1-2 digits
+# are just the out-point's OWN seconds, inheriting the in-point's hours and
+# minutes rather than restating them. Matched only immediately after the in
+# timecode (optional whitespace, one or two hyphen/dash characters, optional
+# whitespace, then the digits, word-bounded so it doesn't swallow the start
+# of an unrelated multi-digit number or word right after it).
+_SHORTHAND_OUT_RE = re.compile(r'^\s*[-\u2010-\u2015]{1,2}\s*(\d{1,2})\b')
+
 def _parse_timecode_line(line, fps=25.0):
     """Parse timecode(s) on a script line for scene selection.
 
@@ -3050,19 +3060,40 @@ def _parse_timecode_line(line, fps=25.0):
     selecting a scene. An in/out pair (two timecodes on one line) still
     selects from the **in** point; the out is kept only for display. Lines
     with no recognisable timecode return None and are ignored.
-    """
+
+    Also recognises the "3:33—37" shorthand (see _SHORTHAND_OUT_RE) as an
+    in/out pair even though only one full timecode appears on the line --
+    without this, that trailing "—37" was just left sitting in the
+    description text, unparsed, and the line was treated as a single
+    in-point with no out-point at all."""
     for idx, pat in enumerate(_TC_PATTERNS):
         matches = [m for m in pat.finditer(line) if not _CLOCK_TIME_SUFFIX_RE.match(line[m.end():])]
         if not matches:
             continue
         in_secs = _match_to_seconds(matches[0], idx, fps=fps)
         out_secs = None
+        shorthand_match = None
         if len(matches) >= 2:
             out_secs = _match_to_seconds(matches[1], idx, fps=fps)
             if out_secs <= in_secs:
                 out_secs = None  # not a sensible range; treat as single
-        # Strip every matched TC span from the description text
+        else:
+            shorthand_match = _SHORTHAND_OUT_RE.match(line[matches[0].end():])
+            if shorthand_match:
+                shorthand_secs = int(shorthand_match.group(1))
+                # Floor the in-point to its own minute boundary, then apply
+                # the shorthand digits as the out-point's seconds -- see
+                # _SHORTHAND_OUT_RE's own comment for why this, not the
+                # shorthand digits alone, is the out-point.
+                out_secs = (int(in_secs) // 60) * 60 + shorthand_secs
+                if out_secs <= in_secs:
+                    out_secs = None  # e.g. "3:33--10" would be earlier, not later
+        # Strip every matched TC span (and the shorthand span, if any) from
+        # the description text.
         desc = line
+        if shorthand_match:
+            shorthand_end = matches[0].end() + shorthand_match.end()
+            desc = (desc[:matches[0].end()] + ' ' + desc[shorthand_end:])
         for m in reversed(matches):
             desc = (desc[:m.start()] + ' ' + desc[m.end():])
         desc = re.sub(r'\s+', ' ', desc).strip(' \t-–—:|./')

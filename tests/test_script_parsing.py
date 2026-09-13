@@ -105,6 +105,92 @@ class TestClockTimeVsTimecode:
         assert not any('GMA' in d or 'TELECAST' in d or 'PRIME' in d for d in descs)
 
 
+class TestShorthandOutNotation:
+    """A rundown commonly writes an out-point as just its own trailing
+    seconds after a dash, rather than restating the full timecode: "3:33—37"
+    means in at 3:33, out at 3:37 (37 is the out-point's OWN seconds,
+    inheriting the in-point's minutes); "00:35—42" means in at 0:35, out at
+    0:42. Before this, that trailing "—37" was left sitting unparsed in the
+    description text and the line was treated as a single in-point with no
+    out-point at all -- a real, user-reported gap, confirmed directly
+    against the actual reported document's own real lines."""
+
+    def test_em_dash_shorthand_on_a_real_document_line(self):
+        result = pipeline._parse_timecode_line('M1 3:33\u201437 HABOL TACKLE')
+        assert result is not None
+        in_secs, desc, meta = result
+        assert in_secs == 213  # 3:33
+        assert meta['out'] == 217  # 3:37
+        assert 'HABOL TACKLE' in desc
+        assert '37' not in desc
+
+    def test_em_dash_shorthand_with_zero_padded_minutes(self):
+        result = pipeline._parse_timecode_line('M2 00:35\u201442 BUNOT')
+        assert result is not None
+        in_secs, desc, meta = result
+        assert in_secs == 35
+        assert meta['out'] == 42
+        assert 'BUNOT' in desc
+
+    def test_double_hyphen_variant(self):
+        result = pipeline._parse_timecode_line('M1 3:33--37')
+        assert result is not None
+        _, _, meta = result
+        assert meta['out'] == 217
+
+    def test_single_hyphen_variant(self):
+        result = pipeline._parse_timecode_line('M1 3:33-37')
+        assert result is not None
+        _, _, meta = result
+        assert meta['out'] == 217
+
+    def test_shorthand_directly_after_a_full_hhmmssff_timecode_with_no_material_label(self):
+        result = pipeline._parse_timecode_line('00:03:33:00--37')
+        assert result is not None
+        in_secs, _, meta = result
+        assert in_secs == 213.0
+        assert meta['out'] == 217
+
+    def test_full_reported_document_now_produces_correct_in_out_pairs(self):
+        # The exact two real cue lines from the actual reported document.
+        text = "\n".join([
+            "M1 3:33\u201437 HABOL TACKLE",
+            "M2 00:35\u201442 BUNOT",
+        ])
+        cues = pipeline.parse_script_cues(text, available_materials={1, 2})
+        assert len(cues) == 2
+        by_material = {c['material']: c for c in cues}
+        assert by_material[1]['time'] == 213 and by_material[1]['out'] == 217
+        assert by_material[2]['time'] == 35 and by_material[2]['out'] == 42
+
+    def test_shorthand_earlier_than_in_point_is_rejected_not_treated_as_out(self):
+        # "3:33--10" would put the out-point at 3:10, before the in-point at
+        # 3:33 -- not a sensible range, so this must fall back to no
+        # out-point at all rather than a nonsensical or negative-duration one.
+        result = pipeline._parse_timecode_line('M1 3:33--10')
+        assert result is not None
+        _, _, meta = result
+        assert meta['out'] is None
+
+    def test_a_real_full_second_timecode_still_takes_priority_over_shorthand(self):
+        # If a genuine second timecode is present, that's a real in/out pair
+        # already -- the shorthand path only applies when there ISN'T one.
+        result = pipeline._parse_timecode_line('M1 3:33 to 3:45')
+        assert result is not None
+        _, _, meta = result
+        assert meta['out'] == 225  # 3:45, the real second timecode
+
+    def test_shorthand_also_works_for_the_documents_other_real_cue_lines(self):
+        # M1 3:38—43 (the right-column dialogue-tagged line, excluded from
+        # cues elsewhere for being in the wrong column, but its own
+        # timecode parsing in isolation should still work correctly).
+        result = pipeline._parse_timecode_line('M1 3:38\u201443')
+        assert result is not None
+        in_secs, desc, meta = result
+        assert in_secs == 218
+        assert meta['out'] == 223  # 3:43, the shorthand out-point
+
+
 class TestApplyScriptPriority:
     def test_boosts_scene_matching_a_cue_timecode(self):
         scenes = [
