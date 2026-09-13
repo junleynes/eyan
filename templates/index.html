@@ -1939,6 +1939,29 @@ document.addEventListener("DOMContentLoaded", function(){
   // than greeting a plain page load with an error about an action nobody
   // took.
   ;(function enforceScriptModeGatingOnLoad(){
+    // A second, related bug from the same root cause, reported separately:
+    // browsers restore a hidden <input>'s own value= across a reload too,
+    // not just a radio's checked state -- tr-network-file (the staged
+    // network source path) and the materials fields fed by it are exactly
+    // this kind of hidden input. trailerSourceSelected() trusted
+    // tr-network-file's value directly, so a stale, browser-restored path
+    // there made it report "yes, a source is selected" even though the
+    // VISIBLE preview (tr-file-preview's own 'shown' class, which is pure
+    // JS state a browser never restores on its own) correctly showed
+    // nothing attached at all -- exactly the mismatch reported: no visible
+    // media after a reload, but Script/Manual Entry still "detecting" the
+    // last attached material regardless. This app never persists a
+    // selected source across a reload by design (the underlying file
+    // itself isn't re-staged), so these fields should always start empty
+    // on a fresh load regardless of anything the browser tried to restore
+    // -- cleared here, unconditionally, before the gating check below ever
+    // reads them.
+    ;['tr-network-file', 'tr-materials-network', 'tr-materials-display-names',
+      'tr-file-segment-durations'].forEach(function(id){
+      var el = document.getElementById(id)
+      if(el) el.value = ''
+    })
+    window._fileSegmentDurations = []
     var checked = document.querySelector('input[name=script_mode]:checked')
     var v = checked ? checked.value : 'none'
     if((v === 'upload' || v === 'manual') && !trailerSourceSelected()){
