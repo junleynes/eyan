@@ -5184,6 +5184,7 @@ def api_trailer_preview_get(preview_id):
                             'vo_beat': s.get('vo_beat'), 'vo_match': s.get('vo_match'),
                             'script_boost': round(s.get('script_boost') or 0, 2) or None,
                             'script_desc': s.get('script_desc') or None,
+                            'material': s.get('material'),
                             'why': _why(s),
                             'description': _scene_desc(s), 'thumb': p['thumbs'][i]}
                            for i, s in enumerate(p['selected'])],
@@ -5192,6 +5193,7 @@ def api_trailer_preview_get(preview_id):
                                 'duration': round(s['selected_dur'], 1),
                                 'script_boost': round(s.get('script_boost') or 0, 2) or None,
                                 'script_desc': s.get('script_desc') or None,
+                                'material': s.get('material'),
                                 'description': _scene_desc(s), 'thumb': (p.get('alt_thumbs') or [None]*99)[i]}
                                for i, s in enumerate(p.get('alternates') or [])])
 
@@ -5292,7 +5294,12 @@ def _autofill_short_selection_from_alternates(selected, alternates, already_used
     for _, alt in candidates:
         if shortfall <= 0.5:
             break
-        if any(abs(alt['start'] - s['start']) < min_gap for s in result):
+        # Scoped to the same material only -- see the identical fix and its
+        # full explanation at the main selection loop's own min_gap check
+        # in _run_trailer_job for why an unscoped comparison across
+        # different materials' own local timelines is wrong.
+        if any(abs(alt['start'] - s['start']) < min_gap and alt.get('material') == s.get('material')
+               for s in result):
             continue
         result.append(alt)
         shortfall -= alt['selected_dur']
@@ -7538,7 +7545,11 @@ def select_scenes_vo_led(scenes_data, vo_text, trailer_duration, max_scene_dur, 
         for i, s in enumerate(scenes_data):
             if i in used:
                 continue
-            if any(abs(s['start'] - c['start']) < min_gap for c in selected):
+            # Scoped to the same material only -- see the identical fix and
+            # full explanation at the main selection loop's own min_gap
+            # check in _run_trailer_job.
+            if any(abs(s['start'] - c['start']) < min_gap and s.get('material') == c.get('material')
+                   for c in selected):
                 continue
             if s['duration'] < min_seg_dur * 0.6:
                 continue
@@ -8284,10 +8295,23 @@ def _run_trailer_job(jid, params):
                     # shortfall gets absorbed by nudging trailer_duration up on the
                     # next pass_attempt below.
                     break
-                if any(abs(s['start'] - c['start']) < min_gap for c in selected):
-                    # Too close in the source timeline to an already-selected scene
-                    # — skip it in favor of spreading selections across the video,
-                    # rather than over-sampling one stretch of it.
+                # Too close in the source timeline to an already-selected
+                # scene -- skip it in favor of spreading selections across
+                # the video, rather than over-sampling one stretch of it.
+                # Scoped to the SAME material only: a real, confirmed bug --
+                # each material's own timecodes are local to that source
+                # (see apply_script_priority's own docstring), so a scene
+                # from material 2 at local time 0:35 and one from material 1
+                # at local time 0:38 are three seconds apart in two
+                # completely unrelated files, not three seconds apart in
+                # any shared timeline at all. The unscoped version of this
+                # check could exclude a script-matched scene from one
+                # material purely because ANOTHER material's already-picked
+                # scene happened to land at a numerically close local
+                # timecode -- exactly the shape of "script detected the
+                # cue but didn't select it" a real report described.
+                if any(abs(s['start'] - c['start']) < min_gap and s.get('material') == c.get('material')
+                       for c in selected):
                     continue
                 seg_dur = min(s['duration'], remaining)
                 if max_scene_dur:
@@ -8459,17 +8483,25 @@ def _run_trailer_job(jid, params):
         # rejected clip can be swapped for a real alternative instead of forcing a
         # full re-analysis. Spaced by the same min_gap rule the selector uses, and
         # excluding anything already chosen.
-        chosen_starts = {round(s['start'], 3) for s in selected}
+        #
+        # chosen_starts is keyed on (material, rounded start) together, not
+        # start alone -- the same fix, for the same reason, as every other
+        # min_gap check in this file: two different materials' own local
+        # timelines can share numerically identical or close start times
+        # without being anywhere near each other in the source video.
+        chosen_starts = {(s.get('material'), round(s['start'], 3)) for s in selected}
         alternates = []
         if not preselected:
             for cand in sorted(scenes_data, key=lambda x: x['total_score'], reverse=True):
                 if len(alternates) >= PREVIEW_ALTERNATES:
                     break
-                if round(cand['start'], 3) in chosen_starts:
+                if (cand.get('material'), round(cand['start'], 3)) in chosen_starts:
                     continue
-                if any(abs(cand['start'] - o['start']) < min_gap for o in alternates):
+                if any(abs(cand['start'] - o['start']) < min_gap and cand.get('material') == o.get('material')
+                       for o in alternates):
                     continue
-                if any(abs(cand['start'] - s['start']) < min_gap for s in selected):
+                if any(abs(cand['start'] - s['start']) < min_gap and cand.get('material') == s.get('material')
+                       for s in selected):
                     continue
                 cand = dict(cand)
                 cand.setdefault('selected_dur', min(cand['duration'], max_scene_dur or cand['duration']))
@@ -8584,6 +8616,7 @@ def _run_trailer_job(jid, params):
                      'vo_match': s.get('vo_match'),
                      'script_boost': round(s.get('script_boost') or 0, 2) or None,
                      'script_desc': s.get('script_desc') or None,
+                     'material': s.get('material'),
                      'why': _scene_why(s),
                      'description': _scene_desc(s), 'thumb': thumbs[i]}
                     for i, s in enumerate(selected)],
@@ -8595,6 +8628,7 @@ def _run_trailer_job(jid, params):
                          'has_face': bool(s.get('has_face')),
                          'script_boost': round(s.get('script_boost') or 0, 2) or None,
                          'script_desc': s.get('script_desc') or None,
+                         'material': s.get('material'),
                          'description': _scene_desc(s), 'thumb': alt_thumbs[i]}
                         for i, s in enumerate(alternates)])
         job_set(jid, percent=100, step='Preview ready', done=True, result=result)
@@ -9311,6 +9345,7 @@ def _run_trailer_job(jid, params):
         scenes=[{
             'scene': i+1, 'start': round(s['start'], 1), 'end': round(s['end'], 1),
             'quality': s['total_score'], 'duration': round(s['selected_dur'], 1),
+            'material': s.get('material'),
             'description': _scene_desc(s)
         } for i, s in enumerate(selected)])
     # library_add() runs BEFORE the job is marked done, not after -- doing it

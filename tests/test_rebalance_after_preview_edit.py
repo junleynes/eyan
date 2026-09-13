@@ -122,6 +122,25 @@ def test_autofill_skips_alternates_too_close_to_an_already_selected_scene():
     assert any(s['start'] == 50 for s in result)
 
 
+def test_autofill_does_not_skip_a_close_alternate_from_a_DIFFERENT_material():
+    # Regression guard for a real, user-reported bug: a script's cue for
+    # material 2 wasn't being selected at all in multi-material jobs. Root
+    # cause -- confirmed directly here -- the min_gap "too close to an
+    # already-picked scene" check compared raw start times with no
+    # awareness that each material's own timecodes are local to that
+    # source (see apply_script_priority's own docstring for the same
+    # point): a scene from material 2 at local time 20.5 is not "close to"
+    # a scene from material 1 at local time 20 at all -- they're in two
+    # completely unrelated video files. The unscoped version of this check
+    # would have excluded material 2's own scene here purely because of
+    # that numerical coincidence.
+    selected = [dict(_scene(0, 5, 5.0), material=1), dict(_scene(20, 5, 5.0), material=1)]
+    alternates = [dict(_alt(20.5, 6, 6.0, total_score=9.0), material=2)]
+    result = pipeline._autofill_short_selection_from_alternates(
+        selected, alternates, already_used_alt_numbers=set(), target_duration=15.0)
+    assert any(s['start'] == 20.5 and s.get('material') == 2 for s in result)
+
+
 def test_autofill_does_nothing_when_shortfall_is_small():
     # A shortfall under the 1.0s threshold isn't worth pulling in a whole
     # extra clip for -- the rebalance pass alone (or simply being close
