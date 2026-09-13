@@ -18,7 +18,7 @@ import os, cv2, numpy as np, tempfile, threading, time, pathlib, base64, json, r
 from xml.sax.saxutils import escape as xml_escape
 from concurrent.futures import ThreadPoolExecutor
 from collections import deque
-from scenedetect import open_video, SceneManager
+from scenedetect import open_video, SceneManager, FrameTimecode
 from scenedetect.detectors import ContentDetector, AdaptiveDetector
 from flask import request, jsonify, redirect, url_for, Response, send_from_directory, session
 from werkzeug.utils import secure_filename
@@ -3540,6 +3540,76 @@ def apply_script_priority(scenes_data, cues, window=2.5, boost=8.0):
             s['total_score'] += s['script_boost']
     return matched
 
+def build_cue_clips(cues, materials_paths, min_seg_dur=0.8, default_cue_dur=4.0):
+    """Builds 'selected'-shaped scene dicts directly from script/manual
+    timecode cues, bypassing PySceneDetect's own detected scene boundaries
+    entirely -- a cue's own in/out span becomes the clip, in full, even
+    when it spans several of PySceneDetect's own shot changes combined
+    into one continuous cut, exactly as a rundown line like "M1 3:33—37"
+    means: use that whole 4-second span, not whichever single automatically-
+    detected scene happens to overlap its start.
+
+    User-requested and confirmed: when timecode cues exist at all, the
+    final promo uses ONLY those cues -- no unrelated, automatically-scored
+    scenes added -- but each cue's own in/out CAN be adjusted (stretched or
+    shrunk) afterward to fill the target duration, rather than staying
+    fixed at exactly what was typed. This function only builds the initial
+    clips; _rebalance_selected_durations (already used for exactly this
+    kind of proportional stretch/shrink elsewhere) does the actual
+    adjusting, using each clip's own 'duration' field here as its stretch
+    ceiling.
+
+    That ceiling is the real remaining footage in that material from the
+    cue's own start -- up to the NEXT cue in the same material, if there is
+    one (so stretching one cue's out-point can never eat into footage
+    another cue in the same material already claims), or the material's own
+    actual file length otherwise (via probe_duration, so a cue can never be
+    stretched past the end of its own source file). A cue's initial
+    selected_dur is its own out-minus-in span when an out was given, or
+    default_cue_dur when only a single in-point was written -- clamped to
+    that same ceiling either way.
+
+    Cues naming a material outside materials_paths' own range, or with no
+    material at all, are skipped -- parse_script_cues already guarantees
+    every cue it returns has a real, loaded material when available_materials
+    was supplied, so this is a defensive floor, not the primary filter."""
+    by_material = {}
+    for c in cues:
+        mat = c.get('material')
+        if mat is None or mat < 1 or mat > len(materials_paths):
+            continue
+        by_material.setdefault(mat, []).append(c)
+    for mat_cues in by_material.values():
+        mat_cues.sort(key=lambda c: c['time'])
+
+    clips = []
+    for mat, mat_cues in by_material.items():
+        src_path = materials_paths[mat - 1]
+        file_dur = probe_duration(src_path)
+        for i, c in enumerate(mat_cues):
+            start = float(c['time'])
+            out = c.get('out')
+            init_dur = max(min_seg_dur, (out - start) if out else default_cue_dur)
+            next_start = mat_cues[i + 1]['time'] if i + 1 < len(mat_cues) else None
+            candidates = [v for v in (next_start, file_dur) if v is not None and v > start]
+            ceiling = min(candidates) if candidates else start + init_dur
+            avail = max(min_seg_dur, ceiling - start)
+            clips.append({
+                'start': start,
+                'end': start + avail,
+                'duration': avail,
+                'selected_dur': min(init_dur, avail),
+                'trim_start': start,
+                'material': mat,
+                'source_path': src_path,
+                'total_score': 10.0,
+                'script_boost': 10.0,
+                'script_desc': c.get('desc') or f'M{mat}',
+                'has_face': False,
+            })
+    clips.sort(key=lambda s: (s.get('material') or 0, s['start']))
+    return clips
+
 def librosa_load(path, sr=22050, mono=True, duration=None):
     """librosa.load, but never via the deprecated audioread fallback.
 
@@ -5334,7 +5404,12 @@ def _autofill_short_selection_from_alternates(selected, alternates, already_used
             continue
         result.append(alt)
         shortfall -= alt['selected_dur']
-    result.sort(key=lambda s: s['start'])
+    # Sorted by (material, start), not start alone -- the same fix, for the
+    # same reason, as every other cross-material comparison in this file:
+    # two different materials' own local timelines can share numerically
+    # close or identical start times without being anywhere near each
+    # other in the actual source video.
+    result.sort(key=lambda s: (s.get('material') or 0, s['start']))
     return result
 
 @app.route('/api/trailer/render', methods=['POST'])
@@ -5378,7 +5453,10 @@ def api_trailer_render():
         if bad:
             return jsonify(error=f'No alternate numbered {bad[0]} in this preview.'), 400
         selected = selected + [alts[n - 1] for n in sorted(added)]
-        selected.sort(key=lambda s: s['start'])
+        # (material, start), not start alone -- see the identical fix and
+        # its full explanation elsewhere in this file for cross-material
+        # ordering.
+        selected.sort(key=lambda s: (s.get('material') or 0, s['start']))
 
     if not selected:
         return jsonify(error='You dropped every scene — keep at least one, or add an alternate.'), 400
@@ -7474,6 +7552,8 @@ def run_trailer_job(jid, params):
         job_set(jid, error=f'A media processing step timed out and was stopped ({e}). '
                            'The source may be corrupt, or the server is overloaded.')
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f'Trailer job {jid} crashed: {e}')
         job_set(jid, error=f'Unexpected error: {e}')
     finally:
@@ -7646,7 +7726,9 @@ def select_scenes_vo_led(scenes_data, vo_text, trailer_duration, max_scene_dur, 
             break
     if not selected:
         return None, 0.0
-    selected.sort(key=lambda x: x['start'])
+    # (material, start), not start alone -- see the identical fix and its
+    # full explanation elsewhere in this file for cross-material ordering.
+    selected.sort(key=lambda x: (x.get('material') or 0, x['start']))
     return selected, total_sel
 
 
@@ -7761,7 +7843,10 @@ def _run_trailer_job(jid, params):
         # different cut than the one the user actually approved.
         job_set(jid, percent=34, step=f'Rendering approved cut ({len(preselected)} clips)')
         selected = [dict(s) for s in preselected]
-        selected.sort(key=lambda x: x['start'])
+        # (material, start), not start alone -- see the identical fix and
+        # its full explanation elsewhere in this file for cross-material
+        # ordering.
+        selected.sort(key=lambda x: (x.get('material') or 0, x['start']))
         total_sel = sum(s['selected_dur'] for s in selected)
         scene_list = [None] * int(params.get('preview_total_scenes') or len(selected))
         word_starts = word_ends = []
@@ -7808,8 +7893,37 @@ def _run_trailer_job(jid, params):
             for start, end in sl:
                 scene_list.append((start, end, mat_num, mpath))
         if not scene_list:
-            job_set(jid, error='No scene changes detected. Try a video with clear cuts, or lower the detection threshold.')
-            return
+            # Timecode cues bypass PySceneDetect's own boundaries entirely
+            # (build_cue_clips builds clips directly from each cue's own
+            # in/out span) -- a source with no detectable cuts at all (a
+            # single, continuous static shot, or just below the detection
+            # threshold) is still perfectly usable when cues are supplied,
+            # so this is only a hard failure for the ordinary,
+            # scene-detection-driven selection path below.
+            if not (params.get('script_cues') or []):
+                job_set(jid, error='No scene changes detected. Try a video with clear cuts, or lower the detection threshold.')
+                return
+            # Synthesize one fallback "scene" per material spanning its own
+            # whole file, purely so the existing quality/AI-vision scoring
+            # block right below (built around scene_list/scenes_data never
+            # being empty) has something harmless to process -- the
+            # cue-exclusive selection path further down never reads
+            # scenes_data at all, so what gets scored here is discarded,
+            # not actually used to pick anything.
+            #
+            # Must be real FrameTimecode objects, not plain floats: tc_frames/
+            # tc_seconds (used throughout scoring) read PySceneDetect's own
+            # .frame_num/.seconds attributes and recurse infinitely on a type
+            # that doesn't have them -- confirmed directly, a real crash this
+            # exact code caused before switching to FrameTimecode here.
+            for mi, mpath in enumerate(materials):
+                dur = probe_duration(mpath) or 1.0
+                cap = cv2.VideoCapture(mpath)
+                fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+                cap.release()
+                start_tc = FrameTimecode(0.0, fps)
+                end_tc = FrameTimecode(max(dur, 1.0 / fps), fps)
+                scene_list.append((start_tc, end_tc, mi + 1, mpath))
         if len(materials) == 1 and len(scene_list) == 1 and (
                 tc_seconds(scene_list[0][1]) - tc_seconds(scene_list[0][0])) > video_duration * 0.95:
             # PySceneDetect's own fallback: no real cuts found, so it returned one
@@ -8200,24 +8314,16 @@ def _run_trailer_job(jid, params):
         job_set(jid, percent=33, step='Selecting scenes')
         # Pick top scenes by score to fill target, then sort by timecode
         # Iterative: xfade transitions shorten output, so compensate
-        # Apply script-driven priority (if a script/rundown was uploaded)
-        # after every automatic scoring component has contributed, and before
-        # any selection happens -- so cue-matched scenes compete on their
-        # boosted score throughout the passes below rather than being
-        # promoted after the fact.
+        # When cues exist, they drive selection EXCLUSIVELY via
+        # build_cue_clips below -- apply_script_priority (a total_score
+        # boost feeding the greedy best-scenes loop) is no longer used at
+        # all in that case, since there IS no best-scenes loop to feed once
+        # cues are present. Kept only as a message here, not a scoring
+        # step, so the person still sees confirmation their cues parsed
+        # and how many will be used.
         script_cues = params.get('script_cues') or []
         if script_cues:
-            matched = apply_script_priority(scenes_data, script_cues)
-            if matched:
-                job_set(jid, step=f'Script priority applied: {matched}/{len(script_cues)} cues matched to scenes')
-            else:
-                # Surface this clearly in the progress UI -- previously it was only a
-                # server log line, so users had no idea their script was ignored.
-                job_set(jid, step=f'Script parsed ({len(script_cues)} cues) but NONE matched the video timeline '
-                                  f'({video_duration:.0f}s) — check timecodes / segment offsets')
-                print(f'Script priority: none of the {len(script_cues)} cue timecodes fell inside '
-                      f'a detected scene (video is {video_duration:.0f}s) -- script may be for a '
-                      f'different cut of this episode.')
+            job_set(jid, step=f'{len(script_cues)} timecode cue(s) will drive scene selection exclusively')
         # Floor for how short a *budget-truncated* clip is allowed to be. Without this,
         # whichever scene happens to land last (in score order, not timeline order) just
         # gets clipped to "whatever duration is left" — which can be a fraction of a
@@ -8254,151 +8360,177 @@ def _run_trailer_job(jid, params):
         has_narration = bool((params.get('vo_text') or '').strip()) or \
                         (params.get('vo_mode') == 'upload' and params.get('vo_upload_path'))
 
-        # --- Narration-led selection (only ever covers what narration actually
-        # supplies -- best-scenes below fills whatever budget is left over) ---
-        selected = []
-        total_sel = 0
-        min_gap = base_min_gap
+        # --- Timecode-priority selection (script cues / Manual Entry) ---
+        # User-requested and confirmed: when cues exist at all, the final
+        # promo uses ONLY those cues -- narration-led and best-scenes
+        # selection below are both skipped entirely, not blended with cues.
+        # Each cue's own in/out becomes the clip via build_cue_clips
+        # (bypassing PySceneDetect's own scene boundaries, since a cue may
+        # legitimately span several of its shot changes combined into one
+        # cut), then _rebalance_selected_durations -- the same
+        # proportional stretch/shrink already used for preview-edit
+        # rebalancing -- adjusts each cue's own in/out to collectively hit
+        # the target duration, exactly the "AI can adjust the in/out to
+        # fill remaining time" behaviour requested.
         used_driver = 'score'
-        if has_narration:
-            vo_for_sel = (params.get('vo_text') or '').strip()
-            vo_beats = None
-            # Uploaded narration: transcribe with Whisper so selection can follow the spoken lines
-            if not vo_for_sel and params.get('vo_mode') == 'upload' and params.get('vo_upload_path'):
-                job_set(jid, percent=34, step='Transcribing uploaded narration for selection')
-                _vo_words, _vo_segs = transcribe_audio_file(
-                    params.get('vo_upload_path'),
-                    trim_start=params.get('vo_trim_start') or 0.0,
-                    trim_end=params.get('vo_trim_end'),
-                )
-                vo_beats = _vo_beats_from_segments(_vo_segs)
-                if vo_beats:
-                    vo_for_sel = ' '.join(b['text'] for b in vo_beats)
-                    job_set(jid, step=f'Uploaded narration transcribed ({len(vo_beats)} segments)')
-                else:
-                    job_set(jid, step='Could not transcribe uploaded narration — using best scenes only')
-            if vo_for_sel or vo_beats:
-                job_set(jid, percent=35, step='Selecting scenes from narration')
-                vo_sel, vo_total = select_scenes_vo_led(
-                    scenes_data, vo_for_sel, trailer_duration, max_scene_dur, min_seg_dur,
-                    base_min_gap, transcribe_for_cuts=transcribe_for_cuts, word_starts=word_starts,
-                    phrase_ends=phrase_ends, word_ends=word_ends,
-                    sync_beats=sync_beats, beat_times=beat_times,
-                    vo_beats=vo_beats)
-                if vo_sel:
-                    selected, total_sel = vo_sel, vo_total
-                    used_driver = 'vo'
-                    job_set(jid, step=f'Narration-led selection: {len(selected)} beats matched, '
-                                       f'filling remaining budget with best scenes')
-                else:
-                    job_set(jid, step='Narration-led selection found no matches — using best scenes only')
-            else:
-                job_set(jid, step='No narration script or transcript — using best scenes only')
-
-        shortfall = 0.0
-        # Whatever narration-led selection above produced (empty if there was
-        # no narration, or none of it matched) is preserved across every pass
-        # below rather than being thrown away and re-decided from scratch --
-        # narration-pinned scenes stay pinned; only the REMAINING budget gets
-        # filled by best-scenes on top of them.
-        narration_selected = list(selected)
-        narration_total = total_sel
-
-        for pass_attempt in range(4):
-            # Relax the gap requirement on later passes: if spacing is preventing
-            # us from filling the duration budget, it's better to allow some
-            # clustering than to ship a trailer that's noticeably short.
-            min_gap = max(1.0, base_min_gap - pass_attempt * (base_min_gap / 4))
-            scenes_data.sort(key=lambda x: x['total_score'], reverse=True)
-            # Start from narration's picks (if any), not from empty -- the
-            # min_gap check below against every scene already in `selected`
-            # naturally excludes both those exact scenes (distance 0 from
-            # themselves) and anything too close to them, so no separate
-            # exclusion list is needed to avoid double-picking or crowding a
-            # narration-covered stretch of the timeline.
-            selected = list(narration_selected)
-            total_sel = narration_total
-            for s in scenes_data:
-                remaining = trailer_duration - total_sel
-                if remaining < min_seg_dur:
-                    # Not enough budget left for a decent-length clip — stop selecting
-                    # rather than truncating the next scene into a sliver. The
-                    # shortfall gets absorbed by nudging trailer_duration up on the
-                    # next pass_attempt below.
-                    break
-                # Too close in the source timeline to an already-selected
-                # scene -- skip it in favor of spreading selections across
-                # the video, rather than over-sampling one stretch of it.
-                # Scoped to the SAME material only: a real, confirmed bug --
-                # each material's own timecodes are local to that source
-                # (see apply_script_priority's own docstring), so a scene
-                # from material 2 at local time 0:35 and one from material 1
-                # at local time 0:38 are three seconds apart in two
-                # completely unrelated files, not three seconds apart in
-                # any shared timeline at all. The unscoped version of this
-                # check could exclude a script-matched scene from one
-                # material purely because ANOTHER material's already-picked
-                # scene happened to land at a numerically close local
-                # timecode -- exactly the shape of "script detected the
-                # cue but didn't select it" a real report described.
-                if any(abs(s['start'] - c['start']) < min_gap and s.get('material') == c.get('material')
-                       for c in selected):
-                    continue
-                seg_dur = min(s['duration'], remaining)
-                if max_scene_dur:
-                    seg_dur = min(seg_dur, max_scene_dur)
-                seg_start = s['start']
-                if transcribe_for_cuts and word_starts:
-                    # Don't start playback mid-word — nudge the in-point forward to
-                    # the start of the nearest word within this scene (capped so we
-                    # never drift far from the original visual cut point).
-                    snapped_start = nearest_word_boundary(seg_start, word_starts, max_snap=0.45, hard_limit=seg_start + seg_dur)
-                    if seg_start < snapped_start < seg_start + seg_dur:
-                        drift = snapped_start - seg_start
-                        seg_start = snapped_start
-                        seg_dur = max(0.3, seg_dur - drift)
-                scene_end = s['start'] + s['duration']
-                if sync_beats and beat_times:
-                    # Nudge this segment's end so the *cumulative* cut point lands on
-                    # the nearest beat, within what this scene can actually supply --
-                    # but only within a tight window around the already-computed,
-                    # word-boundary-aware target (see BEAT_SYNC_MAX_NUDGE), not the
-                    # whole remaining scene. A beat outside this range is too far to
-                    # snap to without risking a mid-word/mid-phrase cut the
-                    # speech-safety pass below won't be able to find and correct.
-                    target_cut = total_sel + seg_dur
-                    nudge_lo = max(total_sel + 0.3, target_cut - BEAT_SYNC_MAX_NUDGE)
-                    nudge_hi = min(total_sel + (scene_end - seg_start), target_cut + BEAT_SYNC_MAX_NUDGE)
-                    snapped_cut = nearest_beat(target_cut, beat_times, nudge_lo, nudge_hi)
-                    seg_dur = max(0.3, min(scene_end - seg_start, snapped_cut - total_sel))
-                if transcribe_for_cuts and (phrase_ends or word_ends) and seg_dur < (scene_end - seg_start):
-                    # This is a separate `if`, not `elif` -- beat-sync above (when
-                    # enabled) picks a rhythmically-aligned out-point first, and this
-                    # then refines THAT point for speech safety, rather than being
-                    # skipped whenever beat-sync is on. It used to be `elif`, which
-                    # meant turning on "sync cuts to the beat" silently disabled
-                    # "don't cut mid-word" for every clip's out-point.
-                    #
-                    # Prefers a complete-phrase end over a bare word end -- see
-                    # nearest_speech_out for why that distinction is worth a
-                    # wider snap window.
-                    target_end = seg_start + seg_dur
-                    snapped_end = nearest_speech_out(target_end, phrase_ends, word_ends, hard_limit=scene_end)
-                    if seg_start < snapped_end <= scene_end:
-                        seg_dur = max(0.3, snapped_end - seg_start)
-                s['trim_start'] = seg_start
-                s['selected_dur'] = seg_dur
-                selected.append(s)
-                total_sel += seg_dur
-            selected.sort(key=lambda x: x['start'])
-
+        if script_cues:
+            selected = build_cue_clips(script_cues, materials, min_seg_dur=min_seg_dur)
+            used_driver = 'cue'
+            if selected:
+                selected = _rebalance_selected_durations(selected, trailer_duration, min_seg_dur=min_seg_dur)
+            total_sel = sum(s['selected_dur'] for s in selected)
             n_seg = len(selected) + len(card_files)
             xfade_loss = max(0, (n_seg - 1)) * xfade_dur
             expected_total = total_sel + total_card_dur - xfade_loss
             shortfall = trailer_length - expected_total
-            if abs(shortfall) <= 0.5 or pass_attempt == 3:
-                break
-            trailer_duration = total_sel + shortfall * 1.15
+        else:
+            # --- Narration-led selection (only ever covers what narration actually
+            # supplies -- best-scenes below fills whatever budget is left over) ---
+            selected = []
+            total_sel = 0
+            min_gap = base_min_gap
+            if has_narration:
+                vo_for_sel = (params.get('vo_text') or '').strip()
+                vo_beats = None
+                # Uploaded narration: transcribe with Whisper so selection can follow the spoken lines
+                if not vo_for_sel and params.get('vo_mode') == 'upload' and params.get('vo_upload_path'):
+                    job_set(jid, percent=34, step='Transcribing uploaded narration for selection')
+                    _vo_words, _vo_segs = transcribe_audio_file(
+                        params.get('vo_upload_path'),
+                        trim_start=params.get('vo_trim_start') or 0.0,
+                        trim_end=params.get('vo_trim_end'),
+                    )
+                    vo_beats = _vo_beats_from_segments(_vo_segs)
+                    if vo_beats:
+                        vo_for_sel = ' '.join(b['text'] for b in vo_beats)
+                        job_set(jid, step=f'Uploaded narration transcribed ({len(vo_beats)} segments)')
+                    else:
+                        job_set(jid, step='Could not transcribe uploaded narration — using best scenes only')
+                if vo_for_sel or vo_beats:
+                    job_set(jid, percent=35, step='Selecting scenes from narration')
+                    vo_sel, vo_total = select_scenes_vo_led(
+                        scenes_data, vo_for_sel, trailer_duration, max_scene_dur, min_seg_dur,
+                        base_min_gap, transcribe_for_cuts=transcribe_for_cuts, word_starts=word_starts,
+                        phrase_ends=phrase_ends, word_ends=word_ends,
+                        sync_beats=sync_beats, beat_times=beat_times,
+                        vo_beats=vo_beats)
+                    if vo_sel:
+                        selected, total_sel = vo_sel, vo_total
+                        used_driver = 'vo'
+                        job_set(jid, step=f'Narration-led selection: {len(selected)} beats matched, '
+                                           f'filling remaining budget with best scenes')
+                    else:
+                        job_set(jid, step='Narration-led selection found no matches — using best scenes only')
+                else:
+                    job_set(jid, step='No narration script or transcript — using best scenes only')
+
+            shortfall = 0.0
+            # Whatever narration-led selection above produced (empty if there was
+            # no narration, or none of it matched) is preserved across every pass
+            # below rather than being thrown away and re-decided from scratch --
+            # narration-pinned scenes stay pinned; only the REMAINING budget gets
+            # filled by best-scenes on top of them.
+            narration_selected = list(selected)
+            narration_total = total_sel
+
+            for pass_attempt in range(4):
+                # Relax the gap requirement on later passes: if spacing is preventing
+                # us from filling the duration budget, it's better to allow some
+                # clustering than to ship a trailer that's noticeably short.
+                min_gap = max(1.0, base_min_gap - pass_attempt * (base_min_gap / 4))
+                scenes_data.sort(key=lambda x: x['total_score'], reverse=True)
+                # Start from narration's picks (if any), not from empty -- the
+                # min_gap check below against every scene already in `selected`
+                # naturally excludes both those exact scenes (distance 0 from
+                # themselves) and anything too close to them, so no separate
+                # exclusion list is needed to avoid double-picking or crowding a
+                # narration-covered stretch of the timeline.
+                selected = list(narration_selected)
+                total_sel = narration_total
+                for s in scenes_data:
+                    remaining = trailer_duration - total_sel
+                    if remaining < min_seg_dur:
+                        # Not enough budget left for a decent-length clip — stop selecting
+                        # rather than truncating the next scene into a sliver. The
+                        # shortfall gets absorbed by nudging trailer_duration up on the
+                        # next pass_attempt below.
+                        break
+                    # Too close in the source timeline to an already-selected
+                    # scene -- skip it in favor of spreading selections across
+                    # the video, rather than over-sampling one stretch of it.
+                    # Scoped to the SAME material only: a real, confirmed bug --
+                    # each material's own timecodes are local to that source
+                    # (see apply_script_priority's own docstring), so a scene
+                    # from material 2 at local time 0:35 and one from material 1
+                    # at local time 0:38 are three seconds apart in two
+                    # completely unrelated files, not three seconds apart in
+                    # any shared timeline at all. The unscoped version of this
+                    # check could exclude a script-matched scene from one
+                    # material purely because ANOTHER material's already-picked
+                    # scene happened to land at a numerically close local
+                    # timecode -- exactly the shape of "script detected the
+                    # cue but didn't select it" a real report described.
+                    if any(abs(s['start'] - c['start']) < min_gap and s.get('material') == c.get('material')
+                           for c in selected):
+                        continue
+                    seg_dur = min(s['duration'], remaining)
+                    if max_scene_dur:
+                        seg_dur = min(seg_dur, max_scene_dur)
+                    seg_start = s['start']
+                    if transcribe_for_cuts and word_starts:
+                        # Don't start playback mid-word — nudge the in-point forward to
+                        # the start of the nearest word within this scene (capped so we
+                        # never drift far from the original visual cut point).
+                        snapped_start = nearest_word_boundary(seg_start, word_starts, max_snap=0.45, hard_limit=seg_start + seg_dur)
+                        if seg_start < snapped_start < seg_start + seg_dur:
+                            drift = snapped_start - seg_start
+                            seg_start = snapped_start
+                            seg_dur = max(0.3, seg_dur - drift)
+                    scene_end = s['start'] + s['duration']
+                    if sync_beats and beat_times:
+                        # Nudge this segment's end so the *cumulative* cut point lands on
+                        # the nearest beat, within what this scene can actually supply --
+                        # but only within a tight window around the already-computed,
+                        # word-boundary-aware target (see BEAT_SYNC_MAX_NUDGE), not the
+                        # whole remaining scene. A beat outside this range is too far to
+                        # snap to without risking a mid-word/mid-phrase cut the
+                        # speech-safety pass below won't be able to find and correct.
+                        target_cut = total_sel + seg_dur
+                        nudge_lo = max(total_sel + 0.3, target_cut - BEAT_SYNC_MAX_NUDGE)
+                        nudge_hi = min(total_sel + (scene_end - seg_start), target_cut + BEAT_SYNC_MAX_NUDGE)
+                        snapped_cut = nearest_beat(target_cut, beat_times, nudge_lo, nudge_hi)
+                        seg_dur = max(0.3, min(scene_end - seg_start, snapped_cut - total_sel))
+                    if transcribe_for_cuts and (phrase_ends or word_ends) and seg_dur < (scene_end - seg_start):
+                        # This is a separate `if`, not `elif` -- beat-sync above (when
+                        # enabled) picks a rhythmically-aligned out-point first, and this
+                        # then refines THAT point for speech safety, rather than being
+                        # skipped whenever beat-sync is on. It used to be `elif`, which
+                        # meant turning on "sync cuts to the beat" silently disabled
+                        # "don't cut mid-word" for every clip's out-point.
+                        #
+                        # Prefers a complete-phrase end over a bare word end -- see
+                        # nearest_speech_out for why that distinction is worth a
+                        # wider snap window.
+                        target_end = seg_start + seg_dur
+                        snapped_end = nearest_speech_out(target_end, phrase_ends, word_ends, hard_limit=scene_end)
+                        if seg_start < snapped_end <= scene_end:
+                            seg_dur = max(0.3, snapped_end - seg_start)
+                    s['trim_start'] = seg_start
+                    s['selected_dur'] = seg_dur
+                    selected.append(s)
+                    total_sel += seg_dur
+                # (material, start), not start alone -- see the identical fix
+                # and its full explanation elsewhere in this file for
+                # cross-material ordering.
+                selected.sort(key=lambda x: (x.get('material') or 0, x['start']))
+
+                n_seg = len(selected) + len(card_files)
+                xfade_loss = max(0, (n_seg - 1)) * xfade_dur
+                expected_total = total_sel + total_card_dur - xfade_loss
+                shortfall = trailer_length - expected_total
+                if abs(shortfall) <= 0.5 or pass_attempt == 3:
+                    break
+                trailer_duration = total_sel + shortfall * 1.15
 
         # A positive shortfall here means every pass_attempt ran out of usable
         # scenes (limited spacing/availability) before hitting the target, and
@@ -9377,6 +9509,7 @@ def _run_trailer_job(jid, params):
             'scene': i+1, 'start': round(s['start'], 1), 'end': round(s['end'], 1),
             'quality': s['total_score'], 'duration': round(s['selected_dur'], 1),
             'material': s.get('material'),
+            'script_desc': s.get('script_desc') or None,
             'description': _scene_desc(s)
         } for i, s in enumerate(selected)])
     # library_add() runs BEFORE the job is marked done, not after -- doing it
