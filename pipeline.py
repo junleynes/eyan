@@ -3316,6 +3316,47 @@ def _extract_pdf_video_column_only(raw):
     except Exception:
         return None, False
 
+def manual_cues_to_script_text(manual_cues_json):
+    """Converts Timecode Priority's "Manual Entry" rows -- each a
+    {material, start, end} triplet typed directly into the UI, no script
+    file at all -- into synthetic script-line text, one line per row, so
+    they can be run through the exact same parse_script_cues() a real
+    uploaded script goes through. Reuses all of that function's own
+    existing, already-tested parsing and material-availability logic
+    rather than duplicating any of it in a second, parallel code path.
+
+    Returns (text, error). error is a short, specific message naming the
+    first row that failed and why (a real form-validation UX belongs in
+    the frontend before submission; this is the last-resort backend check
+    for a request that got here some other way, e.g. a stale/tampered
+    form)."""
+    try:
+        rows = json.loads(manual_cues_json or '[]')
+    except (ValueError, TypeError):
+        return None, 'Manual timecode entries were not in a readable format.'
+    if not isinstance(rows, list) or not rows:
+        return None, 'No manual timecode entries were provided.'
+    lines = []
+    for i, row in enumerate(rows, start=1):
+        if not isinstance(row, dict):
+            return None, f'Manual entry #{i} is not valid.'
+        try:
+            material = int(row.get('material'))
+        except (TypeError, ValueError):
+            return None, f'Manual entry #{i} needs a material selected.'
+        if material < 1:
+            return None, f'Manual entry #{i} has an invalid material number.'
+        start = str(row.get('start') or '').strip()
+        if not start:
+            return None, f'Manual entry #{i} needs a start timecode.'
+        end = str(row.get('end') or '').strip()
+        line = f'M{material} {start} {end}'.strip()
+        if not _parse_timecode_line(line):
+            return None, (f'Manual entry #{i}\'s start timecode ("{start}") was not '
+                          'recognisable. Use a format like 00:01:30:12, 00:01:30, or 1:30.')
+        lines.append(line)
+    return '\n'.join(lines), None
+
 def extract_script_text(file_storage):
     """Plain text from an uploaded script. Returns (text, error).
 
@@ -4341,8 +4382,15 @@ def api_validate_script():
     detection.
     """
     script_file, src_err = _script_file_from_request()
-    if src_err:
+    manual_cues_json = (request.form.get('manual_cues') or '').strip()
+    if not script_file and manual_cues_json:
+        text, err = manual_cues_to_script_text(manual_cues_json)
+        if err:
+            return jsonify(ok=False, error=err), 400
+    elif src_err:
         return jsonify(ok=False, error=src_err), 400
+    else:
+        text = None  # set below, after script_file is confirmed present
 
     # Discrete materials (preferred): JSON list of staged names, order = M1, M2, …
     # Legacy combine: file_segment_durations still offsets onto one timeline.
@@ -4371,9 +4419,10 @@ def api_validate_script():
     # If only combine durations were posted (legacy), available stays None so
     # parse_script_cues uses the offset path.
 
-    text, err = extract_script_text(script_file)
-    if err:
-        return jsonify(ok=False, error=err), 400
+    if text is None:
+        text, err = extract_script_text(script_file)
+        if err:
+            return jsonify(ok=False, error=err), 400
     if not (text or '').strip():
         return jsonify(ok=False, error='That file has no readable text.'), 400
 
@@ -4606,8 +4655,11 @@ def api_trailer():
 
     script_cues = []
     script_file, _script_src_err = _script_file_from_request()
-    # Missing script is fine (optional); only error when something was
-    # provided but unreadable / invalid.
+    manual_cues_json = (request.form.get('manual_cues') or '').strip()
+    # Missing script/manual entries is fine (optional); only error when
+    # something was provided but unreadable / invalid. Script upload takes
+    # priority over manual entries if a request somehow carries both (the
+    # UI's own radio only ever sends one at a time).
     if script_file:
         text, err = extract_script_text(script_file)
         if err:
@@ -4624,6 +4676,19 @@ def api_trailer():
                                  'Lines without any timecode are ignored.'), 400
     elif (request.form.get('script_file_network') or '').strip():
         return jsonify(error=_script_src_err or 'Could not load the library script.'), 400
+    elif manual_cues_json:
+        text, err = manual_cues_to_script_text(manual_cues_json)
+        if err:
+            return jsonify(error=err), 400
+        script_cues = parse_script_cues(
+            text,
+            segment_offsets=(None if available_materials is not None else segment_offsets),
+            available_materials=available_materials,
+        )
+        if not script_cues:
+            return jsonify(error='Those manual timecodes did not resolve to any usable scene '
+                                 'selections — check that each entry\'s material is one that was '
+                                 'actually loaded.'), 400
 
     transition = request.form.get('transition', 'fade')
     transition_matte_path = None
