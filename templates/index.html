@@ -1928,6 +1928,28 @@ document.addEventListener("DOMContentLoaded", function(){
       if(typeof updateJobSummary === 'function') updateJobSummary()
     })
   })
+  // A page reload doesn't fire 'change' on a radio the BROWSER itself
+  // restored to checked (form-state restoration across a refresh is one of
+  // its own doing, not the person clicking anything) -- a real, reported
+  // bug: reloading with Script Upload or Manual Entry still checked left
+  // that mode looking active with no source loaded at all, since the
+  // gating check above never got a chance to run. Enforced once more here,
+  // right after the change listeners are wired, silently (no error message
+  // -- the person didn't just try to do anything, the browser did) rather
+  // than greeting a plain page load with an error about an action nobody
+  // took.
+  ;(function enforceScriptModeGatingOnLoad(){
+    var checked = document.querySelector('input[name=script_mode]:checked')
+    var v = checked ? checked.value : 'none'
+    if((v === 'upload' || v === 'manual') && !trailerSourceSelected()){
+      var noneRadio = document.querySelector('input[name=script_mode][value=none]')
+      if(noneRadio) noneRadio.checked = true
+      var area = document.getElementById('script-upload-area')
+      if(area) area.style.display = 'none'
+      var manualArea = document.getElementById('manual-cues-area')
+      if(manualArea) manualArea.style.display = 'none'
+    }
+  })()
   document.querySelectorAll('input[name=vo_mode]').forEach(r=>{
     r.addEventListener('change',()=>{
       var v=document.querySelector('input[name=vo_mode]:checked').value
