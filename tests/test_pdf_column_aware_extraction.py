@@ -17,6 +17,7 @@ this at all and reads exactly as it always did, via pypdf, completely
 unaffected.
 """
 import io
+import os
 import unittest.mock as mock
 
 with mock.patch('requests.post'), mock.patch('requests.get'):
@@ -275,3 +276,32 @@ def test_the_actual_reported_document_end_to_end():
     assert times == [35.0, 213.0]
     descs = [c['desc'] for c in cues]
     assert not any('GMA' in d or 'TELECAST' in d or 'PRIME' in d or 'FIREWALL' in d for d in descs)
+
+
+def test_the_actual_real_pdf_file_end_to_end():
+    # The real, ground-truth document itself (not a reportlab
+    # reconstruction) -- provided directly by the person who originally
+    # reported this bug, after the reportlab-based approximation above had
+    # already been fixed and verified. This is the actual, final proof:
+    # confirmed running this real file through the actual, unmodified
+    # extract_script_text() + parse_script_cues() pipeline produces
+    # exactly the 2 cues confirmed correct (M1 3:33 HABOL TACKLE, M2 0:35
+    # BUNOT), with the right column's own M1 3:38 / M2 0:12 / M2 0:43
+    # dialogue-take references and both wall-clock mentions (GMA 8:50 PM,
+    # SECOND TELECAST GTV 10:30 PM) all correctly excluded -- kept as a
+    # permanent fixture so this exact, real document can never silently
+    # regress again.
+    fixture_path = os.path.join(os.path.dirname(__file__), 'fixtures', 'PVPD_FIREWA_070226_LN015.pdf')
+    with open(fixture_path, 'rb') as f:
+        raw = f.read()
+    fs = FileStorage(stream=io.BytesIO(raw), filename='PVPD_FIREWA_070226_LN015.pdf')
+    text, err = pipeline.extract_script_text(fs)
+    assert err is None
+    cues = pipeline.parse_script_cues(text, available_materials={1, 2})
+    assert len(cues) == 2
+    times = sorted(c['time'] for c in cues)
+    assert times == [35.0, 213.0]  # M2 0:35 (BUNOT) and M1 3:33 (HABOL TACKLE)
+    descs = ' '.join(c['desc'] for c in cues)
+    assert 'HABOL TACKLE' in descs
+    assert 'BUNOT' in descs
+    assert not any(x in descs for x in ('3:38', '00:12', '00:43', 'GMA 8:50', 'TELECAST', 'PRIME'))
