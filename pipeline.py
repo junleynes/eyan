@@ -224,12 +224,30 @@ templates_db_init()
 # one bar and one line, so long stages looked frozen and short ones flew past.
 # Each entry is (percent_at_start, label); the UI marks everything below the
 # current percent as done and highlights the stage the job is actually in.
+#
+# "Selecting scenes" starts at 30, not 28: a real, reported bug -- the AI
+# vision scoring loop above climbs incrementally up to 18+12=30 as it works
+# through every scene (see the job_set call using n_scenes_ai below), but
+# several of the steps that genuinely run right after it (transcribing
+# dialogue, preparing music for beat-synced cuts, the actual scene selection
+# itself, transcribing uploaded narration) were still using percent values
+# from BEFORE that 30% ceiling. The progress bar and this stepper visibly
+# jumped backward to "AI vision rating" every time one of those ran, even
+# though the job was moving strictly forward the whole time -- the percent
+# values were just out of order relative to when each step actually executes.
+# Every one of those steps' own job_set() calls (search this file for
+# "Transcribing dialogue", "Preparing music for beat", "Selecting scenes",
+# "Transcribing uploaded narration") now uses a value at or above this same
+# 30, in the same order they actually run in, specifically so this can't
+# regress again -- if a percent value is ever added or changed in that
+# stretch of the pipeline, keeping it >= this table's own "Selecting scenes"
+# entry (and below "Extracting clips" at 38) preserves the same guarantee.
 PIPELINE_STAGES = [
     (2,   'Reading video'),
     (8,   'Detecting cuts'),
     (15,  'Rating scenes'),
     (18,  'AI vision rating'),
-    (28,  'Selecting scenes'),
+    (30,  'Selecting scenes'),
     (38,  'Extracting clips'),
     (50,  'Transitions'),
     (58,  'Audio levels'),
@@ -8080,7 +8098,7 @@ def _run_trailer_job(jid, params):
         #    of silence instead of shaving syllables off dialogue.
         word_starts, word_ends, phrase_ends, speech_spans = [], [], [], []
         if transcribe_for_cuts:
-            job_set(jid, percent=22, step='Transcribing dialogue (faster-whisper)')
+            job_set(jid, percent=31, step='Transcribing dialogue (faster-whisper)')
             words, segments = transcribe_video(path)
             if words or segments:
                 word_starts = [w['start'] for w in words]
@@ -8125,7 +8143,7 @@ def _run_trailer_job(jid, params):
                        # writing to the same trailer_<ts>.mp4 path at once.
         beat_times = []
         if sync_beats:
-            job_set(jid, percent=20, step='Preparing music for beat-synced cuts')
+            job_set(jid, percent=32, step='Preparing music for beat-synced cuts')
             early_bgm_path, early_bgm_source = prepare_bgm_track(genre, scoring_mode, scoring_audio_path,
                                                                   base_target, base_ts,
                                                                   trim_start=params.get('scoring_audio_trim_start') or 0.0,
@@ -8137,7 +8155,7 @@ def _run_trailer_job(jid, params):
             else:
                 sync_beats = False
 
-        job_set(jid, percent=28, step='Selecting scenes')
+        job_set(jid, percent=33, step='Selecting scenes')
         # Pick top scenes by score to fill target, then sort by timecode
         # Iterative: xfade transitions shorten output, so compensate
         # Apply script-driven priority (if a script/rundown was uploaded)
@@ -8205,7 +8223,7 @@ def _run_trailer_job(jid, params):
             vo_beats = None
             # Uploaded narration: transcribe with Whisper so selection can follow the spoken lines
             if not vo_for_sel and params.get('vo_mode') == 'upload' and params.get('vo_upload_path'):
-                job_set(jid, percent=27, step='Transcribing uploaded narration for selection')
+                job_set(jid, percent=34, step='Transcribing uploaded narration for selection')
                 _vo_words, _vo_segs = transcribe_audio_file(
                     params.get('vo_upload_path'),
                     trim_start=params.get('vo_trim_start') or 0.0,
@@ -8218,7 +8236,7 @@ def _run_trailer_job(jid, params):
                 else:
                     job_set(jid, step='Could not transcribe uploaded narration — using best scenes only')
             if vo_for_sel or vo_beats:
-                job_set(jid, percent=28, step='Selecting scenes from narration')
+                job_set(jid, percent=35, step='Selecting scenes from narration')
                 vo_sel, vo_total = select_scenes_vo_led(
                     scenes_data, vo_for_sel, trailer_duration, max_scene_dur, min_seg_dur,
                     base_min_gap, transcribe_for_cuts=transcribe_for_cuts, word_starts=word_starts,
