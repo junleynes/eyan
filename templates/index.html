@@ -1232,6 +1232,7 @@ document.addEventListener("DOMContentLoaded", function(){
     <input type=hidden name=network_file id=tr-network-file value="">
     <input type=hidden name=file_segment_durations id=tr-file-segment-durations value="">
     <input type=hidden name=materials_network id=tr-materials-network value="">
+    <input type=hidden id=tr-materials-display-names value="">
     <div id=tr-dropzone-prompt>
       <div style="font-size:28px;line-height:1;margin-bottom:6px">&#8682;</div>
       <div style="font-size:14px;margin-bottom:12px">{% if allow_local_upload %}Drag &amp; drop a video here{% else %}Pick a video from the library{% endif %}</div>
@@ -1401,8 +1402,8 @@ document.addEventListener("DOMContentLoaded", function(){
     </div>
   </div>
   <template id=manual-cue-row-template>
-    <div class="manual-cue-row" style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
-      <select class="mc-material input-box" style="width:70px;margin:0;padding:6px 8px;font-size:13px"></select>
+    <div class="manual-cue-row" style="display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
+      <select class="mc-material input-box" style="width:190px;flex:1 1 190px;margin:0;padding:6px 8px;font-size:13px;text-overflow:ellipsis"></select>
       <input type=text class="mc-start input-box" placeholder="Start (1:30)" style="width:110px;margin:0;padding:6px 8px;font-size:13px">
       <input type=text class="mc-end input-box" placeholder="End (optional)" style="width:110px;margin:0;padding:6px 8px;font-size:13px">
       <span class="mc-remove" onclick="removeManualCueRow(this)" style="cursor:pointer;opacity:.6;padding:4px 8px;font-size:16px;line-height:1" title="Remove">&#10005;</span>
@@ -1897,6 +1898,18 @@ document.addEventListener("DOMContentLoaded", function(){
   document.querySelectorAll('input[name=script_mode]').forEach(r=>{
     r.addEventListener('change',()=>{
       var v = document.querySelector('input[name=script_mode]:checked').value
+      // Script Upload and Manual Entry both need a HIRES source already
+      // selected -- checked here, the moment either radio is picked, not
+      // deferred until the person tries to actually upload a file or type
+      // a timecode. A failed check shows the same error
+      // requireTrailerSourceForScript() already shows elsewhere, and the
+      // radio itself reverts to None rather than silently sitting on an
+      // option that can't actually be used yet.
+      if((v === 'upload' || v === 'manual') && !requireTrailerSourceForScript()){
+        var noneRadio = document.querySelector('input[name=script_mode][value=none]')
+        if(noneRadio) noneRadio.checked = true
+        return
+      }
       var area = document.getElementById('script-upload-area')
       if(area) area.style.display = v === 'upload' ? '' : 'none'
       var manualArea = document.getElementById('manual-cues-area')
@@ -2427,7 +2440,7 @@ document.addEventListener("DOMContentLoaded", function(){
   }
   function requireTrailerSourceForScript(){
     if(trailerSourceSelected()) return true
-    var msg = 'Select a source video first (Browse files or Browse library), then attach the script.'
+    var msg = 'Select a source video first (Browse files or Browse library), then set up the script or manual timecodes.'
     if(typeof showScriptValidatePanel === 'function'){
       showScriptValidatePanel(null, msg)
       var panel = document.getElementById('script-validate-panel')
@@ -2541,12 +2554,18 @@ document.addEventListener("DOMContentLoaded", function(){
   }
   window.clearScriptFile = clearScriptFile
 
-  function _manualCueMaterialCount(){
+  function _manualCueMaterialNames(){
+    // The real, human-readable filename(s) picked at HIRES selection --
+    // e.g. "WEEK6 DAY4 PLUG1.MOV" -- not the generic "M1"/"M2" labels used
+    // internally for parsing. Falls back to "M1" only if that field is
+    // somehow empty (shouldn't happen once requireTrailerSourceForScript()
+    // is enforced before this UI is even reachable), so the dropdown is
+    // never left with zero options.
     try {
-      var matsRaw = (document.getElementById('tr-materials-network') || {}).value || ''
-      var mats = matsRaw ? JSON.parse(matsRaw) : []
-      return Math.max(1, mats.length)
-    } catch(e){ return 1 }
+      var namesRaw = (document.getElementById('tr-materials-display-names') || {}).value || ''
+      var names = namesRaw ? JSON.parse(namesRaw) : []
+      return (names && names.length) ? names : ['M1']
+    } catch(e){ return ['M1'] }
   }
   function addManualCueRow(){
     var tpl = document.getElementById('manual-cue-row-template')
@@ -2554,13 +2573,14 @@ document.addEventListener("DOMContentLoaded", function(){
     if(!tpl || !rows) return
     var clone = tpl.content.cloneNode(true)
     var sel = clone.querySelector('.mc-material')
-    var count = _manualCueMaterialCount()
-    for(var i = 1; i <= count; i++){
+    var names = _manualCueMaterialNames()
+    names.forEach(function(name, idx){
       var opt = document.createElement('option')
-      opt.value = i
-      opt.textContent = 'M' + i
+      opt.value = idx + 1
+      opt.textContent = name
+      opt.title = name
       sel.appendChild(opt)
-    }
+    })
     ;['change', 'input'].forEach(function(evt){
       sel.addEventListener(evt, scheduleManualCuesValidate)
       clone.querySelector('.mc-start').addEventListener(evt, scheduleManualCuesValidate)
@@ -3271,6 +3291,8 @@ document.addEventListener("DOMContentLoaded", function(){
     if(currentObjectUrl){ URL.revokeObjectURL(currentObjectUrl); currentObjectUrl = null }
     currentObjectUrl = URL.createObjectURL(file)
     previewName.textContent = file.name
+    var displayNamesField = document.getElementById('tr-materials-display-names')
+    if(displayNamesField) displayNamesField.value = JSON.stringify([file.name])
     if(typeof updateJobSummary==='function') updateJobSummary()
     previewMeta.textContent = humanSize(file.size) + ' — reading video info…'
     setPreviewThumbLoading()
@@ -3333,6 +3355,14 @@ document.addEventListener("DOMContentLoaded", function(){
     window._fileSegmentDurations = []
     var matsField = document.getElementById('tr-materials-network')
     if(matsField) matsField.value = ''
+    var displayNamesField = document.getElementById('tr-materials-display-names')
+    // Set for the single-file case here; useSeparateMaterialsSelection
+    // overwrites this with the real per-material list afterward, the same
+    // pattern matsField itself already uses -- this call happens for that
+    // path too (origName is the combined "1: X · 2: Y" label there, not a
+    // real single filename), so it's correct only until that caller's own
+    // follow-up assignment replaces it.
+    if(displayNamesField) displayNamesField.value = JSON.stringify([origName])
     // Unlike the local-file path above, this file genuinely IS already
     // staged server-side (that's what got it here) -- so this uses the
     // real /api/media/probe endpoint instead of the browser's own decode.
@@ -3384,6 +3414,9 @@ document.addEventListener("DOMContentLoaded", function(){
     window._fileSegmentDurations = []
     var matsField = document.getElementById('tr-materials-network')
     if(matsField) matsField.value = ''
+    var displayNamesField = document.getElementById('tr-materials-display-names')
+    if(displayNamesField) displayNamesField.value = ''
+    if(typeof clearManualCues === 'function') clearManualCues()
     preview.classList.remove('shown')
     previewThumb.removeAttribute('src')
     previewThumb.style.display = 'none'
@@ -3525,6 +3558,8 @@ document.addEventListener("DOMContentLoaded", function(){
         showNetworkPreview(staged[0], label, null)
         var matsField = document.getElementById('tr-materials-network')
         if(matsField) matsField.value = JSON.stringify(staged)
+        var displayNamesField = document.getElementById('tr-materials-display-names')
+        if(displayNamesField) displayNamesField.value = JSON.stringify(items.map(function(it){ return it.name }))
         var meta = document.getElementById('tr-file-preview-meta')
         if(meta) meta.textContent = staged.length + ' sources loaded \u00b7 script times match each file separately'
         status.textContent = staged.length + ' sources ready.'
