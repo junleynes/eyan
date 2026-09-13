@@ -1355,7 +1355,7 @@ document.addEventListener("DOMContentLoaded", function(){
     </script>
   <div class="asset-section" id=asset-script style="margin-top:14px">
     <div class="asset-section-header" onclick="toggleAssetSection(this)">
-      <span class="asset-section-title">Script</span>
+      <span class="asset-section-title">Timecode Priority</span>
       <span class="asset-section-summary" id=summary-script>None</span>
       <span class="asset-section-chevron">&#9656;</span>
     </div>
@@ -1365,7 +1365,10 @@ document.addEventListener("DOMContentLoaded", function(){
           <input type=radio name=script_mode value=none checked> None
         </label>
         <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
-          <input type=radio name=script_mode value=upload> Upload
+          <input type=radio name=script_mode value=upload> Script Upload
+        </label>
+        <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
+          <input type=radio name=script_mode value=manual> Manual Entry
         </label>
       </div>
       <div id=script-upload-area style="display:none">
@@ -1382,15 +1385,29 @@ document.addEventListener("DOMContentLoaded", function(){
           <input type=hidden name=script_file_network id=script_file_network value="">
         </div>
         <span class="net-file-chip" id=script-file-chip style="display:none"><span class=chip-name></span><span class=chip-x onclick="clearScriptFile(); updateJobSummary()">&#10005;</span></span>
-        <div id=script-validate-panel style="display:none;margin:8px 0 4px;padding:10px 12px;border-radius:8px;border:1px solid var(--border,#333);background:var(--panel-2,#1a1a1a);font-size:13px;line-height:1.45">
-          <div id=script-validate-summary style="font-weight:600;margin-bottom:6px"></div>
-          <div id=script-validate-warnings style="color:#e6b84d;margin-bottom:6px"></div>
-          <div id=script-validate-cues style="max-height:180px;overflow:auto;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;opacity:.95"></div>
-          <div id=script-validate-skipped style="margin-top:6px;color:#c88;font-size:12px;max-height:100px;overflow:auto"></div>
-        </div>
+      </div>
+      <div id=manual-cues-area style="display:none">
+        <div id=manual-cues-rows></div>
+        <button type=button class="browse-btn" onclick="addManualCueRow()" style="margin-top:6px">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>Add timecode
+        </button>
+      </div>
+      <div id=script-validate-panel style="display:none;margin:8px 0 4px;padding:10px 12px;border-radius:8px;border:1px solid var(--border,#333);background:var(--panel-2,#1a1a1a);font-size:13px;line-height:1.45">
+        <div id=script-validate-summary style="font-weight:600;margin-bottom:6px"></div>
+        <div id=script-validate-warnings style="color:#e6b84d;margin-bottom:6px"></div>
+        <div id=script-validate-cues style="max-height:180px;overflow:auto;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;opacity:.95"></div>
+        <div id=script-validate-skipped style="margin-top:6px;color:#c88;font-size:12px;max-height:100px;overflow:auto"></div>
       </div>
     </div>
   </div>
+  <template id=manual-cue-row-template>
+    <div class="manual-cue-row" style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+      <select class="mc-material input-box" style="width:70px;margin:0;padding:6px 8px;font-size:13px"></select>
+      <input type=text class="mc-start input-box" placeholder="Start (1:30)" style="width:110px;margin:0;padding:6px 8px;font-size:13px">
+      <input type=text class="mc-end input-box" placeholder="End (optional)" style="width:110px;margin:0;padding:6px 8px;font-size:13px">
+      <span class="mc-remove" onclick="removeManualCueRow(this)" style="cursor:pointer;opacity:.6;padding:4px 8px;font-size:16px;line-height:1" title="Remove">&#10005;</span>
+    </div>
+  </template>
   <div class="asset-section" id=asset-narration style="margin-top:10px">
     <div class="asset-section-header" onclick="toggleAssetSection(this)">
       <span class="asset-section-title">Narration</span>
@@ -1836,6 +1853,11 @@ document.addEventListener("DOMContentLoaded", function(){
       var scriptMode = document.querySelector('input[name=script_mode]:checked')
       scriptMode = scriptMode ? scriptMode.value : 'none'
       if(scriptMode === 'none') s.textContent = 'None'
+      else if(scriptMode === 'manual'){
+        var mcCount = document.querySelectorAll('#manual-cues-rows .manual-cue-row .mc-start')
+        var filled = Array.prototype.filter.call(mcCount, function(inp){ return inp.value.trim() }).length
+        s.textContent = filled ? ('Manual: ' + filled + ' timecode' + (filled === 1 ? '' : 's')) : 'Manual entry (none yet)'
+      }
       else {
         var chip = document.getElementById('script-file-chip')
         var chipName = (chip && chip.style.display !== 'none' && chip.querySelector('.chip-name'))
@@ -1877,7 +1899,18 @@ document.addEventListener("DOMContentLoaded", function(){
       var v = document.querySelector('input[name=script_mode]:checked').value
       var area = document.getElementById('script-upload-area')
       if(area) area.style.display = v === 'upload' ? '' : 'none'
+      var manualArea = document.getElementById('manual-cues-area')
+      if(manualArea){
+        manualArea.style.display = v === 'manual' ? '' : 'none'
+        // Start with one empty row the first time Manual Entry is picked,
+        // rather than an empty list the person has to click "Add timecode"
+        // just to begin.
+        if(v === 'manual' && !document.getElementById('manual-cues-rows').children.length){
+          addManualCueRow()
+        }
+      }
       if(v === 'none' && typeof clearScriptFile === 'function') clearScriptFile()
+      if(v !== 'manual' && typeof clearManualCues === 'function') clearManualCues()
       refreshAllAssetSummaries()
       if(typeof updateJobSummary === 'function') updateJobSummary()
     })
@@ -2507,6 +2540,108 @@ document.addEventListener("DOMContentLoaded", function(){
     if(typeof refreshAllAssetSummaries === 'function') refreshAllAssetSummaries()
   }
   window.clearScriptFile = clearScriptFile
+
+  function _manualCueMaterialCount(){
+    try {
+      var matsRaw = (document.getElementById('tr-materials-network') || {}).value || ''
+      var mats = matsRaw ? JSON.parse(matsRaw) : []
+      return Math.max(1, mats.length)
+    } catch(e){ return 1 }
+  }
+  function addManualCueRow(){
+    var tpl = document.getElementById('manual-cue-row-template')
+    var rows = document.getElementById('manual-cues-rows')
+    if(!tpl || !rows) return
+    var clone = tpl.content.cloneNode(true)
+    var sel = clone.querySelector('.mc-material')
+    var count = _manualCueMaterialCount()
+    for(var i = 1; i <= count; i++){
+      var opt = document.createElement('option')
+      opt.value = i
+      opt.textContent = 'M' + i
+      sel.appendChild(opt)
+    }
+    ;['change', 'input'].forEach(function(evt){
+      sel.addEventListener(evt, scheduleManualCuesValidate)
+      clone.querySelector('.mc-start').addEventListener(evt, scheduleManualCuesValidate)
+      clone.querySelector('.mc-end').addEventListener(evt, scheduleManualCuesValidate)
+    })
+    rows.appendChild(clone)
+  }
+  window.addManualCueRow = addManualCueRow
+  function removeManualCueRow(el){
+    var row = el.closest('.manual-cue-row')
+    if(row) row.remove()
+    scheduleManualCuesValidate()
+  }
+  window.removeManualCueRow = removeManualCueRow
+  function clearManualCues(){
+    var rows = document.getElementById('manual-cues-rows')
+    if(rows) rows.innerHTML = ''
+    hideScriptValidatePanel()
+  }
+  window.clearManualCues = clearManualCues
+
+  var _manualCuesValidateTimer = null
+  function scheduleManualCuesValidate(){
+    // Debounced: Manual Entry validates as the person types/changes rows,
+    // not just once on file-choose like Script Upload -- without this, every
+    // keystroke in a timecode field would fire its own request.
+    if(_manualCuesValidateTimer) clearTimeout(_manualCuesValidateTimer)
+    _manualCuesValidateTimer = setTimeout(validateManualCues, 500)
+  }
+  function collectManualCues(){
+    var rows = document.querySelectorAll('#manual-cues-rows .manual-cue-row')
+    var out = []
+    rows.forEach(function(row){
+      var material = row.querySelector('.mc-material').value
+      var start = row.querySelector('.mc-start').value.trim()
+      var end = row.querySelector('.mc-end').value.trim()
+      if(!start) return  // a freshly-added, not-yet-filled row isn't an entry yet
+      out.push({material: parseInt(material, 10), start: start, end: end})
+    })
+    return out
+  }
+  function validateManualCues(){
+    if(!requireTrailerSourceForScript()) return
+    var entries = collectManualCues()
+    if(!entries.length){ hideScriptValidatePanel(); return }
+    var panel = document.getElementById('script-validate-panel')
+    if(panel){
+      panel.style.display = 'block'
+      document.getElementById('script-validate-summary').style.color = ''
+      document.getElementById('script-validate-summary').textContent = 'Checking timecodes…'
+      document.getElementById('script-validate-warnings').textContent = ''
+      document.getElementById('script-validate-cues').textContent = ''
+      document.getElementById('script-validate-skipped').textContent = ''
+    }
+    var fd = new FormData()
+    fd.append('manual_cues', JSON.stringify(entries))
+    try {
+      var matsRaw = (document.getElementById('tr-materials-network') || {}).value || ''
+      if(matsRaw){
+        fd.append('materials_network', matsRaw)
+        var mats = JSON.parse(matsRaw)
+        if(mats && mats.length) fd.append('materials_count', String(mats.length))
+      }
+    } catch(e){}
+    fetch('/api/trailer/validate_script', { method: 'POST', body: fd, credentials: 'same-origin' })
+      .then(function(r){ return r.json().then(function(j){ return { status: r.status, body: j } }) })
+      .then(function(res){
+        var b = res.body || {}
+        if(b.summary || (b.cues && b.cues.length) || b.warnings){
+          showScriptValidatePanel(b, null)
+        } else {
+          showScriptValidatePanel(null, b.error || ('Could not check timecodes (HTTP ' + res.status + ')'))
+        }
+        if(typeof refreshAllAssetSummaries === 'function') refreshAllAssetSummaries()
+      })
+      .catch(function(e){
+        showScriptValidatePanel(null, 'Timecode check failed: ' + e)
+      })
+  }
+  window.validateManualCues = validateManualCues
+
 
   function updateTransitionMatteVisibility(){
     var el = document.getElementById('transition-matte-area')
@@ -3810,6 +3945,15 @@ async function submitTrailer(previewOnly){
 
   var fd = new FormData(this_form)
   if(previewOnly) fd.append('preview_only', '1')
+  // Manual Entry's rows have no name= attributes (they're serialized into
+  // one JSON array, not individual form fields), so FormData(this_form)
+  // above never picks them up on its own -- appended explicitly here,
+  // matching exactly what validateManualCues() already sends for the live
+  // preview, so what gets checked is what actually renders.
+  if(document.querySelector('input[name=script_mode]:checked').value === 'manual'){
+    var manualEntries = collectManualCues()
+    if(manualEntries.length) fd.append('manual_cues', JSON.stringify(manualEntries))
+  }
 
   let startData
   try{
