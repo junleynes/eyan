@@ -13,6 +13,8 @@ file to read, not a mocked one.
 """
 import os
 import subprocess
+import time
+import json
 import unittest.mock as mock
 
 import pytest
@@ -142,3 +144,67 @@ def test_clips_include_an_end_field_matching_start_plus_duration(two_materials):
     cues = [{'time': 10, 'out': 15, 'desc': 'x', 'material': 1}]
     clips = pipeline.build_cue_clips(cues, two_materials)
     assert clips[0]['end'] == clips[0]['start'] + clips[0]['duration']
+
+
+def test_preview_path_does_not_crash_with_cue_exclusive_selection(two_materials, tmp_path, monkeypatch):
+    # Regression guard for a real, user-reported crash: "Writing preview
+    # thumbnails" -> "cannot access free variable 'min_gap'". Cause: the
+    # cue-exclusive selection branch in _run_trailer_job never assigned
+    # min_gap at all (only the narration/best-scenes branch did), but the
+    # preview path's alternates-building code further down references it
+    # unconditionally regardless of which branch ran. Exercises the real,
+    # full preview pipeline end to end -- a plain unit test of
+    # build_cue_clips alone can't catch this, since the bug is about a
+    # variable's scope across a much larger function.
+    import io as _io
+    import unittest.mock as mock
+    import core
+
+    monkeypatch.setattr(pipeline, 'ALLOW_LOCAL_MEDIA_UPLOAD', True)
+    app = main.app
+    client = app.test_client()
+    with client.session_transaction() as sess:
+        sess['authed'] = True
+        sess['user_id'] = 1
+        sess['username'] = 'admin'
+        sess['role'] = 'admin'
+        sess['csrf_token'] = 'test-csrf-cue-preview'
+    headers = {'X-CSRF-Token': 'test-csrf-cue-preview'}
+
+    upload_folder = app.config['UPLOAD_FOLDER']
+    os.makedirs(upload_folder, exist_ok=True)
+    net1, net2 = 'net_cue_preview_1.mp4', 'net_cue_preview_2.mp4'
+    import shutil
+    shutil.copy(two_materials[0], os.path.join(upload_folder, net1))
+    shutil.copy(two_materials[1], os.path.join(upload_folder, net2))
+
+    with open(two_materials[0], 'rb') as f:
+        video_bytes = f.read()
+
+    entries = [
+        {'material': 1, 'start': '3:33', 'end': '3:37'},
+        {'material': 2, 'start': '0:35', 'end': '0:42'},
+    ]
+    core._job_submit_limiter.buckets.clear()
+    with mock.patch('requests.post'), mock.patch('requests.get'):
+        r = client.post('/api/trailer/generate', data={
+            'file': (_io.BytesIO(video_bytes), 'mat1.mp4'),
+            'genre': '', 'trailer_length': '15',
+            'scoring_mode': 'none', 'sfx_mode': 'none', 'vo_mode': 'none',
+            'manual_cues': json.dumps(entries),
+            'materials_network': json.dumps([net1, net2]),
+            'preview_only': '1',
+        }, headers=headers, content_type='multipart/form-data')
+        assert r.status_code == 200, r.get_data(as_text=True)
+        job_id = r.get_json()['job_id']
+        d = None
+        for _ in range(60):
+            d = client.get(f'/api/trailer/progress/{job_id}').get_json()
+            if d.get('done'):
+                break
+            time.sleep(1)
+    assert d.get('error') is None, d.get('error')
+    result = d.get('result') or {}
+    scenes = result.get('scenes') or []
+    assert len(scenes) == 2
+    assert {s['material'] for s in scenes} == {1, 2}
