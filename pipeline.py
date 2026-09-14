@@ -8373,6 +8373,7 @@ def _run_trailer_job(jid, params):
         # the target duration, exactly the "AI can adjust the in/out to
         # fill remaining time" behaviour requested.
         used_driver = 'score'
+        min_gap = base_min_gap
         if script_cues:
             selected = build_cue_clips(script_cues, materials, min_seg_dur=min_seg_dur)
             used_driver = 'cue'
@@ -8388,7 +8389,6 @@ def _run_trailer_job(jid, params):
             # supplies -- best-scenes below fills whatever budget is left over) ---
             selected = []
             total_sel = 0
-            min_gap = base_min_gap
             if has_narration:
                 vo_for_sel = (params.get('vo_text') or '').strip()
                 vo_beats = None
