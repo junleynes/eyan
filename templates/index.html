@@ -1624,6 +1624,12 @@ document.addEventListener("DOMContentLoaded", function(){
       <input type=checkbox name=sync_beats checked> Sync cuts to beat
     </label>
   </div>
+  <p style="margin:0 0 8px;font-size:12px;opacity:.7">
+    These work independently — each has its own beat detection, and neither requires the other.
+    <strong>Sync cuts to beat</strong> snaps the video's own cut points to the music's beat while scenes are being picked.
+    <strong>Beat match</strong> instead adjusts the music's own tempo afterward to fit the cuts that already exist — it doesn't move or add any cuts itself.
+    Turning on Beat match alone won't change where the video cuts at all; it only re-times the music. Using both together can leave cuts slightly off the beat they were synced to, since Beat match's own tempo-stretching shifts where those beats fall in the final mix.
+  </p>
   </div>
   <div class="asset-section" id=asset-title-card>
     <div class="asset-section-header" onclick="toggleAssetSection(this)">
@@ -1781,13 +1787,13 @@ document.addEventListener("DOMContentLoaded", function(){
     <div class="asset-section-body">
   <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:8px 0">
     <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
-      <input type=radio name=sfx_mode value=genre data-requires="woosh"> From genre
-    </label>
-    <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
-      <input type=radio name=sfx_mode value=upload> Upload one-shot
-    </label>
-    <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
       <input type=radio name=sfx_mode value=none checked> None
+    </label>
+    <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
+      <input type=radio name=sfx_mode value=upload> Upload
+    </label>
+    <label style="font-size:13px;text-transform:none;letter-spacing:0;display:flex;align-items:center;gap:4px;margin:0;cursor:pointer">
+      <input type=radio name=sfx_mode value=genre data-requires="woosh"> From genre
     </label>
   </div>
   <p id=sfx-gating-note style="display:none;margin-top:6px;margin-bottom:8px;font-size:12px;color:var(--amber)">"From genre" is unavailable — Woosh isn't reachable.</p>
