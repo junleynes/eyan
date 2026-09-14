@@ -629,6 +629,16 @@ input[type=file]::-webkit-file-upload-button:hover{
   padding:3px 10px;border-radius:6px;font-size:12px;cursor:pointer;
 }
 #tr-file-preview-clear:hover{border-color:var(--tally);color:var(--tally)}
+#pl-close{
+  background:transparent;color:var(--ink-dim);border:1px solid var(--line);
+  padding:3px 10px;border-radius:6px;font-size:12px;cursor:pointer;
+}
+#pl-close:hover{border-color:var(--tally);color:var(--tally)}
+#tr-close{
+  background:transparent;color:var(--ink-dim);border:1px solid var(--line);
+  padding:3px 10px;border-radius:6px;font-size:12px;cursor:pointer;
+}
+#tr-close:hover{border-color:var(--tally);color:var(--tally)}
 input[type=url],input[type=number],input[type=text],select{width:100%;padding:10px 12px;background:var(--elevated);border:1px solid var(--line);border-radius:7px;margin:6px 0;font-size:14px;color:var(--ink);font-family:'IBM Plex Sans',sans-serif}
 select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--ink-dim) 50%),linear-gradient(135deg,var(--ink-dim) 50%,transparent 50%);background-position:calc(100% - 18px) center,calc(100% - 13px) center;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
 
@@ -1130,7 +1140,10 @@ document.addEventListener("DOMContentLoaded", function(){
 <span id=pl-status style="font-size:12px;opacity:.75"></span>
 <div id=pl-area style="display:none;margin-top:16px">
   <div class=card>
-    <div id=pl-title style="font-size:12px;opacity:.8;margin-bottom:8px"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px">
+      <div id=pl-title style="font-size:12px;opacity:.8"></div>
+      <button type=button id=pl-close onclick="closePlayer()" style="font-size:12px;flex-shrink:0">&#10005; Close</button>
+    </div>
     <video id=pl-video controls style="width:100%;max-height:60vh;background:#000;border-radius:6px"></video>
   </div>
 </div>
@@ -3228,6 +3241,9 @@ document.addEventListener("DOMContentLoaded", function(){
   </div>
 </div>
 <div id=tr-area style=display:none>
+  <div style="display:flex;justify-content:flex-end;margin-bottom:8px">
+    <button type=button id=tr-close onclick="closeTrailerResult()" style="font-size:12px">&#10005; Close</button>
+  </div>
   <div class=card id=tr-stats></div>
   <div style=margin:10px 0 id=tr-video></div>
   <table id=tr-table><tr><th>Scene</th><th>Start</th><th>End</th><th>Quality</th><th>Used (s)</th></tr></table>
@@ -5922,6 +5938,37 @@ function renderTrailerResult(d){
   document.getElementById('tr-area').style.display='block'
 }
 
+// User-requested: no way to dismiss a finished promo (whether just
+// rendered, or opened from Recent renders / Saved trailers) and get back
+// to the initial "nothing generated yet" state without starting a brand
+// new render just to replace what's showing. Pauses (rather than merely
+// hiding) so the audio track doesn't keep playing invisibly in the
+// background, and drops the <source> so the browser releases the
+// underlying network resource for a player nobody can see anymore.
+function closeTrailerResult(){
+  var v = document.getElementById('tr-video-el')
+  if(v){
+    v.pause()
+    v.removeAttribute('src')
+    v.querySelectorAll('source').forEach(function(s){ s.removeAttribute('src') })
+    v.load()
+  }
+  document.getElementById('tr-area').style.display = 'none'
+  var prompt = document.getElementById('tr-prompt')
+  prompt.textContent = 'Closed. Generate a new promo, or reopen one from Recent renders / Saved trailers.'
+  prompt.style.display = 'block'
+}
+// Semicolon required here, not stylistic: without it, JS's automatic
+// semicolon insertion does NOT break before the next line's leading "(" --
+// the "Trailer history" IIFE right after this is parsed as a continuation
+// of THIS statement instead (closeTrailerResult(function(){...})()),
+// calling closeTrailerResult with the IIFE's own function as an argument
+// and then calling ITS return value as a function too. This was a real,
+// confirmed bug: exactly this produced "closeTrailerResult(...) is not a
+// function" on every single page load, regardless of whether the new
+// Close button was ever clicked at all.
+window.closeTrailerResult = closeTrailerResult;
+
 // ---- Trailer history — every completed trailer is saved to a small SQLite
 // library on the server (survives restarts), shown here as a collapsible
 // list. Click a row to view/download it again without regenerating; click
@@ -8199,6 +8246,25 @@ function showPlayer(src, label, stagedName){
   document.getElementById('pl-status').textContent = ''
   v.play().catch(function(){})   // autoplay may be blocked; the controls still work
 }
+
+// User-requested: no way to dismiss the video once loaded and go back to
+// the initial "pick a file to play" state without picking ANOTHER file
+// just to replace it. Pauses (rather than merely hiding) so audio doesn't
+// keep playing invisibly in the background, and fully drops the source so
+// the browser releases the underlying network/blob resource rather than
+// keeping it buffered for a player that's no longer shown.
+function closePlayer(){
+  var v = document.getElementById('pl-video')
+  v.pause()
+  v.removeAttribute('src')
+  v.load()
+  document.getElementById('pl-area').style.display = 'none'
+  document.getElementById('pl-prompt').style.display = 'block'
+  document.getElementById('pl-status').textContent = ''
+  document.getElementById('pl-local').value = ''
+  _plStagedName = null
+}
+window.closePlayer = closePlayer
 
 function handlePlayerError(){
   var v = document.getElementById('pl-video')
