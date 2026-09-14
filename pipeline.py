@@ -8750,8 +8750,22 @@ def _run_trailer_job(jid, params):
             # non-serializable analysis state are deliberately dropped.
             # script_boost / script_desc / vo_beat kept so re-fetched previews
             # and the UI can still show why each scene was chosen.
+            #
+            # material / source_path are NOT optional extras here: a real,
+            # reported bug -- omitting them meant an approved multi-material
+            # cut's own scenes lost track of which file they actually came
+            # from the moment they passed through this slimming step. The
+            # actual final "lock and render" pass (the preselected branch
+            # above) reads scene.get('source_path') to know which file to
+            # extract from, falling back to the single primary source when
+            # it's missing -- so every material-2 clip in a locked render
+            # was silently extracted from material 1's own file instead,
+            # even though the PREVIEW (which never goes through _slim,
+            # since it renders straight from `selected`) correctly showed
+            # material 2's own footage and thumbnail.
             return [{'start': s['start'], 'end': s['end'], 'duration': s['duration'],
                      'selected_dur': s['selected_dur'], 'trim_start': s.get('trim_start', s['start']),
+                     'material': s.get('material'), 'source_path': s.get('source_path'),
                      'total_score': s['total_score'], 'quality_score': s.get('quality_score', 0),
                      'vision_score': s.get('vision_score'), 'speech_score': s.get('speech_score', 0),
                      'ai_desc': s.get('ai_desc', ''), 'has_face': s.get('has_face', False),

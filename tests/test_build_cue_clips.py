@@ -364,3 +364,142 @@ def test_preview_generates_real_thumbnails_and_per_scene_video_filename_for_cue_
     assert by_material[1]['video_filename'] == net1
     assert by_material[2]['video_filename'] == net2
     assert by_material[1]['video_filename'] != by_material[2]['video_filename']
+
+
+def test_lock_and_render_preserves_each_scenes_own_material_and_source(tmp_path, monkeypatch):
+    # Regression guard for a real, user-reported bug: the PREVIEW correctly
+    # showed each scene's own material and footage (fixed in the previous
+    # commit), but approving that preview and rendering it for real (the
+    # "lock and render" flow -- POST /api/trailer/render with a preview_id,
+    # which reuses the preview's own STORED scene list rather than
+    # re-selecting) produced a final video where material 2's own clip was
+    # actually extracted from material 1's file instead.
+    #
+    # Root cause: _slim() -- which builds exactly what gets stored server-
+    # side for a preview and later reused as-is for the real render --
+    # dropped 'material' and 'source_path' entirely. The live preview
+    # itself never goes through _slim() (it renders straight from the full
+    # `selected` list, which is why the preview looked correct), but the
+    # STORED version handed to a later, real render lost this information
+    # completely -- so the actual final-render extraction step's own
+    # `seg.get('source_path') or path` fallback silently used the single
+    # primary source for every clip once a preview was actually approved
+    # and rendered, not while merely previewing it.
+    #
+    # Exercises the real, full two-step flow end to end: a real preview,
+    # then a real POST to /api/trailer/render with that preview's own ID
+    # (not a direct /api/trailer/generate call, which wouldn't exercise
+    # _slim() or the stored-preview code path at all) -- then verifies the
+    # ACTUAL rendered video's own pixel content, not just its metadata.
+    # Uses its own, dedicated red/blue materials (not the shared
+    # two_materials fixture, which is red for both -- fine for the other
+    # tests in this file, but useless for telling two clips apart by their
+    # actual pixel content, which is the entire point here).
+    import io as _io
+    import shutil
+    import unittest.mock as mock
+    import core
+    import cv2
+
+    mat1 = str(tmp_path / 'lock_render_red.mp4')
+    mat2 = str(tmp_path / 'lock_render_blue.mp4')
+    for path, color in ((mat1, 'red'), (mat2, 'blue')):
+        subprocess.run([
+            FFMPEG, '-y', '-loglevel', 'error',
+            '-f', 'lavfi', '-i', f'color=c={color}:s=320x240:d=300:r=25',
+            '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo:d=300',
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', '-shortest', path,
+        ], check=True)
+
+    monkeypatch.setattr(pipeline, 'ALLOW_LOCAL_MEDIA_UPLOAD', True)
+    app = main.app
+    client = app.test_client()
+    with client.session_transaction() as sess:
+        sess['authed'] = True
+        sess['user_id'] = 1
+        sess['username'] = 'admin'
+        sess['role'] = 'admin'
+        sess['csrf_token'] = 'test-csrf-lock-render'
+    headers = {'X-CSRF-Token': 'test-csrf-lock-render'}
+
+    upload_folder = app.config['UPLOAD_FOLDER']
+    os.makedirs(upload_folder, exist_ok=True)
+    net1, net2 = 'net_lock_render_1.mp4', 'net_lock_render_2.mp4'
+    shutil.copy(mat1, os.path.join(upload_folder, net1))  # red
+    shutil.copy(mat2, os.path.join(upload_folder, net2))  # blue
+
+    with open(mat1, 'rb') as f:
+        video_bytes = f.read()
+
+    entries = [
+        {'material': 1, 'start': '3:33', 'end': '3:37'},
+        {'material': 2, 'start': '0:35', 'end': '0:42'},
+    ]
+
+    with mock.patch('requests.post'), mock.patch('requests.get'):
+        # Step 1: real preview.
+        core._job_submit_limiter.buckets.clear()
+        r = client.post('/api/trailer/generate', data={
+            'file': (_io.BytesIO(video_bytes), 'mat1.mp4'),
+            'genre': '', 'trailer_length': '15',
+            'scoring_mode': 'none', 'sfx_mode': 'none', 'vo_mode': 'none',
+            'manual_cues': json.dumps(entries),
+            'materials_network': json.dumps([net1, net2]),
+            'preview_only': '1',
+        }, headers=headers, content_type='multipart/form-data')
+        assert r.status_code == 200, r.get_data(as_text=True)
+        job_id = r.get_json()['job_id']
+        d = None
+        for _ in range(60):
+            d = client.get(f'/api/trailer/progress/{job_id}').get_json()
+            if d.get('done'):
+                break
+            time.sleep(0.5)
+        assert d.get('error') is None, d.get('error')
+        preview_id = (d.get('result') or {}).get('preview_id')
+        assert preview_id
+
+        # Step 2: lock and render -- approve the preview exactly as-is.
+        core._job_submit_limiter.buckets.clear()
+        r2 = client.post('/api/trailer/render', data={'preview_id': preview_id}, headers=headers)
+        assert r2.status_code == 200, r2.get_data(as_text=True)
+        job_id2 = r2.get_json()['job_id']
+        d2 = None
+        for _ in range(60):
+            d2 = client.get(f'/api/trailer/progress/{job_id2}').get_json()
+            if d2.get('done'):
+                break
+            time.sleep(0.5)
+    assert d2.get('error') is None, d2.get('error')
+
+    result2 = d2.get('result') or {}
+    final_scenes = result2.get('scenes') or []
+    assert len(final_scenes) == 2
+    assert {s['material'] for s in final_scenes} == {1, 2}
+
+    trailer_url = result2.get('trailer_url')
+    assert trailer_url
+    trailer_path = os.path.join(upload_folder, os.path.basename(trailer_url))
+    assert os.path.exists(trailer_path)
+
+    cap = cv2.VideoCapture(trailer_path)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 5)
+    ok1, frame1 = cap.read()
+    cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, total_frames - 10))
+    ok2, frame2 = cap.read()
+    cap.release()
+    assert ok1 and ok2
+
+    def _dominant(frame):
+        b, g, r_ = frame[:, :, 0].mean(), frame[:, :, 1].mean(), frame[:, :, 2].mean()
+        if r_ > b and r_ > g:
+            return 'red'
+        if b > r_ and b > g:
+            return 'blue'
+        return 'other'
+
+    # The ACTUAL rendered pixels, not metadata: material 1's own clip
+    # (red) first, material 2's own clip (blue) second -- never swapped.
+    assert _dominant(frame1) == 'red'
+    assert _dominant(frame2) == 'blue'
