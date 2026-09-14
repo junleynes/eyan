@@ -503,3 +503,116 @@ def test_lock_and_render_preserves_each_scenes_own_material_and_source(tmp_path,
     # (red) first, material 2's own clip (blue) second -- never swapped.
     assert _dominant(frame1) == 'red'
     assert _dominant(frame2) == 'blue'
+
+
+def test_generate_without_preview_direct_path_with_cues(tmp_path, monkeypatch):
+    # Dedicated coverage for the "Generate without preview" button
+    # specifically (submitTrailer(false) -- a direct /api/trailer/generate
+    # call with NO preview_only flag at all), as distinct from every other
+    # test in this file, which either goes through preview_only=1 or the
+    # full preview -> lock-and-render two-step flow. This path skips
+    # preview and _slim() entirely, going straight from build_cue_clips'
+    # own fresh `selected` list to the real render -- confirms every fix
+    # from this session (cue-exclusive selection, correct per-scene
+    # material/source_path, skipping scene detection/AI vision/
+    # transcription for cues) holds together correctly here too, not just
+    # for the preview and lock-and-render paths already covered elsewhere.
+    import io as _io
+    import shutil
+    import unittest.mock as mock
+    import core
+    import cv2
+
+    mat1 = str(tmp_path / 'direct_gen_red.mp4')
+    mat2 = str(tmp_path / 'direct_gen_blue.mp4')
+    for path, color in ((mat1, 'red'), (mat2, 'blue')):
+        subprocess.run([
+            FFMPEG, '-y', '-loglevel', 'error',
+            '-f', 'lavfi', '-i', f'color=c={color}:s=320x240:d=300:r=25',
+            '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo:d=300',
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', '-shortest', path,
+        ], check=True)
+
+    monkeypatch.setattr(pipeline, 'ALLOW_LOCAL_MEDIA_UPLOAD', True)
+    app = main.app
+    client = app.test_client()
+    with client.session_transaction() as sess:
+        sess['authed'] = True
+        sess['user_id'] = 1
+        sess['username'] = 'admin'
+        sess['role'] = 'admin'
+        sess['csrf_token'] = 'test-csrf-direct-gen'
+    headers = {'X-CSRF-Token': 'test-csrf-direct-gen'}
+
+    upload_folder = app.config['UPLOAD_FOLDER']
+    os.makedirs(upload_folder, exist_ok=True)
+    net1, net2 = 'net_direct_gen_1.mp4', 'net_direct_gen_2.mp4'
+    shutil.copy(mat1, os.path.join(upload_folder, net1))  # red
+    shutil.copy(mat2, os.path.join(upload_folder, net2))  # blue
+
+    with open(mat1, 'rb') as f:
+        video_bytes = f.read()
+
+    entries = [
+        {'material': 1, 'start': '3:33', 'end': '3:37'},
+        {'material': 2, 'start': '0:35', 'end': '0:42'},
+    ]
+
+    core._job_submit_limiter.buckets.clear()
+    with mock.patch('requests.post') as mock_post, mock.patch('requests.get'):
+        r = client.post('/api/trailer/generate', data={
+            'file': (_io.BytesIO(video_bytes), 'mat1.mp4'),
+            'genre': '', 'trailer_length': '15',
+            'scoring_mode': 'none', 'sfx_mode': 'none', 'vo_mode': 'none',
+            'manual_cues': json.dumps(entries),
+            'materials_network': json.dumps([net1, net2]),
+            'mode': 'ai', 'whisper_enhance': '1',
+            # Deliberately NO preview_only key -- this is the exact request
+            # shape "Generate without preview" sends.
+        }, headers=headers, content_type='multipart/form-data')
+        assert r.status_code == 200, r.get_data(as_text=True)
+        job_id = r.get_json()['job_id']
+        d = None
+        for _ in range(60):
+            d = client.get(f'/api/trailer/progress/{job_id}').get_json()
+            if d.get('done'):
+                break
+            time.sleep(0.5)
+        assert d.get('error') is None, d.get('error')
+        # No wasted AI vision / Whisper calls even though both were
+        # explicitly requested -- cues drive selection exclusively.
+        assert mock_post.call_count == 0
+
+    result = d.get('result') or {}
+    assert result.get('went_through_preview') is False
+    assert abs((result.get('trailer_duration') or 0) - 15.0) < 0.5
+
+    scenes = result.get('scenes') or []
+    assert len(scenes) == 2
+    by_material = {s['material']: s for s in scenes}
+    assert set(by_material) == {1, 2}
+
+    trailer_url = result.get('trailer_url')
+    assert trailer_url
+    trailer_path = os.path.join(upload_folder, os.path.basename(trailer_url))
+    assert os.path.exists(trailer_path)
+
+    cap = cv2.VideoCapture(trailer_path)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 5)
+    ok1, frame1 = cap.read()
+    cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, total_frames - 10))
+    ok2, frame2 = cap.read()
+    cap.release()
+    assert ok1 and ok2
+
+    def _dominant(frame):
+        b, g, r_ = frame[:, :, 0].mean(), frame[:, :, 1].mean(), frame[:, :, 2].mean()
+        if r_ > b and r_ > g:
+            return 'red'
+        if b > r_ and b > g:
+            return 'blue'
+        return 'other'
+
+    assert _dominant(frame1) == 'red'
+    assert _dominant(frame2) == 'blue'
