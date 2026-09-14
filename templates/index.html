@@ -4283,9 +4283,16 @@ var _trPreviewVideoFilename = null
 function buildSceneCard(s, cls, num, checked, badge, overlayPlay){
   var card = document.createElement('div')
   card.style.cssText = 'border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--panel-2,#1f232b)'
-  var canPlay = !!_trPreviewVideoFilename
+  // Each scene now carries its own video_filename (a real, reported bug:
+  // every scene's Play button used the same, single, shared file --
+  // correct for one source, but for a multi-material job it meant a
+  // material-2 scene's Play button actually played material 1's own
+  // footage). Falls back to the old, single shared filename only for a
+  // response from before this field existed.
+  var sceneVideoFilename = s.video_filename || _trPreviewVideoFilename
+  var canPlay = !!sceneVideoFilename
   var playAttr = canPlay
-    ? "playClip('"+_trPreviewVideoFilename+"',"+s.start+","+s.end+",'"+escapeHtmlLite(badge)+"')"
+    ? "playClip('"+sceneVideoFilename+"',"+s.start+","+s.end+",'"+escapeHtmlLite(badge)+"')"
     : ''
 
   var thumbHtml
