@@ -4307,8 +4307,18 @@ function buildSceneCard(s, cls, num, checked, badge, overlayPlay){
   // response from before this field existed.
   var sceneVideoFilename = s.video_filename || _trPreviewVideoFilename
   var canPlay = !!sceneVideoFilename
+  // The clip's own ACTUAL used span is start -> start+duration, not
+  // start -> s.end: a real, reported bug -- s.end is the scene's own full
+  // available boundary (for a cue-driven clip specifically, how far it
+  // COULD be stretched to fill the target length, which can be minutes
+  // long), not where the clip actually stops playing. Showing s.end here
+  // made a 4.7s clip display as "213s -> 368s" (a 155s-looking span) and
+  // fed that same wrong end time straight into the Play button, which the
+  // backend's own 30s preview cap then silently truncated to a fixed 30s
+  // every time, regardless of the clip's real, much shorter duration.
+  var usedEnd = s.start + s.duration
   var playAttr = canPlay
-    ? "playClip('"+sceneVideoFilename+"',"+s.start+","+s.end+",'"+escapeHtmlLite(badge)+"')"
+    ? "playClip('"+sceneVideoFilename+"',"+s.start+","+usedEnd+",'"+escapeHtmlLite(badge)+"')"
     : ''
 
   var thumbHtml
@@ -4346,7 +4356,7 @@ function buildSceneCard(s, cls, num, checked, badge, overlayPlay){
     '<div style="display:flex;align-items:center;gap:6px">' +
     '<label style="display:flex;gap:6px;align-items:center;margin:0;text-transform:none;letter-spacing:0;font-size:11px;cursor:pointer">' +
     '<input type=checkbox class="'+cls+'" data-scene="'+num+'"'+(checked?' checked':'')+'> ' +
-    '<strong>'+escapeHtmlLite(badge)+'</strong> <span style="opacity:.7">'+s.start+'s \u2192 '+s.end+'s</span></label>' +
+    '<strong>'+escapeHtmlLite(badge)+'</strong> <span style="opacity:.7">'+s.start+'s \u2192 '+usedEnd.toFixed(1)+'s</span></label>' +
     inlineBtn +
     '</div>' +
     '<div style="opacity:.7;margin-top:4px">uses '+s.duration+'s</div>' +
