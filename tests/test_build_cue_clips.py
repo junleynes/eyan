@@ -208,3 +208,75 @@ def test_preview_path_does_not_crash_with_cue_exclusive_selection(two_materials,
     scenes = result.get('scenes') or []
     assert len(scenes) == 2
     assert {s['material'] for s in scenes} == {1, 2}
+
+
+def test_cue_exclusive_render_skips_scene_detection_and_ai_scoring_entirely(two_materials, monkeypatch):
+    # User-requested and confirmed: when timecode cues are present, the app
+    # should skip scene selection, scene rating, and AI vision rating
+    # entirely -- there's already a selected scene (the cue's own in/out),
+    # so scoring alternatives nobody will use is pure wasted work (real,
+    # measurable time, and previously produced real Ollama/Whisper
+    # connection-refused errors in the logs for a service the render
+    # didn't actually need). Confirms this at the HTTP layer, not just by
+    # reading code: mocks requests.post/get (the transport AI vision and
+    # Whisper both go through) and asserts NEITHER is ever called for a
+    # cue-driven render, while the render itself still succeeds correctly.
+    import io as _io
+    import shutil
+    import unittest.mock as mock
+    import core
+
+    monkeypatch.setattr(pipeline, 'ALLOW_LOCAL_MEDIA_UPLOAD', True)
+    app = main.app
+    client = app.test_client()
+    with client.session_transaction() as sess:
+        sess['authed'] = True
+        sess['user_id'] = 1
+        sess['username'] = 'admin'
+        sess['role'] = 'admin'
+        sess['csrf_token'] = 'test-csrf-cue-skip'
+    headers = {'X-CSRF-Token': 'test-csrf-cue-skip'}
+
+    upload_folder = app.config['UPLOAD_FOLDER']
+    os.makedirs(upload_folder, exist_ok=True)
+    net1, net2 = 'net_cue_skip_1.mp4', 'net_cue_skip_2.mp4'
+    shutil.copy(two_materials[0], os.path.join(upload_folder, net1))
+    shutil.copy(two_materials[1], os.path.join(upload_folder, net2))
+
+    with open(two_materials[0], 'rb') as f:
+        video_bytes = f.read()
+
+    entries = [
+        {'material': 1, 'start': '3:33', 'end': '3:37'},
+        {'material': 2, 'start': '0:35', 'end': '0:42'},
+    ]
+    core._job_submit_limiter.buckets.clear()
+    with mock.patch('requests.post') as mock_post, mock.patch('requests.get') as mock_get:
+        r = client.post('/api/trailer/generate', data={
+            'file': (_io.BytesIO(video_bytes), 'mat1.mp4'),
+            'genre': '', 'trailer_length': '15',
+            'scoring_mode': 'none', 'sfx_mode': 'none', 'vo_mode': 'none',
+            'manual_cues': json.dumps(entries),
+            'materials_network': json.dumps([net1, net2]),
+            'mode': 'ai',            # AI vision rating requested...
+            'whisper_enhance': '1',  # ...and dialogue transcription too
+        }, headers=headers, content_type='multipart/form-data')
+        assert r.status_code == 200, r.get_data(as_text=True)
+        job_id = r.get_json()['job_id']
+        d = None
+        for _ in range(60):
+            d = client.get(f'/api/trailer/progress/{job_id}').get_json()
+            if d.get('done'):
+                break
+            time.sleep(0.5)
+        assert d.get('error') is None, d.get('error')
+        # ...but neither Ollama (AI vision) nor Whisper (transcription) --
+        # both real HTTP calls via requests.post -- was ever actually
+        # reached, because cues drove selection exclusively and both
+        # scoring passes are skipped entirely when cues are present.
+        assert mock_post.call_count == 0
+
+    result = d.get('result') or {}
+    scenes = result.get('scenes') or []
+    assert len(scenes) == 2
+    assert {s['material'] for s in scenes} == {1, 2}

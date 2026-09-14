@@ -7882,16 +7882,29 @@ def _run_trailer_job(jid, params):
         if not materials:
             materials = [path]
         scene_list = []  # (start, end, material_num, source_path)
-        for mi, mpath in enumerate(materials):
-            mat_num = mi + 1
-            job_set(jid, step=f'Detecting scene cuts (source {mat_num}/{len(materials)})')
-            sl = detect_scenes(mpath, threshold=scene_threshold,
-                               min_scene_len_sec=min_scene_len_sec, downscale=2,
-                               detector=detector, adaptive_threshold=adaptive_threshold)
-            if not sl:
-                continue
-            for start, end in sl:
-                scene_list.append((start, end, mat_num, mpath))
+        # Timecode cues (script upload / Manual Entry) drive selection
+        # exclusively further down via build_cue_clips, which builds each
+        # cue's own in/out span directly and never reads scene_list or
+        # scenes_data at all -- so actually running PySceneDetect here would
+        # be pure wasted time (real, measurable time on a long episode) for
+        # a result nothing downstream uses. Left empty so the existing
+        # "if not scene_list" fallback-synthesis immediately below runs
+        # unconditionally in this case, producing the same minimal,
+        # single-scene-per-material placeholder it already builds for a
+        # source with no detectable cuts at all -- one code path for both
+        # "cues present" and "cues absent but detection legitimately found
+        # nothing", rather than a second, separate one.
+        if not (params.get('script_cues') or []):
+            for mi, mpath in enumerate(materials):
+                mat_num = mi + 1
+                job_set(jid, step=f'Detecting scene cuts (source {mat_num}/{len(materials)})')
+                sl = detect_scenes(mpath, threshold=scene_threshold,
+                                   min_scene_len_sec=min_scene_len_sec, downscale=2,
+                                   detector=detector, adaptive_threshold=adaptive_threshold)
+                if not sl:
+                    continue
+                for start, end in sl:
+                    scene_list.append((start, end, mat_num, mpath))
         if not scene_list:
             # Timecode cues bypass PySceneDetect's own boundaries entirely
             # (build_cue_clips builds clips directly from each cue's own
@@ -7924,12 +7937,17 @@ def _run_trailer_job(jid, params):
                 start_tc = FrameTimecode(0.0, fps)
                 end_tc = FrameTimecode(max(dur, 1.0 / fps), fps)
                 scene_list.append((start_tc, end_tc, mi + 1, mpath))
-        if len(materials) == 1 and len(scene_list) == 1 and (
+        if not (params.get('script_cues') or []) and len(materials) == 1 and len(scene_list) == 1 and (
                 tc_seconds(scene_list[0][1]) - tc_seconds(scene_list[0][0])) > video_duration * 0.95:
             # PySceneDetect's own fallback: no real cuts found, so it returned one
             # scene spanning the whole video. Selecting from a single "scene" isn't
             # meaningful — surface this clearly instead of silently treating the
-            # entire source as one giant clip.
+            # entire source as one giant clip. Excluded when cues are present: the
+            # synthesized whole-file placeholder scene built just above ALWAYS
+            # spans the whole file by design for a single material, and the
+            # cue-exclusive path never selects from it anyway -- it's a harmless
+            # placeholder for the scoring code below, not a real selection
+            # candidate, so this check has nothing meaningful to warn about here.
             job_set(jid, error='No distinct scene cuts were found — PySceneDetect sees this video as one continuous shot. Try lowering the detection threshold or upload footage with visible cuts.')
             return
 
@@ -8021,7 +8039,14 @@ def _run_trailer_job(jid, params):
             # contract the AI/dialogue weights are balanced against.
             s['quality_score'] = max(1, min(3, score))
 
-        if mode == 'ai':
+        if mode == 'ai' and not (params.get('script_cues') or []):
+            # Skipped entirely when timecode cues are present: user-requested
+            # and confirmed -- the cue-exclusive selection path further down
+            # never reads quality_score/vision_score at all, so scoring them
+            # here is pure wasted work (real Ollama round trips, one per
+            # scene, that previously ran and failed/timed out for no benefit
+            # whenever the vision service wasn't reachable, exactly as seen
+            # in a real render's own logs).
             # Only AI-score scenes that could realistically make the cut. Previously
             # every detected scene got a vision call -- on a 45-minute episode that's
             # 200-400 Ollama round trips to choose ~12 clips, and it dominated the
@@ -8253,7 +8278,14 @@ def _run_trailer_job(jid, params):
         #    clip actually contain talking, so it can absorb its rounding error out
         #    of silence instead of shaving syllables off dialogue.
         word_starts, word_ends, phrase_ends, speech_spans = [], [], [], []
-        if transcribe_for_cuts:
+        if transcribe_for_cuts and not (params.get('script_cues') or []):
+            # Also skipped for timecode cues, same reasoning as AI vision
+            # scoring above: build_cue_clips never reads word/phrase
+            # boundaries at all (that's only consumed by the ordinary
+            # best-scenes loop's own snapped_start/snapped_end logic, which
+            # the cue-exclusive path skips entirely), so transcribing here
+            # would be a real Whisper round trip spent on data nothing
+            # downstream uses.
             job_set(jid, percent=31, step='Transcribing dialogue (faster-whisper)')
             words, segments = transcribe_video(path)
             if words or segments:
