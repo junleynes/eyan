@@ -280,3 +280,87 @@ def test_cue_exclusive_render_skips_scene_detection_and_ai_scoring_entirely(two_
     scenes = result.get('scenes') or []
     assert len(scenes) == 2
     assert {s['material'] for s in scenes} == {1, 2}
+
+
+def test_preview_generates_real_thumbnails_and_per_scene_video_filename_for_cue_clips(two_materials, monkeypatch):
+    # Regression guard for a real, user-reported bug pair from an actual
+    # preview: "no thumbnail" for cue-selected scenes, and a material-2
+    # scene's Play button actually playing material 1's own footage.
+    #
+    # Root cause of "no thumbnail": _thumb() only ever read a pre-captured
+    # 'frame' key, set by _score_one_scene() during ordinary scene scoring
+    # -- but build_cue_clips' own clips never go through that scoring at
+    # all, so they never had a 'frame' to read, and _thumb() correctly (but
+    # unhelpfully) returned None every time.
+    #
+    # Root cause of "wrong material's video": the preview response's
+    # top-level video_filename is ONE shared file (the primary source),
+    # and the frontend's Play button used that same one value for every
+    # single scene card regardless of which material a given scene
+    # actually belonged to.
+    import io as _io
+    import shutil
+    import unittest.mock as mock
+    import core
+
+    monkeypatch.setattr(pipeline, 'ALLOW_LOCAL_MEDIA_UPLOAD', True)
+    app = main.app
+    client = app.test_client()
+    with client.session_transaction() as sess:
+        sess['authed'] = True
+        sess['user_id'] = 1
+        sess['username'] = 'admin'
+        sess['role'] = 'admin'
+        sess['csrf_token'] = 'test-csrf-thumb'
+    headers = {'X-CSRF-Token': 'test-csrf-thumb'}
+
+    upload_folder = app.config['UPLOAD_FOLDER']
+    os.makedirs(upload_folder, exist_ok=True)
+    net1, net2 = 'net_thumb_1.mp4', 'net_thumb_2.mp4'
+    shutil.copy(two_materials[0], os.path.join(upload_folder, net1))
+    shutil.copy(two_materials[1], os.path.join(upload_folder, net2))
+
+    with open(two_materials[0], 'rb') as f:
+        video_bytes = f.read()
+
+    entries = [
+        {'material': 1, 'start': '3:33', 'end': '3:37'},
+        {'material': 2, 'start': '0:35', 'end': '0:42'},
+    ]
+    core._job_submit_limiter.buckets.clear()
+    with mock.patch('requests.post'), mock.patch('requests.get'):
+        r = client.post('/api/trailer/generate', data={
+            'file': (_io.BytesIO(video_bytes), 'mat1.mp4'),
+            'genre': '', 'trailer_length': '15',
+            'scoring_mode': 'none', 'sfx_mode': 'none', 'vo_mode': 'none',
+            'manual_cues': json.dumps(entries),
+            'materials_network': json.dumps([net1, net2]),
+            'preview_only': '1',
+        }, headers=headers, content_type='multipart/form-data')
+        assert r.status_code == 200, r.get_data(as_text=True)
+        job_id = r.get_json()['job_id']
+        d = None
+        for _ in range(60):
+            d = client.get(f'/api/trailer/progress/{job_id}').get_json()
+            if d.get('done'):
+                break
+            time.sleep(0.5)
+    assert d.get('error') is None, d.get('error')
+    result = d.get('result') or {}
+    scenes = result.get('scenes') or []
+    assert len(scenes) == 2
+
+    by_material = {s['material']: s for s in scenes}
+    # Each scene has a real thumbnail (not None), and the underlying file
+    # genuinely exists with real content.
+    for mat, s in by_material.items():
+        assert s.get('thumb'), f"material {mat} has no thumbnail"
+        thumb_path = os.path.join(upload_folder, os.path.basename(s['thumb']))
+        assert os.path.exists(thumb_path)
+        assert os.path.getsize(thumb_path) > 0
+
+    # Each scene's own video_filename matches ITS OWN material's staged
+    # file, not a single shared one across both.
+    assert by_material[1]['video_filename'] == net1
+    assert by_material[2]['video_filename'] == net2
+    assert by_material[1]['video_filename'] != by_material[2]['video_filename']

@@ -8706,7 +8706,30 @@ def _run_trailer_job(jid, params):
         def _thumb(scene, tag, i):
             frame = scene.get('frame')
             if frame is None:
-                return None
+                # Cue-driven clips (build_cue_clips) never go through
+                # _score_one_scene at all, so they have no pre-captured
+                # 'frame' the way an ordinary detected-and-scored scene
+                # does -- a real, reported gap ("no thumbnail" for a
+                # cue-selected scene). Extracted directly here instead:
+                # opens the clip's OWN source_path (never a single, shared
+                # file -- the same fix, for the same reason, as the
+                # video_filename fix right below) and seeks to its own
+                # actual start time.
+                src = scene.get('source_path') or params.get('path')
+                if not src or not os.path.exists(src):
+                    return None
+                try:
+                    cap = cv2.VideoCapture(src)
+                    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+                    seek_time = scene.get('trim_start', scene.get('start', 0.0))
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, int(seek_time * fps))
+                    ok, frame = cap.read()
+                    cap.release()
+                    if not ok:
+                        return None
+                except Exception as e:
+                    print(f'Preview thumbnail {tag}{i} frame extraction failed: {e}')
+                    return None
             try:
                 tw = 320
                 h, w = frame.shape[:2]
@@ -8812,6 +8835,16 @@ def _run_trailer_job(jid, params):
                      'script_boost': round(s.get('script_boost') or 0, 2) or None,
                      'script_desc': s.get('script_desc') or None,
                      'material': s.get('material'),
+                     # A real, reported bug: the top-level video_filename
+                     # below is ONE shared file (params['path'], the primary
+                     # source) used for every scene's own Play button --
+                     # correct for a single-source job, but for a
+                     # multi-material one it meant a material-2 scene's Play
+                     # button actually played from material 1's own file.
+                     # Each scene now carries its own, matching its actual
+                     # source_path, for the frontend to use instead of the
+                     # single shared one.
+                     'video_filename': os.path.basename(s.get('source_path') or params.get('path', '')),
                      'why': _scene_why(s),
                      'description': _scene_desc(s), 'thumb': thumbs[i]}
                     for i, s in enumerate(selected)],
@@ -8824,6 +8857,7 @@ def _run_trailer_job(jid, params):
                          'script_boost': round(s.get('script_boost') or 0, 2) or None,
                          'script_desc': s.get('script_desc') or None,
                          'material': s.get('material'),
+                         'video_filename': os.path.basename(s.get('source_path') or params.get('path', '')),
                          'description': _scene_desc(s), 'thumb': alt_thumbs[i]}
                         for i, s in enumerate(alternates)])
         job_set(jid, percent=100, step='Preview ready', done=True, result=result)
