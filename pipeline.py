@@ -4574,9 +4574,15 @@ def api_validate_script():
         status = 'usable'
         note_parts = []
         if meta.get('out') is not None:
+            # "noted only" would be stale, misleading wording now: this out
+            # point genuinely sets the clip's own initial length (out minus
+            # in) via build_cue_clips, not just a display-only annotation
+            # the way it was before cues drove selection directly -- it can
+            # still be stretched or shrunk afterward to help fill the
+            # target duration, so it's not a hard, fixed length either.
             note_parts.append(
-                f'In/out pair → selecting scene at in-point '
-                f'(out {_seconds_to_tc(meta["out"])} noted only)'
+                f'In/out pair → using {_seconds_to_tc(secs)}\u2013{_seconds_to_tc(meta["out"])} as the '
+                f'clip (may be stretched or shrunk to help fill the target length)'
             )
         else:
             note_parts.append('Single timecode → will select the scene at this moment')
@@ -4639,7 +4645,7 @@ def api_validate_script():
 
     summary = (
         f'Extracted {len(kept)} scene-selection cue(s) from {len(lines)} non-empty line(s). '
-        f'Each cue picks the scene at that time (single TC or in-point of a pair).'
+        f'Each cue picks that clip (in/out pair) or moment (single timecode) exclusively.'
         if kept else
         f'No usable cues from {len(lines)} non-empty line(s).'
     )
