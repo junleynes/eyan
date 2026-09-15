@@ -616,3 +616,47 @@ def test_generate_without_preview_direct_path_with_cues(tmp_path, monkeypatch):
 
     assert _dominant(frame1) == 'red'
     assert _dominant(frame2) == 'blue'
+
+
+def test_cancelling_a_still_queued_job_does_not_leak_a_gate_slot():
+    # Regression guard for a real, user-reported bug: "Generate without
+    # preview" intermittently stopped working, with no clear pattern, and
+    # the user specifically suspected cancelling a generation was
+    # involved. Root cause: run_trailer_job_gated's own `finally` block
+    # ALWAYS decremented GATE.running, even for a job that was cancelled
+    # while still QUEUED -- i.e. one that returned early from the
+    # while-waiting-for-a-slot loop and never actually incremented
+    # GATE.running for itself at all. Every such cancellation silently
+    # freed a concurrency slot that belonged to a DIFFERENT, still
+    # actually-running job, letting more jobs run concurrently than
+    # MAX_CONCURRENT_JOBS intends -- competing for the same CPU/ffmpeg/
+    # memory resources and producing exactly this kind of intermittent,
+    # hard-to-reproduce failure.
+    import threading
+    import time
+
+    original = pipeline.GATE.running
+    try:
+        # Simulate MAX_CONCURRENT_JOBS (2 by default) jobs already
+        # genuinely running and holding their own real slots.
+        pipeline.GATE.running = 2
+        jid_c = 'test_job_c_cancel_while_queued'
+
+        def cancel_after_delay():
+            time.sleep(0.5)
+            with pipeline.JOB_QUEUE_LOCK:
+                if jid_c in pipeline.JOB_QUEUE:
+                    pipeline.JOB_QUEUE.remove(jid_c)
+
+        t = threading.Thread(target=cancel_after_delay)
+        t.start()
+        # Job C: submitted, waits (GATE.running >= GATE.limit), gets
+        # cancelled (removed from JOB_QUEUE) before ever acquiring a slot.
+        pipeline.run_trailer_job_gated(jid_c, {})
+        t.join()
+
+        # The two ACTUALLY running jobs' own slots must be untouched --
+        # job C never held one to release.
+        assert pipeline.GATE.running == 2
+    finally:
+        pipeline.GATE.running = original
