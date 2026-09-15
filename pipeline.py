@@ -2729,17 +2729,47 @@ def trim_card_video(video_path, trim_start, trim_end, output_path):
     with a separately-uploaded VO track. Re-encodes (not -c copy) since an
     accurate cut at an arbitrary, non-keyframe point is worth far more here
     than the speed of a copy -- these cards are short, so the cost is
-    small. Returns output_path on success, or None if the trim failed
-    (caller should keep the card's original, untrimmed video in that
-    case, exactly like mux_card_vo's own failure contract)."""
+    small for an ordinary web-friendly source. A real, reported failure
+    showed this isn't true for every source, though: a large,
+    professional-codec master (ProRes/DNxHD .mov, hundreds of MB) can take
+    genuinely long to decode and re-encode even for a short trim, and the
+    original version of this function used a flat 60s timeout with no
+    handling for it timing out at all -- subprocess.run kills ffmpeg
+    mid-write on a timeout, which for a plain (non-faststart) MP4 leaves a
+    truncated file with real video bytes but no trailing moov atom (the
+    duration/index metadata, normally written last) -- passing this
+    function's own "exists and has some bytes" check while being
+    genuinely unreadable by ffprobe, which is exactly what surfaced much
+    later as a confusing "could not read the duration" failure instead of
+    a clear one here. Uses FFMPEG_LONG_TIMEOUT (900s default, the same
+    budget already used elsewhere for full-source passes) instead of a
+    short, fixed one, explicitly handles an actual timeout by returning
+    None rather than leaving a corrupt file to be discovered downstream,
+    and confirms the output's own duration is genuinely readable before
+    ever calling this a success. Returns output_path on success, or None
+    if the trim failed for any reason (caller should keep the card's
+    original, untrimmed video in that case, exactly like mux_card_vo's
+    own failure contract) -- and cleans up any partial output file itself
+    in the failure case, rather than leaving a corrupt one on disk that
+    could be mistaken for a valid cached result later."""
     cmd = [FFMPEG, '-y', '-ss', str(trim_start)]
     if trim_end is not None:
         cmd += ['-to', str(trim_end)]
     cmd += ['-i', video_path, '-c:v', 'libx264', '-preset', 'fast', '-c:a', 'aac', '-b:a', '192k', output_path]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-    if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=FFMPEG_LONG_TIMEOUT)
+        stderr = r.stderr
+    except subprocess.TimeoutExpired:
+        stderr = f'Trim timed out after {FFMPEG_LONG_TIMEOUT}s'
+    if (os.path.exists(output_path) and os.path.getsize(output_path) > 0
+            and (probe_duration(output_path) or 0) > 0):
         return output_path
-    print(f'Card video trim error ({video_path}): {r.stderr[:500]}')
+    print(f'Card video trim error ({video_path}): {stderr[:500]}')
+    if os.path.exists(output_path):
+        try:
+            os.remove(output_path)
+        except OSError:
+            pass
     return None
 
 def mux_card_vo(video_path, vo_path, trim_start, trim_end, output_path):
@@ -2748,7 +2778,13 @@ def mux_card_vo(video_path, vo_path, trim_start, trim_end, output_path):
     end of the file). The VO is padded with silence if shorter than the card video
     so the card keeps its full original length either way. Returns output_path on
     success, or None if the mux failed (caller should keep the card's original
-    audio/video untouched in that case)."""
+    audio/video untouched in that case).
+
+    Same timeout/validation hardening as trim_card_video's own, and for the
+    same real reason: -c:v copy usually makes this fast regardless of
+    source size, but a slow enough disk/network or a container ffmpeg
+    still has to at least partially re-parse could still exceed a short,
+    fixed timeout for a large enough professional-codec source."""
     cmd = [FFMPEG, '-y', '-i', video_path, '-ss', str(trim_start)]
     if trim_end is not None:
         cmd.extend(['-to', str(trim_end)])
@@ -2756,10 +2792,20 @@ def mux_card_vo(video_path, vo_path, trim_start, trim_end, output_path):
                 '-map', '0:v', '-map', '1:a',
                 '-af', 'apad', '-shortest',
                 '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', output_path])
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-    if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=FFMPEG_LONG_TIMEOUT)
+        stderr = r.stderr
+    except subprocess.TimeoutExpired:
+        stderr = f'Mux timed out after {FFMPEG_LONG_TIMEOUT}s'
+    if (os.path.exists(output_path) and os.path.getsize(output_path) > 0
+            and (probe_duration(output_path) or 0) > 0):
         return output_path
-    print(f'Card VO mux error ({video_path}): {r.stderr[:500]}')
+    print(f'Card VO mux error ({video_path}): {stderr[:500]}')
+    if os.path.exists(output_path):
+        try:
+            os.remove(output_path)
+        except OSError:
+            pass
     return None
 
 def detect_beat_times(audio_path, duration):
