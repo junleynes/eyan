@@ -1562,6 +1562,7 @@ def run_trailer_job_gated(jid, params):
     frees the slot for the next one in line."""
     with JOB_QUEUE_LOCK:
         JOB_QUEUE.append(jid)
+    acquired_slot = False
     try:
         with GATE.cond:
             while GATE.running >= GATE.limit:
@@ -1573,15 +1574,31 @@ def run_trailer_job_gated(jid, params):
                         percent=0, status='queued')
                 GATE.cond.wait(timeout=2)
             GATE.running += 1
+            acquired_slot = True
         with JOB_QUEUE_LOCK:
             if jid in JOB_QUEUE:
                 JOB_QUEUE.remove(jid)
         job_set(jid, step='Starting', percent=1, status='running')
         run_trailer_job(jid, params)
     finally:
-        with GATE.cond:
-            GATE.running = max(0, GATE.running - 1)
-            GATE.cond.notify_all()
+        # Only release a slot this job actually acquired -- a real,
+        # confirmed bug: cancelling a job while it was still QUEUED (the
+        # early `return` above, before GATE.running was ever incremented
+        # for it) still ran this same finally block, which decremented
+        # GATE.running anyway. That's one job's worth of concurrency
+        # capacity vanishing from the gate's own count every time a queued
+        # job got cancelled, while every actually-running job kept its
+        # real slot the whole time -- silently allowing more jobs to run
+        # concurrently than MAX_CONCURRENT_JOBS intends, competing for the
+        # same CPU/ffmpeg/memory resources and producing exactly the kind
+        # of intermittent, hard-to-reproduce failures ("works the first or
+        # second time, no clear pattern") a real report described,
+        # especially right after cancelling a job that had been waiting in
+        # the queue.
+        if acquired_slot:
+            with GATE.cond:
+                GATE.running = max(0, GATE.running - 1)
+                GATE.cond.notify_all()
         with JOB_QUEUE_LOCK:
             if jid in JOB_QUEUE:
                 JOB_QUEUE.remove(jid)
