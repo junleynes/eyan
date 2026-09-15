@@ -1639,12 +1639,30 @@ document.addEventListener("DOMContentLoaded", function(){
     </div>
     <div class="asset-section-body">
   <div class="browse-row">
-    {% if allow_local_upload %}<input type=file name=end_card_video accept=video/* data-net-field="end_card_video">{% endif %}
+    {% if allow_local_upload %}<input type=file name=end_card_video accept=video/* data-net-field="end_card_video" onchange="cardVideoFileChosen(this,'end_card_video')">{% endif %}
     <button type=button class="browse-btn" onclick="openNetworkBrowser('end_card_video','tcard','Title card (TCARD)')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
   </div>
   <input type=hidden id=end_card_video_network name=end_card_video_network value="">
   <input type=hidden id=end_card_video_skip_template name=end_card_video_skip_template value="">
   <span class="net-file-chip" id=end_card_video_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('end_card_video')">&#10005;</span></span>
+  <div class="audio-player-card" id="end_card_video_card">
+    <video id="end_card_video_player" style="width:100%;max-height:180px;background:#000;border-radius:6px;display:block"></video>
+    <div class="audio-player-controls">
+      <span class="player-io-group">
+        <button type=button class="player-bracket-btn" onclick="cardVoSetPoint('end_card_video','start')" title="Set IN point">[</button>
+        <input type=number name=end_card_video_trim_start id="end_card_video_start" value=0 min=0 step=0.1 class="player-io-input">
+      </span>
+      <button type=button class="player-play-btn" id="end_card_video_playbtn" onclick="cardVoTogglePlay('end_card_video')">&#9654;</button>
+      <button type=button class="player-stop-btn" id="end_card_video_stopbtn" onclick="cardVoStop('end_card_video')" title="Stop">&#9632;</button>
+      <span class="player-io-group">
+        <button type=button class="player-bracket-btn" onclick="cardVoSetPoint('end_card_video','end')" title="Set OUT point">]</button>
+        <input type=number name=end_card_video_trim_end id="end_card_video_end" min=0 step=0.1 class="player-io-input" placeholder="end">
+      </span>
+      <span class="player-time" id="end_card_video_time">0:00 / 0:00</span>
+      <span class="player-volume"><button type=button class="player-volume-icon" id="end_card_video_volicon" onclick="cardVoToggleMute('end_card_video')" title="Mute">&#128266;</button><input type=range class="player-volume-slider" id="end_card_video_volume" min=0 max=100 value=100 oninput="cardVoSetVolume('end_card_video', this.value)"></span>
+    </div>
+    <span id="end_card_video_preview_note" style="font-size:11px;opacity:.7;display:block;margin-top:4px"></span>
+  </div>
   <div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0 4px">
     <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">VO for this card (optional, replaces its audio):</span>
@@ -1687,12 +1705,30 @@ document.addEventListener("DOMContentLoaded", function(){
     </div>
     <div class="asset-section-body">
   <div class="browse-row">
-    {% if allow_local_upload %}<input type=file name=schedule_video accept=video/* data-net-field="schedule_video">{% endif %}
+    {% if allow_local_upload %}<input type=file name=schedule_video accept=video/* data-net-field="schedule_video" onchange="cardVideoFileChosen(this,'schedule_video')">{% endif %}
     <button type=button class="browse-btn" onclick="openNetworkBrowser('schedule_video','endcard','End card (ENDCARD)')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
   </div>
   <input type=hidden id=schedule_video_network name=schedule_video_network value="">
   <input type=hidden id=schedule_video_skip_template name=schedule_video_skip_template value="">
   <span class="net-file-chip" id=schedule_video_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('schedule_video')">&#10005;</span></span>
+  <div class="audio-player-card" id="schedule_video_card">
+    <video id="schedule_video_player" style="width:100%;max-height:180px;background:#000;border-radius:6px;display:block"></video>
+    <div class="audio-player-controls">
+      <span class="player-io-group">
+        <button type=button class="player-bracket-btn" onclick="cardVoSetPoint('schedule_video','start')" title="Set IN point">[</button>
+        <input type=number name=schedule_video_trim_start id="schedule_video_start" value=0 min=0 step=0.1 class="player-io-input">
+      </span>
+      <button type=button class="player-play-btn" id="schedule_video_playbtn" onclick="cardVoTogglePlay('schedule_video')">&#9654;</button>
+      <button type=button class="player-stop-btn" id="schedule_video_stopbtn" onclick="cardVoStop('schedule_video')" title="Stop">&#9632;</button>
+      <span class="player-io-group">
+        <button type=button class="player-bracket-btn" onclick="cardVoSetPoint('schedule_video','end')" title="Set OUT point">]</button>
+        <input type=number name=schedule_video_trim_end id="schedule_video_end" min=0 step=0.1 class="player-io-input" placeholder="end">
+      </span>
+      <span class="player-time" id="schedule_video_time">0:00 / 0:00</span>
+      <span class="player-volume"><button type=button class="player-volume-icon" id="schedule_video_volicon" onclick="cardVoToggleMute('schedule_video')" title="Mute">&#128266;</button><input type=range class="player-volume-slider" id="schedule_video_volume" min=0 max=100 value=100 oninput="cardVoSetVolume('schedule_video', this.value)"></span>
+    </div>
+    <span id="schedule_video_preview_note" style="font-size:11px;opacity:.7;display:block;margin-top:4px"></span>
+  </div>
   <div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0 4px">
     <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">VO for this card (optional, replaces its audio):</span>
@@ -1799,13 +1835,32 @@ document.addEventListener("DOMContentLoaded", function(){
   <p id=sfx-gating-note style="display:none;margin-top:6px;margin-bottom:8px;font-size:12px;color:var(--amber)">"From genre" is unavailable — Woosh isn't reachable.</p>
   <div id=sfx-upload-area style="display:none">
     <div class="browse-row">
-      {% if allow_local_upload %}<input type=file name=sfx_upload accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" data-net-field="sfx_upload">{% endif %}
+      {% if allow_local_upload %}<input type=file name=sfx_upload accept="audio/*,.mp3,.wav,.m4a,.flac,.ogg" data-net-field="sfx_upload" onchange="cardVoFileChosen(this,'sfx_upload')">{% endif %}
       <button type=button class="browse-btn" onclick="openNetworkBrowser('sfx_upload','sfx','SFX')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
     </div>
     <input type=hidden id=sfx_upload_network name=sfx_upload_network value="">
   <input type=hidden id=sfx_upload_skip_template name=sfx_upload_skip_template value="">
     <span class="net-file-chip" id=sfx_upload_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('sfx_upload')">&#10005;</span></span>
-    <p style="margin-top:4px">A single hit/whoosh/impact sound — it gets stamped at every cut, not looped as music.</p>
+    <div class="audio-player-card" id="sfx_upload_card">
+      <canvas id="sfx_upload_waveform" width="420" height="68" style="display:none;width:100%;height:68px;cursor:pointer"></canvas>
+      <div class="audio-player-controls">
+        <span class="player-io-group">
+          <button type=button class="player-bracket-btn" onclick="cardVoSetPoint('sfx_upload','start')" title="Set IN point">[</button>
+          <input type=number name=sfx_upload_trim_start id="sfx_upload_start" value=0 min=0 step=0.1 class="player-io-input">
+        </span>
+        <button type=button class="player-play-btn" id="sfx_upload_playbtn" onclick="cardVoTogglePlay('sfx_upload')">&#9654;</button>
+        <button type=button class="player-stop-btn" id="sfx_upload_stopbtn" onclick="cardVoStop('sfx_upload')" title="Stop">&#9632;</button>
+        <span class="player-io-group">
+          <button type=button class="player-bracket-btn" onclick="cardVoSetPoint('sfx_upload','end')" title="Set OUT point">]</button>
+          <input type=number name=sfx_upload_trim_end id="sfx_upload_end" min=0 step=0.1 class="player-io-input" placeholder="end">
+        </span>
+        <span class="player-time" id="sfx_upload_time">0:00 / 0:00</span>
+        <span class="player-volume"><button type=button class="player-volume-icon" id="sfx_upload_volicon" onclick="cardVoToggleMute('sfx_upload')" title="Mute">&#128266;</button><input type=range class="player-volume-slider" id="sfx_upload_volume" min=0 max=100 value=100 oninput="cardVoSetVolume('sfx_upload', this.value)"></span>
+      </div>
+    </div>
+    <audio id="sfx_upload_player" style="display:none"></audio>
+    <span id="sfx_upload_preview_note" style="font-size:12px;opacity:.75;display:block;margin:4px 0 6px"></span>
+    <p style="margin-top:4px">A single hit/whoosh/impact sound — it gets stamped at every cut, not looped as music. IN sets where the one-shot starts reading from in your file (skip past any leading silence or noise); OUT can trim it shorter than its own natural length, but a one-shot is capped at roughly a second either way, so OUT can't make it longer.</p>
   </div>
     </div>
   </div>
@@ -2875,6 +2930,33 @@ document.addEventListener("DOMContentLoaded", function(){
       _hideAudioPlayerCard(prefix)
     }
   }
+  // Title/end card VIDEO files (end_card_video, schedule_video) share the
+  // exact same play/stop/mute/volume/set-in/set-out controls as the audio
+  // cards above (cardVoTogglePlay etc. all operate generically via
+  // document.getElementById(prefix + '_player'), which works identically
+  // for an <audio> or <video> element) -- but deliberately skip
+  // renderWaveform() entirely: a waveform canvas makes sense for an audio
+  // file with nothing else to look at, not for a video file, where the
+  // <video> element itself already IS the visual preview. Just shows the
+  // card and loads the file; no separate waveform-drawing step needed.
+  function cardVideoFileChosen(input, prefix){
+    var player = document.getElementById(prefix + '_player')
+    var note = document.getElementById(prefix + '_preview_note')
+    var card = document.getElementById(prefix + '_card')
+    if(cardVoObjectUrls[prefix]) URL.revokeObjectURL(cardVoObjectUrls[prefix])
+    if(input.files && input.files[0]){
+      var url = URL.createObjectURL(input.files[0])
+      cardVoObjectUrls[prefix] = url
+      player.src = url
+      if(note) note.textContent = ''
+      if(card) card.style.display = 'block'
+    } else {
+      player.removeAttribute('src')
+      if(note) note.textContent = ''
+      if(card) card.style.display = 'none'
+      _setPlayIcon(prefix, false)
+    }
+  }
   function _hideAudioPlayerCard(prefix){
     var card = document.getElementById(prefix + '_card')
     if(card) card.style.display = 'none'
@@ -3229,7 +3311,7 @@ document.addEventListener("DOMContentLoaded", function(){
     if(startInput) startInput.addEventListener('input', function(){ _repaintWaveform(prefix) })
     if(endInput) endInput.addEventListener('input', function(){ _repaintWaveform(prefix) })
   }
-  ['vo_upload', 'title_card_vo', 'end_card_vo', 'scoring_audio'].forEach(wireWaveformInteraction)
+  ['vo_upload', 'title_card_vo', 'end_card_vo', 'scoring_audio', 'sfx_upload'].forEach(wireWaveformInteraction)
   </script>
   </div><!-- /#generator-settings -->
   <div class="promo-actions">
@@ -8639,7 +8721,17 @@ document.addEventListener('DOMContentLoaded', function(){
         var networkUrl = '/uploads/' + encodeURIComponent(d.filename)
         player.src = networkUrl
         if(note) note.textContent = ''
-        renderWaveform(active.fieldName, networkUrl)
+        // A waveform canvas makes sense for an audio file's own player card
+        // (nothing else to look at); the title/end card VIDEO fields' own
+        // <video> element already IS the visual preview, so drawing a
+        // waveform for it would be pointless -- just show its card the
+        // same way cardVideoFileChosen() does for a locally-chosen file.
+        if(player.tagName === 'VIDEO'){
+          var vcard = document.getElementById(active.fieldName + '_card')
+          if(vcard) vcard.style.display = 'block'
+        } else {
+          renderWaveform(active.fieldName, networkUrl)
+        }
       }
       closeModal()
     }).catch(function(e){ listEl.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + e + '</div>' })
