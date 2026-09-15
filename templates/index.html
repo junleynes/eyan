@@ -3239,7 +3239,7 @@ document.addEventListener("DOMContentLoaded", function(){
 </div>
 <div id=tr-history class=card style="padding:0;margin-bottom:14px;overflow:hidden">
   <div id=tr-history-toggle style="display:flex;align-items:center;justify-content:space-between;padding:11px 16px;cursor:pointer">
-    <strong style="font-size:13px">Saved trailers <span id=tr-history-count style="opacity:.6;font-weight:400"></span></strong>
+    <strong style="font-size:13px">Saved plugs <span id=tr-history-count style="opacity:.6;font-weight:400"></span></strong>
     <span id=tr-history-chevron style="opacity:.6;font-size:12px">&#9660;</span>
   </div>
   <div id=tr-history-body style="display:none;border-top:1px solid var(--line)">
@@ -3267,7 +3267,7 @@ document.addEventListener("DOMContentLoaded", function(){
       <button type=button class=btn id=tr-alt-toggle onclick="toggleAlternates()" style="background:transparent;border:1px solid var(--line);color:var(--ink)">Show more clips</button>
       <span id=tr-alt-hint style="font-size:12px;opacity:.7;margin-left:10px"></span>
       <div id=tr-alt-body style="display:none;margin-top:12px">
-        <p style="font-size:12px;opacity:.75;margin:0 0 10px">Runner-up scenes the selector scored next-highest but didn't pick. Tick any to add them — they'll slot into the trailer in timeline order, not at the end.</p>
+        <p style="font-size:12px;opacity:.75;margin:0 0 10px">Runner-up scenes the selector scored next-highest but didn't pick. Tick any to add them — they'll slot into the plug in timeline order, not at the end.</p>
         <div id=tr-alt-grid style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px"></div>
       </div>
     </div>
@@ -5971,7 +5971,7 @@ function closeTrailerResult(){
   }
   document.getElementById('tr-area').style.display = 'none'
   var prompt = document.getElementById('tr-prompt')
-  prompt.textContent = 'Closed. Generate a new promo, or reopen one from Recent renders / Saved trailers.'
+  prompt.textContent = 'Closed. Generate a new promo, or reopen one from Recent renders / Saved plugs.'
   prompt.style.display = 'block'
 }
 // Semicolon required here, not stylistic: without it, JS's automatic
@@ -6007,7 +6007,7 @@ window.closeTrailerResult = closeTrailerResult;
       if(!d.ok) return
       countEl.textContent = d.items.length ? '(' + d.items.length + ')' : ''
       if(!d.items.length){
-        listEl.innerHTML = '<div class="net-modal-empty">No saved trailers yet.</div>'
+        listEl.innerHTML = '<div class="net-modal-empty">No saved plugs yet.</div>'
         return
       }
       listEl.innerHTML = ''
@@ -6030,7 +6030,7 @@ window.closeTrailerResult = closeTrailerResult;
         })
         row.querySelector('.history-del').addEventListener('click', function(e){
           e.stopPropagation()
-          if(!confirm('Delete "' + (item.orig_name || 'this trailer') + '" permanently? This removes the saved file too.')) return
+          if(!confirm('Delete "' + (item.orig_name || 'this plug') + '" permanently? This removes the saved file too.')) return
           fetch('/api/trailer/library/' + item.id + '/delete', {method: 'POST'}).then(function(){ refreshHistory() })
         })
         listEl.appendChild(row)
@@ -6603,7 +6603,7 @@ the cloud API when <code>FISH_AUDIO_API_KEY</code> is set, and otherwise from a 
 server's <code>/v1/references/list</code> (falling back to <code>/v1/models</code> on older
 builds) — if a list comes back empty,
 upload a reference sample instead. You can also override the auto-detected language, and
-generate a short preview via <code>/api/vo/preview</code> before running the full trailer
+generate a short preview via <code>/api/vo/preview</code> before running the full plug
 job. Configured via env vars:
 </p>
 <div class=card>
@@ -6740,10 +6740,10 @@ job. Configured via env vars:
       <tr><td>SFX</td><td><code>SFX</code></td><td>Audio</td></tr>
       </table>
       <p>Each category is configured in Config &gt; Network (admin) with its own path and credentials. Network picks are copied into the work folder like uploads.</p>
-      <h3>Job monitor &amp; saved trailers</h3>
+      <h3>Job monitor &amp; saved plugs</h3>
       <ul style="line-height:1.8;padding-left:20px">
         <li><strong>Job monitor</strong> — active, queued, and recent jobs with live progress.</li>
-        <li><strong>Saved trailers</strong> — finished renders kept until deleted; reopen video, download, and scene breakdown.</li>
+        <li><strong>Saved plugs</strong> — finished renders kept until deleted; reopen video, download, and scene breakdown.</li>
       </ul>
       <h3>Player format compatibility</h3>
       <p>The Player streams directly when the browser can decode the file. Broadcast masters (ProRes, DNxHD, many MXF) may fail in-browser; the Player then calls <code>POST /api/media/playable</code> to transcode to H.264/AAC MP4 and caches the result. Conversion applies to library picks, not local-only files.</p>
@@ -6767,7 +6767,7 @@ POST /api/chat  + model, messages, system?, think?</pre>
       <h3>Building</h3>
       <p>Configure the form, attach assets, name it under <strong>Save as template</strong>. Saving an existing name updates settings and only rewrites slots you supply.</p>
       <h3>Using</h3>
-      <p>Pick from the Template dropdown. Explicit form choices always win for that job. Delete removes stored assets; finished trailers stay in the library.</p>
+      <p>Pick from the Template dropdown. Explicit form choices always win for that job. Delete removes stored assets; finished plugs stay in the library.</p>
       <pre>GET/POST /api/templates
 DELETE /api/templates/&lt;id&gt;
 GET /api/templates/&lt;id&gt;/asset/&lt;slot&gt;
@@ -6919,7 +6919,7 @@ function switchDocs(btn){
 
 <div id="p-config-branding" class="sub-panel">
 <h3 style="margin-top:0">Branding</h3>
-<p style="margin-top:6px;color:var(--ink-dim)">Changes the name, tagline, footer, color theme, logo, and favicon everyone signed in (and the sign-in page itself) sees — saved to <code>branding_config.json</code> next to the script (text) and a <code>branding/</code> folder in the trailer library (logo/favicon files), so both persist across restarts. Takes effect immediately; existing sessions pick it up on their next page load.</p>
+<p style="margin-top:6px;color:var(--ink-dim)">Changes the name, tagline, footer, color theme, logo, and favicon everyone signed in (and the sign-in page itself) sees — saved to <code>branding_config.json</code> next to the script (text) and a <code>branding/</code> folder in the plug library (logo/favicon files), so both persist across restarts. Takes effect immediately; existing sessions pick it up on their next page load.</p>
 
 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px;margin-top:16px">
 
@@ -7604,7 +7604,7 @@ async function loadAuditLog(){
     var ACTION_LABELS = {
       user_create: 'Created account', user_role_change: 'Changed role', user_enable: 'Enabled account',
       user_disable: 'Disabled account', user_2fa_reset: 'Reset 2FA', user_password_reset: 'Reset password',
-      user_delete: 'Deleted account', trailer_delete: 'Deleted trailer', trailer_generate: 'Generated promo',
+      user_delete: 'Deleted account', trailer_delete: 'Deleted plug', trailer_generate: 'Generated promo',
       network_folder_change: 'Changed network folder', production_defaults_change: 'Changed production defaults',
       branding_change: 'Changed branding', job_cancel: 'Cancelled job'
     }
@@ -8952,7 +8952,7 @@ function _dashLoadLibrary(){
       if(b >= 1024*1024) return (b/(1024*1024)).toFixed(0) + ' MB'
       return (b/1024).toFixed(0) + ' KB'
     }
-    var lines = ['<p style="margin:0 0 4px">' + d.count + ' saved trailer' + (d.count===1?'':'s') + ' &middot; ' + fmtBytes(d.total_bytes) + '</p>']
+    var lines = ['<p style="margin:0 0 4px">' + d.count + ' saved plug' + (d.count===1?'':'s') + ' &middot; ' + fmtBytes(d.total_bytes) + '</p>']
     if(d.free_mb != null){
       var freeLabel = d.free_mb >= 1024 ? (d.free_mb/1024).toFixed(1) + ' GB' : d.free_mb + ' MB'
       lines.push('<p style="margin:0;opacity:.7">' + freeLabel + ' free on disk</p>')
@@ -9028,7 +9028,7 @@ function _dashLoadRecent(){
     }
     var items = (d.items || []).slice(0, 5)
     if(!items.length){
-      el.innerHTML = '<p style="opacity:.6;margin:0">No saved trailers yet.</p>'
+      el.innerHTML = '<p style="opacity:.6;margin:0">No saved plugs yet.</p>'
       return
     }
     // created_at, not created -- the field this silently got wrong before,
