@@ -6082,12 +6082,17 @@ function renderTrailerResult(d){
     // selection a person reviewed (and could still edit: drop/swap scenes)
     // via Preview the cut, so offering it for an unreviewed "Generate
     // without preview" render would hand off a cut nobody actually looked
-    // at as if it had been checked. A plain video destination is the
-    // mirror case: meant specifically for the direct, no-review path, so
-    // hidden once a render WAS reviewed via preview. went_through_preview
-    // comes from the backend (see api_generate/api_trailer_render's own
-    // result), not guessed at here.
-    var wantKinds = d.went_through_preview ? {csv: 1, csv_video: 1} : {video: 1}
+    // at as if it had been checked. A plain video destination has no such
+    // problem either way -- it's just the finished file, review or not --
+    // so unlike an earlier version of this logic, it's no longer EXCLUDED
+    // once a render went through preview: that was a real, reported bug,
+    // hiding a configured plain-video destination for anyone who reviews
+    // their cuts via Preview the cut, for no actual reason tied to what a
+    // plain video destination even sends. went_through_preview comes from
+    // the backend (see api_generate/api_trailer_render's own result), not
+    // guessed at here.
+    var wantKinds = {video: 1}
+    if(d.went_through_preview) Object.assign(wantKinds, {csv: 1, csv_video: 1})
     var items = dd.items.filter(function(dest){ return wantKinds[dest.delivery_kind] })
     if(!items.length) return
     items.forEach(function(dest){
