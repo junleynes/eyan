@@ -3244,7 +3244,21 @@ document.addEventListener("DOMContentLoaded", function(){
     _waveformWired[prefix] = true
     var canvas = document.getElementById(prefix + '_waveform')
     var player = document.getElementById(prefix + '_player')
-    if(!canvas || !player) return
+    // A real, reported bug: this used to require BOTH canvas and player,
+    // returning early otherwise -- which meant the title/end card VIDEO
+    // players (end_card_video, schedule_video), which deliberately have
+    // no waveform canvas at all (the <video> element itself is already
+    // the visual preview, so a waveform would be redundant), never got
+    // ANY of this wiring attached: no play/pause icon sync, no time
+    // display updates, nothing. Play still technically worked (the
+    // buttons call player.play()/pause() directly, not through this
+    // function), but with no visible feedback at all -- looking exactly
+    // like the button wasn't responding, and the preview note area never
+    // updating made the whole player look inert. Only the canvas-specific
+    // drag/click handling below still requires canvas; the core
+    // play/pause/time wiring every player card needs now only requires
+    // player itself.
+    if(!player) return
     player.addEventListener('timeupdate', function(){
       _repaintWaveform(prefix)
       _updatePlayerTime(prefix)
@@ -3259,6 +3273,7 @@ document.addEventListener("DOMContentLoaded", function(){
 
     var startInput = document.getElementById(prefix + '_start')
     var endInput = document.getElementById(prefix + '_end')
+    if(canvas){
     var HANDLE_GRAB_PX = 8  // generous enough to actually grab a 3px-wide line with a mouse
     var dragMode = null  // null | 'start' | 'end' | 'seek'
 
@@ -3304,14 +3319,16 @@ document.addEventListener("DOMContentLoaded", function(){
       }
     })
     document.addEventListener('mouseup', function(){ dragMode = null })
+    }
     // Typing a trim value directly (not just clicking Set in/out or
     // dragging a handle) should also repaint immediately -- the selection
     // is exactly what's being edited, so it should never look stale
-    // relative to the fields.
+    // relative to the fields. _repaintWaveform itself safely no-ops when
+    // there's no canvas (a video card), so this stays unconditional.
     if(startInput) startInput.addEventListener('input', function(){ _repaintWaveform(prefix) })
     if(endInput) endInput.addEventListener('input', function(){ _repaintWaveform(prefix) })
   }
-  ['vo_upload', 'title_card_vo', 'end_card_vo', 'scoring_audio', 'sfx_upload'].forEach(wireWaveformInteraction)
+  ['vo_upload', 'title_card_vo', 'end_card_vo', 'scoring_audio', 'sfx_upload', 'end_card_video', 'schedule_video'].forEach(wireWaveformInteraction)
   </script>
   </div><!-- /#generator-settings -->
   <div class="promo-actions">
