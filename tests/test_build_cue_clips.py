@@ -765,3 +765,64 @@ def test_sfx_and_card_video_trim_values_reach_params_from_a_real_form_post(monke
     params = captured.get('params') or {}
     assert params.get('sfx_upload_trim_start') == 0.5
     assert params.get('sfx_upload_trim_end') == 1.0
+
+
+def test_trim_card_video_handles_timeout_gracefully():
+    # Regression guard for a real, user-reported failure: setting in/out
+    # on a large, professional-codec (.mov, hundreds of MB) title card
+    # produced "Could not read the duration of the card video
+    # titlecard_trim_....mp4 -- it may be corrupt or in an unsupported
+    # format" much later in the job, rather than a clear failure at the
+    # actual trim step. Root cause: the original 60s timeout was far too
+    # short for decoding and re-encoding a large ProRes/DNxHD source even
+    # for a short trim, subprocess.run's own TimeoutExpired was never
+    # caught, and ffmpeg being killed mid-write on a plain (non-faststart)
+    # MP4 leaves a truncated file WITH some real bytes but no trailing
+    # moov atom (the duration/index metadata normally written last) --
+    # passing the old "exists and has some bytes" check while being
+    # genuinely unreadable by ffprobe.
+    import subprocess
+    import unittest.mock as mock
+
+    with mock.patch('pipeline.subprocess.run', side_effect=subprocess.TimeoutExpired(cmd='ffmpeg', timeout=900)):
+        result = pipeline.trim_card_video('nonexistent.mp4', 1.0, 3.0, '/tmp/should_not_exist_timeout.mp4')
+    assert result is None
+    assert not os.path.exists('/tmp/should_not_exist_timeout.mp4')
+
+
+def test_trim_card_video_detects_and_cleans_up_a_truncated_output():
+    # A "successful" ffmpeg run (or one that silently produced garbage)
+    # that leaves a non-empty but genuinely unreadable file must not be
+    # reported as success -- this is exactly the failure mode a real
+    # report described: some bytes on disk, but no readable duration.
+    import unittest.mock as mock
+
+    out_path = '/tmp/should_be_cleaned_up.mp4'
+
+    def fake_run(cmd, capture_output, text, timeout):
+        with open(cmd[-1], 'wb') as f:
+            f.write(b'not a real video file')
+        class FakeResult:
+            stderr = ''
+        return FakeResult()
+
+    with mock.patch('pipeline.subprocess.run', side_effect=fake_run):
+        result = pipeline.trim_card_video('nonexistent.mp4', 1.0, 3.0, out_path)
+    assert result is None
+    assert not os.path.exists(out_path)
+
+
+def test_mux_card_vo_also_handles_timeout_and_truncation():
+    # mux_card_vo had the exact same pattern (60s timeout, no
+    # TimeoutExpired handling, weak "exists and has bytes" validation) as
+    # trim_card_video before this fix -- less likely to actually hit it in
+    # practice since it uses -c:v copy (fast regardless of source size),
+    # but the same underlying risk for a slow enough disk/network or a
+    # source ffmpeg still has to at least partially re-parse.
+    import subprocess
+    import unittest.mock as mock
+
+    with mock.patch('pipeline.subprocess.run', side_effect=subprocess.TimeoutExpired(cmd='ffmpeg', timeout=900)):
+        result = pipeline.mux_card_vo('nonexistent.mp4', 'nonexistent_vo.mp3', 0.0, None, '/tmp/should_not_exist_mux.mp4')
+    assert result is None
+    assert not os.path.exists('/tmp/should_not_exist_mux.mp4')
