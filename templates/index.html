@@ -2914,9 +2914,22 @@ document.addEventListener("DOMContentLoaded", function(){
   // Title/end card VO: preview player + set-in/set-out from playhead (or type the
   // seconds manually in the number inputs next to it - both write to the same fields).
   var cardVoObjectUrls = {}
+  // Per-prefix state for the SAME "convert unplayable format" fallback the
+  // standalone Player tab already has (attemptPlayableFallback / a real,
+  // reported bug: a professional-grade .mov master -- ProRes, DNxHD, and
+  // similar codecs are extremely common in broadcast/VFX work but aren't
+  // decodable by any browser at all -- showed only a black frame with an
+  // unresponsive Play button here, with the actual demuxer error visible
+  // only in the browser's own developer console, never surfaced to the
+  // user at all). null/false means "no staged server filename yet" (a
+  // local file played straight from a blob URL, or nothing chosen).
+  var cardMediaStagedName = {}
+  var cardMediaFellBack = {}
   function cardVoFileChosen(input, prefix){
     var player = document.getElementById(prefix + '_player')
     var note = document.getElementById(prefix + '_preview_note')
+    cardMediaStagedName[prefix] = null  // local file via blob URL -- never touched the server, nothing to convert server-side
+    cardMediaFellBack[prefix] = {done: false}
     if(cardVoObjectUrls[prefix]) URL.revokeObjectURL(cardVoObjectUrls[prefix])
     if(input.files && input.files[0]){
       var url = URL.createObjectURL(input.files[0])
@@ -2943,6 +2956,8 @@ document.addEventListener("DOMContentLoaded", function(){
     var player = document.getElementById(prefix + '_player')
     var note = document.getElementById(prefix + '_preview_note')
     var card = document.getElementById(prefix + '_card')
+    cardMediaStagedName[prefix] = null  // local file via blob URL -- nothing staged server-side to convert
+    cardMediaFellBack[prefix] = {done: false}
     if(cardVoObjectUrls[prefix]) URL.revokeObjectURL(cardVoObjectUrls[prefix])
     if(input.files && input.files[0]){
       var url = URL.createObjectURL(input.files[0])
@@ -3270,6 +3285,20 @@ document.addEventListener("DOMContentLoaded", function(){
     player.addEventListener('play', function(){ _setPlayIcon(prefix, true) })
     player.addEventListener('pause', function(){ _setPlayIcon(prefix, false) })
     player.addEventListener('ended', function(){ _setPlayIcon(prefix, false) })
+    // Same "convert an unplayable format" fallback as the standalone
+    // Player tab's own handlePlayerError -- a professional-grade upload
+    // (ProRes/DNxHD .mov and similar) is common in broadcast/VFX work and
+    // simply cannot be decoded by any browser, which otherwise showed
+    // only a black frame and a Play button that looked unresponsive, with
+    // the real cause visible only in the browser's own developer console.
+    player.addEventListener('error', function(){
+      var note = document.getElementById(prefix + '_preview_note')
+      attemptPlayableFallback(player, cardMediaStagedName[prefix], cardMediaFellBack[prefix] || (cardMediaFellBack[prefix] = {done: false}), function(msg, isError){
+        if(!note) return
+        note.style.color = isError ? 'var(--amber)' : ''
+        note.textContent = msg
+      })
+    })
 
     var startInput = document.getElementById(prefix + '_start')
     var endInput = document.getElementById(prefix + '_end')
@@ -8738,6 +8767,13 @@ document.addEventListener('DOMContentLoaded', function(){
         var networkUrl = '/uploads/' + encodeURIComponent(d.filename)
         player.src = networkUrl
         if(note) note.textContent = ''
+        // A network pick DOES have a real, server-side staged filename --
+        // unlike a local file played straight from a blob URL, this one
+        // CAN be converted server-side if the browser can't decode it
+        // natively (see cardMediaStagedName's own comment, and
+        // attemptPlayableFallback further down).
+        cardMediaStagedName[active.fieldName] = d.filename
+        cardMediaFellBack[active.fieldName] = {done: false}
         // A waveform canvas makes sense for an audio file's own player card
         // (nothing else to look at); the title/end card VIDEO fields' own
         // <video> element already IS the visual preview, so drawing a
