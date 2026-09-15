@@ -1945,6 +1945,12 @@ document.addEventListener("DOMContentLoaded", function(){
       if(v !== 'manual' && typeof clearManualCues === 'function') clearManualCues()
       refreshAllAssetSummaries()
       if(typeof updateJobSummary === 'function') updateJobSummary()
+      // Timecode cues bypass AI Vision entirely, so switching into or out
+      // of Script Upload/Manual Entry changes whether "Generate without
+      // preview" actually needs Ollama at all -- re-applied immediately
+      // here (from the last known service status, not a fresh health
+      // check) rather than leaving it stale until the next periodic poll.
+      if(typeof applyServiceGating === 'function' && _lastServiceStatus) applyServiceGating(_lastServiceStatus)
     })
   })
   // A page reload doesn't fire 'change' on a radio the BROWSER itself
@@ -2758,13 +2764,24 @@ document.addEventListener("DOMContentLoaded", function(){
   // Grays out and disables generate-music / from-genre-sfx / tts-narration options
   // when the AI service(s) they need aren't reachable, falling back the selection
   // to "None" if it was the one currently chosen. Wired into runHealthCheck() below.
+  var _lastServiceStatus = null   // re-applied whenever script_mode changes (see below)
   function applyServiceGating(services){
+    _lastServiceStatus = services
     var status = {}
     services.forEach(function(s){ status[s.name] = s.status })
-    // AI Vision (Ollama) is a hard dependency for every scoring mode (no fallback
-    // exists) — if it's down, block submission outright rather than just
-    // greying out one option.
-    var ollamaUp = status.ollama === 'up'
+    // AI Vision (Ollama) is a hard dependency for the ordinary scene-scoring
+    // path (no fallback exists there) -- but NOT for Timecode Priority
+    // (script/manual entry cues): those drive selection exclusively and
+    // skip scene detection, quality scoring, and AI vision entirely (see
+    // build_cue_clips), so blocking submission here whenever Ollama is
+    // down was a real, confirmed bug for anyone using cues -- "Generate
+    // without preview" got disabled for a dependency the job wouldn't
+    // even use, while "Preview the cut" was never gated by this at all,
+    // producing exactly the "one works, the other doesn't" split a real
+    // report described.
+    var scriptModeInput = document.querySelector('input[name=script_mode]:checked')
+    var usingTimecodeCues = !!scriptModeInput && scriptModeInput.value !== 'none'
+    var ollamaUp = status.ollama === 'up' || usingTimecodeCues
     var banner = document.getElementById('ollama-down-banner')
     var submitBtn = document.getElementById('trailer-submit-btn')
     if(banner) banner.style.display = ollamaUp ? 'none' : ''
