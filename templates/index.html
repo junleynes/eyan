@@ -456,6 +456,19 @@ p{color:var(--ink-dim);font-size:13px;line-height:1.65;margin:8px 0}
   width:10px;height:10px;border-radius:50%;border:none;
   background:var(--phosphor);cursor:pointer;
 }
+.player-scrubber{
+  width:100%;height:4px;-webkit-appearance:none;appearance:none;
+  background:var(--line);border-radius:2px;outline:none;cursor:pointer;
+  margin-top:6px;display:block;
+}
+.player-scrubber::-webkit-slider-thumb{
+  -webkit-appearance:none;appearance:none;width:12px;height:12px;border-radius:50%;
+  background:var(--phosphor);cursor:pointer;
+}
+.player-scrubber::-moz-range-thumb{
+  width:12px;height:12px;border-radius:50%;border:none;
+  background:var(--phosphor);cursor:pointer;
+}
 .player-time{font-size:11px;opacity:.65;min-width:76px;white-space:nowrap;font-variant-numeric:tabular-nums;margin-left:auto}
 .player-io-group{display:flex;align-items:center;gap:4px}
 /* Bracket-style IN/OUT buttons -- replaces the earlier text "IN"/"OUT"
@@ -1647,6 +1660,7 @@ document.addEventListener("DOMContentLoaded", function(){
   <span class="net-file-chip" id=end_card_video_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('end_card_video')">&#10005;</span></span>
   <div class="audio-player-card" id="end_card_video_card">
     <video id="end_card_video_player" style="width:100%;max-height:180px;background:#000;border-radius:6px;display:block"></video>
+    <input type=range class="player-scrubber" id="end_card_video_scrubber" min=0 max=1000 value=0 oninput="cardVoSeek('end_card_video', this.value)">
     <div class="audio-player-controls">
       <span class="player-io-group">
         <button type=button class="player-bracket-btn" onclick="cardVoSetPoint('end_card_video','start')" title="Set IN point">[</button>
@@ -1713,6 +1727,7 @@ document.addEventListener("DOMContentLoaded", function(){
   <span class="net-file-chip" id=schedule_video_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('schedule_video')">&#10005;</span></span>
   <div class="audio-player-card" id="schedule_video_card">
     <video id="schedule_video_player" style="width:100%;max-height:180px;background:#000;border-radius:6px;display:block"></video>
+    <input type=range class="player-scrubber" id="schedule_video_scrubber" min=0 max=1000 value=0 oninput="cardVoSeek('schedule_video', this.value)">
     <div class="audio-player-controls">
       <span class="player-io-group">
         <button type=button class="player-bracket-btn" onclick="cardVoSetPoint('schedule_video','start')" title="Set IN point">[</button>
@@ -3012,6 +3027,16 @@ document.addEventListener("DOMContentLoaded", function(){
     player.pause()
     player.currentTime = 0
   }
+  // Scrubber for a picker that has no waveform canvas of its own (a video
+  // preview -- the video itself is already the visual element, so there's
+  // no canvas to click-to-seek on the way the audio cards' own waveform
+  // already provides). Dragging seeks live, not just on release, matching
+  // how the waveform's own seek-by-click already behaves.
+  function cardVoSeek(prefix, sliderValue){
+    var player = document.getElementById(prefix + '_player')
+    if(!player || !player.duration) return
+    player.currentTime = (sliderValue / 1000) * player.duration
+  }
   function cardVoToggleMute(prefix){
     var player = document.getElementById(prefix + '_player')
     if(!player || !player.src) return
@@ -3048,6 +3073,22 @@ document.addEventListener("DOMContentLoaded", function(){
     var timeEl = document.getElementById(prefix + '_time')
     if(!player || !timeEl) return
     timeEl.textContent = _formatPlayerTime(player.currentTime) + ' / ' + _formatPlayerTime(player.duration)
+  }
+  // Only the video preview cards (end_card_video, schedule_video) have a
+  // scrubber at all -- the audio cards' own waveform already doubles as
+  // one (click-to-seek is part of wireWaveformInteraction's own canvas
+  // handling). Safely does nothing for any prefix without one, the same
+  // way _repaintWaveform already does nothing for a prefix without a
+  // canvas.
+  function _updateScrubber(prefix){
+    var player = document.getElementById(prefix + '_player')
+    var scrubber = document.getElementById(prefix + '_scrubber')
+    if(!player || !scrubber || !player.duration) return
+    // Only move the thumb from a real playback update, not while the user
+    // is actively dragging it themselves -- otherwise a timeupdate firing
+    // mid-drag would fight the drag and jump the thumb back.
+    if(document.activeElement === scrubber) return
+    scrubber.value = Math.round((player.currentTime / player.duration) * 1000)
   }
 
   // ---- Waveform display for uploaded/browsed audio (VO + narration, music) ----
@@ -3277,10 +3318,12 @@ document.addEventListener("DOMContentLoaded", function(){
     player.addEventListener('timeupdate', function(){
       _repaintWaveform(prefix)
       _updatePlayerTime(prefix)
+      _updateScrubber(prefix)
     })
     player.addEventListener('loadedmetadata', function(){
       _updatePlayerTime(prefix)
       _repaintWaveform(prefix)  // duration just became known -- selection fractions were wrong (or 0/1) until now
+      _updateScrubber(prefix)
     })
     player.addEventListener('play', function(){ _setPlayIcon(prefix, true) })
     player.addEventListener('pause', function(){ _setPlayIcon(prefix, false) })
