@@ -82,8 +82,11 @@ TEMPLATE_SETTING_FIELDS = [
     'scoring_mode', 'sfx_mode', 'sfx_source', 'vo_mode', 'vo_engine',
     'vo_voice', 'vo_language', 'vo_rate', 'vo_start', 'vo_volume',
     'vo_trim_start', 'vo_trim_end', 'vo_text',
+    'sfx_upload_trim_start', 'sfx_upload_trim_end',
     'title_card_vo_start', 'title_card_vo_end',
     'end_card_vo_start', 'end_card_vo_end',
+    'end_card_video_start', 'end_card_video_end',
+    'schedule_video_start', 'schedule_video_end',
     'target_loudness', 'true_peak', 'music_duck_db', 'duck_depth_db',
     'duck_release_hold', 'beat_match', 'broadcast_stereo',
     'sync_beats', 'whisper_enhance',
@@ -2332,13 +2335,24 @@ def synth_sfx_waveform(genre, sample_rate=22050, sfx_dur=0.6):
         sfx = sfx / peak * 0.85
     return sfx
 
-def load_hit_waveform(path, sample_rate=22050, max_dur=1.2):
+def load_hit_waveform(path, sample_rate=22050, max_dur=1.2, offset=0.0, trim_end=None):
     """Load an uploaded or AI-generated one-shot SFX file (any format ffmpeg/librosa
     can read) as a short mono waveform, trimmed and fade-tailed so it behaves like
-    a 'hit' when stamped at multiple cut points. Returns None on failure."""
+    a 'hit' when stamped at multiple cut points. Returns None on failure.
+
+    offset: seconds into the file to start reading from (the IN point set via
+    the waveform's own bracket buttons) -- lets a user skip past leading
+    silence or noise in their own uploaded file rather than always reading
+    from its very start.
+    trim_end: seconds into the file to stop reading at, or None for no
+    explicit cap beyond max_dur. The one-shot's own actual length is still
+    whichever is shorter of max_dur and (trim_end - offset) -- trim_end can
+    only shorten a one-shot, never lengthen it past max_dur, since a longer
+    "hit" stamped at every cut would stop sounding like one."""
     try:
         import librosa
-        y, sr = librosa_load(path, sr=sample_rate, mono=True, duration=max_dur)
+        dur = max_dur if trim_end is None else max(0.05, min(max_dur, trim_end - offset))
+        y, sr = librosa_load(path, sr=sample_rate, mono=True, offset=max(0.0, offset), duration=dur)
         if y is None or len(y) == 0:
             return None
         # short fade-out so repeated stamping never clicks at the tail
@@ -2706,6 +2720,26 @@ def finalize_bgm_duration(src_path, duration, base_ts, fade_in=2.0, fade_out=3.0
                        capture_output=True, text=True, timeout=30)
     if os.path.exists(out) and os.path.getsize(out) > 0:
         return out
+    return None
+
+def trim_card_video(video_path, trim_start, trim_end, output_path):
+    """Cut a title/end card's own VIDEO to [trim_start, trim_end) seconds
+    (trim_end=None means to the end of the file) -- the card's own visual
+    content, as opposed to mux_card_vo() below which replaces its AUDIO
+    with a separately-uploaded VO track. Re-encodes (not -c copy) since an
+    accurate cut at an arbitrary, non-keyframe point is worth far more here
+    than the speed of a copy -- these cards are short, so the cost is
+    small. Returns output_path on success, or None if the trim failed
+    (caller should keep the card's original, untrimmed video in that
+    case, exactly like mux_card_vo's own failure contract)."""
+    cmd = [FFMPEG, '-y', '-ss', str(trim_start)]
+    if trim_end is not None:
+        cmd += ['-to', str(trim_end)]
+    cmd += ['-i', video_path, '-c:v', 'libx264', '-preset', 'fast', '-c:a', 'aac', '-b:a', '192k', output_path]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+        return output_path
+    print(f'Card video trim error ({video_path}): {r.stderr[:500]}')
     return None
 
 def mux_card_vo(video_path, vo_path, trim_start, trim_end, output_path):
@@ -3627,21 +3661,31 @@ def build_cue_clips(cues, materials_paths, min_seg_dur=0.8, default_cue_dur=4.0)
     clips.sort(key=lambda s: (s.get('material') or 0, s['start']))
     return clips
 
-def librosa_load(path, sr=22050, mono=True, duration=None):
+def librosa_load(path, sr=22050, mono=True, duration=None, offset=0.0):
     """librosa.load, but never via the deprecated audioread fallback.
 
     soundfile cannot open compressed/container formats (.mov, .m4a, .mp4), so
     librosa silently falls back to audioread -- which emits a deprecation warning,
     is removed in librosa 1.0, and is markedly slower. Decoding to a temporary
-    PCM WAV with ffmpeg first keeps everything on the soundfile path."""
+    PCM WAV with ffmpeg first keeps everything on the soundfile path.
+
+    offset: seconds into the source to start reading from (e.g. a one-shot
+    SFX's own user-set IN point). Applied via ffmpeg's own -ss for a
+    converted file (fast, accurate input-side seeking, not the slower
+    decode-then-discard output-side seeking -ss after -i would do), or
+    passed straight through to librosa's own load() for an already-native
+    format that skips the ffmpeg conversion step entirely."""
     import librosa as _lb
     ext = os.path.splitext(path)[1].lower()
     tmp = None
     try:
         if ext not in ('.wav', '.flac', '.ogg', '.aiff', '.aif'):
             tmp = os.path.join(app.config['UPLOAD_FOLDER'], f'lb_{uuid.uuid4().hex}.wav')
-            cmd = [FFMPEG, '-y', '-i', path, '-vn', '-ac', '1' if mono else '2',
-                   '-ar', str(int(sr)), '-c:a', 'pcm_s16le']
+            cmd = [FFMPEG, '-y']
+            if offset:
+                cmd += ['-ss', str(offset)]
+            cmd += ['-i', path, '-vn', '-ac', '1' if mono else '2',
+                    '-ar', str(int(sr)), '-c:a', 'pcm_s16le']
             if duration:
                 cmd += ['-t', str(duration)]
             cmd.append(tmp)
@@ -3651,7 +3695,14 @@ def librosa_load(path, sr=22050, mono=True, duration=None):
                 tmp = None
             if tmp and not (os.path.exists(tmp) and os.path.getsize(tmp) > 0):
                 tmp = None
-        return _lb.load(tmp or path, sr=sr, mono=mono, duration=duration)
+            # The ffmpeg pass above already seeked to `offset` (or the temp
+            # decode failed and this reads the original file from its own
+            # start instead) -- pass offset again to librosa's own load()
+            # only in the fallback case, never double-applying it against
+            # the temp file, which is already positioned at 0 = offset.
+            return _lb.load(tmp or path, sr=sr, mono=mono, duration=duration,
+                             offset=0.0 if tmp else offset)
+        return _lb.load(path, sr=sr, mono=mono, duration=duration, offset=offset)
     finally:
         if tmp and os.path.exists(tmp):
             try:
@@ -4896,6 +4947,21 @@ def api_trailer():
         sfx_upload_path = _resolve_upload('sfx_upload', AUDIO_EXTENSIONS)
     if sfx_mode == 'upload' and not sfx_upload_path:
         sfx_mode = 'none'  # nothing usable was uploaded, don't silently fall back to genre SFX
+    # Same in/out parsing as the title/end card VO fields (_parse_card_vo,
+    # defined further down) -- inlined here rather than sharing that helper
+    # since it also re-resolves its own file upload, which sfx_upload_path
+    # already did just above.
+    try:
+        sfx_upload_trim_start = max(0.0, float(request.form.get('sfx_upload_trim_start', 0) or 0))
+    except ValueError:
+        sfx_upload_trim_start = 0.0
+    _sfx_trim_end_raw = request.form.get('sfx_upload_trim_end', '').strip()
+    try:
+        sfx_upload_trim_end = float(_sfx_trim_end_raw) if _sfx_trim_end_raw else None
+    except ValueError:
+        sfx_upload_trim_end = None
+    if sfx_upload_trim_end is not None and sfx_upload_trim_end <= sfx_upload_trim_start:
+        sfx_upload_trim_end = None
 
 
     # Voiceover: 'none' (skip), 'upload' (use a supplied VO track as-is), or
@@ -5003,8 +5069,7 @@ def api_trailer():
     # name) and end card ("schedule_video" field) — each can have its own
     # uploaded narration audio, muxed on in place of whatever audio the card
     # video already has, trimmed to a chosen [start, end) window of the source file.
-    def _parse_card_vo(file_key, start_key, end_key):
-        path = _resolve_upload(file_key, AUDIO_EXTENSIONS)
+    def _parse_trim_pair(start_key, end_key):
         try:
             start = max(0.0, float(request.form.get(start_key, 0) or 0))
         except ValueError:
@@ -5016,12 +5081,24 @@ def api_trailer():
             end = None
         if end is not None and end <= start:
             end = None
+        return start, end
+
+    def _parse_card_vo(file_key, start_key, end_key):
+        path = _resolve_upload(file_key, AUDIO_EXTENSIONS)
+        start, end = _parse_trim_pair(start_key, end_key)
         return path, start, end
 
     title_card_vo_path, title_card_vo_start, title_card_vo_end = _parse_card_vo(
         'title_card_vo', 'title_card_vo_start', 'title_card_vo_end')
     end_card_vo_path, end_card_vo_start, end_card_vo_end = _parse_card_vo(
         'end_card_vo', 'end_card_vo_start', 'end_card_vo_end')
+    # The card VIDEO files' own in/out (as opposed to their VO's, just above)
+    # -- end_card_path/schedule_card_path are already resolved further up,
+    # so this only needs the trim pair, not another file resolution.
+    end_card_video_start, end_card_video_end = _parse_trim_pair(
+        'end_card_video_trim_start', 'end_card_video_trim_end')
+    schedule_video_start, schedule_video_end = _parse_trim_pair(
+        'schedule_video_trim_start', 'schedule_video_trim_end')
 
     # ---- Show template fill-in ----
     # A template IS the configuration for a programme: its genre, transition,
@@ -5214,6 +5291,7 @@ def api_trailer():
                   transition=transition, xfade_dur=xfade_dur, transition_matte_path=transition_matte_path,
                   target_loudness=target_loudness, true_peak=true_peak, music_duck_db=music_duck_db, duck_depth_db=duck_depth_db, duck_release_hold=duck_release_hold, beat_match=beat_match, broadcast_stereo=broadcast_stereo, model=model,
                   sfx_mode=sfx_mode, sfx_upload_path=sfx_upload_path,
+                  sfx_upload_trim_start=sfx_upload_trim_start, sfx_upload_trim_end=sfx_upload_trim_end,
                   vo_mode=vo_mode, vo_upload_path=vo_upload_path, vo_upload_orig_name=vo_upload_orig_name,
                   vo_text=vo_text, vo_voice=vo_voice,
                   vo_language=vo_language, vo_engine=vo_engine, vo_ref_upload_path=vo_ref_upload_path,
@@ -5222,7 +5300,9 @@ def api_trailer():
                   vo_trim_start=vo_trim_start, vo_trim_end=vo_trim_end,
                   scoring_audio_trim_start=scoring_audio_trim_start, scoring_audio_trim_end=scoring_audio_trim_end,
                   end_card_path=end_card_path, end_card_orig_name=end_card_orig_name,
+                  end_card_video_start=end_card_video_start, end_card_video_end=end_card_video_end,
                   schedule_card_path=schedule_card_path, schedule_card_orig_name=schedule_card_orig_name,
+                  schedule_video_start=schedule_video_start, schedule_video_end=schedule_video_end,
                   title_card_vo_path=title_card_vo_path, title_card_vo_start=title_card_vo_start, title_card_vo_end=title_card_vo_end,
                   end_card_vo_path=end_card_vo_path, end_card_vo_start=end_card_vo_start, end_card_vo_end=end_card_vo_end,
                   scoring_audio_path=scoring_audio_path, scoring_audio_orig_name=scoring_audio_orig_name,
@@ -7794,6 +7874,8 @@ def _run_trailer_job(jid, params):
     end_card_path = params['end_card_path']; schedule_card_path = params['schedule_card_path']
     title_card_vo_path = params.get('title_card_vo_path'); title_card_vo_start = params.get('title_card_vo_start', 0.0); title_card_vo_end = params.get('title_card_vo_end')
     end_card_vo_path = params.get('end_card_vo_path'); end_card_vo_start = params.get('end_card_vo_start', 0.0); end_card_vo_end = params.get('end_card_vo_end')
+    end_card_video_start = params.get('end_card_video_start', 0.0); end_card_video_end = params.get('end_card_video_end')
+    schedule_video_start = params.get('schedule_video_start', 0.0); schedule_video_end = params.get('schedule_video_end')
     scoring_audio_path = params['scoring_audio_path']; prompt = params['prompt']
 
     job_set(jid, percent=2, step='Reading video info')
@@ -7818,6 +7900,11 @@ def _run_trailer_job(jid, params):
     card_durations = []
     _card_vo_ts = int(time.time() * 1000)
     if end_card_path and os.path.exists(end_card_path):
+        if end_card_video_start > 0 or end_card_video_end is not None:
+            trimmed = os.path.join(app.config['UPLOAD_FOLDER'], f'titlecard_trim_{_card_vo_ts}.mp4')
+            result = trim_card_video(end_card_path, end_card_video_start, end_card_video_end, trimmed)
+            if result:
+                end_card_path = result
         if title_card_vo_path and os.path.exists(title_card_vo_path):
             muxed = os.path.join(app.config['UPLOAD_FOLDER'], f'titlecard_vo_{_card_vo_ts}.mp4')
             result = mux_card_vo(end_card_path, title_card_vo_path, title_card_vo_start, title_card_vo_end, muxed)
@@ -7825,6 +7912,11 @@ def _run_trailer_job(jid, params):
                 end_card_path = result
         card_files.append(end_card_path)
     if schedule_card_path and os.path.exists(schedule_card_path):
+        if schedule_video_start > 0 or schedule_video_end is not None:
+            trimmed = os.path.join(app.config['UPLOAD_FOLDER'], f'endcard_trim_{_card_vo_ts}.mp4')
+            result = trim_card_video(schedule_card_path, schedule_video_start, schedule_video_end, trimmed)
+            if result:
+                schedule_card_path = result
         if end_card_vo_path and os.path.exists(end_card_vo_path):
             muxed = os.path.join(app.config['UPLOAD_FOLDER'], f'endcard_vo_{_card_vo_ts}.mp4')
             result = mux_card_vo(schedule_card_path, end_card_vo_path, end_card_vo_start, end_card_vo_end, muxed)
@@ -9241,7 +9333,10 @@ def _run_trailer_job(jid, params):
     if sfx_mode != 'none' and sfx_timestamps:
         hit_wave = None
         if sfx_mode == 'upload' and sfx_upload_path:
-            hit_wave = load_hit_waveform(sfx_upload_path)
+            hit_wave = load_hit_waveform(
+                sfx_upload_path,
+                offset=params.get('sfx_upload_trim_start') or 0.0,
+                trim_end=params.get('sfx_upload_trim_end'))
             sfx_source = 'uploaded' if hit_wave is not None else 'none'
         elif sfx_mode == 'genre' and genre:
             woosh_sfx_path = os.path.join(app.config['UPLOAD_FOLDER'], f'woosh_sfx_{base_ts}.flac')

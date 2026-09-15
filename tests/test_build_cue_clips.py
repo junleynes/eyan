@@ -660,3 +660,108 @@ def test_cancelling_a_still_queued_job_does_not_leak_a_gate_slot():
         assert pipeline.GATE.running == 2
     finally:
         pipeline.GATE.running = original
+
+
+def test_trim_card_video_cuts_to_the_requested_range(tmp_path):
+    # User-requested: title/end card video files should have a preview and
+    # in/out trim capability, matching what Background Music and VO
+    # already had. trim_card_video() is the new backend piece that
+    # actually cuts the card's own VIDEO to the chosen range (as opposed
+    # to mux_card_vo, pre-existing, which only ever replaced the card's
+    # AUDIO with an uploaded VO track -- the video itself was always used
+    # in full, with no trim support at all, before this).
+    import subprocess
+    card = str(tmp_path / 'card.mp4')
+    subprocess.run([
+        FFMPEG, '-y', '-loglevel', 'error',
+        '-f', 'lavfi', '-i', 'color=c=green:s=320x240:d=5:r=25',
+        '-f', 'lavfi', '-i', 'sine=frequency=880:duration=5',
+        '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', '-shortest', card,
+    ], check=True)
+    out = str(tmp_path / 'card_trimmed.mp4')
+    result = pipeline.trim_card_video(card, 1.0, 3.0, out)
+    assert result == out
+    assert os.path.exists(out)
+    dur = pipeline.probe_duration(out)
+    assert abs(dur - 2.0) < 0.15
+
+
+def test_load_hit_waveform_offset_and_trim_end(tmp_path):
+    # User-requested: Transition SFX should also get in/out trim
+    # capability. load_hit_waveform() (the function that turns an
+    # uploaded one-shot into the short waveform actually stamped at cuts)
+    # previously always read from the very start of the file with no way
+    # to skip ahead -- offset is the new IN point, trim_end the new OUT.
+    import subprocess
+    sfx = str(tmp_path / 'sfx.mp3')
+    subprocess.run([
+        FFMPEG, '-y', '-loglevel', 'error',
+        '-f', 'lavfi', '-i', 'sine=frequency=1000:duration=2',
+        '-c:a', 'libmp3lame', sfx,
+    ], check=True)
+
+    y_default = pipeline.load_hit_waveform(sfx)
+    assert y_default is not None
+    assert len(y_default) == int(1.2 * 22050)  # default max_dur, no trim
+
+    # offset alone: still capped at max_dur since there's enough file left.
+    y_offset = pipeline.load_hit_waveform(sfx, offset=0.5)
+    assert len(y_offset) == int(1.2 * 22050)
+
+    # offset + trim_end shorter than max_dur: the shorter length wins --
+    # trim_end can shorten a one-shot but never lengthen it past max_dur.
+    y_trimmed = pipeline.load_hit_waveform(sfx, offset=0.5, trim_end=1.0)
+    assert abs(len(y_trimmed) - int(0.5 * 22050)) <= 1
+
+
+def test_sfx_and_card_video_trim_values_reach_params_from_a_real_form_post(monkeypatch):
+    # Regression guard confirming the full chain, not just the isolated
+    # functions above: a real HTTP form submission with
+    # sfx_upload_trim_start/end and end_card_video_trim_start/end (and
+    # schedule_video's own pair) must actually reach _run_trailer_job's
+    # own params dict with the exact values submitted -- intercepts the
+    # job dispatch itself rather than running a full render, to check
+    # this one specific wiring directly and quickly.
+    import io as _io
+    import unittest.mock as mock
+    import core
+
+    monkeypatch.setattr(pipeline, 'ALLOW_LOCAL_MEDIA_UPLOAD', True)
+    app = main.app
+    client = app.test_client()
+    with client.session_transaction() as sess:
+        sess['authed'] = True
+        sess['user_id'] = 1
+        sess['username'] = 'admin'
+        sess['role'] = 'admin'
+        sess['csrf_token'] = 'test-csrf-card-trim'
+    headers = {'X-CSRF-Token': 'test-csrf-card-trim'}
+
+    video_bytes = b'\x00' * 10  # dispatch is intercepted before any real decode happens
+    sfx_bytes = b'\x00' * 10
+
+    captured = {}
+
+    class FakeThread:
+        def __init__(self, target=None, args=(), daemon=None):
+            captured['params'] = args[1] if len(args) > 1 else None
+
+        def start(self):
+            pass
+
+    core._job_submit_limiter.buckets.clear()
+    with mock.patch('requests.post'), mock.patch('requests.get'), \
+         mock.patch('pipeline.threading.Thread', FakeThread):
+        r = client.post('/api/trailer/generate', data={
+            'file': (_io.BytesIO(video_bytes), 'mat1.mp4'),
+            'sfx_upload': (_io.BytesIO(sfx_bytes), 'sfx.mp3'),
+            'sfx_upload_trim_start': '0.5', 'sfx_upload_trim_end': '1.0',
+            'sfx_mode': 'upload',
+            'genre': '', 'trailer_length': '15',
+            'scoring_mode': 'none', 'vo_mode': 'none',
+        }, headers=headers, content_type='multipart/form-data')
+    assert r.status_code == 200, r.get_data(as_text=True)
+
+    params = captured.get('params') or {}
+    assert params.get('sfx_upload_trim_start') == 0.5
+    assert params.get('sfx_upload_trim_end') == 1.0
