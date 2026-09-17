@@ -77,6 +77,22 @@ def library_db_init():
         created_at REAL NOT NULL,
         updated_at REAL NOT NULL
     )''')
+    # Added after the table already existed in the wild -- same ALTER TABLE
+    # guard pattern as trailers' user_id/username below. include_fcpxml is an
+    # independent add-on (send the FCP XML cut package alongside whatever
+    # delivery_kind already sends) rather than another delivery_kind value,
+    # since every existing kind (video / csv / csv_video) can equally well
+    # want the XML alongside it -- folding it into delivery_kind would mean
+    # a combinatorial explosion of kind values instead of one checkbox.
+    # fcpxml_audio_tracks controls whether that XML embeds actual audio
+    # clipitems for the surviving music/VO/card materials, or stays a
+    # simpler video-only cut with markers -- some editors want the fuller
+    # package, others find extra audio tracks just noise to strip back out.
+    have_dest = {r[1] for r in conn.execute('PRAGMA table_info(network_destinations)')}
+    if 'include_fcpxml' not in have_dest:
+        conn.execute('ALTER TABLE network_destinations ADD COLUMN include_fcpxml INTEGER NOT NULL DEFAULT 0')
+    if 'fcpxml_audio_tracks' not in have_dest:
+        conn.execute('ALTER TABLE network_destinations ADD COLUMN fcpxml_audio_tracks INTEGER NOT NULL DEFAULT 0')
     conn.execute('''CREATE TABLE IF NOT EXISTS trailers (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         orig_name TEXT,
@@ -214,21 +230,25 @@ def network_destination_get(dest_id):
     conn.close()
     return dict(row) if row else None
 
-def network_destination_add(name, path, username=None, password=None, delivery_kind='video'):
+def network_destination_add(name, path, username=None, password=None, delivery_kind='video',
+                             include_fcpxml=False, fcpxml_audio_tracks=False):
     if delivery_kind not in DELIVERY_KINDS:
         delivery_kind = 'video'
     now = time.time()
     conn = _lib_db()
     cur = conn.execute(
-        'INSERT INTO network_destinations (name, path, username, password, delivery_kind, created_at, updated_at) '
-        'VALUES (?,?,?,?,?,?,?)',
-        (name, path, username or None, password or None, delivery_kind, now, now))
+        'INSERT INTO network_destinations '
+        '(name, path, username, password, delivery_kind, include_fcpxml, fcpxml_audio_tracks, created_at, updated_at) '
+        'VALUES (?,?,?,?,?,?,?,?,?)',
+        (name, path, username or None, password or None, delivery_kind,
+         int(bool(include_fcpxml)), int(bool(fcpxml_audio_tracks)), now, now))
     conn.commit()
     new_id = cur.lastrowid
     conn.close()
     return new_id
 
-def network_destination_update(dest_id, name=None, path=None, username=None, password=None, delivery_kind=None):
+def network_destination_update(dest_id, name=None, path=None, username=None, password=None, delivery_kind=None,
+                                include_fcpxml=None, fcpxml_audio_tracks=None):
     """Only touches fields explicitly passed -- None means "leave as is", not
     "clear it", matching how save_network_folder already treats a field
     that's simply absent from an edit. An admin updating just the name
@@ -240,12 +260,15 @@ def network_destination_update(dest_id, name=None, path=None, username=None, pas
         delivery_kind = existing['delivery_kind']
     conn = _lib_db()
     conn.execute(
-        'UPDATE network_destinations SET name=?, path=?, username=?, password=?, delivery_kind=?, updated_at=? WHERE id=?',
+        'UPDATE network_destinations SET name=?, path=?, username=?, password=?, delivery_kind=?, '
+        'include_fcpxml=?, fcpxml_audio_tracks=?, updated_at=? WHERE id=?',
         (name if name is not None else existing['name'],
          path if path is not None else existing['path'],
          username if username is not None else existing['username'],
          password if password is not None else existing['password'],
          delivery_kind if delivery_kind is not None else existing['delivery_kind'],
+         int(bool(include_fcpxml)) if include_fcpxml is not None else existing['include_fcpxml'],
+         int(bool(fcpxml_audio_tracks)) if fcpxml_audio_tracks is not None else existing['fcpxml_audio_tracks'],
          time.time(), dest_id))
     conn.commit()
     conn.close()

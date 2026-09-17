@@ -5650,6 +5650,130 @@ def api_trailer_render():
     threading.Thread(target=run_trailer_job_gated, args=(jid, params), daemon=True).start()
     return jsonify(job_id=jid, dropped=sorted(drop), added=sorted(added), scenes=len(selected))
 
+@app.route('/api/trailer/preview/<preview_id>/send-to-destination', methods=['POST'])
+@require_permission('promo_generation')
+def api_trailer_preview_send_to_destination(preview_id):
+    """Send to destination straight from the Proposed cut (preview) screen,
+    before Lock cut & render even runs. A csv/csv_video destination's whole
+    point is the ORIGINAL source video plus a CSV describing the reviewed
+    cut -- both already fully known right after Preview -- so requiring a
+    full render first (as the library-row-based /library/<tid>/send-to-
+    destination route does) just makes someone wait on a render whose own
+    output isn't even what gets sent. A plain "video" destination genuinely
+    does need the generated promo and is intentionally rejected here (see
+    the delivery_kind check below); it's still only offered from
+    renderTrailerResult once that promo actually exists.
+
+    Mirrors api_trailer_render's own drop/add handling against the same
+    stored preview selection, minus the target-length rebalancing (which
+    only matters for an actual render's pacing, not for a CSV listing
+    exactly the scenes a person chose to keep)."""
+    p = preview_get(preview_id)
+    if not p:
+        return jsonify(ok=False, error='That preview has expired. Run the analysis again.'), 404
+    if not _owns_or_admin(p.get('params', {}).get('user_id')):
+        return jsonify(ok=False, error='That preview belongs to a different account.'), 403
+
+    data = request.get_json(silent=True) or {}
+    destination_id = data.get('destination_id')
+    destination = network_destination_get(destination_id) if destination_id else None
+    if not destination:
+        return jsonify(ok=False, error='That destination no longer exists -- pick another.'), 400
+    if destination['delivery_kind'] not in ('csv', 'csv_video'):
+        return jsonify(ok=False, error="That destination sends the generated video, which isn't "
+                       "ready until after Lock cut & render."), 400
+
+    selected = p['selected']
+    try:
+        drop = {int(x) for x in (data.get('drop') or [])}
+        added = [int(x) for x in (data.get('add') or [])]
+    except (ValueError, TypeError):
+        return jsonify(ok=False, error='`drop`/`add` must be arrays of scene numbers.'), 400
+    if drop:
+        selected = [s for i, s in enumerate(selected) if (i + 1) not in drop]
+    if added:
+        alts = p.get('alternates') or []
+        bad = [n for n in added if not (1 <= n <= len(alts))]
+        if bad:
+            return jsonify(ok=False, error=f'No alternate numbered {bad[0]} in this preview.'), 400
+        selected = selected + [alts[n - 1] for n in sorted(added)]
+        selected.sort(key=lambda s: (s.get('material') or 0, s['start']))
+    if not selected:
+        return jsonify(ok=False, error='You dropped every scene -- keep at least one, or add an alternate.'), 400
+
+    scenes_payload = [{
+        'scene': i + 1, 'start': round(s['start'], 1), 'end': round(s['end'], 1),
+        'quality': s.get('total_score'),
+        'duration': round(s.get('selected_dur', s['end'] - s['start']), 1),
+        'description': _scene_desc(s),
+    } for i, s in enumerate(selected)]
+    # source_video_path/production_summary/fcpxml_materials are included so
+    # build_fcpxml_package works from this same fake row below (destination
+    # opted into include_fcpxml) -- best-effort from the preview's own
+    # params, the same fields _run_trailer_job persists onto a real result.
+    fake_result = {
+        'scenes': scenes_payload,
+        'orig_name': p['params'].get('orig_name'),
+        'source_video_path': p['params'].get('path'),
+        'production_summary': {'transition': p['params'].get('transition'), 'xfade_dur': p['params'].get('xfade_dur')},
+        'fcpxml_materials': dict(
+            music=(dict(path=p['params'].get('scoring_audio_path'),
+                        orig_name=p['params'].get('scoring_audio_orig_name'))
+                   if p['params'].get('scoring_audio_path') not in (None, 'GENERATE') else None),
+            vo=(dict(path=p['params'].get('vo_upload_path'), orig_name=p['params'].get('vo_upload_orig_name'))
+                if p['params'].get('vo_mode') == 'upload' and p['params'].get('vo_upload_path') else None),
+            card_title=(dict(path=p['params'].get('end_card_path'), orig_name=p['params'].get('end_card_orig_name'))
+                        if p['params'].get('end_card_path') else None),
+            card_end=(dict(path=p['params'].get('schedule_card_path'), orig_name=p['params'].get('schedule_card_orig_name'))
+                      if p['params'].get('schedule_card_path') else None),
+        ),
+    }
+    fake_row = {'filename': p['params'].get('orig_name') or 'source', 'orig_name': p['params'].get('orig_name'),
+                'result_json': json.dumps(fake_result)}
+
+    orig_name = p['params'].get('orig_name') or os.path.basename(p['params'].get('path') or 'source')
+    base_name = (data.get('filename') or '').strip() or os.path.splitext(orig_name)[0]
+    base_name = secure_filename(base_name) or 'source'
+    sent = []
+
+    if destination['delivery_kind'] == 'csv_video':
+        source_path = p['params'].get('path')
+        if not source_path or not os.path.exists(source_path):
+            return jsonify(ok=False, error='The source video for this preview is no longer on disk '
+                           '(it may have been cleaned up) -- re-upload and analyse again, or use a '
+                           'CSV-only destination instead.'), 410
+        source_ext = os.path.splitext(source_path)[1].lstrip('.') or 'mp4'
+        remote_filename = f'{base_name}.{source_ext}'
+        try:
+            send_file_to_network_destination(source_path, remote_filename, destination)
+        except ValueError as e:
+            return jsonify(ok=False, error=str(e)), 502
+        sent.append(remote_filename)
+
+    csv_text = build_scene_list_csv(fake_row)
+    csv_filename = f'{base_name}_scenes.csv'
+    try:
+        send_bytes_to_network_destination(csv_text.encode('utf-8'), csv_filename, destination)
+    except ValueError as e:
+        return jsonify(ok=False, error=str(e)), 502
+    sent.append(csv_filename)
+
+    if destination.get('include_fcpxml'):
+        try:
+            xml_text = build_fcpxml_package(fake_row, include_audio_tracks=bool(destination.get('fcpxml_audio_tracks')))
+        except ValueError as e:
+            return jsonify(ok=False, error=str(e)), 400
+        xml_filename = f'{base_name}_cut.xml'
+        try:
+            send_bytes_to_network_destination(xml_text.encode('utf-8'), xml_filename, destination)
+        except ValueError as e:
+            return jsonify(ok=False, error=str(e)), 502
+        sent.append(xml_filename)
+
+    audit_log('trailer_preview_send_to_destination', target=f'{destination["name"]}: {", ".join(sent)}',
+              user_id=session.get('user_id'), username=session.get('username'), ip=_client_ip())
+    return jsonify(ok=True, filename=sent[0] if len(sent) == 1 else sent, sent=sent, destination=destination['name'])
+
 ACE_STEP_MAX_SAMPLES = int(os.environ.get('ACE_STEP_MAX_SAMPLES', 4))
 # Where audio2audio reference files are written. ACE-Step's ref_audio_input is a
 # path read by the ACE-Step process, not an upload, so both processes must be able
@@ -6324,7 +6448,41 @@ def _path_to_file_url(path):
         normalized = '/' + normalized
     return 'file://localhost' + normalized
 
-def build_fcpxml(row):
+FCPXML_TRANSITION_STYLES = (
+    # Legacy xmeml's own transition vocabulary is far smaller than the
+    # ffmpeg xfade styles this app actually renders with (see
+    # VALID_TRANSITIONS above) -- exact style parity isn't achievable and
+    # isn't really the point for a rough-cut hand-off: what matters is
+    # WHERE a transition happens and how long it lasts, not reproducing
+    # the precise look. Everything maps to one of these three broadly-
+    # supported legacy effect names, chosen by rough family resemblance.
+    ({'wipeleft', 'wiperight', 'wipeup', 'wipedown', 'diagtl', 'diagtr', 'diagbl', 'diagbr',
+      'hlslice', 'hrslice', 'vuslice', 'vdslice', 'circlecrop', 'rectcrop', 'circleopen', 'circleclose'}, 'Wipe'),
+    ({'slideleft', 'slideright', 'slideup', 'slidedown', 'smoothleft', 'smoothright', 'smoothup',
+      'smoothdown', 'squeezev', 'squeezeh', 'horzopen', 'horzclose', 'vertopen', 'vertclose'}, 'Push'),
+)
+
+def _fcpxml_transition_name(style):
+    for styles, name in FCPXML_TRANSITION_STYLES:
+        if style in styles:
+            return name
+    return 'Cross Dissolve'  # fades, dissolves, and everything else not named above
+
+def _probe_media_duration_s(path):
+    """Real duration in seconds via ffprobe -- used only to place a
+    material's audio clipitem in build_fcpxml_package, so a rough estimate
+    (falling back to 0, which the caller treats as "skip this material")
+    beats crashing the whole export over one unreadable file."""
+    try:
+        r = subprocess.run(
+            ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+             '-of', 'default=noprint_wrappers=1:nokey=1', path],
+            capture_output=True, text=True, timeout=20)
+        return max(0.0, float((r.stdout or '0').strip() or 0))
+    except Exception:
+        return 0.0
+
+def build_fcpxml_package(row, include_audio_tracks=False):
     """Legacy "Final Cut Pro XML Interchange Format" (xmeml version 5) --
     deliberately NOT modern FCPXML (Final Cut Pro X's own, structurally
     different and incompatible format). Chose the older dialect on
@@ -6334,14 +6492,38 @@ def build_fcpxml(row):
     different NLEs, the old format is the one that's actually broadly
     useful, "legacy" status notwithstanding.
 
-    Builds one clipitem per selected scene, all referencing the same
-    original HIRES source file (single file, or an already-combined
-    multi-file result -- whichever source_video_path already points to,
-    matching what a csv_video Send to destination sends alongside its
-    CSV) at that scene's real in/out points against the source's own,
-    actually-measured frame rate -- a rough-cut sequence an editor drops
-    into a real timeline and refines by hand, not the generated promo's
-    own, already-edited output as a single flattened clip.
+    The "package" here is more than the original single-track cut:
+      - Video track: one clipitem per selected scene, referencing the
+        original HIRES source file (single file, or an already-combined
+        multi-file result -- whichever source_video_path already points
+        to, matching what a csv_video Send to destination sends alongside
+        its CSV) at that scene's real in/out points, named with the
+        source's own ORIGINAL filename rather than this app's internal
+        one. (Referencing each separately-combined original HIRES file on
+        its own, rather than the single already-combined result, isn't
+        supported yet -- source_video_path only ever records the one
+        file that was actually scored/cut from, matching the rest of this
+        app's existing Send to destination/csv_video handling.)
+      - Transitions: when the render used a real crossfade style (not a
+        hard cut) and xfade_dur > 0, a <transitionitem> is inserted at
+        each cut, and the two adjoining clips are given a small amount of
+        extra handle (up to half the crossfade each side, borrowed from
+        the source footage just outside the originally detected scene
+        bounds and clamped to the source's own duration) so there's
+        actually overlapping footage for the transition to dissolve
+        between -- not just a transition marker sitting on top of a hard
+        cut with nothing underneath it.
+      - Cut points: a sequence marker at every scene's start, so an
+        editor can jump cut-to-cut without hunting through the track.
+      - Multi-material: when include_audio_tracks is True, separate audio
+        tracks are added for whichever of music / VO / title card / end
+        card actually survived to this point (see fcpxml_materials on the
+        result -- an AI-generated bed/VO or a since-cleaned-up upload
+        simply isn't included; a partial package beats none). Each is
+        referenced by its own original filename, placed at the head of
+        the sequence for a rough starting point -- exact sync against the
+        cut is left to the editor, the same way a real EDL hand-off
+        would be.
 
     Raises ValueError (safe to show the user) if there's no recorded
     scene selection, no recorded source path, or the source file no
@@ -6366,6 +6548,7 @@ def build_fcpxml(row):
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1920
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1080
     real_fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    src_total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or None
     cap.release()
     timebase, ntsc = _fps_to_timebase_ntsc(real_fps)
     fps = timebase * (1000.0 / 1001.0) if ntsc else float(timebase)
@@ -6374,22 +6557,48 @@ def build_fcpxml(row):
     file_url = xml_escape(_path_to_file_url(source_path))
     rate_block = f'<rate><timebase>{timebase}</timebase><ntsc>{"TRUE" if ntsc else "FALSE"}</ntsc></rate>'
 
-    clip_items = []
-    cursor = 0  # sequence-timeline position, in frames, of the next clip -- these are placed back to back with no gaps, matching a straight cut-together assembly
-    for i, s in enumerate(scenes):
+    # A real crossfade needs overlapping footage, which a hard cut (no
+    # transition, or xfade_dur == 0) never gets -- both are treated the
+    # same way below: zero handle borrowed, no <transitionitem> emitted.
+    ps = result.get('production_summary') or {}
+    transition_style = ps.get('transition') or 'cut'
+    xfade_dur_s = float(ps.get('xfade_dur') or 0)
+    xfade_frames = round(xfade_dur_s * fps) if transition_style not in ('cut', 'none', '') else 0
+    handle = xfade_frames // 2
+
+    raw_in_out = []  # (in_frame, out_frame) at each scene's OWN detected bounds, before handle extension
+    for s in scenes:
         start_s = float(s.get('start') or 0)
         end_s = float(s.get('end') or 0)
         in_frame = max(0, round(start_s * fps))
-        out_frame = max(in_frame + 1, round(end_s * fps))  # at least 1 frame -- a zero-length clipitem is invalid
-        seq_start, seq_end = cursor, cursor + (out_frame - in_frame)
-        cursor = seq_end
-        # The id-attribute inheritance convention: only the FIRST clipitem
-        # referencing this source carries the full <file> definition
-        # (name/pathurl/rate/dimensions); every later one just references
-        # it by the same id via a self-closing tag, exactly matching how
-        # a real FCP/Premiere export represents "many clips, one source
-        # file" rather than repeating the same file metadata dozens of
-        # times.
+        out_frame = max(in_frame + 1, round(end_s * fps))
+        raw_in_out.append((in_frame, out_frame))
+
+    clip_items = []
+    transition_items = []
+    marker_items = []
+    cursor = 0  # sequence-timeline position, in frames, of the next clip's nominal (pre-overlap) start
+    n = len(scenes)
+    for i, s in enumerate(scenes):
+        in_frame, out_frame = raw_in_out[i]
+        # Borrow up to `handle` extra source frames past this scene's own
+        # detected end (for a transition into the NEXT clip) and before
+        # its own detected start (for a transition from the PREVIOUS
+        # clip) -- clamped so it never reads before frame 0 or past the
+        # source's own last frame.
+        lead = handle if i > 0 else 0
+        trail = handle if i < n - 1 else 0
+        ext_in = max(0, in_frame - lead)
+        ext_out = out_frame + trail
+        if src_total_frames:
+            ext_out = min(ext_out, src_total_frames)
+        clip_len = ext_out - ext_in
+        seq_start = cursor - lead
+        seq_end = seq_start + clip_len
+        # Next clip's nominal start overlaps this one by `trail` frames --
+        # that overlap IS the transition region.
+        cursor = seq_end - trail
+
         if i == 0:
             file_block = (
                 f'<file id="file-1"><name>{source_name}</name>'
@@ -6406,16 +6615,68 @@ def build_fcpxml(row):
         clip_items.append(
             f'<clipitem id="clipitem-{i+1}"><masterclipid>masterclip-1</masterclipid>'
             f'<name>{source_name} - Scene {xml_escape(str(s.get("scene", i+1)))}</name>'
-            f'<enabled>TRUE</enabled><duration>{out_frame - in_frame}</duration>{rate_block}'
+            f'<enabled>TRUE</enabled><duration>{clip_len}</duration>{rate_block}'
             f'<start>{seq_start}</start><end>{seq_end}</end>'
-            f'<in>{in_frame}</in><out>{out_frame}</out>{file_block}'
+            f'<in>{ext_in}</in><out>{ext_out}</out>{file_block}'
             f'<logginginfo><description>{desc}</description></logginginfo>'
             f'</clipitem>'
         )
+        # Cut point marker at this scene's actual (non-extended) start.
+        marker_items.append(
+            f'<marker><name>{xml_escape("Scene " + str(s.get("scene", i + 1)))}</name>'
+            f'<in>{seq_start + lead}</in><out>-1</out><comment>{desc}</comment></marker>'
+        )
+        if trail > 0 and i < n - 1:
+            trans_name = xml_escape(_fcpxml_transition_name(transition_style))
+            trans_start, trans_end = seq_end - trail, seq_end
+            transition_items.append(
+                f'<transitionitem><name>{trans_name}</name><duration>{trail}</duration>{rate_block}'
+                f'<start>{trans_start}</start><end>{trans_end}</end><alignment>center</alignment>'
+                f'<effect><name>{trans_name}</name><effectid>{trans_name}</effectid>'
+                f'<effectcategory>Dissolve</effectcategory><effecttype>transition</effecttype>'
+                f'<mediatype>video</mediatype></effect></transitionitem>'
+            )
 
     total_frames = cursor
     base_name = os.path.splitext(row['orig_name'] or row['filename'])[0]
     seq_name = xml_escape(base_name + '_cut')
+
+    # Additional audio tracks for whichever multi-material sources
+    # actually survived to this point -- see this function's own docstring.
+    # Each occupies its own <track> (not mixed onto the video's own audio
+    # track above), placed at the head of the sequence as a rough starting
+    # point rather than attempting precise sync, matching how a real EDL
+    # hand-off leaves fine placement to the editor.
+    audio_tracks = []
+    if include_audio_tracks:
+        materials = (result.get('fcpxml_materials') or {})
+        for kind, label in (('music', 'Music'), ('vo', 'VO'), ('card_title', 'Title Card'), ('card_end', 'End Card')):
+            mat = materials.get(kind)
+            if not mat or not mat.get('path') or not os.path.exists(mat['path']):
+                continue
+            dur_s = _probe_media_duration_s(mat['path'])
+            if dur_s <= 0:
+                continue
+            dur_frames = max(1, round(dur_s * fps))
+            mat_name = xml_escape(mat.get('orig_name') or os.path.basename(mat['path']))
+            mat_url = xml_escape(_path_to_file_url(mat['path']))
+            file_id = f'file-{kind}'
+            audio_tracks.append(
+                '<track>'
+                f'<clipitem id="clipitem-{kind}"><masterclipid>masterclip-{kind}</masterclipid>'
+                f'<name>{mat_name}</name><enabled>TRUE</enabled><duration>{dur_frames}</duration>{rate_block}'
+                f'<start>0</start><end>{dur_frames}</end><in>0</in><out>{dur_frames}</out>'
+                f'<file id="{file_id}"><name>{mat_name}</name><pathurl>{mat_url}</pathurl>{rate_block}'
+                f'<media><audio><samplecharacteristics><depth>16</depth><samplerate>48000</samplerate>'
+                f'</samplecharacteristics></audio></media></file>'
+                f'<logginginfo><description>{label}</description></logginginfo>'
+                '</clipitem>'
+                '</track>'
+            )
+
+    audio_block = ''
+    if audio_tracks:
+        audio_block = '<audio>' + ''.join(audio_tracks) + '</audio>'
 
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -6429,11 +6690,20 @@ def build_fcpxml(row):
         f'{rate_block}\n'
         f'<width>{width}</width><height>{height}</height>\n'
         '</samplecharacteristics></format>\n'
-        '<track>\n' + '\n'.join(clip_items) + '\n</track>\n'
-        '</video></media>\n'
+        '<track>\n' + '\n'.join(clip_items + transition_items) + '\n</track>\n'
+        '</video>' + audio_block + '</media>\n'
+        + '\n'.join(marker_items) + '\n'
         '</sequence>\n'
         '</xmeml>\n'
     )
+
+# Kept as a thin alias -- the name existing call sites (the manual FCP XML
+# download button's route, and older tests) already use, now delegating to
+# the fuller package builder above with audio tracks off, which reproduces
+# exactly this function's original video-only-plus-markers-plus-transitions
+# output.
+def build_fcpxml(row):
+    return build_fcpxml_package(row, include_audio_tracks=False)
 
 def build_scene_list_csv(row):
     """Same CSV shape as the client-side downloadSceneListCsv() (used for
@@ -6506,7 +6776,7 @@ def library_send_to_destination(tid):
     sent = []
 
     row = None
-    if destination['delivery_kind'] in ('csv', 'csv_video'):
+    if destination['delivery_kind'] in ('csv', 'csv_video') or destination.get('include_fcpxml'):
         row = library_get_row(tid)
         if not row or not _owns_or_admin(row.get('user_id')):
             return jsonify(ok=False, error='Not found'), 404
@@ -6564,9 +6834,37 @@ def library_send_to_destination(tid):
             return jsonify(ok=False, error=str(e)), 502
         sent.append(csv_filename)
 
+    if destination.get('include_fcpxml'):
+        # An orthogonal add-on to whatever delivery_kind already sends
+        # (video / csv / csv_video), not another delivery_kind value --
+        # every existing kind can equally well want the FCP XML rough-cut
+        # package alongside it, so this is a destination-level checkbox
+        # rather than a combinatorial explosion of kind strings.
+        try:
+            xml_text = build_fcpxml_package(row, include_audio_tracks=bool(destination.get('fcpxml_audio_tracks')))
+        except ValueError as e:
+            return jsonify(ok=False, error=str(e)), 400
+        base_name = (custom_name or '').strip() or os.path.splitext(row['orig_name'] or row['filename'])[0]
+        base_name = secure_filename(base_name) or 'cut'
+        xml_filename = f'{base_name}_cut.xml'
+        try:
+            send_bytes_to_network_destination(xml_text.encode('utf-8'), xml_filename, destination)
+        except ValueError as e:
+            return jsonify(ok=False, error=str(e)), 502
+        sent.append(xml_filename)
+
     audit_log('trailer_send_to_destination', target=f'{destination["name"]}: {", ".join(sent)}',
               user_id=session.get('user_id'), username=session.get('username'), ip=_client_ip())
     return jsonify(ok=True, filename=sent[0] if len(sent) == 1 else sent, sent=sent, destination=destination['name'])
+
+def _truthy(v):
+    """Accepts a JSON body's real boolean/1 as well as a form post's string
+    ('true'/'on'/'1') -- api_network_destinations_add/update take either,
+    since the admin destinations panel posts JSON but the field started
+    life as the kind of thing an HTML checkbox would submit."""
+    if isinstance(v, bool):
+        return v
+    return str(v).strip().lower() in ('1', 'true', 'on', 'yes')
 
 @app.route('/api/network/destinations', methods=['GET'])
 def api_network_destinations_list():
@@ -6592,7 +6890,9 @@ def api_network_destinations_add():
         return jsonify(ok=False, error='Name and network path are both required.'), 400
     new_id = network_destination_add(
         name, path, username=data.get('username'), password=data.get('password'),
-        delivery_kind=data.get('delivery_kind', 'video'))
+        delivery_kind=data.get('delivery_kind', 'video'),
+        include_fcpxml=_truthy(data.get('include_fcpxml')),
+        fcpxml_audio_tracks=_truthy(data.get('fcpxml_audio_tracks')))
     audit_log('destination_add', target=name, user_id=session.get('user_id'),
               username=session.get('username'), ip=_client_ip())
     return jsonify(ok=True, id=new_id)
@@ -6608,7 +6908,9 @@ def api_network_destinations_update(dest_id):
     ok = network_destination_update(
         dest_id, name=data.get('name'), path=data.get('path'),
         username=data.get('username'), password=data.get('password') or None,
-        delivery_kind=data.get('delivery_kind'))
+        delivery_kind=data.get('delivery_kind'),
+        include_fcpxml=_truthy(data.get('include_fcpxml')) if 'include_fcpxml' in data else None,
+        fcpxml_audio_tracks=_truthy(data.get('fcpxml_audio_tracks')) if 'fcpxml_audio_tracks' in data else None)
     if ok:
         audit_log('destination_update', target=existing['name'], user_id=session.get('user_id'),
                   username=session.get('username'), ip=_client_ip())
@@ -9733,8 +10035,35 @@ def _run_trailer_job(jid, params):
         # collects them into one place a person can actually read after
         # the fact, since previously reconstructing "what did I use for
         # this one" meant remembering it or re-opening the original job.
+        # Surviving material paths a later FCP XML package export (see
+        # build_fcpxml_package) can reference -- kept separate from
+        # production_summary above, which only ever holds display-friendly
+        # names/text for a person to read, never a raw filesystem path.
+        # Each entry uses params' own ORIGINAL, untrimmed path (the same
+        # one production_summary's *_orig_name already resolves against),
+        # not any trimmed/muxed working copy made further up during
+        # rendering -- an editor pulling this into an NLE wants the whole
+        # original card/music/VO file to work with, not a pre-cut piece of
+        # it. 'GENERATE' is scoring_audio_path's sentinel for "make ambient
+        # music on the fly" -- no real file exists for that case, so it's
+        # excluded here rather than pointing at nothing.
+        fcpxml_materials=dict(
+            music=(dict(path=params.get('scoring_audio_path'),
+                        orig_name=params.get('scoring_audio_orig_name') or _asset_display_name(params.get('scoring_audio_path')))
+                   if params.get('scoring_audio_path') and params.get('scoring_audio_path') != 'GENERATE' else None),
+            vo=(dict(path=params.get('vo_upload_path'),
+                     orig_name=params.get('vo_upload_orig_name') or _asset_display_name(params.get('vo_upload_path')))
+                if params.get('vo_mode') == 'upload' and params.get('vo_upload_path') else None),
+            card_title=(dict(path=params.get('end_card_path'),
+                              orig_name=params.get('end_card_orig_name') or _asset_display_name(params.get('end_card_path')))
+                        if params.get('end_card_path') else None),
+            card_end=(dict(path=params.get('schedule_card_path'),
+                            orig_name=params.get('schedule_card_orig_name') or _asset_display_name(params.get('schedule_card_path')))
+                      if params.get('schedule_card_path') else None),
+        ),
         production_summary=dict(
             transition=params.get('transition'),
+            xfade_dur=params.get('xfade_dur'),
             transition_matte=_asset_display_name(params.get('transition_matte_path')),
             title_card=params.get('end_card_orig_name') or _asset_display_name(params.get('end_card_path')),
             schedule_card=params.get('schedule_card_orig_name') or _asset_display_name(params.get('schedule_card_path')),

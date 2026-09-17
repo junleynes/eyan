@@ -3463,6 +3463,9 @@ document.addEventListener("DOMContentLoaded", function(){
       <button type=button class=btn id=tr-render-btn onclick="renderApprovedCut()">Lock cut &amp; render</button>
       <button type=button class=btn id=tr-preview-all-btn onclick="togglePreviewAll()" style="background:transparent;border:1px solid var(--line);color:var(--ink)">Deselect all</button>
       <span id=tr-preview-kept style="font-size:12px;opacity:.75"></span>
+      <select id="tr-preview-destination-select" style="display:none;font-size:12px;padding:6px 8px;border-radius:7px;border:1px solid var(--line);background:var(--panel);color:var(--ink)"></select>
+      <button type="button" class="btn btn-secondary-promo" id="tr-preview-send-destination-btn" style="display:none">Send to destination</button>
+      <span id="tr-preview-send-destination-status" style="font-size:12px"></span>
     </div>
   </div>
 </div>
@@ -4612,6 +4615,69 @@ function renderPreviewCut(d){
   updatePreviewKept()
   document.getElementById('tr-preview-area').style.display='block'
   document.getElementById('tr-preview-area').scrollIntoView({behavior:'smooth', block:'nearest'})
+  setupPreviewSendToDestination(d)
+}
+
+// A csv/csv_video destination's whole point is the ORIGINAL source video
+// plus a CSV describing the reviewed cut -- both already known right here,
+// right after Preview, with no need to sit through Lock cut & render just
+// to hand that off. Offered directly on the Proposed cut screen, unlike a
+// plain "video" destination (which needs the actual generated promo and
+// still only shows up later, in renderTrailerResult, once one exists).
+function setupPreviewSendToDestination(d){
+  var sendBtn = document.getElementById('tr-preview-send-destination-btn')
+  var sendStatus = document.getElementById('tr-preview-send-destination-status')
+  var destSelect = document.getElementById('tr-preview-destination-select')
+  if(!sendBtn || !destSelect) return
+  sendBtn.style.display = 'none'
+  destSelect.style.display = 'none'
+  destSelect.innerHTML = ''
+  sendStatus.textContent = ''
+  fetch('/api/network/destinations').then(function(r){ return r.json() }).then(function(dd){
+    if(!dd.ok || !dd.items.length) return
+    var items = dd.items.filter(function(dest){ return dest.delivery_kind === 'csv' || dest.delivery_kind === 'csv_video' })
+    if(!items.length) return
+    items.forEach(function(dest){
+      var opt = document.createElement('option')
+      opt.value = dest.id
+      opt.textContent = dest.name
+      destSelect.appendChild(opt)
+    })
+    destSelect.style.display = ''
+    sendBtn.style.display = ''
+  }).catch(function(){})
+
+  sendBtn.onclick = function(){
+    var destId = destSelect.value
+    var destName = destSelect.options[destSelect.selectedIndex] ? destSelect.options[destSelect.selectedIndex].textContent : ''
+    var drop = previewPicks().filter(function(c){ return !c.checked })
+                             .map(function(c){ return parseInt(c.dataset.scene, 10) })
+    var add = altPicks().filter(function(c){ return c.checked })
+                        .map(function(c){ return parseInt(c.dataset.scene, 10) })
+    openSaveAsModal(d.orig_name || 'source', 'csv', function(name){
+      sendBtn.disabled = true
+      sendStatus.textContent = 'Sending to ' + destName + '\u2026'
+      sendStatus.style.color = ''
+      fetch('/api/trailer/preview/' + _previewId + '/send-to-destination', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({destination_id: destId, drop: drop, add: add, filename: name})
+      }).then(function(r){ return r.json() }).then(function(dd){
+        sendBtn.disabled = false
+        if(!dd.ok){
+          sendStatus.textContent = dd.error || 'Send failed.'
+          sendStatus.style.color = 'var(--tally)'
+          return
+        }
+        var sentList = Array.isArray(dd.sent) ? dd.sent.join(', ') : dd.filename
+        sendStatus.textContent = 'Sent ' + sentList + ' to ' + dd.destination
+        sendStatus.style.color = 'var(--phosphor)'
+      }).catch(function(e){
+        sendBtn.disabled = false
+        sendStatus.textContent = 'Error: ' + e
+        sendStatus.style.color = 'var(--tally)'
+      })
+    })
+  }
 }
 
 function previewPicks(){
@@ -7086,7 +7152,7 @@ function switchDocs(btn){
 </div>
 
 <h3 style="margin-top:28px">Delivery destinations</h3>
-<p style="margin-top:6px;color:var(--ink-dim)">Named "Send to destination" targets, shown as a dropdown when delivering a finished render — a facility can configure several (e.g. separate Vantage watch folders, or a MAM ingest and a logging system side by side). Each has its own network path, credentials, and delivery format: the rendered video, the scene-list CSV, or both.</p>
+<p style="margin-top:6px;color:var(--ink-dim)">Named "Send to destination" targets, shown as a dropdown when delivering a finished render — a facility can configure several (e.g. separate Vantage watch folders, or a MAM ingest and a logging system side by side). Each has its own network path, credentials, and delivery format: the rendered video, the scene-list CSV, or both. An FCP XML rough-cut package (multi-material: HIRES video, transitions, cut-point markers, and optionally music/VO/card audio tracks) can be sent alongside any of those, independent of the format above.</p>
 <div id="config-destinations-list" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px;margin-top:12px">
   <!-- cards injected by loadNetworkDestinations() -->
 </div>
@@ -7104,6 +7170,14 @@ function switchDocs(btn){
       <option value="csv_video">Sends: video + scene list CSV</option>
       <option value="csv">Sends: scene list CSV only</option>
     </select>
+    <label style="font-size:11px;display:flex;align-items:center;gap:6px;margin-top:2px">
+      <input type=checkbox id=dest-new-fcpxml onchange="document.getElementById('dest-new-fcpxml-audio-wrap').style.display=this.checked?'flex':'none'">
+      Also send an FCP XML rough-cut package
+    </label>
+    <label id="dest-new-fcpxml-audio-wrap" style="font-size:11px;display:none;align-items:center;gap:6px;margin-left:18px">
+      <input type=checkbox id=dest-new-fcpxml-audio>
+      Embed music/VO/card audio tracks in the XML (off = video + markers only)
+    </label>
     <div><button type=button class=btn style="padding:4px 10px;font-size:11px" onclick="addNetworkDestination()">Add destination</button>
     <span id="dest-new-status" style="font-size:11px;margin-left:6px"></span></div>
   </div>
@@ -7683,6 +7757,13 @@ async function loadNetworkDestinations(){
         '</div>' +
         (dest.has_password ? '<div style="font-size:11px;opacity:.65;margin-bottom:6px">A password is already saved for this destination — leave the field above blank to keep it.</div>' : '<div style="margin-bottom:6px"></div>') +
         '<select id="dest-kind-' + dest.id + '" style="' + fieldStyle + ';margin-bottom:8px">' + kindOptions + '</select>' +
+        '<label style="font-size:11px;display:flex;align-items:center;gap:6px;margin-bottom:4px">' +
+          '<input type=checkbox id="dest-fcpxml-' + dest.id + '"' + (dest.include_fcpxml ? ' checked' : '') +
+          ' onchange="document.getElementById(\'dest-fcpxml-audio-wrap-' + dest.id + '\').style.display=this.checked?\'flex\':\'none\'">' +
+          ' Also send an FCP XML rough-cut package</label>' +
+        '<label id="dest-fcpxml-audio-wrap-' + dest.id + '" style="font-size:11px;display:' + (dest.include_fcpxml ? 'flex' : 'none') + ';align-items:center;gap:6px;margin-bottom:8px;margin-left:18px">' +
+          '<input type=checkbox id="dest-fcpxml-audio-' + dest.id + '"' + (dest.fcpxml_audio_tracks ? ' checked' : '') + '>' +
+          ' Embed music/VO/card audio tracks in the XML</label>' +
         '<div><button type=button class=btn style="padding:4px 10px;font-size:11px" onclick="updateNetworkDestination(' + dest.id + ')">Save</button> ' +
         '<button type=button class=btn style="padding:4px 10px;font-size:11px;color:var(--tally);border-color:var(--tally)" onclick="deleteNetworkDestination(' + dest.id + ',\'' + String(dest.name).replace(/'/g,"\\'") + '\')">Delete</button> ' +
         '<span id="dest-status-' + dest.id + '" style="font-size:11px;margin-left:6px"></span></div>'
@@ -7708,6 +7789,8 @@ async function addNetworkDestination(){
     username: document.getElementById('dest-new-username').value.trim(),
     password: document.getElementById('dest-new-password').value,
     delivery_kind: document.getElementById('dest-new-kind').value,
+    include_fcpxml: document.getElementById('dest-new-fcpxml').checked,
+    fcpxml_audio_tracks: document.getElementById('dest-new-fcpxml-audio').checked,
   }
   status.textContent = 'Adding\u2026'; status.style.color = 'var(--ink-dim)'
   try{
@@ -7719,6 +7802,9 @@ async function addNetworkDestination(){
       document.getElementById('dest-new-path').value = ''
       document.getElementById('dest-new-username').value = ''
       document.getElementById('dest-new-password').value = ''
+      document.getElementById('dest-new-fcpxml').checked = false
+      document.getElementById('dest-new-fcpxml-audio').checked = false
+      document.getElementById('dest-new-fcpxml-audio-wrap').style.display = 'none'
       loadNetworkDestinations()
     }else{
       status.textContent = 'Failed: ' + (d.error || 'unknown error'); status.style.color = 'var(--amber)'
@@ -7736,6 +7822,8 @@ async function updateNetworkDestination(id){
     path: document.getElementById('dest-path-' + id).value.trim(),
     username: document.getElementById('dest-user-' + id).value.trim(),
     delivery_kind: document.getElementById('dest-kind-' + id).value,
+    include_fcpxml: document.getElementById('dest-fcpxml-' + id).checked,
+    fcpxml_audio_tracks: document.getElementById('dest-fcpxml-audio-' + id).checked,
   }
   var pw = document.getElementById('dest-pass-' + id).value
   if(pw) payload.password = pw   // omitted when blank -- leaves the saved password untouched
