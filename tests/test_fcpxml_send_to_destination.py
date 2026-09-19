@@ -271,6 +271,58 @@ def test_preview_send_to_destination_includes_fcpxml_when_configured(preview_fro
     assert b'<xmeml' in sent_files[xml_files[0]]
 
 
+# ---- 'fcpxml' as its own delivery_kind ("XML + media only") ----
+# Distinct from include_fcpxml above: a destination configured with
+# delivery_kind == 'fcpxml' always sends the XML package plus physical
+# copies of the source/surviving materials, with no video/csv sent, and
+# needs no separate checkbox to opt in.
+
+def test_fcpxml_is_a_valid_delivery_kind():
+    assert 'fcpxml' in library_db.DELIVERY_KINDS
+
+
+def test_send_to_destination_fcpxml_kind_sends_source_and_xml_no_csv(rendered_trailer_from_network):
+    client, headers, result = rendered_trailer_from_network
+    library_id = result['library_id']
+    dest_id = _make_destination('fcpxml')
+
+    sent_bytes = {}
+    sent_files = []
+    with mock.patch('pipeline.send_file_to_network_destination',
+                    side_effect=lambda p, n, d: sent_files.append(n)), \
+         mock.patch('pipeline.send_bytes_to_network_destination',
+                    side_effect=lambda d, n, dest: sent_bytes.__setitem__(n, d)):
+        r = client.post(f'/library/{library_id}/send-to-destination',
+                        json={'destination_id': dest_id, 'format': 'mp4_high'}, headers=headers)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    xml_files = [f for f in sent_bytes if f.endswith('_cut.xml')]
+    assert len(xml_files) == 1
+    assert b'<xmeml' in sent_bytes[xml_files[0]]
+    # The HIRES source itself was sent as a physical file (like csv_video)...
+    assert len(sent_files) >= 1
+    # ...but no scene-list CSV, since this kind's whole point is XML+media.
+    assert not any(f.endswith('_scenes.csv') for f in sent_bytes)
+
+
+def test_preview_send_to_destination_accepts_fcpxml_kind(preview_from_network):
+    client, headers, preview_id, _ = preview_from_network
+    dest_id = _make_destination('fcpxml')
+
+    sent_bytes = {}
+    sent_files = []
+    with mock.patch('pipeline.send_file_to_network_destination',
+                    side_effect=lambda p, n, d: sent_files.append(n)), \
+         mock.patch('pipeline.send_bytes_to_network_destination',
+                    side_effect=lambda d, n, dest: sent_bytes.__setitem__(n, d)):
+        r = client.post(f'/api/trailer/preview/{preview_id}/send-to-destination',
+                        json={'destination_id': dest_id}, headers=headers)
+    assert r.status_code == 200, r.get_data(as_text=True)
+    xml_files = [f for f in sent_bytes if f.endswith('_cut.xml')]
+    assert len(xml_files) == 1
+    assert not any(f.endswith('_scenes.csv') for f in sent_bytes)
+    assert len(sent_files) >= 1  # the source video, sent as a physical file
+
+
 def test_preview_send_to_destination_unknown_preview_id(rendered_trailer_from_network):
     # Reuses the render fixture purely to get an authenticated client/headers
     # cheaply -- the preview_id itself is deliberately bogus.

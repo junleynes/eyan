@@ -4635,7 +4635,7 @@ function setupPreviewSendToDestination(d){
   sendStatus.textContent = ''
   fetch('/api/network/destinations').then(function(r){ return r.json() }).then(function(dd){
     if(!dd.ok || !dd.items.length) return
-    var items = dd.items.filter(function(dest){ return dest.delivery_kind === 'csv' || dest.delivery_kind === 'csv_video' })
+    var items = dd.items.filter(function(dest){ return dest.delivery_kind === 'csv' || dest.delivery_kind === 'csv_video' || dest.delivery_kind === 'fcpxml' })
     if(!items.length) return
     items.forEach(function(dest){
       var opt = document.createElement('option')
@@ -6082,7 +6082,6 @@ function renderTrailerResult(d){
         '<button type="button" class="btn btn-secondary-promo" id="tr-send-destination-btn" style="display:none">Send to destination</button>'+
         '<span id="tr-send-destination-status" style="font-size:12px;align-self:center"></span>'+
         '<button type="button" class="btn btn-secondary-promo" id="tr-scene-csv-btn">Scene list CSV</button>'+
-        '<button type="button" class="btn btn-secondary-promo" id="tr-fcpxml-btn" style="display:none">FCP XML</button>'+
         '<button type="button" class="btn btn-secondary-promo" onclick="submitTrailer(true)">Re-preview same setup</button>'+
       '</div>'+
     '</div>'
@@ -6101,22 +6100,12 @@ function renderTrailerResult(d){
   var csvBtn = document.getElementById('tr-scene-csv-btn')
   if(csvBtn) csvBtn.addEventListener('click', function(){ downloadSceneListCsv(d) })
 
-  // FCP XML needs a real, saved source video on the server to reference
-  // and probe (see build_fcpxml's own error cases) -- only shown once
-  // this render is actually saved to the library, matching the same
-  // d.library_id guard Send to destination already uses, since both
-  // depend on the same saved row existing.
-  var fcpxmlBtn = document.getElementById('tr-fcpxml-btn')
-  if(fcpxmlBtn && d.library_id){
-    fcpxmlBtn.style.display = ''
-    fcpxmlBtn.addEventListener('click', function(){
-      // A real navigation, not fetch() -- same reasoning as the main
-      // download button below: the browser's native download handling
-      // (Content-Disposition, save dialog) only fires for an actual
-      // navigation, not an in-page request.
-      window.location.href = '/library/' + d.library_id + '/fcpxml'
-    })
-  }
+  // The standalone "FCP XML" download button that used to live here has
+  // been retired -- an FCP XML package is now one of the choices in the
+  // "Send to destination" dropdown just below (delivery_kind 'fcpxml',
+  // "XML + media only"), configured per-destination in Config > Network,
+  // rather than a separate one-off button next to Download that only ever
+  // wrote a plain download with no destination or media alongside it.
 
   var downloadBtn = document.getElementById('tr-download-selected')
   if(downloadBtn) downloadBtn.addEventListener('click', function(){
@@ -6157,7 +6146,11 @@ function renderTrailerResult(d){
     // plain video destination even sends. went_through_preview comes from
     // the backend (see api_generate/api_trailer_render's own result), not
     // guessed at here.
-    var wantKinds = {video: 1}
+    // fcpxml ("XML + media only") needs nothing a plain video destination
+    // doesn't already have available at this point (the recorded source
+    // path + scene selection), so it's offered unconditionally alongside
+    // video rather than gated on went_through_preview like csv/csv_video.
+    var wantKinds = {video: 1, fcpxml: 1}
     if(d.went_through_preview) Object.assign(wantKinds, {csv: 1, csv_video: 1})
     var items = dd.items.filter(function(dest){ return wantKinds[dest.delivery_kind] })
     if(!items.length) return
@@ -7165,13 +7158,14 @@ function switchDocs(btn){
       <input type=text id=dest-new-username placeholder="Username" style="flex:1;min-width:130px;box-sizing:border-box;padding:6px 9px;margin:0;font-size:12px;border:1px solid var(--line);border-radius:6px;background:var(--elevated);color:var(--ink);font-family:inherit">
       <input type=password id=dest-new-password placeholder="Password" style="flex:1;min-width:130px;box-sizing:border-box;padding:6px 9px;margin:0;font-size:12px;border:1px solid var(--line);border-radius:6px;background:var(--elevated);color:var(--ink);font-family:inherit">
     </div>
-    <select id=dest-new-kind style="width:100%;box-sizing:border-box;padding:6px 9px;margin:0;font-size:12px;border:1px solid var(--line);border-radius:6px;background:var(--elevated);color:var(--ink);font-family:inherit">
+    <select id=dest-new-kind onchange="_updateNewDestFcpxmlUI()" style="width:100%;box-sizing:border-box;padding:6px 9px;margin:0;font-size:12px;border:1px solid var(--line);border-radius:6px;background:var(--elevated);color:var(--ink);font-family:inherit">
       <option value="video">Sends: video only</option>
       <option value="csv_video">Sends: video + scene list CSV</option>
       <option value="csv">Sends: scene list CSV only</option>
+      <option value="fcpxml">Sends: XML + media only</option>
     </select>
-    <label style="font-size:11px;display:flex;align-items:center;gap:6px;margin-top:2px">
-      <input type=checkbox id=dest-new-fcpxml onchange="document.getElementById('dest-new-fcpxml-audio-wrap').style.display=this.checked?'flex':'none'">
+    <label id="dest-new-fcpxml-wrap" style="font-size:11px;display:flex;align-items:center;gap:6px;margin-top:2px">
+      <input type=checkbox id=dest-new-fcpxml onchange="_updateNewDestFcpxmlUI()">
       Also send an FCP XML rough-cut package
     </label>
     <label id="dest-new-fcpxml-audio-wrap" style="font-size:11px;display:none;align-items:center;gap:6px;margin-left:18px">
@@ -7729,7 +7723,35 @@ window.saveNetworkFolder = saveNetworkFolder
 // A list of named "Send to <name>" targets, unlike the single-value network
 // categories above -- rendered as editable cards plus a separate "add new"
 // form, matching the same fetch-and-render pattern every Config tab uses.
-var DEST_KIND_LABELS = {video: 'Video only', csv_video: 'Video + scene list CSV', csv: 'Scene list CSV only'}
+var DEST_KIND_LABELS = {video: 'Video only', csv_video: 'Video + scene list CSV', csv: 'Scene list CSV only', fcpxml: 'XML + media only'}
+
+// fcpxml as a delivery_kind already always sends the XML package by
+// definition, so the separate "Also send an FCP XML..." checkbox (which
+// exists for bolting the XML onto a video/csv/csv_video destination) would
+// just be a redundant, always-true control in that case -- hidden instead,
+// leaving only the audio-tracks sub-option, which still matters regardless
+// of which kind triggered the XML.
+function _updateNewDestFcpxmlUI(){
+  var kind = document.getElementById('dest-new-kind').value
+  var isXml = kind === 'fcpxml'
+  var fcpxmlWrap = document.getElementById('dest-new-fcpxml-wrap')
+  var fcpxmlBox = document.getElementById('dest-new-fcpxml')
+  var audioWrap = document.getElementById('dest-new-fcpxml-audio-wrap')
+  if(fcpxmlWrap) fcpxmlWrap.style.display = isXml ? 'none' : 'flex'
+  if(audioWrap) audioWrap.style.display = (isXml || (fcpxmlBox && fcpxmlBox.checked)) ? 'flex' : 'none'
+}
+window._updateNewDestFcpxmlUI = _updateNewDestFcpxmlUI
+
+function _updateDestFcpxmlUI(id){
+  var kind = document.getElementById('dest-kind-' + id).value
+  var isXml = kind === 'fcpxml'
+  var fcpxmlWrap = document.getElementById('dest-fcpxml-wrap-' + id)
+  var fcpxmlBox = document.getElementById('dest-fcpxml-' + id)
+  var audioWrap = document.getElementById('dest-fcpxml-audio-wrap-' + id)
+  if(fcpxmlWrap) fcpxmlWrap.style.display = isXml ? 'none' : 'flex'
+  if(audioWrap) audioWrap.style.display = (isXml || (fcpxmlBox && fcpxmlBox.checked)) ? 'flex' : 'none'
+}
+window._updateDestFcpxmlUI = _updateDestFcpxmlUI
 
 async function loadNetworkDestinations(){
   var container = document.getElementById('config-destinations-list')
@@ -7756,12 +7778,12 @@ async function loadNetworkDestinations(){
           '<input type=password id="dest-pass-' + dest.id + '" placeholder="Password" style="' + fieldStyle + ';flex:1;min-width:120px">' +
         '</div>' +
         (dest.has_password ? '<div style="font-size:11px;opacity:.65;margin-bottom:6px">A password is already saved for this destination — leave the field above blank to keep it.</div>' : '<div style="margin-bottom:6px"></div>') +
-        '<select id="dest-kind-' + dest.id + '" style="' + fieldStyle + ';margin-bottom:8px">' + kindOptions + '</select>' +
-        '<label style="font-size:11px;display:flex;align-items:center;gap:6px;margin-bottom:4px">' +
+        '<select id="dest-kind-' + dest.id + '" onchange="_updateDestFcpxmlUI(' + dest.id + ')" style="' + fieldStyle + ';margin-bottom:8px">' + kindOptions + '</select>' +
+        '<label id="dest-fcpxml-wrap-' + dest.id + '" style="font-size:11px;display:' + (dest.delivery_kind === 'fcpxml' ? 'none' : 'flex') + ';align-items:center;gap:6px;margin-bottom:4px">' +
           '<input type=checkbox id="dest-fcpxml-' + dest.id + '"' + (dest.include_fcpxml ? ' checked' : '') +
-          ' onchange="document.getElementById(\'dest-fcpxml-audio-wrap-' + dest.id + '\').style.display=this.checked?\'flex\':\'none\'">' +
+          ' onchange="_updateDestFcpxmlUI(' + dest.id + ')">' +
           ' Also send an FCP XML rough-cut package</label>' +
-        '<label id="dest-fcpxml-audio-wrap-' + dest.id + '" style="font-size:11px;display:' + (dest.include_fcpxml ? 'flex' : 'none') + ';align-items:center;gap:6px;margin-bottom:8px;margin-left:18px">' +
+        '<label id="dest-fcpxml-audio-wrap-' + dest.id + '" style="font-size:11px;display:' + ((dest.delivery_kind === 'fcpxml' || dest.include_fcpxml) ? 'flex' : 'none') + ';align-items:center;gap:6px;margin-bottom:8px;margin-left:18px">' +
           '<input type=checkbox id="dest-fcpxml-audio-' + dest.id + '"' + (dest.fcpxml_audio_tracks ? ' checked' : '') + '>' +
           ' Embed music/VO/card audio tracks in the XML</label>' +
         '<div><button type=button class=btn style="padding:4px 10px;font-size:11px" onclick="updateNetworkDestination(' + dest.id + ')">Save</button> ' +

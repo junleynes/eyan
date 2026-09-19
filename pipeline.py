@@ -5679,7 +5679,7 @@ def api_trailer_preview_send_to_destination(preview_id):
     destination = network_destination_get(destination_id) if destination_id else None
     if not destination:
         return jsonify(ok=False, error='That destination no longer exists -- pick another.'), 400
-    if destination['delivery_kind'] not in ('csv', 'csv_video'):
+    if destination['delivery_kind'] not in ('csv', 'csv_video', 'fcpxml'):
         return jsonify(ok=False, error="That destination sends the generated video, which isn't "
                        "ready until after Lock cut & render."), 400
 
@@ -5736,7 +5736,7 @@ def api_trailer_preview_send_to_destination(preview_id):
     base_name = secure_filename(base_name) or 'source'
     sent = []
 
-    if destination['delivery_kind'] == 'csv_video':
+    if destination['delivery_kind'] in ('csv_video', 'fcpxml'):
         source_path = p['params'].get('path')
         if not source_path or not os.path.exists(source_path):
             return jsonify(ok=False, error='The source video for this preview is no longer on disk '
@@ -5750,15 +5750,34 @@ def api_trailer_preview_send_to_destination(preview_id):
             return jsonify(ok=False, error=str(e)), 502
         sent.append(remote_filename)
 
-    csv_text = build_scene_list_csv(fake_row)
-    csv_filename = f'{base_name}_scenes.csv'
-    try:
-        send_bytes_to_network_destination(csv_text.encode('utf-8'), csv_filename, destination)
-    except ValueError as e:
-        return jsonify(ok=False, error=str(e)), 502
-    sent.append(csv_filename)
+    if destination['delivery_kind'] == 'fcpxml':
+        # "XML + media only": alongside the source video sent just above,
+        # also send physical copies of whichever music/VO/title-card/end-
+        # card assets actually survived to this point (see fake_result's
+        # own fcpxml_materials below), so the XML's references aren't
+        # pointing at files that only exist on this app's own upload
+        # folder. A csv/csv_video destination has no use for these, so
+        # this only runs for the dedicated XML+media kind.
+        for mat in (fake_result.get('fcpxml_materials') or {}).values():
+            if not mat or not mat.get('path') or not os.path.exists(mat['path']):
+                continue
+            mat_remote = mat.get('orig_name') or os.path.basename(mat['path'])
+            try:
+                send_file_to_network_destination(mat['path'], mat_remote, destination)
+            except ValueError as e:
+                return jsonify(ok=False, error=str(e)), 502
+            sent.append(mat_remote)
 
-    if destination.get('include_fcpxml'):
+    if destination['delivery_kind'] in ('csv', 'csv_video'):
+        csv_text = build_scene_list_csv(fake_row)
+        csv_filename = f'{base_name}_scenes.csv'
+        try:
+            send_bytes_to_network_destination(csv_text.encode('utf-8'), csv_filename, destination)
+        except ValueError as e:
+            return jsonify(ok=False, error=str(e)), 502
+        sent.append(csv_filename)
+
+    if destination.get('include_fcpxml') or destination['delivery_kind'] == 'fcpxml':
         try:
             xml_text = build_fcpxml_package(fake_row, include_audio_tracks=bool(destination.get('fcpxml_audio_tracks')))
         except ValueError as e:
@@ -6776,7 +6795,7 @@ def library_send_to_destination(tid):
     sent = []
 
     row = None
-    if destination['delivery_kind'] in ('csv', 'csv_video') or destination.get('include_fcpxml'):
+    if destination['delivery_kind'] in ('csv', 'csv_video', 'fcpxml') or destination.get('include_fcpxml'):
         row = library_get_row(tid)
         if not row or not _owns_or_admin(row.get('user_id')):
             return jsonify(ok=False, error='Not found'), 404
@@ -6823,6 +6842,38 @@ def library_send_to_destination(tid):
             return jsonify(ok=False, error=str(e)), 502
         sent.append(remote_filename)
 
+    elif destination['delivery_kind'] == 'fcpxml':
+        # "XML + media only": sends the original HIRES source (same as
+        # csv_video, above) plus physical copies of any surviving music/
+        # VO/title-card/end-card assets recorded on this render, so the
+        # XML package's file:// references have real files sitting next
+        # to it on the destination even on a machine that never had this
+        # app's own upload folder mounted.
+        result = json.loads(row['result_json'] or '{}')
+        source_path = result.get('source_video_path')
+        if not source_path or not os.path.exists(source_path):
+            return jsonify(ok=False, error='The original source video for this render is no longer '
+                           'available locally (the working copy may have been cleaned up since the '
+                           'render finished) -- re-generate this promo to make it available again.'), 410
+        source_ext = os.path.splitext(source_path)[1].lstrip('.') or 'mp4'
+        base_name = (custom_name or '').strip() or os.path.splitext(row['orig_name'] or row['filename'])[0]
+        base_name = secure_filename(base_name) or 'source'
+        remote_filename = f'{base_name}.{source_ext}'
+        try:
+            send_file_to_network_destination(source_path, remote_filename, destination)
+        except ValueError as e:
+            return jsonify(ok=False, error=str(e)), 502
+        sent.append(remote_filename)
+        for mat in (result.get('fcpxml_materials') or {}).values():
+            if not mat or not mat.get('path') or not os.path.exists(mat['path']):
+                continue
+            mat_remote = mat.get('orig_name') or os.path.basename(mat['path'])
+            try:
+                send_file_to_network_destination(mat['path'], mat_remote, destination)
+            except ValueError as e:
+                return jsonify(ok=False, error=str(e)), 502
+            sent.append(mat_remote)
+
     if destination['delivery_kind'] in ('csv', 'csv_video'):
         csv_text = build_scene_list_csv(row)
         base_name = (custom_name or '').strip() or os.path.splitext(row['orig_name'] or row['filename'])[0]
@@ -6834,12 +6885,10 @@ def library_send_to_destination(tid):
             return jsonify(ok=False, error=str(e)), 502
         sent.append(csv_filename)
 
-    if destination.get('include_fcpxml'):
-        # An orthogonal add-on to whatever delivery_kind already sends
-        # (video / csv / csv_video), not another delivery_kind value --
-        # every existing kind can equally well want the FCP XML rough-cut
-        # package alongside it, so this is a destination-level checkbox
-        # rather than a combinatorial explosion of kind strings.
+    if destination.get('include_fcpxml') or destination['delivery_kind'] == 'fcpxml':
+        # Either an add-on checkbox bolted onto video/csv/csv_video, or
+        # the dedicated 'fcpxml' ("XML + media only") delivery_kind itself,
+        # which always sends the XML package by definition.
         try:
             xml_text = build_fcpxml_package(row, include_audio_tracks=bool(destination.get('fcpxml_audio_tracks')))
         except ValueError as e:

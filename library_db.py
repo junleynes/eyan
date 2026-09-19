@@ -208,10 +208,16 @@ def network_favorite_remove(user_id, favorite_id):
 
 # ---- Delivery destinations ----
 # Named, admin-managed "Send to <name>" targets. delivery_kind is one of
-# 'video' (the rendered file only), 'csv' (the scene-list CSV only), or
-# 'csv_video' (both) -- validated here, at the one place every write goes
-# through, rather than trusting each caller to only ever pass a good value.
-DELIVERY_KINDS = ('video', 'csv', 'csv_video')
+# 'video' (the rendered file only), 'csv' (the scene-list CSV only),
+# 'csv_video' (both), or 'fcpxml' ('XML + media only' -- the multi-material
+# FCP XML rough-cut package together with physical copies of the original
+# HIRES source and any surviving music/VO/card assets, nothing else) --
+# validated here, at the one place every write goes through, rather than
+# trusting each caller to only ever pass a good value. include_fcpxml (see
+# below) is a separate, orthogonal add-on for bolting the XML onto one of
+# the OTHER three kinds; 'fcpxml' itself is for a destination whose sole
+# purpose is the XML package.
+DELIVERY_KINDS = ('video', 'csv', 'csv_video', 'fcpxml')
 
 def network_destinations_list():
     """Every configured destination, oldest first -- stable ordering so a
