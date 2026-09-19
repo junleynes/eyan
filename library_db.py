@@ -78,16 +78,17 @@ def library_db_init():
         updated_at REAL NOT NULL
     )''')
     # Added after the table already existed in the wild -- same ALTER TABLE
-    # guard pattern as trailers' user_id/username below. include_fcpxml is an
-    # independent add-on (send the FCP XML cut package alongside whatever
-    # delivery_kind already sends) rather than another delivery_kind value,
-    # since every existing kind (video / csv / csv_video) can equally well
-    # want the XML alongside it -- folding it into delivery_kind would mean
-    # a combinatorial explosion of kind values instead of one checkbox.
-    # fcpxml_audio_tracks controls whether that XML embeds actual audio
-    # clipitems for the surviving music/VO/card materials, or stays a
-    # simpler video-only cut with markers -- some editors want the fuller
-    # package, others find extra audio tracks just noise to strip back out.
+    # guard pattern as trailers' user_id/username below. include_fcpxml was
+    # an earlier, since-removed UI add-on (bolt the FCP XML package onto
+    # whatever delivery_kind already sends) -- the column is kept only so
+    # any value already stored on an existing destination doesn't error out
+    # on load; the 'fcpxml' delivery_kind (see DELIVERY_KINDS below) is now
+    # the only way to get the XML package, with no separate opt-in needed.
+    # fcpxml_audio_tracks is still live: it controls whether that XML
+    # embeds actual audio clipitems for the surviving music/VO/card
+    # materials, or stays a simpler video-only cut with markers -- some
+    # editors want the fuller package, others find extra audio tracks just
+    # noise to strip back out.
     have_dest = {r[1] for r in conn.execute('PRAGMA table_info(network_destinations)')}
     if 'include_fcpxml' not in have_dest:
         conn.execute('ALTER TABLE network_destinations ADD COLUMN include_fcpxml INTEGER NOT NULL DEFAULT 0')
@@ -213,10 +214,9 @@ def network_favorite_remove(user_id, favorite_id):
 # FCP XML rough-cut package together with physical copies of the original
 # HIRES source and any surviving music/VO/card assets, nothing else) --
 # validated here, at the one place every write goes through, rather than
-# trusting each caller to only ever pass a good value. include_fcpxml (see
-# below) is a separate, orthogonal add-on for bolting the XML onto one of
-# the OTHER three kinds; 'fcpxml' itself is for a destination whose sole
-# purpose is the XML package.
+# trusting each caller to only ever pass a good value. 'fcpxml' is the only
+# way to get the XML package; there's no separate opt-in on the other kinds
+# (see include_fcpxml's own comment above, in library_db_init).
 DELIVERY_KINDS = ('video', 'csv', 'csv_video', 'fcpxml')
 
 def network_destinations_list():

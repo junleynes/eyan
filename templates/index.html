@@ -7145,7 +7145,7 @@ function switchDocs(btn){
 </div>
 
 <h3 style="margin-top:28px">Delivery destinations</h3>
-<p style="margin-top:6px;color:var(--ink-dim)">Named "Send to destination" targets, shown as a dropdown when delivering a finished render — a facility can configure several (e.g. separate Vantage watch folders, or a MAM ingest and a logging system side by side). Each has its own network path, credentials, and delivery format: the rendered video, the scene-list CSV, or both. An FCP XML rough-cut package (multi-material: HIRES video, transitions, cut-point markers, and optionally music/VO/card audio tracks) can be sent alongside any of those, independent of the format above.</p>
+<p style="margin-top:6px;color:var(--ink-dim)">Named "Send to destination" targets, shown as a dropdown when delivering a finished render — a facility can configure several (e.g. separate Vantage watch folders, or a MAM ingest and a logging system side by side). Each has its own network path, credentials, and delivery format: the rendered video, the scene-list CSV, both, or an FCP XML rough-cut package (multi-material: HIRES video plus any surviving music/VO/card assets, transitions, cut-point markers, and optionally audio tracks) together with the original media it references.</p>
 <div id="config-destinations-list" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px;margin-top:12px">
   <!-- cards injected by loadNetworkDestinations() -->
 </div>
@@ -7164,11 +7164,7 @@ function switchDocs(btn){
       <option value="csv">Sends: scene list CSV only</option>
       <option value="fcpxml">Sends: XML + media only</option>
     </select>
-    <label id="dest-new-fcpxml-wrap" style="font-size:11px;display:flex;align-items:center;gap:6px;margin-top:2px">
-      <input type=checkbox id=dest-new-fcpxml onchange="_updateNewDestFcpxmlUI()">
-      Also send an FCP XML rough-cut package
-    </label>
-    <label id="dest-new-fcpxml-audio-wrap" style="font-size:11px;display:none;align-items:center;gap:6px;margin-left:18px">
+    <label id="dest-new-fcpxml-audio-wrap" style="font-size:11px;display:none;align-items:center;gap:6px;margin-top:2px">
       <input type=checkbox id=dest-new-fcpxml-audio>
       Embed music/VO/card audio tracks in the XML (off = video + markers only)
     </label>
@@ -7726,30 +7722,20 @@ window.saveNetworkFolder = saveNetworkFolder
 var DEST_KIND_LABELS = {video: 'Video only', csv_video: 'Video + scene list CSV', csv: 'Scene list CSV only', fcpxml: 'XML + media only'}
 
 // fcpxml as a delivery_kind already always sends the XML package by
-// definition, so the separate "Also send an FCP XML..." checkbox (which
-// exists for bolting the XML onto a video/csv/csv_video destination) would
-// just be a redundant, always-true control in that case -- hidden instead,
-// leaving only the audio-tracks sub-option, which still matters regardless
-// of which kind triggered the XML.
+// definition -- there's now exactly one way to get the XML package (pick
+// this kind), so the audio-tracks sub-option is the only thing left to
+// show/hide, purely off which kind is selected.
 function _updateNewDestFcpxmlUI(){
   var kind = document.getElementById('dest-new-kind').value
-  var isXml = kind === 'fcpxml'
-  var fcpxmlWrap = document.getElementById('dest-new-fcpxml-wrap')
-  var fcpxmlBox = document.getElementById('dest-new-fcpxml')
   var audioWrap = document.getElementById('dest-new-fcpxml-audio-wrap')
-  if(fcpxmlWrap) fcpxmlWrap.style.display = isXml ? 'none' : 'flex'
-  if(audioWrap) audioWrap.style.display = (isXml || (fcpxmlBox && fcpxmlBox.checked)) ? 'flex' : 'none'
+  if(audioWrap) audioWrap.style.display = (kind === 'fcpxml') ? 'flex' : 'none'
 }
 window._updateNewDestFcpxmlUI = _updateNewDestFcpxmlUI
 
 function _updateDestFcpxmlUI(id){
   var kind = document.getElementById('dest-kind-' + id).value
-  var isXml = kind === 'fcpxml'
-  var fcpxmlWrap = document.getElementById('dest-fcpxml-wrap-' + id)
-  var fcpxmlBox = document.getElementById('dest-fcpxml-' + id)
   var audioWrap = document.getElementById('dest-fcpxml-audio-wrap-' + id)
-  if(fcpxmlWrap) fcpxmlWrap.style.display = isXml ? 'none' : 'flex'
-  if(audioWrap) audioWrap.style.display = (isXml || (fcpxmlBox && fcpxmlBox.checked)) ? 'flex' : 'none'
+  if(audioWrap) audioWrap.style.display = (kind === 'fcpxml') ? 'flex' : 'none'
 }
 window._updateDestFcpxmlUI = _updateDestFcpxmlUI
 
@@ -7779,11 +7765,7 @@ async function loadNetworkDestinations(){
         '</div>' +
         (dest.has_password ? '<div style="font-size:11px;opacity:.65;margin-bottom:6px">A password is already saved for this destination — leave the field above blank to keep it.</div>' : '<div style="margin-bottom:6px"></div>') +
         '<select id="dest-kind-' + dest.id + '" onchange="_updateDestFcpxmlUI(' + dest.id + ')" style="' + fieldStyle + ';margin-bottom:8px">' + kindOptions + '</select>' +
-        '<label id="dest-fcpxml-wrap-' + dest.id + '" style="font-size:11px;display:' + (dest.delivery_kind === 'fcpxml' ? 'none' : 'flex') + ';align-items:center;gap:6px;margin-bottom:4px">' +
-          '<input type=checkbox id="dest-fcpxml-' + dest.id + '"' + (dest.include_fcpxml ? ' checked' : '') +
-          ' onchange="_updateDestFcpxmlUI(' + dest.id + ')">' +
-          ' Also send an FCP XML rough-cut package</label>' +
-        '<label id="dest-fcpxml-audio-wrap-' + dest.id + '" style="font-size:11px;display:' + ((dest.delivery_kind === 'fcpxml' || dest.include_fcpxml) ? 'flex' : 'none') + ';align-items:center;gap:6px;margin-bottom:8px;margin-left:18px">' +
+        '<label id="dest-fcpxml-audio-wrap-' + dest.id + '" style="font-size:11px;display:' + (dest.delivery_kind === 'fcpxml' ? 'flex' : 'none') + ';align-items:center;gap:6px;margin-bottom:8px">' +
           '<input type=checkbox id="dest-fcpxml-audio-' + dest.id + '"' + (dest.fcpxml_audio_tracks ? ' checked' : '') + '>' +
           ' Embed music/VO/card audio tracks in the XML</label>' +
         '<div><button type=button class=btn style="padding:4px 10px;font-size:11px" onclick="updateNetworkDestination(' + dest.id + ')">Save</button> ' +
@@ -7811,7 +7793,6 @@ async function addNetworkDestination(){
     username: document.getElementById('dest-new-username').value.trim(),
     password: document.getElementById('dest-new-password').value,
     delivery_kind: document.getElementById('dest-new-kind').value,
-    include_fcpxml: document.getElementById('dest-new-fcpxml').checked,
     fcpxml_audio_tracks: document.getElementById('dest-new-fcpxml-audio').checked,
   }
   status.textContent = 'Adding\u2026'; status.style.color = 'var(--ink-dim)'
@@ -7824,7 +7805,6 @@ async function addNetworkDestination(){
       document.getElementById('dest-new-path').value = ''
       document.getElementById('dest-new-username').value = ''
       document.getElementById('dest-new-password').value = ''
-      document.getElementById('dest-new-fcpxml').checked = false
       document.getElementById('dest-new-fcpxml-audio').checked = false
       document.getElementById('dest-new-fcpxml-audio-wrap').style.display = 'none'
       loadNetworkDestinations()
@@ -7844,7 +7824,6 @@ async function updateNetworkDestination(id){
     path: document.getElementById('dest-path-' + id).value.trim(),
     username: document.getElementById('dest-user-' + id).value.trim(),
     delivery_kind: document.getElementById('dest-kind-' + id).value,
-    include_fcpxml: document.getElementById('dest-fcpxml-' + id).checked,
     fcpxml_audio_tracks: document.getElementById('dest-fcpxml-audio-' + id).checked,
   }
   var pw = document.getElementById('dest-pass-' + id).value

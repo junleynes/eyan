@@ -1,15 +1,22 @@
 """
-Tests for the two features added on top of Send to destination:
+Tests for features added on top of Send to destination:
 
-  1. include_fcpxml / fcpxml_audio_tracks -- a per-destination checkbox pair
-     (not a new delivery_kind) that sends the FCP XML rough-cut package
-     (see build_fcpxml_package in pipeline.py) alongside whatever
-     delivery_kind already sends.
+  1. The 'fcpxml' delivery_kind ("XML + media only") -- sends the original
+     HIRES source, any surviving music/VO/card assets, and the FCP XML
+     rough-cut package (see build_fcpxml_package in pipeline.py), with no
+     video export or scene-list CSV. fcpxml_audio_tracks is a per-
+     destination toggle for whether that XML embeds real audio clipitems.
+     (An earlier version had a separate include_fcpxml checkbox add-on
+     that bolted the XML onto a video/csv/csv_video destination -- removed
+     since it was redundant once this dedicated kind existed; the DB
+     column is kept, inert, for backward compatibility -- see a couple of
+     tests below that confirm setting it directly no longer does anything.)
   2. A preview-stage Send to destination route
-     (/api/trailer/preview/<id>/send-to-destination) so a csv/csv_video
-     destination -- whose whole point is the ORIGINAL source video plus a
-     CSV of the reviewed cut -- doesn't require sitting through Lock cut &
-     render first, since both are already known right after Preview.
+     (/api/trailer/preview/<id>/send-to-destination) so a csv/csv_video/
+     fcpxml destination -- whose whole point is the ORIGINAL source video
+     plus a CSV or XML of the reviewed cut -- doesn't require sitting
+     through Lock cut & render first, since both are already known right
+     after Preview.
 """
 import json
 import shutil
@@ -90,11 +97,14 @@ def test_api_add_destination_accepts_fcpxml_flags(tmp_path, monkeypatch):
 
 # ---- library_send_to_destination sending the FCP XML package ----
 
-def test_send_to_destination_sends_fcpxml_alongside_video(rendered_trailer_from_network):
+def test_send_to_destination_fcpxml_kind_sends_xml(rendered_trailer_from_network):
+    # The XML package is now only ever sent via the dedicated 'fcpxml'
+    # delivery_kind -- the old include_fcpxml checkbox add-on (bolt the XML
+    # onto a video/csv/csv_video destination) has been removed; setting the
+    # column directly no longer does anything, since gating is on kind alone.
     client, headers, result = rendered_trailer_from_network
     library_id = result['library_id']
-    dest_id = _make_destination('video')
-    library_db.network_destination_update(dest_id, include_fcpxml=True)
+    dest_id = _make_destination('fcpxml')
 
     sent_bytes = {}
     def fake_bytes(data, filename, destination):
@@ -111,10 +121,13 @@ def test_send_to_destination_sends_fcpxml_alongside_video(rendered_trailer_from_
     assert '<clipitem' in xml_text
 
 
-def test_send_to_destination_without_include_fcpxml_sends_no_xml(rendered_trailer_from_network):
+def test_send_to_destination_non_fcpxml_kind_sends_no_xml(rendered_trailer_from_network):
     client, headers, result = rendered_trailer_from_network
     library_id = result['library_id']
-    dest_id = _make_destination('video')  # include_fcpxml defaults off
+    dest_id = _make_destination('video')
+    # Setting the legacy column directly (no UI exposes this anymore) has
+    # no effect now -- only delivery_kind == 'fcpxml' sends the XML.
+    library_db.network_destination_update(dest_id, include_fcpxml=True)
 
     sent = []
     with mock.patch('pipeline.send_file_to_network_destination'), \
@@ -128,10 +141,11 @@ def test_send_to_destination_without_include_fcpxml_sends_no_xml(rendered_traile
 def test_send_to_destination_fcpxml_audio_tracks_toggle(rendered_trailer_from_network):
     client, headers, result = rendered_trailer_from_network
     library_id = result['library_id']
-    dest_id = _make_destination('csv')
-    library_db.network_destination_update(dest_id, include_fcpxml=True, fcpxml_audio_tracks=True)
+    dest_id = _make_destination('fcpxml')
+    library_db.network_destination_update(dest_id, fcpxml_audio_tracks=True)
 
     with mock.patch('pipeline.build_fcpxml_package', wraps=pipeline.build_fcpxml_package) as spy, \
+         mock.patch('pipeline.send_file_to_network_destination'), \
          mock.patch('pipeline.send_bytes_to_network_destination'):
         r = client.post(f'/library/{library_id}/send-to-destination',
                         json={'destination_id': dest_id, 'format': 'mp4_high'}, headers=headers)
@@ -255,7 +269,11 @@ def test_preview_send_to_destination_honors_drop(preview_from_network):
     assert len(rows_drop) == len(rows_all) - 1
 
 
-def test_preview_send_to_destination_includes_fcpxml_when_configured(preview_from_network):
+def test_preview_send_to_destination_csv_kind_ignores_legacy_include_fcpxml_column(preview_from_network):
+    # The old include_fcpxml checkbox add-on is gone -- setting the legacy
+    # column directly on a csv destination no longer makes it send XML;
+    # only the dedicated 'fcpxml' delivery_kind does (see the 'fcpxml as
+    # its own delivery_kind' section below).
     client, headers, preview_id, _ = preview_from_network
     dest_id = _make_destination('csv')
     library_db.network_destination_update(dest_id, include_fcpxml=True)
@@ -266,9 +284,7 @@ def test_preview_send_to_destination_includes_fcpxml_when_configured(preview_fro
         r = client.post(f'/api/trailer/preview/{preview_id}/send-to-destination',
                         json={'destination_id': dest_id}, headers=headers)
     assert r.status_code == 200, r.get_data(as_text=True)
-    xml_files = [f for f in sent_files if f.endswith('_cut.xml')]
-    assert len(xml_files) == 1
-    assert b'<xmeml' in sent_files[xml_files[0]]
+    assert not any(f.endswith('_cut.xml') for f in sent_files)
 
 
 # ---- 'fcpxml' as its own delivery_kind ("XML + media only") ----

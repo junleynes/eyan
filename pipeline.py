@@ -5708,9 +5708,9 @@ def api_trailer_preview_send_to_destination(preview_id):
         'description': _scene_desc(s),
     } for i, s in enumerate(selected)]
     # source_video_path/production_summary/fcpxml_materials are included so
-    # build_fcpxml_package works from this same fake row below (destination
-    # opted into include_fcpxml) -- best-effort from the preview's own
-    # params, the same fields _run_trailer_job persists onto a real result.
+    # build_fcpxml_package works from this same fake row below (for an
+    # 'fcpxml' destination) -- best-effort from the preview's own params,
+    # the same fields _run_trailer_job persists onto a real result.
     fake_result = {
         'scenes': scenes_payload,
         'orig_name': p['params'].get('orig_name'),
@@ -5777,7 +5777,7 @@ def api_trailer_preview_send_to_destination(preview_id):
             return jsonify(ok=False, error=str(e)), 502
         sent.append(csv_filename)
 
-    if destination.get('include_fcpxml') or destination['delivery_kind'] == 'fcpxml':
+    if destination['delivery_kind'] == 'fcpxml':
         try:
             xml_text = build_fcpxml_package(fake_row, include_audio_tracks=bool(destination.get('fcpxml_audio_tracks')))
         except ValueError as e:
@@ -6795,7 +6795,7 @@ def library_send_to_destination(tid):
     sent = []
 
     row = None
-    if destination['delivery_kind'] in ('csv', 'csv_video', 'fcpxml') or destination.get('include_fcpxml'):
+    if destination['delivery_kind'] in ('csv', 'csv_video', 'fcpxml'):
         row = library_get_row(tid)
         if not row or not _owns_or_admin(row.get('user_id')):
             return jsonify(ok=False, error='Not found'), 404
@@ -6885,10 +6885,11 @@ def library_send_to_destination(tid):
             return jsonify(ok=False, error=str(e)), 502
         sent.append(csv_filename)
 
-    if destination.get('include_fcpxml') or destination['delivery_kind'] == 'fcpxml':
-        # Either an add-on checkbox bolted onto video/csv/csv_video, or
-        # the dedicated 'fcpxml' ("XML + media only") delivery_kind itself,
-        # which always sends the XML package by definition.
+    if destination['delivery_kind'] == 'fcpxml':
+        # The 'fcpxml' ("XML + media only") delivery_kind always sends the
+        # XML package by definition -- there's no separate opt-in checkbox
+        # for it (an earlier version had one; removed since it was just a
+        # redundant, always-true control once this dedicated kind exists).
         try:
             xml_text = build_fcpxml_package(row, include_audio_tracks=bool(destination.get('fcpxml_audio_tracks')))
         except ValueError as e:
