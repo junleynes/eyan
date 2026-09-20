@@ -269,8 +269,6 @@ PIPELINE_STAGES = [
 PREVIEWS = {}
 PREVIEWS_LOCK = threading.Lock()
 PREVIEW_TTL = int(os.environ.get('PREVIEW_TTL', 2 * 3600))
-# How many runner-up scenes a preview offers as swap-in alternatives ("show more").
-PREVIEW_ALTERNATES = int(os.environ.get('PREVIEW_ALTERNATES', 12))
 
 def preview_store(pid, data):
     with PREVIEWS_LOCK:
@@ -9187,10 +9185,19 @@ def _run_trailer_job(jid, params):
         pid = f'pv{jid}'
         job_set(jid, percent=34, step='Writing preview thumbnails')
 
-        # Runner-ups: the next-best scoring scenes that didn't make the cut, so a
-        # rejected clip can be swapped for a real alternative instead of forcing a
-        # full re-analysis. Spaced by the same min_gap rule the selector uses, and
-        # excluding anything already chosen.
+        # Scene search pool: every detected scene NOT already in the cut, so
+        # the Proposed cut screen's scene-search box can match a typed
+        # description against the full set the analysis found, not just a
+        # short, score-ranked runner-up list -- what used to be here
+        # (top PREVIEW_ALTERNATES by score, min_gap-deduped against each
+        # other and against `selected`) made sense for a small "here are a
+        # few other options" grid, but a text search needs the whole pool
+        # to actually find whatever the person describes. No score/min_gap
+        # filtering here: every non-chosen scene is a legitimate search
+        # result, however close together or low-scoring. Sorted by
+        # (material, start) for a stable, source-order listing rather than
+        # a ranking that no longer means anything once this is a search
+        # result set rather than a curated shortlist.
         #
         # chosen_starts is keyed on (material, rounded start) together, not
         # start alone -- the same fix, for the same reason, as every other
@@ -9200,16 +9207,8 @@ def _run_trailer_job(jid, params):
         chosen_starts = {(s.get('material'), round(s['start'], 3)) for s in selected}
         alternates = []
         if not preselected:
-            for cand in sorted(scenes_data, key=lambda x: x['total_score'], reverse=True):
-                if len(alternates) >= PREVIEW_ALTERNATES:
-                    break
+            for cand in sorted(scenes_data, key=lambda x: (x.get('material') or 0, x['start'])):
                 if (cand.get('material'), round(cand['start'], 3)) in chosen_starts:
-                    continue
-                if any(abs(cand['start'] - o['start']) < min_gap and cand.get('material') == o.get('material')
-                       for o in alternates):
-                    continue
-                if any(abs(cand['start'] - s['start']) < min_gap and cand.get('material') == s.get('material')
-                       for s in selected):
                     continue
                 cand = dict(cand)
                 cand.setdefault('selected_dur', min(cand['duration'], max_scene_dur or cand['duration']))
@@ -9255,8 +9254,57 @@ def _run_trailer_job(jid, params):
                 print(f'Preview thumbnail {tag}{i} failed: {e}')
                 return None
 
+        def _thumb_batch(scenes_list, tag):
+            """Same output as calling _thumb per scene, but reuses one
+            cv2.VideoCapture per unique source file across the whole list
+            instead of opening (and closing) a fresh one per scene. Needed
+            now that `alternates` (see the scene-search pool above) covers
+            every detected scene rather than a dozen sampled runner-ups --
+            opening a brand new VideoCapture per scene would mean
+            re-opening the same source file dozens or hundreds of times
+            over for a single preview. Scenes that already have a
+            pre-captured 'frame' (the normal, scored path) still skip
+            opening anything at all, same as _thumb."""
+            caps = {}
+            thumbs_out = [None] * len(scenes_list)
+            try:
+                for i, scene in enumerate(scenes_list):
+                    frame = scene.get('frame')
+                    if frame is None:
+                        src = scene.get('source_path') or params.get('path')
+                        if not src or not os.path.exists(src):
+                            continue
+                        cap = caps.get(src)
+                        if cap is None:
+                            cap = cv2.VideoCapture(src)
+                            caps[src] = cap
+                        try:
+                            fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+                            seek_time = scene.get('trim_start', scene.get('start', 0.0))
+                            cap.set(cv2.CAP_PROP_POS_FRAMES, int(seek_time * fps))
+                            ok, frame = cap.read()
+                            if not ok:
+                                continue
+                        except Exception as e:
+                            print(f'Preview thumbnail {tag}{i} frame extraction failed: {e}')
+                            continue
+                    try:
+                        tw = 320
+                        h, w = frame.shape[:2]
+                        small = cv2.resize(frame, (tw, max(1, int(h * tw / max(w, 1)))))
+                        tname = f'preview_{pid}_{tag}{i}.jpg'
+                        cv2.imwrite(os.path.join(app.config['UPLOAD_FOLDER'], tname), small,
+                                    [cv2.IMWRITE_JPEG_QUALITY, 78])
+                        thumbs_out[i] = f'/uploads/{tname}'
+                    except Exception as e:
+                        print(f'Preview thumbnail {tag}{i} failed: {e}')
+            finally:
+                for cap in caps.values():
+                    cap.release()
+            return thumbs_out
+
         thumbs = [_thumb(s, 's', i) for i, s in enumerate(selected)]
-        alt_thumbs = [_thumb(s, 'a', i) for i, s in enumerate(alternates)]
+        alt_thumbs = _thumb_batch(alternates, 'a')
 
         def _slim(rows):
             # Only the fields the render half consumes -- frames and other

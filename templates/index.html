@@ -3451,13 +3451,12 @@ document.addEventListener("DOMContentLoaded", function(){
     </div>
     <div id=tr-cut-timeline class="cut-timeline" aria-label="Cut timeline"></div>
     <div id=tr-preview-grid style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-top:14px"></div>
-    <div id=tr-alt-wrap style="display:none;margin-top:16px;border-top:1px solid var(--line);padding-top:14px">
-      <button type=button class=btn id=tr-alt-toggle onclick="toggleAlternates()" style="background:transparent;border:1px solid var(--line);color:var(--ink)">Show more clips</button>
-      <span id=tr-alt-hint style="font-size:12px;opacity:.7;margin-left:10px"></span>
-      <div id=tr-alt-body style="display:none;margin-top:12px">
-        <p style="font-size:12px;opacity:.75;margin:0 0 10px">Runner-up scenes the selector scored next-highest but didn't pick. Tick any to add them — they'll slot into the plug in timeline order, not at the end.</p>
-        <div id=tr-alt-grid style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px"></div>
-      </div>
+    <div id=tr-scene-search-wrap style="display:none;margin-top:16px;border-top:1px solid var(--line);padding-top:14px">
+      <strong style="font-size:13px">Scene search</strong>
+      <p style="font-size:12px;opacity:.75;margin:4px 0 10px">Describe a scene you want — "close up angry face", "car chase at night", "guy running away" — and matching clips from the full source (not just what got picked) appear below with a thumbnail to preview. Tick any to add it — it'll slot into the plug in timeline order, not at the end.</p>
+      <input type=text id=tr-scene-search-input placeholder="Describe the scene you need&hellip;" class=input-box style="margin-bottom:8px">
+      <div id=tr-scene-search-status style="font-size:12px;opacity:.7;margin-bottom:10px"></div>
+      <div id=tr-alt-grid style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px"></div>
     </div>
     <div style="display:flex;gap:10px;align-items:center;margin-top:16px;flex-wrap:wrap">
       <button type=button class=btn id=tr-render-btn onclick="renderApprovedCut()">Lock cut &amp; render</button>
@@ -4565,12 +4564,57 @@ function buildSceneCard(s, cls, num, checked, badge, overlayPlay){
   return card
 }
 
-function toggleAlternates(){
-  var body = document.getElementById('tr-alt-body')
-  var open = body.style.display !== 'none'
-  body.style.display = open ? 'none' : 'block'
-  document.getElementById('tr-alt-toggle').textContent = open ? 'Show more clips' : 'Hide more clips'
+// Scene search: every scene from `alternates` (the full detected-scene
+// pool, minus whatever's already in the cut -- see build_fcpxml_package's
+// sibling change server-side, in run_trailer_job's preview branch) gets a
+// card built ONCE and left mounted in the DOM (just hidden), rather than
+// rebuilt on every keystroke -- that way a scene's checked state survives
+// across searches, and altPicks()/updatePreviewKept() (which just query
+// all .tr-alt-pick checkboxes regardless of visibility) keep working
+// completely unchanged. Searching only reorders/hides the existing cards.
+var _sceneSearchPool = []  // [{el, text, num}], rebuilt once per preview
+var SCENE_SEARCH_MAX_SHOWN = 60  // cap what's actually displayed, for a huge pool
+
+function _sceneSearchWords(q){
+  return (q || '').toLowerCase().split(/\s+/).filter(function(w){ return w.length > 0 })
 }
+
+function runSceneSearch(){
+  var input = document.getElementById('tr-scene-search-input')
+  var status = document.getElementById('tr-scene-search-status')
+  var grid = document.getElementById('tr-alt-grid')
+  if(!input || !status || !grid) return
+  var words = _sceneSearchWords(input.value)
+  var total = _sceneSearchPool.length
+  if(!words.length){
+    _sceneSearchPool.forEach(function(entry){ entry.el.style.display = 'none' })
+    status.textContent = total + ' scene' + (total === 1 ? '' : 's') + ' available — type a description to search'
+    return
+  }
+  var scored = _sceneSearchPool.map(function(entry){
+    var hits = words.reduce(function(n, w){ return n + (entry.text.indexOf(w) !== -1 ? 1 : 0) }, 0)
+    return {entry: entry, hits: hits}
+  }).filter(function(x){ return x.hits > 0 })
+  scored.sort(function(a, b){ return b.hits - a.hits })
+  var shown = scored.slice(0, SCENE_SEARCH_MAX_SHOWN)
+  var shownSet = {}
+  shown.forEach(function(x, i){
+    shownSet[x.entry.num] = true
+    x.entry.el.style.display = ''
+    grid.appendChild(x.entry.el)  // reorders best matches first
+  })
+  _sceneSearchPool.forEach(function(entry){
+    if(!shownSet[entry.num]) entry.el.style.display = 'none'
+  })
+  if(!scored.length){
+    status.textContent = 'No scenes match “' + input.value.trim() + '”'
+  }else if(scored.length > shown.length){
+    status.textContent = 'Showing top ' + shown.length + ' of ' + scored.length + ' matches — refine your search to narrow it down'
+  }else{
+    status.textContent = scored.length + ' match' + (scored.length === 1 ? '' : 'es')
+  }
+}
+window.runSceneSearch = runSceneSearch
 
 function renderPreviewCut(d){
   if(d.error){
@@ -4593,25 +4637,34 @@ function renderPreviewCut(d){
   })
   renderCutTimeline(d.scenes, d.estimated_duration, d.trailer_length)
 
-  // Runner-ups for swapping out a clip you don't like.
+  // Scene search pool -- every detected scene not already in the cut (see
+  // this same comment's server-side sibling in run_trailer_job), searched
+  // by typed description rather than browsed as a fixed ranked list.
   var alts = d.alternates || []
-  var wrap = document.getElementById('tr-alt-wrap')
+  var wrap = document.getElementById('tr-scene-search-wrap')
   var agrid = document.getElementById('tr-alt-grid')
   agrid.innerHTML = ''
+  _sceneSearchPool = []
   if(alts.length){
     alts.forEach(function(s){
-      agrid.appendChild(buildSceneCard(s, 'tr-alt-pick', s.alt, false, 'Alt ' + s.alt, true))
+      var card = buildSceneCard(s, 'tr-alt-pick', s.alt, false, 'Alt ' + s.alt, true)
+      card.style.display = 'none'  // hidden until a search actually matches it
+      agrid.appendChild(card)
+      _sceneSearchPool.push({el: card, text: (s.description || '').toLowerCase(), num: s.alt})
     })
     agrid.querySelectorAll('.tr-alt-pick').forEach(function(cb){
       cb.addEventListener('change', updatePreviewKept)
     })
-    document.getElementById('tr-alt-hint').textContent = alts.length + ' more available'
+    var searchInput = document.getElementById('tr-scene-search-input')
+    if(searchInput){
+      searchInput.value = ''
+      searchInput.oninput = runSceneSearch
+    }
+    runSceneSearch()
     wrap.style.display = 'block'
   }else{
     wrap.style.display = 'none'
   }
-  document.getElementById('tr-alt-body').style.display = 'none'
-  document.getElementById('tr-alt-toggle').textContent = 'Show more clips'
   updatePreviewKept()
   document.getElementById('tr-preview-area').style.display='block'
   document.getElementById('tr-preview-area').scrollIntoView({behavior:'smooth', block:'nearest'})
