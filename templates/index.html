@@ -794,7 +794,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
   </div>
 </div>
 <!-- Floating clip player: opened by playClip() for scene-preview "Play" buttons
-     (Scene Detection & Analysis results, trailer preview scene cards) so a scene
+     (Scene Search results, trailer preview scene cards) so a scene
      plays right over the current page instead of navigating to the Player tab
      and losing your place/scroll position/unsaved form state. -->
 <div id="clip-modal-overlay" class="net-modal-overlay" style="z-index:1100" onclick="if(event.target===this) closeClipModal()">
@@ -864,7 +864,7 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
     <div class="tab{{ ' active' if default_tab == 'p-stt' else '' }}" onclick="switchTab('p-stt',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h4l2-2h4l2 2h4v12H4z"/><circle cx="12" cy="13" r="3.5"/></svg></span><span class=tab-text>Speech to Text</span></div>
     {% endif %}
     {% if current_role == 'admin' or 'scene_detection' in current_permissions %}
-    <div class="tab{{ ' active' if default_tab == 'p-vision' else '' }}" onclick="switchTab('p-vision',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span><span class=tab-text>Scene Detection</span></div>
+    <div class="tab{{ ' active' if default_tab == 'p-vision' else '' }}" onclick="switchTab('p-vision',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span><span class=tab-text>Scene Search</span></div>
     {% endif %}
     {% if current_role == 'admin' or 'ai_chat' in current_permissions %}
     <div class="tab{{ ' active' if default_tab == 'p-chat' else '' }}" onclick="switchTab('p-chat',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3V12a8 8 0 1 1 18 0z"/></svg></span><span class=tab-text>AI Assistant</span></div>
@@ -3451,12 +3451,13 @@ document.addEventListener("DOMContentLoaded", function(){
     </div>
     <div id=tr-cut-timeline class="cut-timeline" aria-label="Cut timeline"></div>
     <div id=tr-preview-grid style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-top:14px"></div>
-    <div id=tr-scene-search-wrap style="display:none;margin-top:16px;border-top:1px solid var(--line);padding-top:14px">
-      <strong style="font-size:13px">Scene search</strong>
-      <p style="font-size:12px;opacity:.75;margin:4px 0 10px">Describe a scene you want — "close up angry face", "car chase at night", "guy running away" — and matching clips from the full source (not just what got picked) appear below with a thumbnail to preview. Tick any to add it — it'll slot into the plug in timeline order, not at the end.</p>
-      <input type=text id=tr-scene-search-input placeholder="Describe the scene you need&hellip;" class=input-box style="margin-bottom:8px">
-      <div id=tr-scene-search-status style="font-size:12px;opacity:.7;margin-bottom:10px"></div>
-      <div id=tr-alt-grid style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px"></div>
+    <div id=tr-alt-wrap style="display:none;margin-top:16px;border-top:1px solid var(--line);padding-top:14px">
+      <button type=button class=btn id=tr-alt-toggle onclick="toggleAlternates()" style="background:transparent;border:1px solid var(--line);color:var(--ink)">Show more clips</button>
+      <span id=tr-alt-hint style="font-size:12px;opacity:.7;margin-left:10px"></span>
+      <div id=tr-alt-body style="display:none;margin-top:12px">
+        <p style="font-size:12px;opacity:.75;margin:0 0 10px">Runner-up scenes the selector scored next-highest but didn't pick. Tick any to add them — they'll slot into the plug in timeline order, not at the end.</p>
+        <div id=tr-alt-grid style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px"></div>
+      </div>
     </div>
     <div style="display:flex;gap:10px;align-items:center;margin-top:16px;flex-wrap:wrap">
       <button type=button class=btn id=tr-render-btn onclick="renderApprovedCut()">Lock cut &amp; render</button>
@@ -4564,57 +4565,12 @@ function buildSceneCard(s, cls, num, checked, badge, overlayPlay){
   return card
 }
 
-// Scene search: every scene from `alternates` (the full detected-scene
-// pool, minus whatever's already in the cut -- see build_fcpxml_package's
-// sibling change server-side, in run_trailer_job's preview branch) gets a
-// card built ONCE and left mounted in the DOM (just hidden), rather than
-// rebuilt on every keystroke -- that way a scene's checked state survives
-// across searches, and altPicks()/updatePreviewKept() (which just query
-// all .tr-alt-pick checkboxes regardless of visibility) keep working
-// completely unchanged. Searching only reorders/hides the existing cards.
-var _sceneSearchPool = []  // [{el, text, num}], rebuilt once per preview
-var SCENE_SEARCH_MAX_SHOWN = 60  // cap what's actually displayed, for a huge pool
-
-function _sceneSearchWords(q){
-  return (q || '').toLowerCase().split(/\s+/).filter(function(w){ return w.length > 0 })
+function toggleAlternates(){
+  var body = document.getElementById('tr-alt-body')
+  var open = body.style.display !== 'none'
+  body.style.display = open ? 'none' : 'block'
+  document.getElementById('tr-alt-toggle').textContent = open ? 'Show more clips' : 'Hide more clips'
 }
-
-function runSceneSearch(){
-  var input = document.getElementById('tr-scene-search-input')
-  var status = document.getElementById('tr-scene-search-status')
-  var grid = document.getElementById('tr-alt-grid')
-  if(!input || !status || !grid) return
-  var words = _sceneSearchWords(input.value)
-  var total = _sceneSearchPool.length
-  if(!words.length){
-    _sceneSearchPool.forEach(function(entry){ entry.el.style.display = 'none' })
-    status.textContent = total + ' scene' + (total === 1 ? '' : 's') + ' available — type a description to search'
-    return
-  }
-  var scored = _sceneSearchPool.map(function(entry){
-    var hits = words.reduce(function(n, w){ return n + (entry.text.indexOf(w) !== -1 ? 1 : 0) }, 0)
-    return {entry: entry, hits: hits}
-  }).filter(function(x){ return x.hits > 0 })
-  scored.sort(function(a, b){ return b.hits - a.hits })
-  var shown = scored.slice(0, SCENE_SEARCH_MAX_SHOWN)
-  var shownSet = {}
-  shown.forEach(function(x, i){
-    shownSet[x.entry.num] = true
-    x.entry.el.style.display = ''
-    grid.appendChild(x.entry.el)  // reorders best matches first
-  })
-  _sceneSearchPool.forEach(function(entry){
-    if(!shownSet[entry.num]) entry.el.style.display = 'none'
-  })
-  if(!scored.length){
-    status.textContent = 'No scenes match “' + input.value.trim() + '”'
-  }else if(scored.length > shown.length){
-    status.textContent = 'Showing top ' + shown.length + ' of ' + scored.length + ' matches — refine your search to narrow it down'
-  }else{
-    status.textContent = scored.length + ' match' + (scored.length === 1 ? '' : 'es')
-  }
-}
-window.runSceneSearch = runSceneSearch
 
 function renderPreviewCut(d){
   if(d.error){
@@ -4637,34 +4593,25 @@ function renderPreviewCut(d){
   })
   renderCutTimeline(d.scenes, d.estimated_duration, d.trailer_length)
 
-  // Scene search pool -- every detected scene not already in the cut (see
-  // this same comment's server-side sibling in run_trailer_job), searched
-  // by typed description rather than browsed as a fixed ranked list.
+  // Runner-ups for swapping out a clip you don't like.
   var alts = d.alternates || []
-  var wrap = document.getElementById('tr-scene-search-wrap')
+  var wrap = document.getElementById('tr-alt-wrap')
   var agrid = document.getElementById('tr-alt-grid')
   agrid.innerHTML = ''
-  _sceneSearchPool = []
   if(alts.length){
     alts.forEach(function(s){
-      var card = buildSceneCard(s, 'tr-alt-pick', s.alt, false, 'Alt ' + s.alt, true)
-      card.style.display = 'none'  // hidden until a search actually matches it
-      agrid.appendChild(card)
-      _sceneSearchPool.push({el: card, text: (s.description || '').toLowerCase(), num: s.alt})
+      agrid.appendChild(buildSceneCard(s, 'tr-alt-pick', s.alt, false, 'Alt ' + s.alt, true))
     })
     agrid.querySelectorAll('.tr-alt-pick').forEach(function(cb){
       cb.addEventListener('change', updatePreviewKept)
     })
-    var searchInput = document.getElementById('tr-scene-search-input')
-    if(searchInput){
-      searchInput.value = ''
-      searchInput.oninput = runSceneSearch
-    }
-    runSceneSearch()
+    document.getElementById('tr-alt-hint').textContent = alts.length + ' more available'
     wrap.style.display = 'block'
   }else{
     wrap.style.display = 'none'
   }
+  document.getElementById('tr-alt-body').style.display = 'none'
+  document.getElementById('tr-alt-toggle').textContent = 'Show more clips'
   updatePreviewKept()
   document.getElementById('tr-preview-area').style.display='block'
   document.getElementById('tr-preview-area').scrollIntoView({behavior:'smooth', block:'nearest'})
@@ -6540,26 +6487,56 @@ loadModels()
 loadAceStepModels()
 var _lastVisionVideoFilename = null
 
+function _buildSceneSearchCard(r, videoFilename){
+  var card = document.createElement('div')
+  card.style.cssText = 'border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--panel-2,#1f232b)'
+  var badge = 'Scene ' + r.scene
+  var canPlay = !!videoFilename
+  var playAttr = canPlay ? "playClip('"+videoFilename+"',"+r.start_sec+","+r.end_sec+",'"+escapeHtmlLite(badge)+"')" : ''
+  var overlayBtn = canPlay
+    ? '<button type=button aria-label="Play '+escapeHtmlLite(badge)+'" onclick="'+playAttr+'" ' +
+      'style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:40px;height:40px;' +
+      'border-radius:50%;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.5);color:#fff;' +
+      'font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0 0 0 2px">&#9654;</button>'
+    : ''
+  var thumbHtml = '<div style="position:relative">' +
+    (r.thumb ? '<img src="'+r.thumb+'" alt="'+escapeHtmlLite(badge)+'" loading="lazy" decoding="async" style="width:100%;display:block;aspect-ratio:4/3;object-fit:cover">'
+             : '<div style="aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;opacity:.4;font-size:11px">no thumbnail</div>') +
+    overlayBtn + '</div>'
+  card.innerHTML = thumbHtml +
+    '<div style="padding:8px 10px;font-size:11px;line-height:1.5">' +
+    '<strong>'+escapeHtmlLite(badge)+'</strong> <span style="opacity:.7">'+r.start_tc+' → '+r.end_tc+' ('+r.duration+'s)</span>' +
+    (r.match_hits ? ' <span class="score-chip total" title="Matched words">'+r.match_hits+' match'+(r.match_hits===1?'':'es')+'</span>' : '') +
+    '<div style="opacity:.75;margin-top:4px">'+escapeHtmlLite(r.description||'')+'</div>' +
+    (r.dialogue ? '<div class="vo-beat-line" title="Whisper dialogue over this scene">"'+escapeHtmlLite(r.dialogue)+'"</div>' : '') +
+    '</div>'
+  return card
+}
+
 document.getElementById('vf').addEventListener('submit', async function(e){
   e.preventDefault()
   document.getElementById('vr-area').style.display='none'
   document.getElementById('vr-prompt').style.display='block'
-  document.getElementById('vr-prompt').textContent='Analyzing...'
+  document.getElementById('vr-prompt').textContent='Detecting scenes, analyzing frames, and transcribing dialogue… this can take a while on a long source.'
   let r=await fetch('/api/vision/analyze',{method:'POST',body:new FormData(this)})
   let d=await r.json()
   document.getElementById('vr-prompt').style.display='none'
-  if(d.error){document.getElementById('vr-result').innerHTML='<b>Error:</b> '+d.error; document.getElementById('vr-area').style.display='block'; return}
+  if(d.error){
+    document.getElementById('vr-status').textContent=''
+    document.getElementById('vr-result').innerHTML=''
+    document.getElementById('vr-prompt').style.display='block'
+    document.getElementById('vr-prompt').innerHTML='<b>Error:</b> '+d.error
+    return
+  }
   _lastVisionVideoFilename = d.video_filename || null
-  let h='<table><tr><th>#</th><th>Time</th><th>Scene</th><th>AI Response</th><th></th></tr>'
-  d.results.forEach(r=>{
-    let sc=r.scene?'S'+r.scene+' ('+r.scene_start+'-'+r.scene_end+', '+r.scene_duration+'s)':'-'
-    let playBtn = (r.scene && _lastVisionVideoFilename)
-      ? '<button type=button class=btn style="padding:4px 10px;font-size:11px" onclick="playClip(\''+_lastVisionVideoFilename+'\','+r.scene_start_sec+','+r.scene_end_sec+',\'Scene '+r.scene+'\')">&#9654; Play</button>'
-      : ''
-    h+='<tr><td>'+r.frame_idx+'</td><td>'+r.time_sec+'s</td><td>'+sc+'</td><td>'+r.ollama_response+'</td><td>'+playBtn+'</td></tr>'
-  })
-  h+='</table>'
-  document.getElementById('vr-result').innerHTML='<p>Analyzed '+d.frames_analyzed+' frames across '+d.total_scenes+' scenes.</p>'+h
+  let grid = document.getElementById('vr-result')
+  grid.innerHTML = ''
+  d.results.forEach(function(r){ grid.appendChild(_buildSceneSearchCard(r, _lastVisionVideoFilename)) })
+  let statusMsg = d.searched
+    ? d.results.length + ' matching scene' + (d.results.length===1?'':'s') + ' of ' + d.total_scenes + ' detected' +
+      (d.excluded_count ? ' (' + d.excluded_count + ' excluded by the negative prompt)' : '')
+    : d.total_scenes + ' scene' + (d.total_scenes===1?'':'s') + ' detected — type a description above to search'
+  document.getElementById('vr-status').textContent = statusMsg
   document.getElementById('vr-area').style.display='block'
 })
 })   // end DOMContentLoaded
@@ -6775,41 +6752,48 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 </div>
 
 <div id="p-vision" class="panel{{ ' active' if default_tab == 'p-vision' else '' }}">
-<h2>Scene Detection &amp; Analysis</h2>
-<p style="font-size:12px;opacity:.75;margin-top:-6px">Runs PySceneDetect over the source to find the cuts, then samples frames and describes them with the AI Vision model — the same two stages that feed scene rating in the promo generator.</p>
+<h2>Scene Search</h2>
+<p style="font-size:12px;opacity:.75;margin-top:-6px">Runs PySceneDetect over the source to find every cut, describes each one with the AI Vision model, and aligns it with Whisper dialogue — then finds the scenes matching what you describe. No rating/scoring happens here; that's a separate step the promo generator does when actually building a plug.</p>
 <form id=vf method=POST action=/api/vision/analyze enctype=multipart/form-data>
+  <label>Video (HIRES):</label>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
     <input type=file name=file accept=video/* data-net-field="file">
     <button type=button class="browse-btn" onclick="openNetworkBrowser('file','hires','Video (HIRES)')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
   </div>
   <input type=hidden id=file_network name=file_network value="">
   <span class="net-file-chip" id=file_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('file')">&#10005;</span></span>
-  <label>Cut detector:</label>
-  <select name=detector id=vf-detector-select onchange="document.getElementById('vf-adaptive-threshold-row').style.display = (this.value==='adaptive' ? '' : 'none')">
-    <option value=content selected>Content (default)</option>
-    <option value=adaptive>Adaptive — resists false cuts from pans/handheld/zooms</option>
-  </select>
-  <label>Scene cut sensitivity:</label>
-  <input type=number name=scene_threshold value=30 min=1 max=100 step=1 style="width:100px">
-  <p style="margin-top:6px;margin-bottom:8px;font-size:12px;opacity:.75">Matches the generator form's "Scene cut sensitivity" — set these the same to see exactly what generation will detect before running a full render.</p>
-  <div id=vf-adaptive-threshold-row style="display:none">
-  <label>Adaptive sensitivity:</label>
-  <input type=number name=adaptive_threshold value=3.0 min=1 max=10 step=0.5 style="width:100px">
-  </div>
-  <label>Minimum scene length (s):</label>
-  <input type=number name=min_scene_len value=0.5 min=0.1 max=5 step=0.1 style="width:100px">
-  <label>Custom prompt:</label>
-  <input type=text name=prompt class=input-box value="Describe the quality and content of this video frame. Note any blur, color issues, or anomalies.">
-  <label>Frames to analyze:</label>
-  <input type=number name=num_frames value=5 min=1 max=20>
-  <label>Model:</label>
-  <select name=model id=vision-model><option value="">Loading...</option></select>
-  <button class=btn type=submit>Analyze with AI</button>
+  <label>Describe the scene you want:</label>
+  <input type=text name=prompt class=input-box placeholder="e.g. close up angry face, car chase at night, guy running away">
+  <label>Negative prompt (optional):</label>
+  <input type=text name=negative_prompt class=input-box placeholder="e.g. blurry, dark, empty room &mdash; scenes matching this are excluded">
+  <details style="margin-top:10px">
+    <summary style="cursor:pointer;font-size:12px;opacity:.75">Scene detection settings</summary>
+    <div style="margin-top:8px">
+    <label>Cut detector:</label>
+    <select name=detector id=vf-detector-select onchange="document.getElementById('vf-adaptive-threshold-row').style.display = (this.value==='adaptive' ? '' : 'none')">
+      <option value=content selected>Content (default)</option>
+      <option value=adaptive>Adaptive — resists false cuts from pans/handheld/zooms</option>
+    </select>
+    <label>Scene cut sensitivity:</label>
+    <input type=number name=scene_threshold value=30 min=1 max=100 step=1 style="width:100px">
+    <p style="margin-top:6px;margin-bottom:8px;font-size:12px;opacity:.75">Matches the generator form's "Scene cut sensitivity" — set these the same to see exactly what generation will detect before running a full render.</p>
+    <div id=vf-adaptive-threshold-row style="display:none">
+    <label>Adaptive sensitivity:</label>
+    <input type=number name=adaptive_threshold value=3.0 min=1 max=10 step=0.5 style="width:100px">
+    </div>
+    <label>Minimum scene length (s):</label>
+    <input type=number name=min_scene_len value=0.5 min=0.1 max=5 step=0.1 style="width:100px">
+    <label>Model:</label>
+    <select name=model id=vision-model><option value="">Loading...</option></select>
+    </div>
+  </details>
+  <button class=btn type=submit style="margin-top:14px">Search scenes</button>
 </form>
 <div id=vr-area style=display:none>
-  <div class=card id=vr-result></div>
+  <div id=vr-status style="font-size:12px;opacity:.75;margin-bottom:10px"></div>
+  <div id=vr-result style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px"></div>
 </div>
-<div id=vr-prompt class=no-data>Upload a video to analyze frames with the AI Vision model.</div>
+<div id=vr-prompt class=no-data>Upload a video, describe the scene you need, and matching clips (with thumbnails to preview) will appear here. Leave the prompt blank to just browse every detected scene.</div>
 </div>
 
 <div id="p-chat" class="panel{{ ' active' if default_tab == 'p-chat' else '' }}">
@@ -7018,7 +7002,7 @@ job. Configured via env vars:
       <p style="margin:8px 2px 0;font-size:11px;color:var(--ink-dim);text-align:left">Amber dashed = optional, feeds into the main pipeline rather than sitting inline with it.</p>
       </div>
       <ol style="line-height:1.9;padding-left:26px">
-        <li><strong>Scene detection</strong> — PySceneDetect (Content or Adaptive) finds every cut, using the same settings as Scene Detection &amp; Analysis.</li>
+        <li><strong>Scene detection</strong> — PySceneDetect (Content or Adaptive) finds every cut, using the same settings as the Scene Search tool.</li>
         <li><strong>Rating</strong> — sharpness/brightness/duration/faces (OpenCV), AI Vision quality, and dialogue boosts from faster-whisper.</li>
         <li><strong>Beat/dialogue prep (optional)</strong> — beat grid and word-level timestamps when those options are on.</li>
         <li><strong>Scene selection</strong> — highest-rated scenes fill the target duration with spacing, beat/word snaps, and top-up passes.</li>
@@ -8629,7 +8613,7 @@ function handlePlayerError(){
 }
 
 // ---- Floating clip player ----
-// Used by the Scene Detection & Analysis results and the trailer preview's
+// Used by the Scene Search results and the trailer preview's
 // scene cards (see buildSceneCard) to play a single scene right over the
 // current page -- no tab switch, so your scroll position, form state, and
 // preview selections all stay exactly where they were.

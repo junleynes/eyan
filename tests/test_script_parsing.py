@@ -283,3 +283,67 @@ class TestSegmentOffsets:
         cues = pipeline.parse_script_cues("M1 01:02:03 fully qualified timecode")
         assert len(cues) == 1
         assert cues[0]['time'] == 3723.0
+
+
+class TestPeriodSeparatedTimecodes:
+    """Some scripts write every timecode field with periods instead of
+    colons -- a real, user-reported bug where several attached scripts'
+    cues went unrecognised by Timecode Priority while others (colon-style)
+    worked fine. Two period house-styles were found in the wild:
+
+    - Plain M.SS / MM.SS, e.g. "M1 2.11" or "Mat 3 1.06 - 1.08" -- the
+      period-separated equivalent of the existing MM:SS pattern.
+    - A padded "00.00.MM.SS" shape, e.g. "M2:00.00.02.01-02.02" -- despite
+      looking like HH.MM.SS.FF, cross-checking its cue ranges against the
+      same show's other scripts (which write the identical cues as plain
+      MM.SS, with values up to several minutes) confirms the 2nd field is
+      redundant padding and the 3rd/4th fields are the real MM.SS -- NOT
+      hours/minutes/seconds/frames.
+    """
+
+    def test_period_mm_ss_format(self):
+        cues = pipeline.parse_script_cues("M1 2.11 City establishing")
+        assert len(cues) == 1
+        assert cues[0]['time'] == 131.0
+
+    def test_period_m_ss_with_leading_zero_minute(self):
+        # M1 (seg_num 1) is always usable in the legacy/no-offsets path, so
+        # this isolates the period-format parsing itself rather than the
+        # unrelated material-availability behavior covered elsewhere.
+        cues = pipeline.parse_script_cues("M1 0.06 – 10 Robb lingon kay Yasser")
+        assert len(cues) == 1
+        assert cues[0]['time'] == 6.0
+
+    def test_period_mm_ss_in_out_pair(self):
+        cues = pipeline.parse_script_cues("1.06 - 1.08 tight shots")
+        assert len(cues) == 1
+        assert cues[0]['time'] == 66.0
+
+    def test_padded_zero_zero_mm_ss_format(self):
+        # "00.00.03.53" -> 3:53 (233s), not 3s + 53 frames/ms.
+        cues = pipeline.parse_script_cues("M1: NATSOT 00.00.03.53-03.55(ROSELLE)")
+        assert len(cues) == 1
+        assert cues[0]['time'] == 233.0
+
+    def test_padded_format_shorthand_dash_out_does_not_produce_bogus_time(self):
+        # The dash-out here ("-02.02") isn't recognised as a valid shorthand
+        # out-point in this padded style; the important thing is the
+        # in-point itself still comes out correct and the line isn't
+        # dropped entirely.
+        cues = pipeline.parse_script_cues("M1:00.00.02.01-02.02-WIDE TO MID JACKYLOU")
+        assert len(cues) == 1
+        assert cues[0]['time'] == 121.0
+
+    def test_period_format_description_excludes_the_timecode(self):
+        cues = pipeline.parse_script_cues("M1 SOT ONLY 3.38 (Yasser) dialogue line")
+        assert len(cues) == 1
+        assert '3.38' not in cues[0]['desc']
+        assert 'Yasser' in cues[0]['desc']
+
+    def test_leading_dot_only_shorthand_is_still_unrecognised(self):
+        # ".06 - .14" omits the minute digit entirely (implicitly "same
+        # minute as the previous cue") -- genuinely ambiguous without
+        # tracking state across lines, so this remains a known gap rather
+        # than a silently-wrong guess.
+        cues = pipeline.parse_script_cues(".06 - .14 tumba Tobuts")
+        assert cues == []

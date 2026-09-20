@@ -269,6 +269,8 @@ PIPELINE_STAGES = [
 PREVIEWS = {}
 PREVIEWS_LOCK = threading.Lock()
 PREVIEW_TTL = int(os.environ.get('PREVIEW_TTL', 2 * 3600))
+# How many runner-up scenes a preview offers as swap-in alternatives ("show more").
+PREVIEW_ALTERNATES = int(os.environ.get('PREVIEW_ALTERNATES', 12))
 
 def preview_store(pid, data):
     with PREVIEWS_LOCK:
@@ -3082,7 +3084,14 @@ def speech_free_slack(clip_start, clip_end, speech_spans, guard=0.18):
 _TC_PATTERNS = [
     re.compile(r'\b(\d{1,2}):(\d{2}):(\d{2})[:.](\d{1,3})\b'),  # HH:MM:SS:FF / HH:MM:SS.mmm
     re.compile(r'\b(\d{1,2}):(\d{2}):(\d{2})\b'),               # HH:MM:SS
+    # Some scripts write every timecode field with periods instead of colons
+    # (e.g. "00.00.02.01" for HH.MM.SS.FF, or "2.11" / "0.06" for M.SS) --
+    # otherwise identical to the colon formats above, just a different house
+    # style some editors/writers use. Checked before the bare MM:SS/M.SS
+    # patterns for the same longest-first reason those are ordered that way.
+    re.compile(r'\b(\d{1,2})\.(\d{2})\.(\d{2})\.(\d{1,3})\b'),  # HH.MM.SS.FF (period-separated)
     re.compile(r'\b(\d{1,2}):(\d{2})\b'),                       # MM:SS
+    re.compile(r'\b(\d{1,2})\.(\d{2})\b'),                      # M.SS / MM.SS (period-separated)
 ]
 
 # A real video timecode never carries an AM/PM suffix -- that's exclusively
@@ -3133,7 +3142,21 @@ def _match_to_seconds(m, pat_idx, fps=25.0):
         return h * 3600 + mnt * 60 + s + sub
     if pat_idx == 1:
         return int(g[0]) * 3600 + int(g[1]) * 60 + int(g[2])
-    return int(g[0]) * 60 + int(g[1])
+    if pat_idx == 2:
+        # HH.MM.SS.FF-shaped (period-separated), but real scripts using this
+        # style write it as a constant "00.00." prefix followed by the actual
+        # MM.SS cue (e.g. "00.00.03.53" means 3:53, not "0h 0m 3s 53f") --
+        # confirmed by comparing cue ranges across scripts that write the
+        # same cues as plain MM.SS elsewhere (0:06-3:38, 1:03-4:37, …): the
+        # 4-field version's 3rd/4th groups line up with that same MM:SS
+        # range only when the 2nd group is discarded, not treated as minutes
+        # of its own. The leading group is kept as hours in case a future
+        # script's raw source ever runs past an hour.
+        h, _padding, mnt, s = int(g[0]), g[1], int(g[2]), int(g[3])
+        return h * 3600 + mnt * 60 + s
+    if pat_idx == 3:
+        return int(g[0]) * 60 + int(g[1])
+    return int(g[0]) * 60 + int(g[1])  # pat_idx == 4: M.SS / MM.SS (period-separated)
 
 # Shorthand range notation a rundown commonly uses instead of writing the
 # out-point as a full second timecode: "3:33—37" or "00:35--42" means "in at
@@ -4131,17 +4154,28 @@ def unload_ollama_model(model):
 @app.route('/api/vision/analyze', methods=['POST'])
 @require_permission('scene_detection')
 def api_vision():
+    """Scene search: detect every cut in a hires video, describe each one
+    with the AI Vision model and align it with Whisper dialogue, then rank
+    (and optionally exclude) results against a typed prompt / negative
+    prompt -- a "find me the scene with X" tool.
+
+    Deliberately stops at the two raw-material stages (vision description +
+    dialogue text) rather than running the full rating pipeline: no OpenCV
+    sharpness/brightness/face heuristics, no combined score, no scene
+    selection. That scoring formula answers "how good is this clip for a
+    promo"; this tool answers "which of these clips shows what I described",
+    which is a plain keyword match against text, not a quality judgment.
+    """
     path, err = load_video(request)
     if not path:
         return jsonify(error=err), 400
-    prompt = request.form.get('prompt', 'Describe what is happening in this video frame in 1-2 sentences.')
-    num_frames = min(int(request.form.get('num_frames', 5)), 20)
+    search_prompt = (request.form.get('prompt') or '').strip()
+    negative_prompt = (request.form.get('negative_prompt') or '').strip()
     model = request.form.get('model', 'llama3.2-vision:11b')
 
     path = _ensure_readable(path)
-    # Basename under UPLOAD_FOLDER, handed back so the frontend can play the
-    # scene straight from /uploads/<name> -- lets "Analyze with AI" double as
-    # a scene-cut preview you can actually watch, not just read timecodes for.
+    # Basename under UPLOAD_FOLDER, handed back so the frontend can play any
+    # result straight from /uploads/<name> via the shared clip player.
     video_filename = os.path.basename(path)
 
     # Was hardcoded to threshold=30.0 regardless of what the generator form
@@ -4153,72 +4187,76 @@ def api_vision():
                'start_tc': s.get_timecode(), 'end_tc': e.get_timecode(),
                'duration': round(tc_seconds(e) - tc_seconds(s), 2)}
               for i, (s, e) in enumerate(scene_list)]
+    if not scenes:
+        return jsonify(error='No scene cuts were detected in this video -- try lowering the '
+                             'scene cut sensitivity.'), 400
+
+    # Dialogue, best-effort: an unreachable Whisper service just means no
+    # dialogue text to search against, not a failed request.
+    _, segments = transcribe_video(path)
 
     cap = cv2.VideoCapture(path)
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-
-    frames_to_analyze = []
-    if scenes:
-        for sc in scenes:
-            mid_sec = (sc['start'] + sc['end']) / 2
-            mid_frame = int(mid_sec * fps) if fps else 0
-            frames_to_analyze.append({'frame_idx': mid_frame, 'time_sec': round(mid_sec, 2), 'scene': sc})
-    else:
-        step = max(total // num_frames, 1) if total > num_frames else 1
-        for i in range(0, total, step):
-            if len(frames_to_analyze) >= num_frames:
-                break
-            ts = round(i / fps, 2) if fps > 0 else 0
-            frames_to_analyze.append({'frame_idx': i, 'time_sec': ts, 'scene': None})
-
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    batch_id = uuid.uuid4().hex[:10]
     results = []
-    for fa in frames_to_analyze[:num_frames]:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, fa['frame_idx'])
+    for sc in scenes:
+        mid_sec = (sc['start'] + sc['end']) / 2
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(mid_sec * fps))
         ret, frame = cap.read()
-        if not ret:
-            continue
-        _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        b64 = base64.b64encode(buf.tobytes()).decode()
+        description, thumb_url = '', None
+        if ret:
+            tw = 320
+            h, w = frame.shape[:2]
+            small = cv2.resize(frame, (tw, max(1, int(h * tw / max(w, 1)))))
+            tname = f'vsearch_{batch_id}_{sc["scene"]}.jpg'
+            cv2.imwrite(os.path.join(app.config['UPLOAD_FOLDER'], tname), small,
+                        [cv2.IMWRITE_JPEG_QUALITY, 80])
+            thumb_url = f'/uploads/{tname}'
+            _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            b64 = base64.b64encode(buf.tobytes()).decode()
+            try:
+                r = requests.post(f'{OLLAMA_URL}/api/generate', json={
+                    'model': model,
+                    'prompt': 'Describe what is happening in this video frame in 1-2 sentences: '
+                              'who or what is visible, the action, and the setting.',
+                    'stream': False, 'images': [b64],
+                }, timeout=300)
+                description = (r.json().get('response') or '').strip()
+            except Exception as e:
+                description = f'(vision analysis failed: {e})'
 
-        scene_ctx = ''
-        if fa['scene']:
-            s = fa['scene']
-            scene_ctx = f' (Scene {s["scene"]}, {s["start_tc"]}-{s["end_tc"]}, {s["duration"]}s)'
-        full_prompt = prompt + scene_ctx
+        dialogue = ' '.join(
+            seg['text'] for seg in segments
+            if seg['start'] < sc['end'] and seg['end'] > sc['start']
+        ).strip()
 
-        try:
-            r = requests.post(f'{OLLAMA_URL}/api/generate', json={
-                'model': model, 'prompt': full_prompt, 'stream': False,
-                'images': [b64]
-            }, timeout=300)
-            data = r.json()
-            resp = data.get('response', '')
-        except Exception as e:
-            resp = f'Error: {e}'
-
-        entry = {'frame_idx': fa['frame_idx'], 'time_sec': fa['time_sec'], 'ollama_response': resp}
-        if fa['scene']:
-            entry['scene'] = fa['scene']['scene']
-            entry['scene_start'] = fa['scene']['start_tc']
-            entry['scene_end'] = fa['scene']['end_tc']
-            entry['scene_duration'] = fa['scene']['duration']
-            # Numeric seconds alongside the display timecodes above, so the
-            # frontend can seek a <video> element directly (currentTime wants
-            # a float, not a "00:00:12.500" string).
-            entry['scene_start_sec'] = fa['scene']['start']
-            entry['scene_end_sec'] = fa['scene']['end']
-        results.append(entry)
-
+        results.append({
+            'scene': sc['scene'], 'start_tc': sc['start_tc'], 'end_tc': sc['end_tc'],
+            'start_sec': sc['start'], 'end_sec': sc['end'], 'duration': sc['duration'],
+            'thumb': thumb_url, 'description': description, 'dialogue': dialogue,
+        })
     cap.release()
     # Same reasoning as the main render pipeline's equivalent call: this tool
     # is a plausible thing to run right before someone tries Speech to Text
     # on the same video, so it gets the same "free the GPU the moment this
-    # scoring pass is actually done" treatment for consistency.
+    # analysis pass is actually done" treatment for consistency.
     if load_production_defaults().get('unload_vision_after_scoring', True):
         unload_ollama_model(model)
-    return jsonify(frames_analyzed=len(results), total_scenes=len(scenes), results=results,
-                    video_filename=video_filename)
+
+    def _words(q):
+        return [w for w in re.split(r'\s+', (q or '').lower().strip()) if w]
+
+    pos_words, neg_words = _words(search_prompt), _words(negative_prompt)
+    for r in results:
+        text = (r['description'] + ' ' + r['dialogue']).lower()
+        r['match_hits'] = sum(1 for w in pos_words if w in text)
+        r['excluded'] = bool(neg_words) and any(w in text for w in neg_words)
+    excluded_count = sum(1 for r in results if r['excluded'])
+    if pos_words or neg_words:
+        results = [r for r in results if not r['excluded']]
+        results.sort(key=lambda r: (-r['match_hits'], r['scene']))
+    return jsonify(total_scenes=len(scenes), results=results, video_filename=video_filename,
+                    searched=bool(pos_words or neg_words), excluded_count=excluded_count)
 
 @app.errorhandler(413)
 def too_large(e):
@@ -4374,7 +4412,7 @@ Script priority (if used): a large boost (up to ~8, deliberately dominant) for s
 
 OTHER TABS
 Speech to Text: standalone faster-whisper transcription.
-Scene Detection: standalone scene-detection/preview testing separate from a full generate.
+Scene Search: detects every cut in a hires video, describes each with AI Vision, aligns Whisper dialogue, then finds scenes matching a typed prompt (with an optional negative prompt to exclude some) -- no rating/scoring, separate from a full generate.
 AI Assistant: this chat.
 Player: browses and plays saved trailers from the shared library.
 API: live health status of every connected service (Ollama, Fish Audio, faster-whisper, ACE-Step, Woosh), admin-only.
@@ -4672,12 +4710,18 @@ def api_validate_script():
         parsed = _parse_timecode_line(line)
         if not parsed:
             # Only report lines that look like they *tried* to be cues
-            # (contain digits + colon) so we don't spam prose.
-            if re.search(r'\d:\d', line):
+            # (contain digits + a colon or period separator) so we don't spam
+            # prose. This also catches the leading-dot shorthand some scripts
+            # use ("Mat 3 .26 - .30", minute implied from a previous cue) --
+            # not currently recognised since the minute digit is missing
+            # entirely, which is genuinely ambiguous rather than a different
+            # separator style.
+            if re.search(r'\d[:.]\d', line) or re.search(r'(?<!\d)\.\d{2}\b', line):
                 skipped.append({
                     'line': line[:160],
-                    'reason': 'No recognisable timecode (use 00:01:30:12, 00:01:30, or 1:30). '
-                              'A single time is enough — in/out pairs are not required.',
+                    'reason': 'No recognisable timecode (use 00:01:30:12, 00:01:30, 1:30, or the '
+                              'period-separated 00.01.30.12 / 1.30). A single time is enough — '
+                              'in/out pairs are not required.',
                 })
             continue
         secs, desc, meta = parsed
@@ -9185,19 +9229,10 @@ def _run_trailer_job(jid, params):
         pid = f'pv{jid}'
         job_set(jid, percent=34, step='Writing preview thumbnails')
 
-        # Scene search pool: every detected scene NOT already in the cut, so
-        # the Proposed cut screen's scene-search box can match a typed
-        # description against the full set the analysis found, not just a
-        # short, score-ranked runner-up list -- what used to be here
-        # (top PREVIEW_ALTERNATES by score, min_gap-deduped against each
-        # other and against `selected`) made sense for a small "here are a
-        # few other options" grid, but a text search needs the whole pool
-        # to actually find whatever the person describes. No score/min_gap
-        # filtering here: every non-chosen scene is a legitimate search
-        # result, however close together or low-scoring. Sorted by
-        # (material, start) for a stable, source-order listing rather than
-        # a ranking that no longer means anything once this is a search
-        # result set rather than a curated shortlist.
+        # Runner-ups: the next-best scoring scenes that didn't make the cut, so a
+        # rejected clip can be swapped for a real alternative instead of forcing a
+        # full re-analysis. Spaced by the same min_gap rule the selector uses, and
+        # excluding anything already chosen.
         #
         # chosen_starts is keyed on (material, rounded start) together, not
         # start alone -- the same fix, for the same reason, as every other
@@ -9207,8 +9242,16 @@ def _run_trailer_job(jid, params):
         chosen_starts = {(s.get('material'), round(s['start'], 3)) for s in selected}
         alternates = []
         if not preselected:
-            for cand in sorted(scenes_data, key=lambda x: (x.get('material') or 0, x['start'])):
+            for cand in sorted(scenes_data, key=lambda x: x['total_score'], reverse=True):
+                if len(alternates) >= PREVIEW_ALTERNATES:
+                    break
                 if (cand.get('material'), round(cand['start'], 3)) in chosen_starts:
+                    continue
+                if any(abs(cand['start'] - o['start']) < min_gap and cand.get('material') == o.get('material')
+                       for o in alternates):
+                    continue
+                if any(abs(cand['start'] - s['start']) < min_gap and cand.get('material') == s.get('material')
+                       for s in selected):
                     continue
                 cand = dict(cand)
                 cand.setdefault('selected_dur', min(cand['duration'], max_scene_dur or cand['duration']))
@@ -9254,57 +9297,8 @@ def _run_trailer_job(jid, params):
                 print(f'Preview thumbnail {tag}{i} failed: {e}')
                 return None
 
-        def _thumb_batch(scenes_list, tag):
-            """Same output as calling _thumb per scene, but reuses one
-            cv2.VideoCapture per unique source file across the whole list
-            instead of opening (and closing) a fresh one per scene. Needed
-            now that `alternates` (see the scene-search pool above) covers
-            every detected scene rather than a dozen sampled runner-ups --
-            opening a brand new VideoCapture per scene would mean
-            re-opening the same source file dozens or hundreds of times
-            over for a single preview. Scenes that already have a
-            pre-captured 'frame' (the normal, scored path) still skip
-            opening anything at all, same as _thumb."""
-            caps = {}
-            thumbs_out = [None] * len(scenes_list)
-            try:
-                for i, scene in enumerate(scenes_list):
-                    frame = scene.get('frame')
-                    if frame is None:
-                        src = scene.get('source_path') or params.get('path')
-                        if not src or not os.path.exists(src):
-                            continue
-                        cap = caps.get(src)
-                        if cap is None:
-                            cap = cv2.VideoCapture(src)
-                            caps[src] = cap
-                        try:
-                            fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-                            seek_time = scene.get('trim_start', scene.get('start', 0.0))
-                            cap.set(cv2.CAP_PROP_POS_FRAMES, int(seek_time * fps))
-                            ok, frame = cap.read()
-                            if not ok:
-                                continue
-                        except Exception as e:
-                            print(f'Preview thumbnail {tag}{i} frame extraction failed: {e}')
-                            continue
-                    try:
-                        tw = 320
-                        h, w = frame.shape[:2]
-                        small = cv2.resize(frame, (tw, max(1, int(h * tw / max(w, 1)))))
-                        tname = f'preview_{pid}_{tag}{i}.jpg'
-                        cv2.imwrite(os.path.join(app.config['UPLOAD_FOLDER'], tname), small,
-                                    [cv2.IMWRITE_JPEG_QUALITY, 78])
-                        thumbs_out[i] = f'/uploads/{tname}'
-                    except Exception as e:
-                        print(f'Preview thumbnail {tag}{i} failed: {e}')
-            finally:
-                for cap in caps.values():
-                    cap.release()
-            return thumbs_out
-
         thumbs = [_thumb(s, 's', i) for i, s in enumerate(selected)]
-        alt_thumbs = _thumb_batch(alternates, 'a')
+        alt_thumbs = [_thumb(s, 'a', i) for i, s in enumerate(alternates)]
 
         def _slim(rows):
             # Only the fields the render half consumes -- frames and other
