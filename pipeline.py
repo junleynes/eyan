@@ -9148,6 +9148,76 @@ def _run_trailer_job(jid, params):
                 total_sel += grow
                 shortfall -= grow
 
+        # A grown last clip (immediately above) can only close a shortfall as
+        # large as ITS OWN remaining slack -- when the source simply doesn't
+        # have that much room left in already-selected scenes (every one of
+        # them is already using all the footage it has), pull in additional,
+        # not-yet-selected scenes from the same scored pool instead of
+        # shipping a trailer that's noticeably short with nothing left to try.
+        # This mirrors what the manual "Preview the cut" edit flow already
+        # does when adding alternates after a drop
+        # (_autofill_short_selection_from_alternates) -- the fully-automatic
+        # generate path had no equivalent, so a source whose top-scored
+        # scenes didn't have enough combined slack could come up short with
+        # no further attempt to fix it at all.
+        #
+        # By this point every pass_attempt above already scanned every scene
+        # in scenes_data at the loosest spacing that loop allows (min_gap
+        # floors at 1.0s, never below), so a candidate skipped there purely
+        # for being too close to an already-picked scene would be skipped
+        # again here for the same reason -- making this step a no-op exactly
+        # when it's needed most. As a genuine last resort (only reached when
+        # every looser option already failed), spacing is relaxed further
+        # here -- clustering two clips closer together in the source is a
+        # smaller problem than shipping a trailer noticeably under the
+        # requested length.
+        if shortfall > 0.5:
+            last_resort_gap = min(min_gap, 0.3)
+            used_starts = {(s.get('material'), round(s['start'], 3)) for s in selected}
+            candidates = [s for s in scenes_data
+                          if (s.get('material'), round(s['start'], 3)) not in used_starts]
+            candidates.sort(key=lambda x: x['total_score'], reverse=True)
+            for cand in candidates:
+                if shortfall <= 0.5:
+                    break
+                if any(abs(cand['start'] - c['start']) < last_resort_gap and cand.get('material') == c.get('material')
+                       for c in selected):
+                    continue
+                seg_dur = min(cand['duration'], shortfall)
+                if max_scene_dur:
+                    seg_dur = min(seg_dur, max_scene_dur)
+                if seg_dur < min_seg_dur:
+                    continue
+                seg_start = cand['start']
+                if transcribe_for_cuts and word_starts:
+                    snapped_start = nearest_word_boundary(seg_start, word_starts, max_snap=0.45, hard_limit=seg_start + seg_dur)
+                    if seg_start < snapped_start < seg_start + seg_dur:
+                        drift = snapped_start - seg_start
+                        seg_start = snapped_start
+                        seg_dur = max(0.3, seg_dur - drift)
+                scene_end = cand['start'] + cand['duration']
+                if transcribe_for_cuts and (phrase_ends or word_ends) and seg_dur < (scene_end - seg_start):
+                    target_end = seg_start + seg_dur
+                    snapped_end = nearest_speech_out(target_end, phrase_ends, word_ends, hard_limit=scene_end)
+                    if seg_start < snapped_end <= scene_end:
+                        seg_dur = max(0.3, snapped_end - seg_start)
+                # Adding a scene also adds one more transition, which costs
+                # xfade_dur off the assembled total -- accounted for here the
+                # same way the main pass_attempt loop's own expected_total
+                # calc does, so this doesn't overshoot and leave the final
+                # exact-length correction below fighting an overshoot instead
+                # of a shortfall.
+                net_gain = seg_dur - xfade_dur
+                if net_gain <= 0:
+                    continue
+                cand = dict(cand)
+                cand['trim_start'] = seg_start
+                cand['selected_dur'] = seg_dur
+                selected.append(cand)
+                total_sel += seg_dur
+                shortfall -= net_gain
+            selected.sort(key=lambda x: (x.get('material') or 0, x['start']))
+
         # Final exact-length correction. Everything above works in tolerances
         # (the loop breaks at abs(shortfall) <= 0.5, and the grow-the-last-clip
         # step only handles being UNDER target and only as far as that clip's
