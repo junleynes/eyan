@@ -1707,6 +1707,14 @@ FFPROBE_TIMEOUT = int(os.environ.get('FFPROBE_TIMEOUT', 30))
 FFMPEG_TIMEOUT = int(os.environ.get('FFMPEG_TIMEOUT', 300))       # per encode/mix step
 FFMPEG_LONG_TIMEOUT = int(os.environ.get('FFMPEG_LONG_TIMEOUT', 900))  # full-source passes
 
+# How much a title/end card's duration may be stretched or shrunk, combined
+# across both cards, as a last-resort gap-filler when scene-clip-based
+# duration correction (rebalancing, growing the last clip, topping up from
+# unused scenes) has already been tried and a residual gap remains. Kept
+# small and user-confirmed: a card is branding/informational, not content,
+# so it should absorb only the last sliver of a gap, never carry it.
+CARD_DURATION_ADJUST_LIMIT = 1.0
+
 class MediaToolTimeout(RuntimeError):
     """Raised when ffmpeg/ffprobe exceeded its timeout and was killed."""
 
@@ -2801,6 +2809,67 @@ def mux_card_vo(video_path, vo_path, trim_start, trim_end, output_path):
             and (probe_duration(output_path) or 0) > 0):
         return output_path
     print(f'Card VO mux error ({video_path}): {stderr[:500]}')
+    if os.path.exists(output_path):
+        try:
+            os.remove(output_path)
+        except OSError:
+            pass
+    return None
+
+def _adjust_card_duration(video_path, delta, output_path):
+    """Grow or shrink a title/end card's duration by `delta` seconds
+    (positive to grow, negative to shrink) as a last-resort gap-filler when
+    scene-clip-based duration correction alone couldn't close a residual
+    gap -- e.g. every selected scene is already at zero headroom. Bounded
+    by the caller to CARD_DURATION_ADJUST_LIMIT combined across both cards;
+    this function just performs one card's share of that adjustment.
+
+    Growing freezes the card's last frame for the extra time (ffmpeg's
+    `tpad=stop_mode=clone`), rather than looping or stretching the card,
+    since a frozen end frame reads as a natural, intentional hold on a
+    broadcast card and never introduces a visible seam. If the card has an
+    audio track, it's extended with silence (`apad`) so video/audio stay in
+    sync; a silent extra second on a card's own audio is inaudible against
+    the trailer's other audio (VO/BGM/SFX) mixed in downstream. Shrinking
+    re-encodes with a plain tail trim (`-t <new_duration>`), matching
+    trim_card_video's existing approach for accurate arbitrary-length cuts.
+
+    Same timeout/validation/cleanup contract as trim_card_video and
+    mux_card_vo: uses FFMPEG_LONG_TIMEOUT, confirms the output's duration is
+    genuinely readable before calling it a success, cleans up any partial
+    output on failure, and returns output_path on success or None on
+    failure (caller should keep the card's original, unadjusted file in
+    that case)."""
+    if abs(delta) < 0.01:
+        return None
+    info = probe_media_info(video_path)
+    orig_dur = info.get('duration')
+    if not orig_dur or orig_dur <= 0:
+        return None
+    if delta > 0:
+        if info.get('has_audio'):
+            filter_complex = (f'[0:v]tpad=stop_mode=clone:stop_duration={delta}[v];'
+                               f'[0:a]apad=pad_dur={delta}[a]')
+            cmd = [FFMPEG, '-y', '-i', video_path, '-filter_complex', filter_complex,
+                   '-map', '[v]', '-map', '[a]',
+                   '-c:v', 'libx264', '-preset', 'fast', '-c:a', 'aac', '-b:a', '192k', output_path]
+        else:
+            cmd = [FFMPEG, '-y', '-i', video_path,
+                   '-vf', f'tpad=stop_mode=clone:stop_duration={delta}',
+                   '-c:v', 'libx264', '-preset', 'fast', '-an', output_path]
+    else:
+        new_duration = max(0.3, orig_dur + delta)
+        cmd = [FFMPEG, '-y', '-i', video_path, '-t', str(new_duration),
+               '-c:v', 'libx264', '-preset', 'fast', '-c:a', 'aac', '-b:a', '192k', output_path]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=FFMPEG_LONG_TIMEOUT)
+        stderr = r.stderr
+    except subprocess.TimeoutExpired:
+        stderr = f'Card duration adjust timed out after {FFMPEG_LONG_TIMEOUT}s'
+    if (os.path.exists(output_path) and os.path.getsize(output_path) > 0
+            and (probe_duration(output_path) or 0) > 0):
+        return output_path
+    print(f'Card duration adjust error ({video_path}, delta={delta}): {stderr[:500]}')
     if os.path.exists(output_path):
         try:
             os.remove(output_path)
@@ -8318,6 +8387,40 @@ def _run_trailer_job(jid, params):
     schedule_video_start = params.get('schedule_video_start', 0.0); schedule_video_end = params.get('schedule_video_end')
     scoring_audio_path = params['scoring_audio_path']; prompt = params['prompt']
 
+    # AI Vision scoring and Whisper-based cut safety are both load-bearing
+    # for the quality of an automatically-generated plug, not optional
+    # enhancements -- a broadcast promo assembled without them silently
+    # degrades to generic OpenCV heuristics for scene choice and no
+    # protection against a cut landing mid-word. That degradation used to
+    # happen invisibly (every per-scene AI call failing the same way,
+    # falling back to a neutral score, with nothing surfacing to the user
+    # that scoring never actually ran) -- user-requested: fail the job
+    # up front with a clear reason instead, before spending any time on
+    # scene detection, so a down service is obvious rather than showing up
+    # later as an oddly generic-looking promo.
+    #
+    # Neither check applies to a timecode-cue job: build_cue_clips uses
+    # neither service at all (see the identical `script_cues` guards on the
+    # AI-scoring and transcription blocks below), so requiring them there
+    # would block a job that was never going to use them.
+    if not (params.get('script_cues') or []):
+        unreachable = []
+        if mode == 'ai':
+            check = _check_service('ollama', OLLAMA_URL, '/api/tags')
+            if check['status'] != 'up':
+                unreachable.append(f"AI Vision (Ollama at {OLLAMA_URL}): {check.get('error', 'unreachable')}")
+        if transcribe_for_cuts:
+            check = _check_service('whisper', WHISPER_URL, '/')
+            if check['status'] != 'up':
+                unreachable.append(f"Speech-to-text (faster-whisper at {WHISPER_URL}): {check.get('error', 'unreachable')}")
+        if unreachable:
+            job_set(jid, error='Cannot generate a promo plug right now -- required service(s) unreachable: '
+                                + '; '.join(unreachable) +
+                                '. Scene scoring and mid-word cut protection both depend on these. '
+                                'Check Config > Services (or the API tab\'s health check) and try again '
+                                'once they\'re back, or ask your admin.')
+            return
+
     job_set(jid, percent=2, step='Reading video info')
     last_ffmpeg_stderr = None
     cap = cv2.VideoCapture(path)
@@ -9292,6 +9395,44 @@ def _run_trailer_job(jid, params):
                 s['selected_dur'] += delta
                 total_sel += delta
                 residual -= delta
+
+    # Last-resort gap-filler, user-requested: when a residual still remains
+    # after every scene-clip-based correction above -- e.g. every selected
+    # clip is already at zero headroom (hard color-cut scenes with
+    # selected_dur == duration already) or capped by min_seg_dur/speech-free
+    # slack -- absorb up to CARD_DURATION_ADJUST_LIMIT seconds, combined
+    # across both cards, by growing (freeze-framing the last frame) or
+    # shrinking (tail-trimming) the title/end cards themselves. This
+    # deliberately runs AFTER, not instead of, the scene-based correction
+    # above, and is capped small: a card is branding/informational, not
+    # content, so it should only mop up the last sliver of a gap, never
+    # carry it. Runs unconditionally (both preview and full render) since
+    # `total_card_dur` feeds the preview's own estimated_duration too.
+    if card_files and abs(residual) > 0.01:
+        growing = residual > 0
+        budget = min(abs(residual), CARD_DURATION_ADJUST_LIMIT)
+        for i in range(len(card_files)):
+            if budget <= 0.01:
+                break
+            if growing:
+                take = budget
+            else:
+                # Never shrink a card below 1.0s -- it still needs to read
+                # as a card, not a flash-frame.
+                room = max(0.0, card_durations[i] - 1.0)
+                take = min(budget, room)
+            if take < 0.05:
+                continue
+            delta = take if growing else -take
+            adjusted_path = os.path.join(app.config['UPLOAD_FOLDER'],
+                                          f'cardadj_{jid}_{i}_{int(time.time() * 1000) % 100000}.mp4')
+            result = _adjust_card_duration(card_files[i], delta, adjusted_path)
+            if result:
+                card_files[i] = result
+                card_durations[i] += delta
+                total_card_dur += delta
+                residual -= delta
+                budget -= take
 
     if params.get('preview_only'):
         # Analysis is done; stop here instead of spending minutes on extraction,
