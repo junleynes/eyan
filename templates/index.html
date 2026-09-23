@@ -899,7 +899,7 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
 </nav>
 <div class="container">
 
-<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadNetworkFolders==='function'&&!networkFoldersLoaded){loadNetworkFolders()}if(id==='p-config'&&typeof loadNetworkDestinations==='function'&&!networkDestinationsLoaded){loadNetworkDestinations()}if(id==='p-config'&&typeof loadProductionTab==='function'&&!productionTabLoaded){loadProductionTab()}if(id==='p-config'&&typeof loadTwofaStatus==='function'&&!twofaLoaded){loadTwofaStatus()}if(id==='p-config'&&typeof loadUsersTab==='function'&&!usersTabLoaded){loadUsersTab()}if(id==='p-config'&&typeof loadAuditLog==='function'&&!auditLogLoaded){loadAuditLog()}if(id==='p-music'&&typeof loadAceStepModels==='function'){loadAceStepModels()}if(id==='p-music'&&typeof loadAceStepLoras==='function'){loadAceStepLoras()}if(id==='p-jobs'&&typeof loadAdminJobs==='function'){loadAdminJobs()}if(id==='p-dashboard'&&typeof loadDashboard==='function'){loadDashboard()}try{localStorage.setItem('prism_last_tab',id)}catch(e){}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active');try{var panel=btn.closest('.panel');if(panel)localStorage.setItem('prism_subtab_'+panel.id,id)}catch(e){}}
+<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadNetworkFolders==='function'&&!networkFoldersLoaded){loadNetworkFolders()}if(id==='p-config'&&typeof loadNetworkDestinations==='function'&&!networkDestinationsLoaded){loadNetworkDestinations()}if(id==='p-config'&&typeof loadProductionTab==='function'&&!productionTabLoaded){loadProductionTab()}if(id==='p-config'&&typeof loadTwofaStatus==='function'&&!twofaLoaded){loadTwofaStatus()}if(id==='p-config'&&typeof loadUsersTab==='function'&&!usersTabLoaded){loadUsersTab()}if(id==='p-config'&&typeof loadAuditLog==='function'&&!auditLogLoaded){loadAuditLog()}if(id==='p-music'&&typeof loadAceStepModels==='function'){loadAceStepModels()}if(id==='p-music'&&typeof loadAceStepLoras==='function'){loadAceStepLoras()}if(id==='p-music'&&typeof loadLoraDatasets==='function'){loadLoraDatasets()}if(id==='p-jobs'&&typeof loadAdminJobs==='function'){loadAdminJobs()}if(id==='p-dashboard'&&typeof loadDashboard==='function'){loadDashboard()}try{localStorage.setItem('prism_last_tab',id)}catch(e){}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active');try{var panel=btn.closest('.panel');if(panel)localStorage.setItem('prism_subtab_'+panel.id,id)}catch(e){}}
 document.addEventListener('DOMContentLoaded',function(){
   // Restore the tab (and, within it, the sub-tab) the user was last on,
   // since switchTab()/switchSubTab() only toggle CSS classes client-side
@@ -4979,6 +4979,268 @@ async function downloadMusicExport(filename, rowId, btn){
 }
 window.downloadMusicExport = downloadMusicExport
 
+// ---- LoRA training (dataset management + kickoff/status) ----
+var _loraSelectedDataset = null
+
+async function loadLoraDatasets(){
+  var sel = document.getElementById('lora-dataset-select')
+  if(!sel) return
+  var keep = sel.value
+  try{
+    var r = await fetch('/api/music/lora_training/datasets')
+    var d = await r.json()
+    var sets = (d && d.ok && d.datasets) || []
+    sel.innerHTML = ''
+    var blank = document.createElement('option')
+    blank.value = ''
+    blank.textContent = sets.length ? '— select —' : 'No datasets yet'
+    sel.appendChild(blank)
+    sets.forEach(function(s){
+      var o = document.createElement('option')
+      o.value = s.name; o.textContent = s.name + ' (' + s.tracks + ' track' + (s.tracks === 1 ? '' : 's') + ')'
+      sel.appendChild(o)
+    })
+    if(keep && sets.some(function(s){ return s.name === keep })){
+      sel.value = keep
+    }else{
+      _loraSelectedDataset = null
+      document.getElementById('lora-dataset-delete-btn').disabled = true
+      document.getElementById('lora-track-form').style.display = 'none'
+      document.getElementById('summary-lora-dataset').textContent = 'No dataset selected'
+    }
+  }catch(e){
+    console.error('Could not list LoRA training datasets:', e)
+  }
+}
+
+async function selectLoraDataset(name){
+  _loraSelectedDataset = name || null
+  var delBtn = document.getElementById('lora-dataset-delete-btn')
+  var form = document.getElementById('lora-track-form')
+  if(!name){
+    delBtn.disabled = true
+    form.style.display = 'none'
+    document.getElementById('summary-lora-dataset').textContent = 'No dataset selected'
+    document.getElementById('lora-track-list').innerHTML = ''
+    return
+  }
+  delBtn.disabled = false
+  form.style.display = ''
+  document.getElementById('summary-lora-dataset').textContent = name
+  document.getElementById('lora-dataset-path').value = '(server path) ' + name
+  await refreshLoraTracks()
+}
+
+async function refreshLoraTracks(){
+  if(!_loraSelectedDataset) return
+  var listEl = document.getElementById('lora-track-list')
+  try{
+    var r = await fetch('/api/music/lora_training/datasets/' + encodeURIComponent(_loraSelectedDataset) + '/tracks')
+    var d = await r.json()
+    if(!d.ok){ listEl.innerHTML = '<span style="color:var(--amber);font-size:12px">' + escapeHtmlLite(d.error || 'Could not load tracks.') + '</span>'; return }
+    document.getElementById('lora-dataset-path').value = d.dataset
+    document.getElementById('lora-tensor-path').value = d.tensor_dir_suggestion || ''
+    document.getElementById('lora-train-tensor-dir').value = d.tensor_dir_suggestion || ''
+    if(!d.tracks.length){
+      listEl.innerHTML = '<p class=no-data style="margin:0">No tracks yet -- add one above.</p>'
+      return
+    }
+    var html = '<table style="width:100%;font-size:12px;border-collapse:collapse">' +
+      '<tr style="text-align:left;opacity:.7"><th>Track</th><th>Lyrics</th><th>Caption</th><th>Duration</th><th></th></tr>'
+    d.tracks.forEach(function(t){
+      html += '<tr style="border-top:1px solid var(--line)">' +
+        '<td style="padding:4px 6px">' + escapeHtmlLite(t.name) + '</td>' +
+        '<td style="padding:4px 6px">' + (t.has_lyrics ? 'yes' : '—') + '</td>' +
+        '<td style="padding:4px 6px" title="' + escapeHtmlLite(t.caption_preview || '') + '">' + (t.has_caption ? escapeHtmlLite((t.caption_preview || '').slice(0, 40)) : '—') + '</td>' +
+        '<td style="padding:4px 6px">' + (t.duration != null ? t.duration + 's' : '—') + '</td>' +
+        '<td style="padding:4px 6px"><button type=button class=btn style="padding:3px 8px;font-size:11px" onclick="deleteLoraTrack(\'' + escapeHtmlLite(t.name) + '\')">Remove</button></td>' +
+        '</tr>'
+    })
+    html += '</table>'
+    listEl.innerHTML = html
+  }catch(e){
+    listEl.innerHTML = '<span style="color:var(--amber);font-size:12px">Could not load tracks: ' + escapeHtmlLite(String(e)) + '</span>'
+  }
+}
+
+async function createLoraDataset(){
+  var input = document.getElementById('lora-new-dataset-name')
+  var name = input.value.trim()
+  if(!name) return
+  try{
+    var fd = new FormData(); fd.append('name', name)
+    var r = await fetch('/api/music/lora_training/datasets', {method: 'POST', body: fd})
+    var d = await r.json()
+    if(!d.ok){ alert(d.error || 'Could not create dataset.'); return }
+    input.value = ''
+    await loadLoraDatasets()
+    document.getElementById('lora-dataset-select').value = d.name
+    selectLoraDataset(d.name)
+  }catch(e){
+    alert('Could not create dataset: ' + e)
+  }
+}
+
+async function deleteLoraDataset(){
+  if(!_loraSelectedDataset) return
+  if(!confirm('Delete dataset "' + _loraSelectedDataset + '" and all its tracks? This cannot be undone.')) return
+  try{
+    var r = await fetch('/api/music/lora_training/datasets/' + encodeURIComponent(_loraSelectedDataset), {method: 'DELETE'})
+    var d = await r.json()
+    if(!d.ok){ alert(d.error || 'Could not delete dataset.'); return }
+    await loadLoraDatasets()
+    selectLoraDataset('')
+  }catch(e){
+    alert('Could not delete dataset: ' + e)
+  }
+}
+
+async function addLoraTrack(){
+  if(!_loraSelectedDataset) return
+  var fileInput = document.getElementById('lora-track-audio')
+  var note = document.getElementById('lora-track-note')
+  if(!fileInput.files || !fileInput.files[0]){
+    note.style.color = 'var(--amber)'; note.textContent = 'Choose an audio file first.'
+    return
+  }
+  var btn = document.getElementById('lora-track-add-btn')
+  btn.disabled = true
+  note.style.color = ''; note.textContent = 'Uploading…'
+  try{
+    var fd = new FormData()
+    fd.append('audio', fileInput.files[0])
+    fd.append('name', document.getElementById('lora-track-name').value.trim())
+    fd.append('caption', document.getElementById('lora-track-caption').value.trim())
+    fd.append('lyrics', document.getElementById('lora-track-lyrics').value.trim())
+    fd.append('bpm', document.getElementById('lora-track-bpm').value)
+    fd.append('keyscale', document.getElementById('lora-track-key').value.trim())
+    var r = await fetch('/api/music/lora_training/datasets/' + encodeURIComponent(_loraSelectedDataset) + '/tracks',
+      {method: 'POST', body: fd})
+    var d = await r.json()
+    if(!d.ok){ note.style.color = 'var(--amber)'; note.textContent = d.error || 'Could not add track.'; return }
+    note.textContent = 'Added "' + d.name + '".'
+    fileInput.value = ''
+    document.getElementById('lora-track-name').value = ''
+    document.getElementById('lora-track-caption').value = ''
+    document.getElementById('lora-track-lyrics').value = ''
+    document.getElementById('lora-track-bpm').value = ''
+    document.getElementById('lora-track-key').value = ''
+    await refreshLoraTracks()
+    await loadLoraDatasets()
+    document.getElementById('lora-dataset-select').value = _loraSelectedDataset
+  }catch(e){
+    note.style.color = 'var(--amber)'; note.textContent = 'Upload failed: ' + e
+  }finally{
+    btn.disabled = false
+  }
+}
+
+async function deleteLoraTrack(name){
+  if(!_loraSelectedDataset) return
+  try{
+    var r = await fetch('/api/music/lora_training/datasets/' + encodeURIComponent(_loraSelectedDataset) +
+      '/tracks/' + encodeURIComponent(name), {method: 'DELETE'})
+    var d = await r.json()
+    if(!d.ok){ alert(d.error || 'Could not remove track.'); return }
+    await refreshLoraTracks()
+    await loadLoraDatasets()
+    document.getElementById('lora-dataset-select').value = _loraSelectedDataset
+  }catch(e){
+    alert('Could not remove track: ' + e)
+  }
+}
+
+function updateLoraTrainDefaults(){
+  var lokr = document.getElementById('lora-train-lokr').checked
+  document.getElementById('lora-train-lr').value = lokr ? 0.03 : 0.0001
+  document.getElementById('lora-train-epochs').value = lokr ? 500 : 10
+}
+window.updateLoraTrainDefaults = updateLoraTrainDefaults
+
+async function startLoraTraining(){
+  var tensorDir = document.getElementById('lora-train-tensor-dir').value.trim()
+  var note = document.getElementById('lora-train-note')
+  if(!tensorDir){
+    note.style.color = 'var(--amber)'
+    note.textContent = 'Enter the tensor directory from step 2 (ACE-Step’s Gradio "Generate Tensors" output).'
+    return
+  }
+  var btn = document.getElementById('lora-train-start-btn')
+  btn.disabled = true
+  note.style.color = ''; note.textContent = 'Starting training…'
+  try{
+    var fd = new FormData()
+    fd.append('tensor_dir', tensorDir)
+    fd.append('lokr', document.getElementById('lora-train-lokr').checked ? '1' : '0')
+    fd.append('lora_rank', document.getElementById('lora-train-rank').value)
+    fd.append('lora_alpha', document.getElementById('lora-train-alpha').value)
+    fd.append('learning_rate', document.getElementById('lora-train-lr').value)
+    fd.append('train_epochs', document.getElementById('lora-train-epochs').value)
+    fd.append('train_batch_size', document.getElementById('lora-train-batch').value)
+    fd.append('save_every_n_epochs', document.getElementById('lora-train-save-every').value)
+    fd.append('gradient_checkpointing', document.getElementById('lora-train-gradckpt').checked ? '1' : '0')
+    fd.append('output_name', (_loraSelectedDataset || 'run') + '_' + Date.now())
+    var r = await fetch('/api/music/lora_training/start', {method: 'POST', body: fd})
+    var d = await r.json()
+    if(!d.ok){ note.style.color = 'var(--amber)'; note.textContent = d.error || 'Could not start training.'; return }
+    note.textContent = 'Training started against ' + d.tensor_dir + '. Output: ' + d.output_dir
+    document.getElementById('lora-status-dir').value = d.output_dir
+  }catch(e){
+    note.style.color = 'var(--amber)'; note.textContent = 'Request failed: ' + e
+  }finally{
+    btn.disabled = false
+  }
+}
+window.startLoraTraining = startLoraTraining
+
+async function checkLoraTrainingStatus(){
+  var dir = document.getElementById('lora-status-dir').value.trim()
+  var out = document.getElementById('lora-status-result')
+  if(!dir){ out.innerHTML = '<span style="color:var(--amber);font-size:12px">Start a training run first, or paste its output directory above.</span>'; return }
+  out.textContent = 'Checking…'
+  try{
+    var r = await fetch('/api/music/lora_training/status?dir=' + encodeURIComponent(dir))
+    var d = await r.json()
+    if(!d.ok){ out.innerHTML = '<span style="color:var(--amber);font-size:12px">' + escapeHtmlLite(d.error || 'Could not check status.') + '</span>'; return }
+    var html = '<p style="font-size:12px;margin:4px 0">' + escapeHtmlLite(d.note || '') + '</p>'
+    if(d.checkpoints && d.checkpoints.length){
+      html += '<table style="width:100%;font-size:12px;border-collapse:collapse">' +
+        '<tr style="text-align:left;opacity:.7"><th>Checkpoint</th><th>Size</th><th>Last changed</th><th></th></tr>'
+      d.checkpoints.forEach(function(c){
+        var ageS = Math.round((Date.now()/1000) - c.mtime)
+        var ageTxt = ageS < 120 ? (ageS + 's ago') : (Math.round(ageS/60) + 'm ago')
+        html += '<tr style="border-top:1px solid var(--line)">' +
+          '<td style="padding:4px 6px">' + escapeHtmlLite(c.name) + '</td>' +
+          '<td style="padding:4px 6px">' + (c.size/1024/1024).toFixed(1) + ' MB</td>' +
+          '<td style="padding:4px 6px">' + ageTxt + '</td>' +
+          '<td style="padding:4px 6px"><button type=button class=btn style="padding:3px 8px;font-size:11px" onclick="useLoraCheckpoint(\'' +
+          encodeURIComponent(c.path) + '\')">Use for generation</button></td>' +
+          '</tr>'
+      })
+      html += '</table>'
+    }
+    out.innerHTML = html
+  }catch(e){
+    out.innerHTML = '<span style="color:var(--amber);font-size:12px">Request failed: ' + escapeHtmlLite(String(e)) + '</span>'
+  }
+}
+window.checkLoraTrainingStatus = checkLoraTrainingStatus
+
+async function useLoraCheckpoint(encodedPath){
+  var path = decodeURIComponent(encodedPath)
+  try{
+    var fd = new FormData(); fd.append('path', path)
+    var r = await fetch('/api/music/lora_training/use_checkpoint', {method: 'POST', body: fd})
+    var d = await r.json()
+    if(!d.ok){ alert(d.error || 'Could not copy checkpoint.'); return }
+    alert('Copied as "' + d.name + '" -- it will appear in the LoRA picker on the Generate tab.')
+    if(typeof loadAceStepLoras === 'function') loadAceStepLoras()
+  }catch(e){
+    alert('Could not copy checkpoint: ' + e)
+  }
+}
+window.useLoraCheckpoint = useLoraCheckpoint
+
 // ---- Text to SFX (Woosh) ----
 async function generateSfxTool(){
   var btn = document.getElementById('sfx-gen-btn')
@@ -6570,6 +6832,7 @@ document.addEventListener('DOMContentLoaded', function(){
 loadModels()
 loadAceStepModels()
 loadAceStepLoras()
+loadLoraDatasets()
 var _lastVisionVideoFilename = null
 
 function _buildSceneSearchCard(r, videoFilename){
@@ -6630,6 +6893,12 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <!-- API -->
 <div id="p-music" class="panel{{ ' active' if default_tab == 'p-music' else '' }}">
 <h2>Music Generation &mdash; ACE-Step</h2>
+<div class="sub-tabs">
+  <div class="sub-tab active" onclick="switchSubTab('p-music-generate',this)" role="button" tabindex="0">Generate</div>
+  <div class="sub-tab" onclick="switchSubTab('p-music-train',this)" role="button" tabindex="0">Train LoRA</div>
+</div>
+
+<div id="p-music-generate" class="sub-panel active">
 <p style="font-size:12px;opacity:.75;margin-top:-6px">Generate music on its own — for building a library of beds, restyling an existing track, or producing a sung stinger. Generated files can be saved into a show template from the Promo tab.</p>
 
 <label>Model:</label>
@@ -6755,6 +7024,112 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 </div>
 <div id=music-result style="display:none;margin-top:16px"></div>
 <div id=music-prompt-note class=no-data style="margin-top:14px">Set a prompt and duration, then hit Generate. Longer or multi-sample runs take proportionally longer — ACE-Step is polled for up to three minutes.</div>
+</div>
+
+<div id="p-music-train" class="sub-panel">
+<p style="font-size:12px;opacity:.75;margin-top:-6px">Organizes a training dataset in the exact format ACE-Step's own dataset scanner expects, and kicks off/tracks a LoRA training run against it. One real gap this can't automate: turning your organized dataset into the "preprocessed tensors" training actually needs is a Gradio-UI-only step in ACE-Step itself (no REST/CLI equivalent exists) &mdash; you'll do that one step there, then come back here to start training.</p>
+
+<div class="asset-section" id=asset-lora-dataset style="margin-top:10px">
+  <div class="asset-section-header" onclick="toggleAssetSection(this)">
+    <span class="asset-section-title">1. Dataset</span>
+    <span class="asset-section-summary" id=summary-lora-dataset>No dataset selected</span>
+    <span class="asset-section-chevron">&#9656;</span>
+  </div>
+  <div class="asset-section-body">
+    <label>Dataset:</label>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <select id=lora-dataset-select onchange="selectLoraDataset(this.value)" style="max-width:260px"><option value="">Loading&hellip;</option></select>
+      <button type=button class=btn style="padding:5px 11px;font-size:12px" onclick="loadLoraDatasets()">Refresh</button>
+      <input type=text id=lora-new-dataset-name placeholder="new dataset name" style="max-width:180px">
+      <button type=button class=btn style="padding:5px 11px;font-size:12px" onclick="createLoraDataset()">Create</button>
+      <button type=button class=btn style="padding:5px 11px;font-size:12px;color:var(--amber)" onclick="deleteLoraDataset()" id=lora-dataset-delete-btn disabled>Delete dataset</button>
+    </div>
+    <p style="font-size:12px;opacity:.7;margin-top:6px">A dataset is a named folder of tracks (audio + lyrics + caption). Create one, add tracks below, then hand its folder to ACE-Step's Gradio UI for tensor generation.</p>
+
+    <div id=lora-track-form style="display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)">
+      <label>Add a track:</label>
+      <input type=file id=lora-track-audio accept=".mp3,.wav,.flac,.ogg,.opus">
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin:8px 0">
+        <input type=text id=lora-track-name placeholder="track name (optional -- default: filename)" style="max-width:220px">
+        <input type=number id=lora-track-bpm placeholder="bpm (optional)" min=40 max=220 style="width:110px">
+        <input type=text id=lora-track-key placeholder="key (optional)" style="width:110px">
+      </div>
+      <textarea id=lora-track-caption class=input-box rows=2 placeholder="Caption / style description (optional but recommended -- this is what the trained LoRA learns to associate with this track's sound)."></textarea>
+      <textarea id=lora-track-lyrics class=input-box rows=3 placeholder="Lyrics (leave empty for an instrumental track)." style="margin-top:8px"></textarea>
+      <div style="margin-top:8px">
+        <button type=button class=btn onclick="addLoraTrack()" id=lora-track-add-btn>Add track</button>
+      </div>
+      <div id=lora-track-note style="font-size:12px;margin-top:6px"></div>
+    </div>
+    <div id=lora-track-list style="margin-top:12px"></div>
+  </div>
+</div>
+
+<div class="asset-section" id=asset-lora-tensors style="margin-top:10px">
+  <div class="asset-section-header" onclick="toggleAssetSection(this)">
+    <span class="asset-section-title">2. Generate tensors (manual, in ACE-Step's Gradio UI)</span>
+    <span class="asset-section-chevron">&#9656;</span>
+  </div>
+  <div class="asset-section-body">
+    <p style="font-size:12px;opacity:.7">In ACE-Step's own Gradio interface: load this dataset's folder (shown below once selected), run auto-labeling/review if needed, then "Generate Tensors" and save the output to the suggested path below (or wherever you prefer -- you'll paste the actual path into step 3).</p>
+    <label>Dataset folder (point Gradio's "Load Data" at this):</label>
+    <input type=text id=lora-dataset-path readonly style="width:100%;font-family:'JetBrains Mono',monospace;font-size:12px">
+    <label style="margin-top:8px">Suggested tensor output path:</label>
+    <input type=text id=lora-tensor-path readonly style="width:100%;font-family:'JetBrains Mono',monospace;font-size:12px">
+  </div>
+</div>
+
+<div class="asset-section" id=asset-lora-train style="margin-top:10px">
+  <div class="asset-section-header" onclick="toggleAssetSection(this)">
+    <span class="asset-section-title">3. Start training</span>
+    <span class="asset-section-chevron">&#9656;</span>
+  </div>
+  <div class="asset-section-body">
+    <label>Tensor directory (from step 2):</label>
+    <input type=text id=lora-train-tensor-dir placeholder="paste the path ACE-Step's Gradio UI generated tensors into" style="width:100%">
+    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:10px 0">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px"><input type=checkbox id=lora-train-lokr onchange="updateLoraTrainDefaults()"> Use LoKr instead of standard LoRA</label>
+    </div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:8px 0">
+      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Rank (dim):</span>
+      <input type=number id=lora-train-rank value=64 min=1 max=256 style="width:90px"></span>
+      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Alpha:</span>
+      <input type=number id=lora-train-alpha value=128 min=1 max=512 style="width:90px"></span>
+      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Learning rate:</span>
+      <input type=number id=lora-train-lr value=0.0001 step=0.0001 style="width:110px"></span>
+      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Epochs:</span>
+      <input type=number id=lora-train-epochs value=10 min=1 style="width:90px"></span>
+    </div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:8px 0">
+      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Batch size:</span>
+      <input type=number id=lora-train-batch value=1 min=1 style="width:80px"></span>
+      <span style="display:inline-flex;gap:6px;align-items:center;white-space:nowrap"><span style="font-size:12px">Save every N epochs:</span>
+      <input type=number id=lora-train-save-every value=5 min=1 style="width:80px"></span>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px"><input type=checkbox id=lora-train-gradckpt> Gradient checkpointing (lower VRAM, slower)</label>
+    </div>
+    <p style="font-size:12px;opacity:.7;margin-top:4px">Defaults match ACE-Step's own documented defaults for whichever method is selected above.</p>
+    <div style="margin-top:10px">
+      <button type=button class=btn id=lora-train-start-btn onclick="startLoraTraining()">Start training</button>
+    </div>
+    <div id=lora-train-note style="font-size:12px;margin-top:8px"></div>
+  </div>
+</div>
+
+<div class="asset-section" id=asset-lora-progress style="margin-top:10px">
+  <div class="asset-section-header" onclick="toggleAssetSection(this)">
+    <span class="asset-section-title">4. Progress &amp; checkpoints</span>
+    <span class="asset-section-chevron">&#9656;</span>
+  </div>
+  <div class="asset-section-body">
+    <label>Training output directory:</label>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input type=text id=lora-status-dir readonly style="flex:1;min-width:220px;font-family:'JetBrains Mono',monospace;font-size:12px">
+      <button type=button class=btn style="padding:5px 11px;font-size:12px" onclick="checkLoraTrainingStatus()">Check status</button>
+    </div>
+    <p style="font-size:12px;opacity:.7;margin-top:6px">There's no live progress feed from ACE-Step for training -- this checks whether a checkpoint file has appeared and how long ago it last changed. Treat "likely finished" as a hint to go verify, not a guarantee.</p>
+    <div id=lora-status-result style="margin-top:10px"></div>
+  </div>
+</div>
 </div>
 
 <div id="p-sfx" class="panel{{ ' active' if default_tab == 'p-sfx' else '' }}">

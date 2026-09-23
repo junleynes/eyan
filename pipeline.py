@@ -5935,6 +5935,393 @@ _LORA_EXTENSIONS = ('.safetensors', '.pt', '.ckpt', '.bin')
 DEMUCS_BIN = os.environ.get('DEMUCS_BIN', 'demucs')
 DEMUCS_TIMEOUT = int(os.environ.get('DEMUCS_TIMEOUT', 900))
 
+# --- LoRA training (dataset management + kicking off /v1/training/start) ---
+#
+# ACE-Step-1.5's REST API documents exactly two training endpoints
+# (/v1/training/start, /v1/training/start_lokr), and both require an
+# ALREADY-PREPROCESSED tensor_dir -- turning raw audio+lyrics into those
+# tensors (loading, auto-captioning, review, "Generate Tensors") is a
+# Gradio-UI-only workflow upstream with no documented REST or CLI
+# equivalent. So this app can genuinely own dataset ORGANIZATION (writing
+# files in the exact format ACE-Step's own dataset scanner recognizes) and
+# TRAINING KICKOFF + coarse progress-watching, but NOT the tensor-generation
+# step itself -- that one real gap is surfaced to the operator as an
+# explicit manual instruction rather than faked.
+#
+# Dataset file convention below is verbatim from ACE-Step-1.5's own LoRA
+# training tutorial (docs/en/LoRA_Training_Tutorial.md), not guessed:
+#   {name}.<audio ext>       the audio itself (mp3/wav/flac/ogg/opus)
+#   {name}.lyrics.txt        lyrics ("[inst]" convention isn't documented
+#                            for this file the way it is for /release_task,
+#                            so an instrumental track simply gets an empty
+#                            or omitted lyrics file)
+#   {name}.caption.txt       style/caption description
+#   {name}.json              optional structured fields: caption/bpm/
+#                            keyscale/timesignature/language
+ACE_STEP_TRAINING_DATA_DIR = os.environ.get('ACE_STEP_TRAINING_DATA_DIR') or os.path.join(
+    os.path.dirname(os.environ.get('LIBRARY_DIR', '/tmp')) or '/tmp', 'ace_step_training_data')
+# Where ACE-Step's own Gradio "Generate Tensors" step is expected to write
+# each dataset's preprocessed tensors -- PRISM only ever SUGGESTS a path
+# here (dataset_name subfolder) for the operator to paste into Gradio; nothing
+# writes to this directory from PRISM's own code.
+ACE_STEP_TENSOR_DIR = os.environ.get('ACE_STEP_TENSOR_DIR') or os.path.join(
+    os.path.dirname(os.environ.get('LIBRARY_DIR', '/tmp')) or '/tmp', 'ace_step_tensors')
+# Where a training run's own checkpoints land (this app's suggested default
+# for the lora_output_dir/output_dir field sent to /v1/training/start) --
+# distinct from ACE_STEP_LORA_DIR, which is where a checkpoint goes once
+# it's been reviewed and picked for actual generation use (see
+# api_music_lora_training_use_checkpoint below).
+ACE_STEP_LORA_TRAINING_OUTPUT_DIR = os.environ.get('ACE_STEP_LORA_TRAINING_OUTPUT_DIR') or os.path.join(
+    os.path.dirname(os.environ.get('LIBRARY_DIR', '/tmp')) or '/tmp', 'ace_step_lora_training_output')
+_TRAINING_AUDIO_EXTS = {'mp3', 'wav', 'flac', 'ogg', 'opus'}
+# How long a training output directory's newest checkpoint has to sit
+# unchanged before the status endpoint calls it "likely finished" rather
+# than "still training" -- there's no real completion signal from the API
+# (see module docstring above), so this is a heuristic, not a fact, and the
+# UI is worded accordingly. Training also saves a checkpoint every
+# save_every_n_epochs, so this must comfortably exceed the gap between two
+# checkpoint saves or every mid-training save would misreport as "done".
+TRAINING_STALE_AFTER = int(os.environ.get('TRAINING_STALE_AFTER', 900))
+
+def _training_dataset_dir(name):
+    """Resolves a dataset name to its directory under
+    ACE_STEP_TRAINING_DATA_DIR, or None if the name is empty/unsafe. Always
+    goes through secure_filename so a dataset "name" can never walk out of
+    that one parent directory."""
+    safe = secure_filename((name or '').strip())
+    return os.path.join(ACE_STEP_TRAINING_DATA_DIR, safe) if safe else None
+
+def _training_track_files(dataset_dir, base):
+    """The up-to-4 files (audio, lyrics, caption, json) that make up one
+    track, keyed by the audio extension actually present on disk (there can
+    only be one, since `base` is the shared filename stem)."""
+    files = {}
+    for ext in _TRAINING_AUDIO_EXTS:
+        p = os.path.join(dataset_dir, f'{base}.{ext}')
+        if os.path.exists(p):
+            files['audio'] = p
+            break
+    for label, suffix in (('lyrics', '.lyrics.txt'), ('caption', '.caption.txt'), ('json', '.json')):
+        p = os.path.join(dataset_dir, f'{base}{suffix}')
+        if os.path.exists(p):
+            files[label] = p
+    return files
+
+@app.route('/api/music/lora_training/datasets')
+@require_permission('music_generation')
+def api_music_lora_training_datasets():
+    """Every training dataset (a folder of tracks) currently organized under
+    ACE_STEP_TRAINING_DATA_DIR, with a track count each -- for the Train
+    LoRA sub-tab's dataset list."""
+    try:
+        os.makedirs(ACE_STEP_TRAINING_DATA_DIR, exist_ok=True)
+        names = sorted(d for d in os.listdir(ACE_STEP_TRAINING_DATA_DIR)
+                       if os.path.isdir(os.path.join(ACE_STEP_TRAINING_DATA_DIR, d)))
+    except OSError as e:
+        return jsonify(ok=True, datasets=[], error=f'Could not read {ACE_STEP_TRAINING_DATA_DIR}: {e}')
+    datasets = []
+    for name in names:
+        d = os.path.join(ACE_STEP_TRAINING_DATA_DIR, name)
+        audio_count = sum(1 for f in os.listdir(d)
+                           if os.path.splitext(f)[1].lstrip('.').lower() in _TRAINING_AUDIO_EXTS)
+        datasets.append({'name': name, 'tracks': audio_count})
+    return jsonify(ok=True, datasets=datasets, dir=ACE_STEP_TRAINING_DATA_DIR)
+
+@app.route('/api/music/lora_training/datasets', methods=['POST'])
+@require_permission('music_generation')
+def api_music_lora_training_create_dataset():
+    """Creates an empty dataset folder (tracks are added separately via
+    api_music_lora_training_add_track). A blank/unsafe name, or one that
+    already exists, is rejected rather than silently reused -- a caller
+    expecting a fresh dataset should never end up appending to someone
+    else's."""
+    name = (request.form.get('name') or '').strip()
+    d = _training_dataset_dir(name)
+    if not d:
+        return jsonify(ok=False, error='Enter a dataset name.'), 400
+    if os.path.exists(d):
+        return jsonify(ok=False, error=f'A dataset named "{os.path.basename(d)}" already exists.'), 400
+    try:
+        os.makedirs(d)
+    except OSError as e:
+        return jsonify(ok=False, error=f'Could not create dataset folder: {e}'), 500
+    return jsonify(ok=True, name=os.path.basename(d))
+
+@app.route('/api/music/lora_training/datasets/<dataset>', methods=['DELETE'])
+@require_permission('music_generation')
+def api_music_lora_training_delete_dataset(dataset):
+    d = _training_dataset_dir(dataset)
+    if not d or not os.path.isdir(d):
+        return jsonify(ok=False, error='Dataset not found.'), 404
+    try:
+        shutil.rmtree(d)
+    except OSError as e:
+        return jsonify(ok=False, error=f'Could not delete dataset: {e}'), 500
+    return jsonify(ok=True)
+
+@app.route('/api/music/lora_training/datasets/<dataset>/tracks')
+@require_permission('music_generation')
+def api_music_lora_training_list_tracks(dataset):
+    d = _training_dataset_dir(dataset)
+    if not d or not os.path.isdir(d):
+        return jsonify(ok=False, error='Dataset not found.'), 404
+    bases = sorted({os.path.splitext(f)[0] for f in os.listdir(d)
+                    if os.path.splitext(f)[1].lstrip('.').lower() in _TRAINING_AUDIO_EXTS})
+    tracks = []
+    for base in bases:
+        files = _training_track_files(d, base)
+        caption = ''
+        if 'caption' in files:
+            try:
+                caption = open(files['caption'], encoding='utf-8', errors='replace').read().strip()
+            except OSError:
+                pass
+        tracks.append({
+            'name': base,
+            'has_lyrics': 'lyrics' in files,
+            'has_caption': 'caption' in files,
+            'has_metadata': 'json' in files,
+            'caption_preview': caption[:120],
+            'duration': round(probe_duration(files['audio']) or 0, 1) if 'audio' in files else None,
+        })
+    return jsonify(ok=True, dataset=os.path.basename(d), tracks=tracks,
+                   tensor_dir_suggestion=os.path.join(ACE_STEP_TENSOR_DIR, os.path.basename(d)))
+
+@app.route('/api/music/lora_training/datasets/<dataset>/tracks', methods=['POST'])
+@require_permission('music_generation')
+def api_music_lora_training_add_track(dataset):
+    """Adds one track to a dataset: an audio file plus optional lyrics/
+    caption text and bpm/keyscale/timesignature/language, written in the
+    exact filename convention ACE-Step's own dataset scanner recognizes
+    (see the module comment above _training_dataset_dir for the source).
+
+    Gated by ALLOW_LOCAL_MEDIA_UPLOAD like every other raw-media upload in
+    this app -- these files don't go through ffmpeg here, but they're still
+    arbitrary browser-supplied binary data landing on disk, and consistency
+    with the rest of the app's upload policy matters more than this one
+    endpoint's slightly different risk profile."""
+    if 'audio' not in request.files or not request.files['audio'].filename:
+        return jsonify(ok=False, error='Choose an audio file.'), 400
+    if not ALLOW_LOCAL_MEDIA_UPLOAD:
+        return jsonify(ok=False, error='Direct file upload is disabled on this deployment.'), 403
+    d = _training_dataset_dir(dataset)
+    if not d or not os.path.isdir(d):
+        return jsonify(ok=False, error='Dataset not found.'), 404
+    f = request.files['audio']
+    if not allowed_file(f.filename, _TRAINING_AUDIO_EXTS):
+        return jsonify(ok=False, error=f'Audio must be one of: {", ".join(sorted(_TRAINING_AUDIO_EXTS))}'), 400
+    requested_name = (request.form.get('name') or '').strip()
+    base = secure_filename(os.path.splitext(requested_name)[0]) if requested_name else \
+        secure_filename(os.path.splitext(f.filename)[0])
+    if not base:
+        return jsonify(ok=False, error='Could not derive a valid track name from that filename.'), 400
+    ext = f.filename.rsplit('.', 1)[1].lower()
+    # Check every recognized audio extension for this base name, not just
+    # the one being uploaded now -- otherwise re-uploading "a" as a .wav
+    # after it already exists as .mp3 would silently create a second audio
+    # file sharing one base name, and which one the scanner actually picks
+    # up would be undefined.
+    if _training_track_files(d, base).get('audio'):
+        return jsonify(ok=False, error=f'A track named "{base}" already exists in this dataset.'), 400
+    audio_path = os.path.join(d, f'{base}.{ext}')
+    f.save(audio_path)
+
+    lyrics = (request.form.get('lyrics') or '').strip()
+    if lyrics:
+        with open(os.path.join(d, f'{base}.lyrics.txt'), 'w', encoding='utf-8') as fh:
+            fh.write(lyrics)
+    caption = (request.form.get('caption') or '').strip()
+    if caption:
+        with open(os.path.join(d, f'{base}.caption.txt'), 'w', encoding='utf-8') as fh:
+            fh.write(caption)
+    meta = {}
+    for key, cast in (('bpm', int), ('keyscale', str), ('timesignature', str), ('language', str)):
+        raw = (request.form.get(key) or '').strip()
+        if raw:
+            try:
+                meta[key] = cast(raw)
+            except (TypeError, ValueError):
+                pass
+    if caption:
+        meta.setdefault('caption', caption)
+    if meta:
+        with open(os.path.join(d, f'{base}.json'), 'w', encoding='utf-8') as fh:
+            json.dump(meta, fh)
+    return jsonify(ok=True, name=base)
+
+@app.route('/api/music/lora_training/datasets/<dataset>/tracks/<track>', methods=['DELETE'])
+@require_permission('music_generation')
+def api_music_lora_training_delete_track(dataset, track):
+    d = _training_dataset_dir(dataset)
+    if not d or not os.path.isdir(d):
+        return jsonify(ok=False, error='Dataset not found.'), 404
+    base = secure_filename((track or '').strip())
+    if not base:
+        return jsonify(ok=False, error='Invalid track name.'), 400
+    files = _training_track_files(d, base)
+    if not files:
+        return jsonify(ok=False, error='Track not found.'), 404
+    for path in files.values():
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    return jsonify(ok=True)
+
+@app.route('/api/music/lora_training/start', methods=['POST'])
+@require_permission('music_generation')
+def api_music_lora_training_start():
+    """Kicks off a LoRA (or LoKr) training run against an already-
+    preprocessed tensor_dir by POSTing to ACE-Step's own /v1/training/start
+    (or /v1/training/start_lokr). Field names match the request models
+    documented in ACE-Step-1.5's own acestep/api/train_api_models.py.
+
+    This does NOT create the tensors themselves -- see the module comment
+    above ACE_STEP_TRAINING_DATA_DIR for why that step has no REST/CLI path
+    and stays a manual Gradio step. tensor_dir here must already exist and
+    contain that step's output; this endpoint doesn't verify its contents
+    (it can't know what a valid tensor file looks like), only that the path
+    was provided.
+
+    No job id or status comes back from ACE-Step for this call (undocumented
+    in the upstream API) -- the response is passed through mostly as-is, and
+    progress after this point is tracked by watching lora_output_dir for
+    checkpoint files to appear (see api_music_lora_training_status)."""
+    tensor_dir = (request.form.get('tensor_dir') or '').strip()
+    if not tensor_dir:
+        return jsonify(ok=False, error='tensor_dir is required -- the folder where ACE-Step\'s own '
+                                       '"Generate Tensors" step (Gradio) wrote this dataset\'s '
+                                       'preprocessed tensors.'), 400
+    lokr = (request.form.get('lokr') or '').strip().lower() in ('1', 'true', 'on', 'yes')
+    # A caller-named SUBFOLDER, not a raw path -- output_dir is always kept
+    # under ACE_STEP_LORA_TRAINING_OUTPUT_DIR so api_music_lora_training_
+    # use_checkpoint's containment check (below) can trust every checkpoint
+    # this training feature ever produces lives somewhere under that one
+    # root, rather than having to trust an arbitrary path a caller supplied.
+    output_subdir = secure_filename((request.form.get('output_name') or '').strip()) or f'run{int(time.time())}'
+    output_dir = os.path.join(ACE_STEP_LORA_TRAINING_OUTPUT_DIR, output_subdir)
+
+    def _num(key, default, cast=float):
+        raw = (request.form.get(key) or '').strip()
+        if raw == '':
+            return default
+        try:
+            return cast(raw)
+        except (TypeError, ValueError):
+            return default
+
+    payload = {
+        'tensor_dir': tensor_dir,
+        'learning_rate': _num('learning_rate', 0.03 if lokr else 1e-4),
+        'train_epochs': _num('train_epochs', 500 if lokr else 10, int),
+        'train_batch_size': _num('train_batch_size', 1, int),
+        'gradient_accumulation': _num('gradient_accumulation', 4, int),
+        'training_seed': _num('training_seed', 42, int),
+        'training_shift': _num('training_shift', 3.0),
+        'save_every_n_epochs': _num('save_every_n_epochs', 5, int),
+        'gradient_checkpointing': (request.form.get('gradient_checkpointing') or '').strip().lower() in ('1', 'true', 'on', 'yes'),
+    }
+    if lokr:
+        payload['output_dir'] = output_dir
+        payload['lokr_linear_dim'] = _num('lora_rank', 64, int)
+        payload['lokr_linear_alpha'] = _num('lora_alpha', 128, int)
+        endpoint = '/v1/training/start_lokr'
+    else:
+        payload['lora_output_dir'] = output_dir
+        payload['lora_rank'] = _num('lora_rank', 64, int)
+        payload['lora_alpha'] = _num('lora_alpha', 128, int)
+        payload['lora_dropout'] = _num('lora_dropout', 0.1)
+        payload['use_fp8'] = (request.form.get('use_fp8') or '').strip().lower() in ('1', 'true', 'on', 'yes')
+        endpoint = '/v1/training/start'
+
+    try:
+        r = requests.post(f'{ACE_STEP_URL}{endpoint}', json=payload, headers=_ace_step_headers(), timeout=30)
+    except requests.exceptions.RequestException as e:
+        return jsonify(ok=False, error=f'Could not reach ACE-Step at {ACE_STEP_URL}: {e}'), 502
+    try:
+        data = r.json()
+    except ValueError:
+        data = {'raw': (r.text or '')[:500]}
+    if not r.ok:
+        return jsonify(ok=False, error=f'ACE-Step rejected the training request (HTTP {r.status_code}): '
+                                       f'{json.dumps(data)[:500]}'), 502
+    return jsonify(ok=True, response=data, output_dir=output_dir, tensor_dir=tensor_dir, lokr=lokr)
+
+@app.route('/api/music/lora_training/status')
+@require_permission('music_generation')
+def api_music_lora_training_status():
+    """Coarse, honest progress signal for a training run: the newest
+    checkpoint file (by mtime) found directly inside ?dir=, how long ago it
+    was last modified, and a `likely_done` guess based on TRAINING_STALE_AFTER
+    -- NOT a real status from ACE-Step, which doesn't expose one over REST
+    for training (see the module comment above). Every checkpoint file found
+    is also listed, since save_every_n_epochs can produce several over a run
+    and the operator may want to pick an earlier one."""
+    out_dir = (request.args.get('dir') or '').strip()
+    if not out_dir:
+        return jsonify(ok=False, error='dir is required.'), 400
+    allowed_root = os.path.abspath(ACE_STEP_LORA_TRAINING_OUTPUT_DIR)
+    if os.path.commonpath([allowed_root, os.path.abspath(out_dir)]) != allowed_root:
+        return jsonify(ok=False, error='dir must be a training output folder this app created '
+                                       f'(under {ACE_STEP_LORA_TRAINING_OUTPUT_DIR}).'), 400
+    if not os.path.isdir(out_dir):
+        return jsonify(ok=True, exists=False, checkpoints=[], newest=None, likely_done=False,
+                       note='Output directory does not exist yet -- training may not have started '
+                            'writing a checkpoint yet, or the path is wrong.')
+    checkpoints = []
+    for root, _dirs, files in os.walk(out_dir):
+        for fn in files:
+            if fn.lower().endswith(_LORA_EXTENSIONS):
+                p = os.path.join(root, fn)
+                try:
+                    st = os.stat(p)
+                except OSError:
+                    continue
+                checkpoints.append({'path': p, 'name': os.path.relpath(p, out_dir),
+                                    'size': st.st_size, 'mtime': st.st_mtime})
+    checkpoints.sort(key=lambda c: c['mtime'], reverse=True)
+    newest = checkpoints[0] if checkpoints else None
+    age = (time.time() - newest['mtime']) if newest else None
+    likely_done = bool(newest and age is not None and age > TRAINING_STALE_AFTER)
+    return jsonify(ok=True, exists=True, checkpoints=checkpoints, newest=newest,
+                   newest_age_seconds=round(age, 0) if age is not None else None,
+                   likely_done=likely_done,
+                   note=('No checkpoint file has appeared here yet.' if not checkpoints else
+                         ('Newest checkpoint hasn\'t changed in a while -- training has likely '
+                          'finished (or stalled). Verify on the ACE-Step host if unsure.' if likely_done else
+                          'A checkpoint was written recently -- training appears to still be running.')))
+
+@app.route('/api/music/lora_training/use_checkpoint', methods=['POST'])
+@require_permission('music_generation')
+def api_music_lora_training_use_checkpoint():
+    """Copies a chosen training-output checkpoint into ACE_STEP_LORA_DIR so
+    it immediately shows up in the Music Generation tab's LoRA picker --
+    the bridge between "training produced a file" and "generation can use
+    it". `path` must be a file this app's own status endpoint just reported
+    (inside ACE_STEP_LORA_TRAINING_OUTPUT_DIR by default, or wherever the
+    caller pointed output_dir when starting training) -- never an arbitrary
+    filesystem path, so this is restricted to files under one of the
+    directories this app itself manages for training output."""
+    src = (request.form.get('path') or '').strip()
+    new_name = secure_filename((request.form.get('name') or '').strip())
+    if not src or not os.path.isfile(src):
+        return jsonify(ok=False, error='Checkpoint file not found.'), 404
+    allowed_root = os.path.abspath(ACE_STEP_LORA_TRAINING_OUTPUT_DIR)
+    src_abs = os.path.abspath(src)
+    if os.path.commonpath([allowed_root, src_abs]) != allowed_root:
+        return jsonify(ok=False, error='That path is outside the managed training-output directory.'), 400
+    if not new_name:
+        new_name = secure_filename(os.path.basename(src))
+    if not os.path.splitext(new_name)[1]:
+        new_name += os.path.splitext(src)[1]
+    try:
+        os.makedirs(ACE_STEP_LORA_DIR, exist_ok=True)
+        dest = os.path.join(ACE_STEP_LORA_DIR, new_name)
+        shutil.copy2(src, dest)
+    except OSError as e:
+        return jsonify(ok=False, error=f'Could not copy checkpoint into the LoRA folder: {e}'), 500
+    return jsonify(ok=True, name=new_name)
+
 def acestep_generate(prompt, duration=None, lyrics=None, bpm=None, samples=1,
                      steps=None, seed=None, base_ts=None,
                      ref_audio_path=None, ref_strength=0.5,
