@@ -20,7 +20,8 @@ from concurrent.futures import ThreadPoolExecutor
 from collections import deque
 from scenedetect import open_video, SceneManager, FrameTimecode
 from scenedetect.detectors import ContentDetector, AdaptiveDetector
-from flask import request, jsonify, redirect, url_for, Response, send_from_directory, session
+from flask import request, jsonify, redirect, url_for, Response, send_from_directory, send_file, session
+import zipfile
 from werkzeug.utils import secure_filename
 import smbclient  # pip install smbprotocol -- lets the upload panels browse a Windows/SMB network share directly
 from smbprotocol.exceptions import SharingViolation
@@ -5912,6 +5913,28 @@ ACE_STEP_MAX_SAMPLES = int(os.environ.get('ACE_STEP_MAX_SAMPLES', 4))
 # path on both sides.
 ACE_STEP_REF_DIR = os.environ.get('ACE_STEP_REF_DIR', '')
 
+# Where trained LoRA checkpoints (.safetensors/.pt/.ckpt/.bin) live, for the
+# Music Generation tool's LoRA picker. Same same-machine-vs-shared-mount
+# caveat as ACE_STEP_REF_DIR above: ACE-Step's own pipeline takes lora_path
+# as a filesystem path its own process reads directly, not an upload, so if
+# ACE-Step runs on a different host this needs to point at a mount that
+# resolves to the same file on both sides. Defaults to a folder inside
+# UPLOAD_FOLDER's parent so a fresh install has somewhere to drop LoRA files
+# without any config -- admin can point this elsewhere (e.g. wherever LoRA
+# training already writes its output) via the env var.
+ACE_STEP_LORA_DIR = os.environ.get('ACE_STEP_LORA_DIR') or os.path.join(
+    os.path.dirname(os.environ.get('LIBRARY_DIR', '/tmp')) or '/tmp', 'ace_step_loras')
+_LORA_EXTENSIONS = ('.safetensors', '.pt', '.ckpt', '.bin')
+
+# Demucs (pip install demucs) does source separation for the "stems" download
+# option -- a genuinely separate model/dependency from ACE-Step itself, run
+# as a local subprocess like ffmpeg rather than a remote service, since
+# that's how the demucs CLI ships. Not installed by default; the export
+# endpoint below fails loudly with an actionable message rather than
+# pretending stems are available when they aren't.
+DEMUCS_BIN = os.environ.get('DEMUCS_BIN', 'demucs')
+DEMUCS_TIMEOUT = int(os.environ.get('DEMUCS_TIMEOUT', 900))
+
 def acestep_generate(prompt, duration=None, lyrics=None, bpm=None, samples=1,
                      steps=None, seed=None, base_ts=None,
                      ref_audio_path=None, ref_strength=0.5,
@@ -5919,7 +5942,7 @@ def acestep_generate(prompt, duration=None, lyrics=None, bpm=None, samples=1,
                      negative_prompt=None, model=None,
                      guidance_scale=None, scheduler_type=None, cfg_type=None,
                      omega_scale=None, use_erg_tag=None, use_erg_lyric=None,
-                     use_erg_diffusion=None):
+                     use_erg_diffusion=None, lora_path=None, lora_weight=None):
     """Generate music with ACE-Step directly. Returns (paths, error).
 
     Unlike prepare_bgm_track (which is shaped around the trailer pipeline: one
@@ -5987,6 +6010,20 @@ def acestep_generate(prompt, duration=None, lyrics=None, bpm=None, samples=1,
     regardless of value, which is itself useful to know when comparing
     against a hosted service that might be running the same checkpoint with
     settings actually tuned for it.
+
+    `lora_path`/`lora_weight`: a fine-tuned LoRA adapter to apply on top of
+    the base checkpoint (see api_lora_list()/ACE_STEP_LORA_DIR for how the
+    picker resolves a filename to this absolute path). Field names follow
+    ACE-Step's own pipeline attributes (`self.lora_path` / `self.lora_weight`
+    in pipeline_ace_step.py upstream, default lora_path="none"/weight=1) --
+    unlike guidance_scale etc. above, these are NOT independently confirmed
+    against a live server's actual /release_task schema (no public REST
+    field-name reference exists for this), so if your specific ACE-Step
+    build names these differently, a LoRA pick may silently have no effect
+    the same way an unrecognized field elsewhere would. Worth confirming
+    once against a known LoRA the first time this is wired up. Omitted from
+    the payload entirely when no LoRA is selected, same principle as every
+    other optional field here -- ordinary generation is unaffected.
 
     `duration` in seconds, or None/blank for automatic -- when omitted,
     `audio_duration` is left out of the payload entirely so the ACE-Step
@@ -6062,6 +6099,9 @@ def acestep_generate(prompt, duration=None, lyrics=None, bpm=None, samples=1,
         payload['use_erg_lyric'] = bool(use_erg_lyric)
     if use_erg_diffusion is not None:
         payload['use_erg_diffusion'] = bool(use_erg_diffusion)
+    if lora_path and os.path.exists(lora_path):
+        payload['lora_path'] = os.path.abspath(lora_path)
+        payload['lora_weight'] = float(lora_weight) if lora_weight is not None else 1.0
 
     base_ts = base_ts or f'tool{int(time.time()*1000)}'
     try:
@@ -6194,6 +6234,22 @@ def api_music_generate():
     use_erg_lyric = _bool_or_none('use_erg_lyric')
     use_erg_diffusion = _bool_or_none('use_erg_diffusion')
 
+    # LoRA: `lora` is a filename from the /api/music/loras picker, resolved
+    # against ACE_STEP_LORA_DIR here (never trust a client-supplied path
+    # directly -- secure_filename plus a fixed parent dir keeps this to
+    # exactly the files that picker actually offered). Blank/"none" means
+    # no LoRA, matching ACE-Step's own base-model default.
+    lora_name = secure_filename((request.form.get('lora') or '').strip())
+    lora_path = None
+    if lora_name and lora_name.lower() != 'none':
+        candidate = os.path.join(ACE_STEP_LORA_DIR, lora_name)
+        if os.path.exists(candidate):
+            lora_path = candidate
+        else:
+            return jsonify(ok=False, error=f'LoRA "{lora_name}" was not found in {ACE_STEP_LORA_DIR} -- '
+                                           'it may have been removed; refresh the LoRA list.'), 400
+    lora_weight = _num('lora_weight', 1.0, 0.0, 2.0)
+
     if not prompt:
         return jsonify(ok=False, error='Enter a prompt describing the style you want.'), 400
 
@@ -6230,7 +6286,8 @@ def api_music_generate():
                                       guidance_scale=guidance_scale, scheduler_type=scheduler_type,
                                       cfg_type=cfg_type, omega_scale=omega_scale,
                                       use_erg_tag=use_erg_tag, use_erg_lyric=use_erg_lyric,
-                                      use_erg_diffusion=use_erg_diffusion)
+                                      use_erg_diffusion=use_erg_diffusion,
+                                      lora_path=lora_path, lora_weight=lora_weight)
     finally:
         # The reference only needs to survive the generation call itself.
         if ref_path and os.path.exists(ref_path):
@@ -6250,7 +6307,26 @@ def api_music_generate():
         instrumental=not lyrics,
         keyscale=keyscale or None, timesignature=timesignature or None, thinking=thinking,
         negative_prompt=negative_prompt or None, model=model or None,
-        reference=bool(ref_path), ref_strength=ref_strength if ref_path else None)
+        reference=bool(ref_path), ref_strength=ref_strength if ref_path else None,
+        lora=lora_name if lora_path else None, lora_weight=lora_weight if lora_path else None)
+
+@app.route('/api/music/loras')
+@require_permission('music_generation')
+def api_music_loras():
+    """LoRA checkpoints available for the Music Generation tool's LoRA
+    picker -- every file with a recognized adapter extension directly inside
+    ACE_STEP_LORA_DIR (not recursive, matching how it's set up: one flat
+    folder of trained checkpoints, not a nested library). An empty/missing
+    directory is not an error -- it just means no LoRAs have been dropped in
+    yet, same "nothing configured yet" handling as the network folders."""
+    try:
+        os.makedirs(ACE_STEP_LORA_DIR, exist_ok=True)
+        names = sorted(f for f in os.listdir(ACE_STEP_LORA_DIR)
+                        if f.lower().endswith(_LORA_EXTENSIONS)
+                        and os.path.isfile(os.path.join(ACE_STEP_LORA_DIR, f)))
+    except OSError as e:
+        return jsonify(ok=True, loras=[], error=f'Could not read {ACE_STEP_LORA_DIR}: {e}')
+    return jsonify(ok=True, loras=names, dir=ACE_STEP_LORA_DIR)
 
 @app.route('/api/music/models')
 @require_permission('music_generation')
@@ -6343,6 +6419,126 @@ def api_music_genres():
     """Genre -> music prompt map, so the Tools tab can show and pre-fill prompts."""
     return jsonify(ok=True, genres=[{'key': g, 'prompt': GENRE_PROMPTS.get(g, '')}
                                     for g in GENRE_NAMES])
+
+def _demucs_available():
+    return shutil.which(DEMUCS_BIN) is not None
+
+# demucs' default 4-way separation model; a fixed choice rather than another
+# knob -- htdemucs is the current well-supported general-purpose default
+# upstream, and exposing a model picker here would be one more thing that
+# can be misconfigured for a feature that's already opt-in.
+_DEMUCS_MODEL = os.environ.get('DEMUCS_MODEL', 'htdemucs')
+
+def separate_stems(src_path, mode, out_dir):
+    """Run demucs on src_path, writing stems under out_dir. `mode` is
+    'vocals' (2-stem: vocals + instrumental) or '4stem' (vocals/drums/
+    bass/other). Returns (list of (label, path), None) on success, or
+    (None, error_message) on failure.
+
+    Shelled out like ffmpeg elsewhere in this file rather than imported as a
+    Python dependency of the Flask process itself -- demucs pulls in torch,
+    which every other ML capability here (Ollama, Whisper, ACE-Step, Fish
+    Audio, Woosh) deliberately keeps OUT of this process by running as a
+    separate service instead. A subprocess call keeps that same separation
+    even though demucs itself doesn't ship as a standalone server."""
+    cmd = [DEMUCS_BIN, '-n', _DEMUCS_MODEL, '-o', out_dir]
+    if mode == 'vocals':
+        cmd += ['--two-stems', 'vocals']
+    cmd.append(src_path)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=DEMUCS_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return None, f'Stem separation timed out after {DEMUCS_TIMEOUT}s.'
+    if r.returncode != 0:
+        return None, f'Stem separation failed: {(r.stderr or r.stdout or "")[-500:]}'
+    # demucs writes to <out_dir>/<model_name>/<track_name_without_ext>/*.wav
+    track_name = os.path.splitext(os.path.basename(src_path))[0]
+    stem_dir = os.path.join(out_dir, _DEMUCS_MODEL, track_name)
+    if not os.path.isdir(stem_dir):
+        return None, 'Stem separation reported success but produced no output files.'
+    stems = []
+    for fn in sorted(os.listdir(stem_dir)):
+        label = os.path.splitext(fn)[0]  # 'vocals', 'no_vocals', 'drums', 'bass', 'other'
+        path = os.path.join(stem_dir, fn)
+        if os.path.isfile(path) and os.path.getsize(path) > 0:
+            stems.append((label, path))
+    if not stems:
+        return None, 'Stem separation reported success but produced no output files.'
+    return stems, None
+
+@app.route('/api/music/export')
+@require_permission('music_generation')
+def api_music_export():
+    """Download a generated (or any uploaded-folder) audio file with a
+    caller-chosen name, optionally transcoded to WAV and/or split into
+    stems -- three separate, composable options rather than three separate
+    endpoints, since a real request is often "give me the vocals, as WAV,
+    named X" all at once.
+
+    ?filename= is the existing file's basename in UPLOAD_FOLDER (as returned
+    by /api/music/generate's `samples[].filename`) -- secure_filename'd and
+    existence-checked so this can only ever serve a file already sitting in
+    that one folder, never an arbitrary path. ?name= is the caller's desired
+    base filename for the download (extension is always decided by this
+    endpoint, never taken from what they typed, so a stray ".mp3" in the
+    name field can't produce a mismatched file). ?format=wav re-encodes if
+    the source isn't already WAV; anything else keeps the source's own
+    format untouched. ?stem=vocals|4stem runs demucs and zips the resulting
+    stem files together (a single download rather than N separate ones)."""
+    filename = secure_filename((request.args.get('filename') or '').strip())
+    if not filename:
+        return jsonify(ok=False, error='No file specified.'), 400
+    src_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    if not os.path.exists(src_path):
+        return jsonify(ok=False, error='File not found -- it may already have been cleaned up.'), 404
+
+    fmt = (request.args.get('format') or 'original').strip().lower()
+    if fmt not in ('original', 'wav'):
+        fmt = 'original'
+    stem = (request.args.get('stem') or 'none').strip().lower()
+    if stem not in ('none', 'vocals', '4stem'):
+        stem = 'none'
+    custom_name = (request.args.get('name') or '').strip()
+    # secure_filename also strips any extension-looking suffix the caller
+    # typed (e.g. pasting "mytrack.mp3" into the name field) -- the real
+    # extension is always decided below, never whatever they typed here.
+    safe = secure_filename(os.path.splitext(custom_name)[0]) if custom_name else ''
+    base_name = safe or os.path.splitext(filename)[0]
+
+    if stem != 'none':
+        if not _demucs_available():
+            return jsonify(ok=False, error=f'Stem separation requires Demucs ("{DEMUCS_BIN}") to be installed '
+                                           'on this server (pip install demucs) -- ask your admin to set it up.'), 503
+        work_dir = tempfile.mkdtemp(prefix='stems_')
+        stems, err = separate_stems(src_path, stem, work_dir)
+        if err:
+            shutil.rmtree(work_dir, ignore_errors=True)
+            return jsonify(ok=False, error=err), 500
+        zip_path = os.path.join(work_dir, f'{base_name}_stems.zip')
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for label, path in stems:
+                zf.write(path, arcname=f'{base_name}_{label}{os.path.splitext(path)[1]}')
+        resp = send_file(zip_path, as_attachment=True, download_name=f'{base_name}_stems.zip',
+                          mimetype='application/zip')
+        resp.call_on_close(lambda: shutil.rmtree(work_dir, ignore_errors=True))
+        return resp
+
+    src_ext = os.path.splitext(filename)[1].lower()
+    if fmt == 'wav' and src_ext != '.wav':
+        out_path = os.path.join(app.config['UPLOAD_FOLDER'], f'export_{int(time.time() * 1000)}.wav')
+        try:
+            run_ffmpeg([FFMPEG, '-y', '-i', src_path, '-c:a', 'pcm_s16le', out_path],
+                       timeout=120, label='Music WAV export')
+        except MediaToolTimeout:
+            return jsonify(ok=False, error='Conversion to WAV timed out.'), 500
+        if not (os.path.exists(out_path) and os.path.getsize(out_path) > 0):
+            return jsonify(ok=False, error='Conversion to WAV failed.'), 500
+        resp = send_file(out_path, as_attachment=True, download_name=f'{base_name}.wav', mimetype='audio/wav')
+        resp.call_on_close(lambda: os.path.exists(out_path) and os.remove(out_path))
+        return resp
+
+    out_ext = src_ext.lstrip('.') or 'wav'
+    return send_file(src_path, as_attachment=True, download_name=f'{base_name}.{out_ext}')
 
 @app.route('/api/sfx/generate', methods=['POST'])
 @require_permission('text_to_sfx')

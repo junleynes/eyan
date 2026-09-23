@@ -899,7 +899,7 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
 </nav>
 <div class="container">
 
-<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadNetworkFolders==='function'&&!networkFoldersLoaded){loadNetworkFolders()}if(id==='p-config'&&typeof loadNetworkDestinations==='function'&&!networkDestinationsLoaded){loadNetworkDestinations()}if(id==='p-config'&&typeof loadProductionTab==='function'&&!productionTabLoaded){loadProductionTab()}if(id==='p-config'&&typeof loadTwofaStatus==='function'&&!twofaLoaded){loadTwofaStatus()}if(id==='p-config'&&typeof loadUsersTab==='function'&&!usersTabLoaded){loadUsersTab()}if(id==='p-config'&&typeof loadAuditLog==='function'&&!auditLogLoaded){loadAuditLog()}if(id==='p-music'&&typeof loadAceStepModels==='function'){loadAceStepModels()}if(id==='p-jobs'&&typeof loadAdminJobs==='function'){loadAdminJobs()}if(id==='p-dashboard'&&typeof loadDashboard==='function'){loadDashboard()}try{localStorage.setItem('prism_last_tab',id)}catch(e){}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active');try{var panel=btn.closest('.panel');if(panel)localStorage.setItem('prism_subtab_'+panel.id,id)}catch(e){}}
+<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadNetworkFolders==='function'&&!networkFoldersLoaded){loadNetworkFolders()}if(id==='p-config'&&typeof loadNetworkDestinations==='function'&&!networkDestinationsLoaded){loadNetworkDestinations()}if(id==='p-config'&&typeof loadProductionTab==='function'&&!productionTabLoaded){loadProductionTab()}if(id==='p-config'&&typeof loadTwofaStatus==='function'&&!twofaLoaded){loadTwofaStatus()}if(id==='p-config'&&typeof loadUsersTab==='function'&&!usersTabLoaded){loadUsersTab()}if(id==='p-config'&&typeof loadAuditLog==='function'&&!auditLogLoaded){loadAuditLog()}if(id==='p-music'&&typeof loadAceStepModels==='function'){loadAceStepModels()}if(id==='p-music'&&typeof loadAceStepLoras==='function'){loadAceStepLoras()}if(id==='p-jobs'&&typeof loadAdminJobs==='function'){loadAdminJobs()}if(id==='p-dashboard'&&typeof loadDashboard==='function'){loadDashboard()}try{localStorage.setItem('prism_last_tab',id)}catch(e){}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active');try{var panel=btn.closest('.panel');if(panel)localStorage.setItem('prism_subtab_'+panel.id,id)}catch(e){}}
 document.addEventListener('DOMContentLoaded',function(){
   // Restore the tab (and, within it, the sub-tab) the user was last on,
   // since switchTab()/switchSubTab() only toggle CSS classes client-side
@@ -4868,6 +4868,11 @@ async function generateMusicTool(){
   fd.append('steps', document.getElementById('music-steps').value)
   fd.append('seed', document.getElementById('music-seed').value)
   fd.append('model', document.getElementById('music-model').value.trim())
+  var loraSel = document.getElementById('music-lora')
+  if(loraSel && loraSel.value){
+    fd.append('lora', loraSel.value)
+    fd.append('lora_weight', document.getElementById('music-lora-weight').value)
+  }
   var gs = document.getElementById('music-guidance-scale').value
   if(gs) fd.append('guidance_scale', gs)
   var os_ = document.getElementById('music-omega-scale').value
@@ -4903,15 +4908,24 @@ async function generateMusicTool(){
       d.model ? 'model ' + d.model : 'model: server default'
     ]
     if(d.reference) meta.push('audio2audio @ ' + Number(d.ref_strength).toFixed(2))
+    if(d.lora) meta.push('LoRA ' + d.lora + ' @ ' + Number(d.lora_weight).toFixed(2))
     var html = '<div style="font-size:12px;opacity:.75;margin-bottom:10px">' +
       escapeHtmlLite(meta.join(' \u00b7 ')) + '</div>'
     d.samples.forEach(function(sm, i){
+      var rowId = 'music-dl-' + i + '-' + Date.now()
+      var defaultName = sm.filename.replace(/\.[^.]+$/, '')
       html += '<div class=card style="margin-top:10px">' +
         '<div style="font-size:12px;opacity:.8;margin-bottom:8px">' +
         (d.samples.length > 1 ? 'Take ' + (i+1) + ' \u00b7 ' : '') + sm.duration + 's</div>' +
         '<audio controls style="width:100%" src="' + sm.url + '"></audio>' +
-        '<div style="margin-top:10px"><a class=btn href="' + sm.url + '" download="' +
-        escapeHtmlLite(sm.filename) + '" style="display:inline-block;text-decoration:none">Download</a></div>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px">' +
+        '<input type=text id="' + rowId + '-name" value="' + escapeHtmlLite(defaultName) + '" placeholder="filename" style="max-width:220px">' +
+        '<select id="' + rowId + '-fmt"><option value=original selected>Original format</option><option value=wav>WAV</option></select>' +
+        '<select id="' + rowId + '-stem"><option value=none selected>Full mix</option><option value=vocals>Vocals + instrumental (2-stem)</option><option value="4stem">4-stem (vocals/drums/bass/other)</option></select>' +
+        '<button type=button class=btn style="padding:5px 11px;font-size:12px" onclick="downloadMusicExport(\'' +
+        escapeHtmlLite(sm.filename) + '\',\'' + rowId + '\',this)">Download</button>' +
+        '</div>' +
+        '<div id="' + rowId + '-note" style="font-size:12px;margin-top:6px"></div>' +
         '</div>'
     })
     out.innerHTML = html
@@ -4922,6 +4936,48 @@ async function generateMusicTool(){
     btn.disabled = false
   }
 }
+
+async function downloadMusicExport(filename, rowId, btn){
+  var nameInput = document.getElementById(rowId + '-name')
+  var fmt = document.getElementById(rowId + '-fmt').value
+  var stem = document.getElementById(rowId + '-stem').value
+  var note = document.getElementById(rowId + '-note')
+  var srcExt = (filename.match(/\.[^.]+$/) || ['.wav'])[0]
+  var baseName = (nameInput.value || '').trim() || filename.replace(/\.[^.]+$/, '')
+  var outName = stem !== 'none' ? baseName + '_stems.zip' : (fmt === 'wav' ? baseName + '.wav' : baseName + srcExt)
+  var url = '/api/music/export?filename=' + encodeURIComponent(filename) +
+    '&format=' + encodeURIComponent(fmt) + '&stem=' + encodeURIComponent(stem) +
+    '&name=' + encodeURIComponent(baseName)
+  if(note){
+    note.style.color = ''
+    note.textContent = stem !== 'none' ? 'Separating stems… this can take a few minutes.' : 'Preparing download…'
+  }
+  if(btn) btn.disabled = true
+  try{
+    var r = await fetch(url)
+    if(!r.ok){
+      var d = null
+      try{ d = await r.json() }catch(e){}
+      if(note){ note.style.color = 'var(--amber)'; note.textContent = (d && d.error) || ('Download failed (HTTP ' + r.status + ').') }
+      return
+    }
+    var blob = await r.blob()
+    var objUrl = URL.createObjectURL(blob)
+    var a = document.createElement('a')
+    a.href = objUrl
+    a.download = outName
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(function(){ URL.revokeObjectURL(objUrl) }, 30000)
+    if(note) note.textContent = ''
+  }catch(e){
+    if(note){ note.style.color = 'var(--amber)'; note.textContent = 'Download failed: ' + e }
+  }finally{
+    if(btn) btn.disabled = false
+  }
+}
+window.downloadMusicExport = downloadMusicExport
 
 // ---- Text to SFX (Woosh) ----
 async function generateSfxTool(){
@@ -6479,12 +6535,41 @@ async function loadAceStepModels(){
     if(note){ note.style.color = 'var(--amber)'; note.textContent = 'Could not reach the ACE-Step server to list models: ' + e }
   }
 }
+async function loadAceStepLoras(){
+  var sel = document.getElementById('music-lora')
+  var note = document.getElementById('music-lora-note')
+  if(!sel) return
+  try{
+    var r = await fetch('/api/music/loras')
+    var d = await r.json()
+    var loras = (d && d.ok && d.loras) || []
+    sel.innerHTML = ''
+    var blank = document.createElement('option')
+    blank.value = ''
+    blank.textContent = loras.length ? '— none —' : 'None available'
+    sel.appendChild(blank)
+    loras.forEach(function(name){
+      var o = document.createElement('option')
+      o.value = name; o.textContent = name
+      sel.appendChild(o)
+    })
+    document.getElementById('music-lora-weight-row').style.display = loras.length ? '' : 'none'
+    if(note){
+      note.textContent = loras.length
+        ? loras.length + ' LoRA' + (loras.length === 1 ? '' : 's') + ' found in ' + (d.dir || 'the LoRA folder') + '.'
+        : 'No LoRA files found in ' + (d.dir || 'the configured folder') + ' — drop a trained .safetensors/.pt/.ckpt there and refresh.'
+    }
+  }catch(e){
+    if(note) note.textContent = 'Could not list LoRAs: ' + e
+  }
+}
 // The Vision panel is rendered further down the page (it lives in the rail now,
 // not inside Tools), so this script parses before its markup exists. Defer the
 // element lookups until the document is ready.
 document.addEventListener('DOMContentLoaded', function(){
 loadModels()
 loadAceStepModels()
+loadAceStepLoras()
 var _lastVisionVideoFilename = null
 
 function _buildSceneSearchCard(r, videoFilename){
@@ -6553,6 +6638,18 @@ document.getElementById('vf').addEventListener('submit', async function(e){
   <button type=button class=btn style="padding:5px 11px;font-size:12px" onclick="loadAceStepModels()">Refresh</button>
 </div>
 <p id=music-model-note style="font-size:12px;opacity:.7;margin-top:6px">Read live from your ACE-Step server. Pick a specific checkpoint (e.g. a fast/turbo model vs. a higher-quality one), or leave on the server default.</p>
+
+<label>LoRA (optional):</label>
+<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+  <select id=music-lora style="max-width:280px"><option value="">Loading&hellip;</option></select>
+  <button type=button class=btn style="padding:5px 11px;font-size:12px" onclick="loadAceStepLoras()">Refresh</button>
+  <span id=music-lora-weight-row style="display:none;align-items:center;gap:6px;white-space:nowrap">
+    <span style="font-size:12px">Weight:</span>
+    <input type=range id=music-lora-weight min=0 max=2 step=0.05 value=1 style="width:160px" oninput="document.getElementById('music-lora-weight-val').textContent=Number(this.value).toFixed(2)">
+    <span id=music-lora-weight-val style="font-size:12px;opacity:.8;font-family:'JetBrains Mono',monospace">1.00</span>
+  </span>
+</div>
+<p id=music-lora-note style="font-size:12px;opacity:.7;margin-top:6px">Applies a fine-tuned style/voice on top of the base checkpoint. Drop trained checkpoints (.safetensors/.pt/.ckpt/.bin) into the server's configured LoRA folder (<code>ACE_STEP_LORA_DIR</code>) and refresh to see them here. Weight 1.0 is full strength; lower blends more of the base model back in.</p>
 
 <label>Prompt (style tags):</label>
 <textarea id=music-prompt class=input-box rows=3 placeholder="cinematic, orchestral, tense strings, driving percussion">Modern alternative rock with energetic electric guitars, driving bass, punchy live drums, melodic guitar riffs, clean male lead vocals, expressive vocal harmonies, dynamic transitions, and a memorable sing-along chorus. Confident, uplifting, and motivational with a polished contemporary production.</textarea>
