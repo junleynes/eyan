@@ -192,6 +192,31 @@ def test_render_is_frame_exact_across_a_cut_even_when_video_starts_late(split_so
     assert st['audio']['codec_name'] == 'aac' and st['audio']['channels'] == 2 and st['audio']['sample_rate'] == '48000'
 
 
+def test_render_survives_a_picture_that_decodes_smaller_than_it_was_measured(split_source, tmp_path):
+    """The planner's size comes from OpenCV and the render's from ffmpeg,
+    and they are not always the same number: a newer ffmpeg applies a .mov's
+    clean-aperture crop, a Windows capture backend counts the 1088 coded
+    lines of a 1080 picture. The crop window used to be cut straight out of
+    whatever arrived, so a window one line taller than the picture stopped
+    the render with "Invalid argument" and no short at all (seen on a
+    Windows server). Here the planner believes the 640x360 source is
+    648x368."""
+    # sd_matrix off: an SD source is always rescaled (for its colour), which hid this; HD is where it bit.
+    info = dict(sc.probe_source('ffprobe', str(split_source)), width=648, height=368, disp_w=648, disp_h=368,
+                sd_matrix=False)
+    crop_w, crop_h = sc.crop_geometry(info['disp_w'], info['disp_h'])
+    assert crop_h == 368 > 360, 'a window taller than the real picture'
+    for name, segs in (('crop', [{'a': 0, 'b': 39, 'layout': 'crop', 'x': 0.0, 'keys': None}]),
+                       ('mixed', [{'a': 0, 'b': 19, 'layout': 'crop', 'x': 0.0, 'keys': None},
+                                  {'a': 20, 'b': 39, 'layout': 'fit', 'x': None, 'keys': None}])):
+        out = tmp_path / f'{name}.mp4'
+        ok, err = sc.render_short('ffmpeg', str(split_source), str(out), 0, 40, info, segs, preset='ultrafast')
+        assert ok, err
+        fr = _frames(out)
+        assert len(fr) == 40 and fr[0].shape[:2] == (1920, 1080)
+        assert _colour(fr[0], 540, 960) == 'red', 'still the left of shot A'
+
+
 def test_mixed_layouts_switch_on_the_cut_and_fit_shows_the_whole_frame(split_source, tmp_path):
     info = sc.probe_source('ffprobe', str(split_source))
     segs = [{'a': 0, 'b': 29, 'layout': 'crop', 'x': 0.0, 'keys': None},

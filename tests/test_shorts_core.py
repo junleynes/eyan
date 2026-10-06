@@ -412,6 +412,8 @@ def test_filtergraph_shape_for_each_layout_mix():
 
     g = sc.build_filtergraph(info, crop)
     assert g.startswith('[0:v]') and g.endswith('[vout]')
+    assert ',scale=1920:1080,setsar=1,crop=' in g, \
+        'the picture is pinned to the size the planner measured before anything is cut out of it'
     assert "crop=608:1080:x='between(n,0,49)*96':y=0" in g and 'scale=1080:1920' in g
     assert 'boxblur' not in g and 'overlay' not in g and 'ass=' not in g
 
@@ -422,6 +424,33 @@ def test_filtergraph_shape_for_each_layout_mix():
     assert "overlay=0:0:enable='between(n,50,99)'" in g
     assert 'ass=shsub_1.ass' in g and g.index('ass=') > g.index('enable='), 'captions go on after the layouts are combined'
     assert 'in_color_matrix' not in g
+
+
+def test_a_failed_render_reports_the_cause_not_the_aftermath():
+    """What a Windows server actually printed (ffmpeg 7+), shortened: the one
+    line that says why comes first and six lines of every thread reporting
+    that it stopped come after. The last 600 characters -- which is what an
+    editor used to be shown -- held none of the reason."""
+    stderr = (
+        "[Parsed_crop_3 @ 000001b7a24b1c80] Invalid too big or non positive size for width '608' or height '1080'\n"
+        "[Parsed_crop_3 @ 000001b7a24b1c80] Failed to configure input pad on Parsed_crop_3\n"
+        "[fc#0 @ 000001b7a24b4f40] Error reinitializing filters!\n"
+        "[fc#0 @ 000001b7a24b4f40] Task finished with error code: -22 (Invalid argument)\n"
+        "[fc#0 @ 000001b7a24b4f40] Terminating thread with return code -22 (Invalid argument)\n"
+        "[vost#0:0/libx264 @ 000001b7a31f8300] [enc:libx264 @ 000001b7a32baf00] Could not open encoder before EOF\n"
+        "[vost#0:0/libx264 @ 000001b7a31f8300] Task finished with error code: -22 (Invalid argument)\n"
+        "[vost#0:0/libx264 @ 000001b7a31f8300] Terminating thread with return code -22 (Invalid argument)\n"
+        "[out#0/mp4 @ 000001b7a24fefc0] Nothing was written into output file, because at least one of its "
+        "streams received no packets.\n")
+    assert 'Invalid too big' not in stderr.strip()[-600:], 'the old tail really did lose it'
+    msg = sc.ffmpeg_error(stderr)
+    assert msg == ("[Parsed_crop_3] Invalid too big or non positive size for width '608' or height '1080' | "
+                   "[Parsed_crop_3] Failed to configure input pad on Parsed_crop_3")
+    # Nothing but aftermath to show: show that rather than nothing.
+    assert 'Could not open encoder' in sc.ffmpeg_error('[vost#0:0/libx264 @ 0x55d0c0ffee00] Could not open encoder before EOF')
+    assert sc.ffmpeg_error('') == '' and sc.ffmpeg_error(None) == ''
+    long = sc.ffmpeg_error('x' * 5000)
+    assert len(long) == 600 and long.endswith('\u2026')
 
 
 def test_filtergraph_converts_sd_colour_and_squares_anamorphic_pixels():

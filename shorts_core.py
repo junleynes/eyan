@@ -1342,7 +1342,17 @@ def build_filtergraph(info, segs, out_w=OUT_W, out_h=OUT_H, ass_name=None):
         # BT.709. Converting here is the difference between correct colour
         # and visibly shifted greens and reds.
         pre.append(f'scale={disp_w}:{disp_h}:in_color_matrix=bt601:out_color_matrix=bt709')
-    elif abs(info.get('sar', 1.0) - 1.0) > 0.01 or (info['width'], info['height']) != (disp_w, disp_h):
+    else:
+        # Unconditional, not only when the pixels aren't square. Every size
+        # below (the crop window, the fit layout) is worked out from the
+        # size the PLANNER measured, and ffmpeg does not always decode to
+        # that: a newer ffmpeg applies a container's clean-aperture crop
+        # (a 1920x1080 .mov arriving as 1888x1062), a Windows capture
+        # backend reports the coded 1088 lines of a 1080 picture. A crop
+        # even one line taller than what actually arrives stops the whole
+        # render with "Invalid argument". Pinning the size here makes every
+        # later number true by construction; when the picture already is
+        # this size the filter passes frames straight through.
         pre.append(f'scale={disp_w}:{disp_h}')
     pre.append('setsar=1')
     pre = ','.join(pre)
@@ -1602,6 +1612,29 @@ def build_render_cmd(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_n
     return cmd
 
 
+# What ffmpeg prints AFTER the line that says what went wrong: every thread
+# reporting that it stopped, and the muxer noting it wrote nothing.
+_FFMPEG_AFTERMATH = re.compile(r'Task finished with error code|Terminating thread with return code|'
+                               r'Could not open encoder before EOF|Nothing was written into output file|'
+                               r'Error (re)?initializing filters|Error while filtering|Conversion failed')
+
+
+def ffmpeg_error(stderr, limit=600):
+    """The part of a failed ffmpeg run's output that names the cause.
+
+    The cause is the FIRST thing ffmpeg prints; half a dozen lines of
+    aftermath follow. Keeping the last 600 characters, as this used to,
+    showed an editor only the aftermath ("Task finished with error code
+    -22") with the reason cut off the front. So the aftermath is dropped
+    and what is left is kept from the start, with the pointer values
+    ("@ 000001b7a24b4f40") that pad every line taken out."""
+    lines = [re.sub(r'\s*@ (0x)?[0-9a-fA-F]{6,}', '', ln).strip() for ln in (stderr or '').splitlines()]
+    lines = [ln for ln in lines if ln]
+    cause = [ln for ln in lines if not _FFMPEG_AFTERMATH.search(ln)]
+    text = ' | '.join(cause or lines)
+    return text if len(text) <= limit else text[:limit - 1].rstrip() + '…'
+
+
 def render_short(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=None, work_dir=None,
                  crf=18, preset='medium', loudness=-14.0, true_peak=-1.5, timeout=900):
     """Renders one short. Returns (ok, error_text).
@@ -1630,7 +1663,7 @@ def render_short(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=
                 os.remove(out_path)
         except OSError:
             pass
-        return False, (r.stderr or '').strip()[-600:] or f'ffmpeg exited with code {r.returncode}'
+        return False, ffmpeg_error(r.stderr) or f'ffmpeg exited with code {r.returncode}'
     return True, None
 
 

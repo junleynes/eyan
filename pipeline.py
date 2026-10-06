@@ -437,6 +437,12 @@ def _network_categories():
     stored directly per-category now, see load_network_folders()."""
     return {
         'hires': {'exts': ALLOWED_EXTENSIONS, 'label': 'Video (HIRES)'},
+        # Source video for the Vertical Shorts tab. Its own folder because
+        # shorts are cut from whole episodes, which commonly live somewhere
+        # other than the material promos are built from. 'fallback': until
+        # an admin gives it a path it reads the Video (HIRES) folder, so the
+        # tab keeps working on a server set up before this category existed.
+        'shorts': {'exts': ALLOWED_EXTENSIONS, 'label': 'Vertical Shorts video (HIRES)', 'fallback': 'hires'},
         # NOTE the legacy form-field names: 'end_card_video' is the TITLE
         # card and 'schedule_video' is the END card (see TEMPLATE_SLOTS for
         # the same mapping).
@@ -465,11 +471,29 @@ def _sanitize_subpath(subpath):
         raise ValueError('Invalid subfolder path')
     return '\\'.join(parts)
 
+# Categories that hold full-length source video: the ones the configured
+# maximum video size applies to.
+VIDEO_SOURCE_CATEGORIES = ('hires', 'shorts')
+
+def _network_folder_row(category):
+    """The saved path/username/password `category` actually reads from.
+    Its own row -- or, for a category that names a 'fallback' and has no
+    path of its own yet, that other category's row WHOLE (path and login
+    together: a login only means something next to the share it is for).
+    Resolved here and nowhere else, so listing, searching, fetching and the
+    SMB session can never disagree about which folder a category means."""
+    folders = load_network_folders()
+    row = folders.get(category, {})
+    if not (row.get('path') or '').strip():
+        fallback = _network_categories().get(category, {}).get('fallback')
+        if fallback:
+            return folders.get(fallback, {})
+    return row
+
 def _network_share_root(category=DEFAULT_NETWORK_CATEGORY):
     """The configured full UNC path for `category`, normalized -- empty
     string if that category hasn't been set up in Config > Network yet."""
-    row = load_network_folders().get(category, {})
-    return _normalize_unc_path(row.get('path', ''))
+    return _normalize_unc_path(_network_folder_row(category).get('path', ''))
 
 def _network_session(category=DEFAULT_NETWORK_CATEGORY):
     """(Re)registers the SMB session for `category`'s configured host.
@@ -477,7 +501,7 @@ def _network_session(category=DEFAULT_NETWORK_CATEGORY):
     cheap once logged in -- including across categories that happen to
     share the same server, still a common case even though each is
     independently configured."""
-    row = load_network_folders().get(category, {})
+    row = _network_folder_row(category)
     root = _normalize_unc_path(row.get('path', ''))
     # Host is the third UNC path segment: \\HOST\share\...
     parts = root.split('\\')
@@ -658,11 +682,11 @@ def fetch_network_file(name, category=DEFAULT_NETWORK_CATEGORY, subpath=''):
     remote_path = root + ('\\' + sub if sub else '') + '\\' + name
     # Checked via a stat, before opening/copying anything -- rejecting a file
     # that's over the configured limit shouldn't cost the time and bandwidth
-    # of pulling it across the network first. Only enforced for the HIRES
-    # category (the source video this limit is actually about); other
-    # categories (music, SFX, cards) aren't video and were never in scope
-    # for a "max video size" setting.
-    if category == 'hires':
+    # of pulling it across the network first. Only enforced for the source
+    # video categories (HIRES, and the Vertical Shorts folder), which this
+    # limit is actually about; the others (music, SFX, cards) were never in
+    # scope for a "max video size" setting.
+    if category in VIDEO_SOURCE_CATEGORIES:
         try:
             size = smbclient.stat(remote_path).st_size
         except Exception:
@@ -8271,6 +8295,8 @@ def api_network_shares_get():
         out[cat] = {
             'path': row.get('path', ''), 'username': row.get('username', ''),
             'has_password': bool(row.get('password')),
+            # Which category this one reads while its own path is blank, if any.
+            'fallback': _network_categories().get(cat, {}).get('fallback'),
         }
     return jsonify(ok=True, categories=out)
 
@@ -8279,10 +8305,12 @@ def api_network_shares_post():
     """Saves one category's network path/username/password. Body:
     {"category": "music", "path": "\\\\server\\share\\folder",
     "username": "...", "password": "..." (omit to leave the saved password
-    unchanged, send "" to explicitly clear it)}. Each of the six categories
-    is fully independent -- there's no shared default any of these fall
-    back to, so a category with no path configured simply isn't reachable
-    until one is set here."""
+    unchanged, send "" to explicitly clear it)}. Each category is fully
+    independent -- there's no shared default any of these fall back to, so
+    a category with no path configured simply isn't reachable until one is
+    set here. The one exception is 'shorts' (the Vertical Shorts source
+    folder), which reads the 'hires' folder while its own path is blank;
+    see _network_folder_row()."""
     if session.get('role') != 'admin':
         return jsonify(ok=False, error='Admin access required.'), 403
     data = request.get_json(silent=True) or {}

@@ -1169,6 +1169,7 @@ document.addEventListener("DOMContentLoaded", function(){
 <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0">
   <select id=pl-category style="max-width:220px">
     <option value=hires selected>Video (HIRES)</option>
+    <option value=shorts>Vertical Shorts video (HIRES)</option>
     <option value=tcard>Title card (TCARD)</option>
     <option value=endcard>End card (ENDCARD)</option>
     <option value=music>Music</option>
@@ -6933,7 +6934,7 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <label>Long-form video (HIRES):</label>
 <div class="browse-row">
   {% if allow_local_upload %}<input type=file id=sh-file name=shorts_file accept="video/*" data-net-field="shorts_file" style="max-width:320px">{% endif %}
-  <button type=button class="browse-btn" onclick="openNetworkBrowser('shorts_file','hires','Video (HIRES)')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
+  <button type=button class="browse-btn" onclick="openNetworkBrowser('shorts_file','shorts','Vertical Shorts video')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
 </div>
 <input type=hidden id=shorts_file_network name=shorts_file_network value="">
 <span class="net-file-chip" id=shorts_file_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('shorts_file')">&#10005;</span></span>
@@ -7839,6 +7840,7 @@ document.addEventListener('DOMContentLoaded', function(){
   </div>
 </div>
 </div>
+</div>
 
 <div id="p-sfx" class="panel{{ ' active' if default_tab == 'p-sfx' else '' }}">
 <h2>Text to SFX &mdash; Woosh</h2>
@@ -8052,7 +8054,7 @@ document.addEventListener('DOMContentLoaded', function(){
 </div>
 </div>
 <p><strong>Player</strong>:</p>
-<pre>GET  /api/network/list?category=hires|tcard|endcard|music|vo|sfx
+<pre>GET  /api/network/list?category=hires|shorts|tcard|endcard|music|vo|sfx
 POST /api/network/fetch  + name, category   stage a file locally, returns url
 POST /api/stt/transcribe + file             transcript + .srt</pre>
 <p><strong>Narration (Fish Audio S2)</strong>:</p>
@@ -8908,7 +8910,7 @@ async function saveProductionTab(){
 }
 window.saveProductionTab = saveProductionTab
 
-var NETWORK_CATEGORY_LABELS = {hires: 'Video (HIRES)', tcard: 'Title card', endcard: 'End card', music: 'Music', vo: 'VO', sfx: 'SFX', script: 'Script / rundown'}
+var NETWORK_CATEGORY_LABELS = {hires: 'Video (HIRES)', shorts: 'Vertical Shorts video (HIRES)', tcard: 'Title card', endcard: 'End card', music: 'Music', vo: 'VO', sfx: 'SFX', script: 'Script / rundown'}
 var networkFoldersLoaded = false
 var networkDestinationsLoaded = false
 async function loadNetworkFolders(){
@@ -8932,6 +8934,13 @@ async function loadNetworkFolders(){
       wrap.style.cssText = 'border:1px solid var(--line);border-radius:12px;padding:16px 18px'
       wrap.innerHTML =
         '<label style="font-size:12px;font-weight:600;display:block;margin:0 0 10px">' + NETWORK_CATEGORY_LABELS[cat] + '</label>' +
+        // A category that borrows another's folder while its own path is
+        // blank says so, or an empty row reads as "not set up" when the tab
+        // it serves is in fact working.
+        (row.fallback && NETWORK_CATEGORY_LABELS[row.fallback] ? '<div style="font-size:11px;opacity:.7;margin:-4px 0 10px">' +
+          'Where the Vertical Shorts tab browses for episodes. ' +
+          (row.path ? 'Clear the path to go back to the ' : 'Blank: it is using the ') +
+          NETWORK_CATEGORY_LABELS[row.fallback] + ' folder' + (row.path ? '.' : ' until a path is saved here.') + '</div>' : '') +
         '<div style="display:flex;flex-direction:column;gap:10px">' +
           '<input type=text id="net-path-' + cat + '" placeholder="Full network path, e.g. \\\\10.0.1.130\\media\\' + cat.toUpperCase() + '" value="' + (row.path || '').replace(/"/g,'&quot;') + '" style="' + fieldStyle + '">' +
           '<div style="display:flex;gap:10px;flex-wrap:wrap">' +
