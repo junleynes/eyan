@@ -283,6 +283,7 @@ def _users_db():
 # shared global resource, not a per-job action.
 AVAILABLE_PERMISSIONS = [
     ('promo_generation', 'Generate Promo Plug'),
+    ('vertical_shorts', 'Vertical Shorts'),
     ('music_generation', 'Music Generation'),
     ('text_to_sfx', 'Text to SFX'),
     ('text_to_speech', 'Text to Speech (voice cloning/narration)'),

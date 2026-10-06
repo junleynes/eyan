@@ -309,3 +309,56 @@ def test_export_rejects_path_traversal_in_filename(upload_dir):
     # basename that won't exist in the upload folder, so this must come
     # back as an ordinary "not found", never a file from outside uploads.
     assert r.status_code in (400, 404)
+
+
+# ---- Temp files built for a download must not outlive it ----
+# Found while reviewing the Vertical Shorts zip download, which used the same
+# pattern: send_file() + response.call_on_close(cleanup). The callback never
+# runs for a send_file response (measured under waitress and under this test
+# client), so every stem export left a folder of separated WAVs behind in the
+# system temp directory -- which nothing sweeps -- and every WAV export left
+# its converted copy until the six-hour upload sweeper.
+
+def test_export_stem_work_folder_is_removed_after_the_download(upload_dir, tmp_path, monkeypatch):
+    (upload_dir / 'music_abc123_0.wav').write_bytes(b'fake wav data')
+    made = []
+    real_mkdtemp = pipeline.tempfile.mkdtemp
+
+    def tracking_mkdtemp(*a, **k):
+        d = real_mkdtemp(*a, **k)
+        made.append(d)
+        return d
+    monkeypatch.setattr(pipeline.tempfile, 'mkdtemp', tracking_mkdtemp)
+
+    def fake_separate(src, mode, out_dir):
+        p = os.path.join(out_dir, 'vocals.wav')
+        with open(p, 'wb') as f:
+            f.write(b'v' * 4096)
+        return [('vocals', p)], None
+    monkeypatch.setattr(pipeline, '_demucs_available', lambda: True)
+    monkeypatch.setattr(pipeline, 'separate_stems', fake_separate)
+
+    client, headers = _client_with_session()
+    r = client.get('/api/music/export?filename=music_abc123_0.wav&stem=vocals&name=mytrack', headers=headers)
+    assert r.status_code == 200
+    import io
+    assert zipfile.ZipFile(io.BytesIO(r.data)).namelist() == ['mytrack_vocals.wav']
+    assert int(r.headers['Content-Length']) == len(r.data)
+    r.close()
+    assert len(made) == 1 and not os.path.exists(made[0]), 'the stems folder is gone once the zip has been sent'
+
+
+def test_export_wav_temp_copy_is_removed_after_the_download(upload_dir):
+    import shutil as _shutil
+    import subprocess
+    if _shutil.which('ffmpeg') is None:
+        pytest.skip('ffmpeg not available in this environment')
+    src = upload_dir / 'music_abc123_0.mp3'
+    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1',
+                    str(src)], check=True, timeout=30)
+    client, headers = _client_with_session()
+    r = client.get('/api/music/export?filename=music_abc123_0.mp3&format=wav&name=bed', headers=headers)
+    assert r.status_code == 200 and r.data[:4] == b'RIFF'
+    assert 'bed.wav' in r.headers.get('Content-Disposition', '')
+    r.close()
+    assert sorted(os.listdir(str(upload_dir))) == ['music_abc123_0.mp3'], 'only the original is left'

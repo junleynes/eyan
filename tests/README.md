@@ -25,6 +25,17 @@ expensive to catch by hand:
   `users_db` fixture in `conftest.py`), not mocks, since this logic
   actually depends on the database round-trip.
 
+- `test_shorts_core.py` — the Vertical Shorts decisions with no services
+  and no ffmpeg: story/vision reply parsing, fitting a moment to the length
+  limits (a too-long one loses its opening, never its ending), in/out
+  placement that never lands inside speech, scoring, de-duplication,
+  shot-by-shot reframing, and captions.
+- `test_shorts.py` — the Vertical Shorts tab end to end against real
+  PySceneDetect/OpenCV/ffmpeg on generated video, with only Ollama and
+  faster-whisper stood in for. Decodes the rendered shorts to check that
+  each shot's crop switches on exactly the frame the picture does, that SD
+  sources are converted to BT.709, and that captions are burned in.
+
 Not covered yet: the full render pipeline (scene detection through ffmpeg
 assembly) isn't unit-testable as-is — it's one large function mixing I/O,
 subprocess calls, and business logic. Extracting the pure decision-making

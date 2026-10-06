@@ -17,6 +17,7 @@ from pipeline import (
     ALLOW_LOCAL_MEDIA_UPLOAD,
 )
 import pipeline
+import shorts           # noqa: F401 -- registers the Vertical Shorts tab's /api/shorts/* routes
 
 
 @app.route('/')
@@ -40,7 +41,8 @@ def index():
     perms = user_permissions(session.get('user_id'), session.get('role'))
     role = session.get('role')
     tab_order = [
-        ('p-dashboard', None), ('p-trailer', 'promo_generation'), ('p-music', 'music_generation'),
+        ('p-dashboard', None), ('p-trailer', 'promo_generation'), ('p-shorts', 'vertical_shorts'),
+        ('p-music', 'music_generation'),
         ('p-sfx', 'text_to_sfx'), ('p-fish', 'text_to_speech'),
         ('p-stt', 'speech_to_text'), ('p-vision', 'scene_detection'),
         ('p-chat', 'ai_chat'), ('p-tools', 'player'), ('p-docs', None),

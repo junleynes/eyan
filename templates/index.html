@@ -723,6 +723,32 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
 .asset-section.open .asset-section-chevron{transform:rotate(90deg)}
 .asset-section-body{display:none;padding:4px 14px 14px}
 .asset-section.open .asset-section-body{display:block}
+
+/* ---- Vertical Shorts ---- */
+.sh-row{display:flex;gap:18px;flex-wrap:wrap;align-items:flex-end}
+.sh-row>div{min-width:0}
+input.sh-num[type=number]{width:92px}
+.sh-bar{display:flex;gap:12px;flex-wrap:wrap;align-items:center;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--elevated);margin:12px 0}
+.sh-bar select{width:auto;max-width:100%;margin:0;padding:7px 30px 7px 10px;font-size:13px}
+.sh-cand{display:grid;grid-template-columns:200px minmax(0,1fr);gap:14px;padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--elevated);margin:10px 0;transition:opacity .15s}
+.sh-cand.off{opacity:.45}
+.sh-thumb{position:relative;border-radius:6px;overflow:hidden;background:#000;aspect-ratio:16/9;align-self:start}
+.sh-thumb img,.sh-poster img{width:100%;height:100%;object-fit:cover;display:block}
+.sh-play{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:40px;height:40px;border-radius:50%;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.5);color:#fff;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0 0 0 2px}
+.sh-play:hover{background:rgba(0,0,0,.75)}
+.sh-head{display:flex;gap:10px;align-items:center}
+.sh-head input[type=text]{margin:0;font-weight:600}
+.sh-head input[type=checkbox]{flex-shrink:0}
+.sh-times{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--ink-dim)}
+.sh-times input[type=text]{width:96px;margin:0;padding:6px 8px;font-family:'JetBrains Mono',monospace;font-size:12px}
+.sh-times input[type=text].bad{border-color:var(--tally)}
+.sh-note{font-size:12px;line-height:1.5;color:var(--ink-dim);margin-top:6px}
+.sh-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:14px;margin-top:12px}
+.sh-tile{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--panel)}
+.sh-poster{position:relative;aspect-ratio:9/16;background:#000}
+.sh-tile-body{padding:8px 10px;font-size:12px;line-height:1.45}
+.sh-warn{font-size:12px;line-height:1.5;padding:8px 10px;border-radius:6px;border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);color:var(--amber);margin:8px 0}
+@media (max-width:640px){.sh-cand{grid-template-columns:1fr}}
 /* ---- Output peak/channel meter (Generate Promo Plug result) ---- */
 .tr-video-row{display:flex;gap:10px;align-items:stretch}
 .peak-meter{
@@ -851,6 +877,9 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
     {% if current_role == 'admin' or 'promo_generation' in current_permissions %}
     <div class="tab{{ ' active' if default_tab == 'p-trailer' else '' }}" onclick="switchTab('p-trailer',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9.5v5l4.5-2.5L10 9.5z"/></svg></span><span class=tab-text>Episodic Plug</span></div>
     {% endif %}
+    {% if current_role == 'admin' or 'vertical_shorts' in current_permissions %}
+    <div class="tab{{ ' active' if default_tab == 'p-shorts' else '' }}" onclick="switchTab('p-shorts',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="6.5" y="3" width="11" height="18" rx="2"/><path d="M10.5 9.5v5l4-2.5-4-2.5z"/></svg></span><span class=tab-text>Vertical Shorts</span></div>
+    {% endif %}
     {% if current_role == 'admin' or 'music_generation' in current_permissions %}
     <div class="tab{{ ' active' if default_tab == 'p-music' else '' }}" onclick="switchTab('p-music',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l11-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg></span><span class=tab-text>Music Generation</span></div>
     {% endif %}
@@ -899,7 +928,7 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
 </nav>
 <div class="container">
 
-<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadNetworkFolders==='function'&&!networkFoldersLoaded){loadNetworkFolders()}if(id==='p-config'&&typeof loadNetworkDestinations==='function'&&!networkDestinationsLoaded){loadNetworkDestinations()}if(id==='p-config'&&typeof loadProductionTab==='function'&&!productionTabLoaded){loadProductionTab()}if(id==='p-config'&&typeof loadTwofaStatus==='function'&&!twofaLoaded){loadTwofaStatus()}if(id==='p-config'&&typeof loadUsersTab==='function'&&!usersTabLoaded){loadUsersTab()}if(id==='p-config'&&typeof loadAuditLog==='function'&&!auditLogLoaded){loadAuditLog()}if(id==='p-music'&&typeof loadAceStepModels==='function'){loadAceStepModels()}if(id==='p-music'&&typeof loadAceStepLoras==='function'){loadAceStepLoras()}if(id==='p-music'&&typeof loadLoraDatasets==='function'){loadLoraDatasets()}if(id==='p-jobs'&&typeof loadAdminJobs==='function'){loadAdminJobs()}if(id==='p-dashboard'&&typeof loadDashboard==='function'){loadDashboard()}try{localStorage.setItem('prism_last_tab',id)}catch(e){}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active');try{var panel=btn.closest('.panel');if(panel)localStorage.setItem('prism_subtab_'+panel.id,id)}catch(e){}}
+<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadNetworkFolders==='function'&&!networkFoldersLoaded){loadNetworkFolders()}if(id==='p-config'&&typeof loadNetworkDestinations==='function'&&!networkDestinationsLoaded){loadNetworkDestinations()}if(id==='p-config'&&typeof loadProductionTab==='function'&&!productionTabLoaded){loadProductionTab()}if(id==='p-config'&&typeof loadTwofaStatus==='function'&&!twofaLoaded){loadTwofaStatus()}if(id==='p-config'&&typeof loadUsersTab==='function'&&!usersTabLoaded){loadUsersTab()}if(id==='p-config'&&typeof loadAuditLog==='function'&&!auditLogLoaded){loadAuditLog()}if(id==='p-music'&&typeof loadAceStepModels==='function'){loadAceStepModels()}if(id==='p-music'&&typeof loadAceStepLoras==='function'){loadAceStepLoras()}if(id==='p-music'&&typeof loadLoraDatasets==='function'){loadLoraDatasets()}if(id==='p-shorts'&&typeof shortsOnTabOpen==='function'){shortsOnTabOpen()}if(id==='p-jobs'&&typeof loadAdminJobs==='function'){loadAdminJobs()}if(id==='p-dashboard'&&typeof loadDashboard==='function'){loadDashboard()}try{localStorage.setItem('prism_last_tab',id)}catch(e){}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active');try{var panel=btn.closest('.panel');if(panel)localStorage.setItem('prism_subtab_'+panel.id,id)}catch(e){}}
 document.addEventListener('DOMContentLoaded',function(){
   // Restore the tab (and, within it, the sub-tab) the user was last on,
   // since switchTab()/switchSubTab() only toggle CSS classes client-side
@@ -6890,6 +6919,664 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 })   // end DOMContentLoaded
 </script>
 
+<!-- Vertical Shorts -->
+<div id="p-shorts" class="panel{{ ' active' if default_tab == 'p-shorts' else '' }}">
+<h2>Vertical Shorts</h2>
+<div class="sub-tabs">
+  <div class="sub-tab active" onclick="switchSubTab('p-shorts-create',this)" role="button" tabindex="0">Create</div>
+  <div class="sub-tab" onclick="switchSubTab('p-shorts-saved',this);shortsLoadSaved()" role="button" tabindex="0">Saved shorts</div>
+</div>
+
+<div id="p-shorts-create" class="sub-panel active">
+<p style="font-size:12px;opacity:.75;margin-top:-6px">Cuts a long-form programme into stand-alone 9:16 shorts. Step one finds the moments: the AI Vision model rates how dramatic the picture looks, the dialogue is transcribed, and a story model reads it to propose stretches that make sense on their own &mdash; a setup, a turn, a payoff &mdash; not just the loudest peaks. Nothing is rendered until you have reviewed them.</p>
+
+<label>Long-form video (HIRES):</label>
+<div class="browse-row">
+  {% if allow_local_upload %}<input type=file id=sh-file name=shorts_file accept="video/*" data-net-field="shorts_file" style="max-width:320px">{% endif %}
+  <button type=button class="browse-btn" onclick="openNetworkBrowser('shorts_file','hires','Video (HIRES)')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
+</div>
+<input type=hidden id=shorts_file_network name=shorts_file_network value="">
+<span class="net-file-chip" id=shorts_file_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('shorts_file')">&#10005;</span></span>
+
+<div class="sh-row">
+  <div>
+    <label>Length of each short (seconds):</label>
+    <div style="display:flex;gap:8px;align-items:center">
+      <input type=number id=sh-min class=sh-num value=30 min=5 max=240 step=5>
+      <span style="font-size:12px;opacity:.7">to</span>
+      <input type=number id=sh-max class=sh-num value=90 min=10 max=300 step=5>
+    </div>
+  </div>
+  <div>
+    <label>Moments to find:</label>
+    <select id=sh-count style="width:110px">
+      <option value=5>Up to 5</option><option value=8 selected>Up to 8</option>
+      <option value=12>Up to 12</option><option value=20>Up to 20</option>
+    </select>
+  </div>
+</div>
+
+<label>What should these shorts feature? (optional)</label>
+<input type=text id=sh-focus class=input-box maxlength=300 placeholder="e.g. the confrontation between the sisters, anything about the missing will">
+<p class="sh-note" style="margin-top:6px">Steers which moments are preferred. Leave empty to let the story model pick the strongest ones.</p>
+
+<details style="margin-top:10px">
+  <summary style="cursor:pointer;font-size:12px;opacity:.75">Advanced</summary>
+  <div class="sh-row" style="margin-top:4px">
+    <div>
+      <label>AI Vision model:</label>
+      <select id=sh-vision-model style="width:240px" title="Defaults to the model set under Config &gt; Production"><option value="">Loading&hellip;</option></select>
+    </div>
+    <div>
+      <label>Story model:</label>
+      <select id=sh-story-model style="width:240px"><option value="">Same as the vision model</option></select>
+    </div>
+    <div>
+      <label>Frames to rate:</label>
+      <input type=number id=sh-frames class=sh-num value=90 min=10 max=300 step=10>
+    </div>
+  </div>
+  <p class="sh-note">One model for both jobs keeps a single model on the GPU. Pick a separate story model only if you have a stronger text model pulled and the memory for both. Frames to rate is the number of vision calls for the whole video, however long it is &mdash; more is slower, not always better.</p>
+  <p class="sh-note" id=sh-capability></p>
+</details>
+
+<div style="margin-top:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+  <button class=btn type=button id=sh-analyze-btn onclick="shortsAnalyze()">Find moments</button>
+  <button class=btn type=button id=sh-cancel-btn style="display:none;color:var(--tally);border-color:var(--tally)" onclick="shortsCancel()">Cancel</button>
+</div>
+
+<div id=sh-progress class=no-data style="display:none;text-align:left;padding:20px 24px">
+  <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;color:var(--ink)">
+    <span id=sh-progress-step>Working&hellip;</span>
+    <span><span id=sh-progress-elapsed style="opacity:.6;margin-right:8px"></span><span id=sh-progress-pct>0%</span></span>
+  </div>
+  <div style="background:var(--panel-2,#1f232b);border-radius:6px;overflow:hidden;height:10px">
+    <div id=sh-progress-bar style="background:var(--accent,#4f8cff);height:100%;width:0%;transition:width .3s ease"></div>
+  </div>
+  <div id=sh-stage-list style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px"></div>
+</div>
+
+<div id=sh-review style="display:none;margin-top:18px">
+  <div id=sh-review-status style="font-size:12px;opacity:.8"></div>
+  <div id=sh-review-warnings></div>
+  <div class="sh-bar">
+    <span style="display:inline-flex;gap:6px;align-items:center;font-size:12px">Reframe
+      <select id=sh-reframe title="How a 16:9 picture becomes 9:16, decided shot by shot">
+        <option value=auto selected>Auto &mdash; follow faces, keep wide two-shots whole</option>
+        <option value=crop>Always crop &mdash; fill the screen</option>
+        <option value=fit>Fit &mdash; whole frame, blurred background</option>
+      </select>
+    </span>
+    <label style="display:inline-flex;align-items:center;gap:6px;margin:0;cursor:pointer;text-transform:none;letter-spacing:0;font-size:12px;font-family:inherit;color:var(--ink)">
+      <input type=checkbox id=sh-captions checked> Burn in captions
+    </label>
+    <span style="display:inline-flex;gap:6px;align-items:center;font-size:12px">Size
+      <select id=sh-caption-size><option value=s>Small</option><option value=m selected>Medium</option><option value=l>Large</option></select>
+    </span>
+    <span style="flex:1"></span>
+    <button type=button class="btn-sm" onclick="shortsSelectAll(true)">Select all</button>
+    <button type=button class="btn-sm" onclick="shortsSelectAll(false)">None</button>
+    <button type=button class=btn id=sh-render-btn onclick="shortsRenderSelected()">Render selected</button>
+  </div>
+  <div id=sh-cands></div>
+  <div class="sh-bar" style="background:transparent">
+    <span style="font-size:12px;opacity:.8">Add your own moment:</span>
+    <span class="sh-times" style="margin:0">
+      In <input type=text id=sh-add-in placeholder="12:31.0"> Out <input type=text id=sh-add-out placeholder="13:20.0">
+    </span>
+    <input type=text id=sh-add-title placeholder="Title" maxlength=80 style="width:220px;margin:0;padding:6px 8px;font-size:13px">
+    <button type=button class="btn-sm" onclick="shortsAddCustom()">Add</button>
+    <span id=sh-add-note style="font-size:12px;color:var(--amber)"></span>
+  </div>
+</div>
+
+<div id=sh-results style="display:none;margin-top:18px"></div>
+<div id=sh-prompt class=no-data style="margin-top:14px">Pick a full episode and choose <b>Find moments</b>. Analysing a 45-minute episode takes several minutes: cut detection and transcription each read the whole file.</div>
+</div>
+
+<div id="p-shorts-saved" class="sub-panel">
+<p style="font-size:12px;opacity:.75;margin-top:-6px">Every rendered batch is kept here until you delete it{% if current_role == 'admin' %} (as an admin you see everyone's){% endif %}.</p>
+<div id=sh-saved></div>
+</div>
+</div>
+
+<script>
+// ---- Vertical Shorts ----
+// One object for the tab's state, rather than a dozen loose globals: the
+// analysis the candidates came from, the candidates as the editor has
+// changed them (kept or dropped, re-timed, retitled, added by hand), and the
+// job currently being polled so Cancel knows what to cancel.
+var SH = {analysis: null, cands: [], jobId: null, options: null, destinations: null, busy: false}
+
+function shFmt(t){
+  t = Math.max(0, Number(t) || 0)
+  var h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t - h * 3600 - m * 60
+  var ss = (s < 10 ? '0' : '') + s.toFixed(1)
+  return h ? h + ':' + (m < 10 ? '0' : '') + m + ':' + ss : m + ':' + ss
+}
+// Accepts what an editor would type: 754.2, 12:34.5 or 1:02:03.
+function shParse(str){
+  str = String(str == null ? '' : str).trim()
+  if(!str) return null
+  var parts = str.split(':'), total = 0
+  if(parts.length > 3) return null
+  for(var i = 0; i < parts.length; i++){
+    if(!/^\d+(\.\d+)?$/.test(parts[i].trim())) return null
+    total = total * 60 + parseFloat(parts[i])
+  }
+  return total
+}
+function shBytes(b){
+  if(b >= 1024 * 1024 * 1024) return (b / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
+  if(b >= 1024 * 1024) return (b / (1024 * 1024)).toFixed(1) + ' MB'
+  return Math.max(1, Math.round(b / 1024)) + ' KB'
+}
+function shEl(id){ return document.getElementById(id) }
+function shNote(html, isError){
+  var el = shEl('sh-prompt')
+  el.style.display = 'block'
+  el.innerHTML = isError ? '<span style="color:var(--amber)">' + html + '</span>' : html
+}
+
+function shortsOnTabOpen(){
+  if(!SH.options) shortsLoadOptions()
+  // After the current call stack, so this also sees a sub-tab that the
+  // page's own restore-last-view code is about to re-select.
+  setTimeout(function(){
+    var saved = shEl('p-shorts-saved')
+    if(saved && saved.classList.contains('active')) shortsLoadSaved()
+  }, 0)
+}
+
+async function shortsLoadOptions(){
+  var vis = shEl('sh-vision-model'), story = shEl('sh-story-model'), cap = shEl('sh-capability')
+  if(!vis) return
+  try{
+    var d = await (await fetch('/api/shorts/options')).json()
+    if(!d.ok) throw new Error(d.error || 'unavailable')
+    SH.options = d
+    var models = d.vision_models || []
+    var dflt = d.default_vision_model || ''
+    vis.innerHTML = ''
+    if(dflt && models.indexOf(dflt) < 0) models = [dflt].concat(models)
+    models.forEach(function(m){
+      var o = document.createElement('option')
+      o.value = m; o.textContent = m + (m === dflt ? ' (default)' : '')
+      vis.appendChild(o)
+    })
+    if(dflt) vis.value = dflt
+    ;(d.text_models || []).forEach(function(m){
+      var o = document.createElement('option')
+      o.value = m; o.textContent = m
+      story.appendChild(o)
+    })
+    shEl('sh-frames').value = d.vision_frames || 90
+    var bits = []
+    if(d.error) bits.push('<span style="color:var(--amber)">' + escapeHtmlLite(d.error) + '</span>')
+    bits.push(d.face_detector === 'yunet' ? 'Face tracking: YuNet.'
+      : d.face_detector === 'haar' ? 'Face tracking: built-in Haar cascades (set SHORTS_FACE_MODEL to a YuNet model file for better tracking of profiles and small faces).'
+      : 'No face detector available: shots will be centre-cropped.')
+    if(!d.captions_available){
+      bits.push('<span style="color:var(--amber)">This server\'s ffmpeg has no libass, so captions cannot be burned in (.srt files are still written).</span>')
+      shEl('sh-captions').checked = false
+      shEl('sh-captions').disabled = true
+    }
+    cap.innerHTML = bits.join(' ')
+  }catch(e){
+    vis.innerHTML = '<option value="">Config &gt; Production default</option>'
+    if(cap) cap.innerHTML = '<span style="color:var(--amber)">Could not load options: ' + escapeHtmlLite(String(e)) + '</span>'
+  }
+}
+
+function shProgress(j){
+  var pct = j.percent || 0
+  shEl('sh-progress-bar').style.width = pct + '%'
+  shEl('sh-progress-pct').textContent = pct + '%'
+  shEl('sh-progress-step').textContent = j.step || 'Working...'
+  shEl('sh-progress-elapsed').textContent = (typeof fmtElapsed === 'function') ? fmtElapsed(j.elapsed) : ''
+  var host = shEl('sh-stage-list'), stages = j.stages || []
+  host.innerHTML = ''
+  var activeIdx = 0
+  stages.forEach(function(s, i){ if(pct >= s.percent) activeIdx = i })
+  stages.forEach(function(s, i){
+    var done = i < activeIdx || pct >= 100, cur = i === activeIdx && pct < 100
+    var el = document.createElement('span')
+    el.style.cssText = 'font-size:11px;padding:3px 9px;border-radius:11px;border:1px solid ' +
+      (cur ? 'var(--accent,#4f8cff)' : 'var(--line)') + ';' +
+      (cur ? 'color:var(--accent,#4f8cff);font-weight:600' : (done ? 'opacity:.55' : 'opacity:.32'))
+    el.textContent = (done ? '✓ ' : '') + s.label
+    host.appendChild(el)
+  })
+}
+
+function shPoll(jobId){
+  return new Promise(function(resolve){
+    var misses = 0
+    var tick = async function(){
+      var j
+      try{ j = await (await fetch('/api/shorts/progress/' + jobId)).json() }
+      catch(err){
+        // A dropped connection or a non-JSON answer (a proxy error page, a
+        // server restart) is retried for about a minute, then reported --
+        // never left as a promise that can't settle, which would keep both
+        // buttons disabled until the page was reloaded.
+        if(++misses > 40){ resolve({error: 'Lost contact with the server while waiting for this job. It may still be running: check the Jobs tab, then try again.'}); return }
+        setTimeout(tick, 1500); return
+      }
+      misses = 0
+      if(j.error){ resolve({error: j.error}); return }
+      shProgress(j)
+      if(j.done){ resolve(j.result || {error: 'Job finished with no result.'}); return }
+      setTimeout(tick, 900)
+    }
+    tick()
+  })
+}
+
+function shBusy(on, label){
+  SH.busy = on
+  shEl('sh-analyze-btn').disabled = on
+  shEl('sh-render-btn').disabled = on
+  shEl('sh-cancel-btn').style.display = on ? 'inline-block' : 'none'
+  shEl('sh-cancel-btn').disabled = false
+  shEl('sh-progress').style.display = on ? 'block' : 'none'
+  if(on){
+    shProgress({percent: 0, step: label || 'Starting...', stages: []})
+    shEl('sh-prompt').style.display = 'none'
+  }
+}
+
+async function shortsCancel(){
+  if(!SH.jobId) return
+  shEl('sh-cancel-btn').disabled = true
+  try{ await fetch('/api/shorts/cancel/' + SH.jobId, {method: 'POST'}) }catch(e){}
+}
+
+// XMLHttpRequest rather than fetch for this one request: a local upload can
+// be gigabytes, and fetch has no upload-progress event. The CSRF header is
+// set by hand because the page-wide fetch wrapper never sees an XHR.
+function shStart(fd){
+  return new Promise(function(resolve, reject){
+    var xhr = new XMLHttpRequest()
+    xhr.open('POST', '/api/shorts/analyze')
+    var meta = document.querySelector('meta[name="csrf-token"]')
+    if(meta) xhr.setRequestHeader('X-CSRF-Token', meta.getAttribute('content'))
+    xhr.upload.onprogress = function(ev){
+      if(!ev.lengthComputable || ev.total < 5 * 1024 * 1024) return
+      var pct = Math.round(ev.loaded / ev.total * 100)
+      shProgress({percent: pct, stages: [], step: pct < 100
+        ? 'Uploading video… (' + shBytes(ev.loaded) + ' / ' + shBytes(ev.total) + ')'
+        : 'Upload complete — starting…'})
+    }
+    xhr.onload = function(){
+      try{ resolve(JSON.parse(xhr.responseText)) }catch(e){ reject(new Error('Bad response from server')) }
+    }
+    xhr.onerror = function(){ reject(new Error('Network error')) }
+    xhr.send(fd)
+  })
+}
+
+async function shortsAnalyze(){
+  if(SH.busy) return
+  var f = shEl('sh-file'), net = shEl('shorts_file_network').value
+  var hasLocal = f && f.files && f.files[0]
+  if(!hasLocal && !net){ shNote('Pick a video first, using Browse library.', true); return }
+  var minD = parseFloat(shEl('sh-min').value), maxD = parseFloat(shEl('sh-max').value)
+  if(!(minD >= 5) || !(maxD >= minD + 5)){
+    shNote('The maximum length must be at least 5 seconds more than the minimum.', true); return
+  }
+  var fd = new FormData()
+  if(hasLocal) fd.append('shorts_file', f.files[0]); else fd.append('shorts_file_network', net)
+  fd.append('min_dur', minD); fd.append('max_dur', maxD)
+  fd.append('count', shEl('sh-count').value)
+  fd.append('focus', shEl('sh-focus').value)
+  fd.append('vision_model', shEl('sh-vision-model').value)
+  fd.append('story_model', shEl('sh-story-model').value)
+  fd.append('vision_frames', shEl('sh-frames').value)
+
+  shEl('sh-review').style.display = 'none'
+  shEl('sh-results').style.display = 'none'
+  shBusy(true, 'Starting...')
+  var start
+  try{ start = await shStart(fd) }
+  catch(err){ shBusy(false); shNote('Could not start: ' + escapeHtmlLite(String(err)), true); return }
+  if(start.error){ shBusy(false); shNote(escapeHtmlLite(start.error), true); return }
+  SH.jobId = start.job_id
+  if(window.refreshMonitor) refreshMonitor()
+  var res = await shPoll(start.job_id)
+  SH.jobId = null
+  shBusy(false)
+  if(res.error){ shNote(escapeHtmlLite(res.error), true); return }
+  try{
+    var a = await (await fetch('/api/shorts/analysis/' + res.analysis_id)).json()
+    if(!a.ok){ shNote(escapeHtmlLite(a.error || 'Could not load the analysis.'), true); return }
+    SH.analysis = a
+    SH.cands = a.candidates.map(function(c){ return Object.assign({}, c, {keep: true}) })
+    shRenderReview()
+  }catch(e){ shNote('Could not load the analysis: ' + escapeHtmlLite(String(e)), true) }
+}
+
+function shRenderReview(){
+  var a = SH.analysis
+  if(!a) return
+  var st = a.stats || {}
+  shEl('sh-review-status').innerHTML = '<b>' + escapeHtmlLite(a.orig_name || '') + '</b> &middot; ' + shFmt(a.duration) +
+    ' &middot; ' + (st.shots || 0) + ' shots &middot; ' + (st.frames_rated || 0) + ' frames rated &middot; ' +
+    (st.transcript_lines || 0) + ' lines of dialogue. Preview each moment, adjust its in and out, untick what you do not want, then render.'
+  shEl('sh-review-warnings').innerHTML = (a.warnings || []).map(function(w){
+    return '<div class="sh-warn">' + escapeHtmlLite(w) + '</div>'
+  }).join('')
+  shRenderCands()
+  shEl('sh-review').style.display = 'block'
+  shEl('sh-prompt').style.display = 'none'
+}
+
+function shCandMeta(c){
+  var chips = []
+  if(typeof c.score === 'number') chips.push('<span class="score-chip total" title="Overall: story, visual drama and pace combined (0-100)">' + c.score + '</span>')
+  if(c.story_score != null) chips.push('<span class="score-chip" title="Story model: how well it stands alone as a dramatic short">Story ' + c.story_score + '/10</span>')
+  if(c.visual_score != null) chips.push('<span class="score-chip" title="AI Vision: how dramatic the frames inside it look">Visual ' + c.visual_score + '/5</span>')
+  if(c.pace != null) chips.push('<span class="score-chip" title="Words per second">' + c.pace + ' w/s</span>')
+  if(c.source === 'heuristic') chips.push('<span class="score-chip speech" title="Picked without story analysis">No story check</span>')
+  if(c.source === 'visual') chips.push('<span class="score-chip speech" title="Picked on visual intensity alone">Visual only</span>')
+  if(c.source === 'manual') chips.push('<span class="score-chip face" title="Added by hand">Yours</span>')
+  ;(c.flags || []).forEach(function(f){
+    if(f === 'trimmed') chips.push('<span class="score-chip" title="Longer than the maximum, so its opening lines were dropped">Trimmed</span>')
+    if(f === 'extended') chips.push('<span class="score-chip" title="Shorter than the minimum, so neighbouring lines were added">Extended</span>')
+    if(f === 'short') chips.push('<span class="score-chip speech" title="Shorter than the minimum; nothing nearby to extend into">Short</span>')
+  })
+  return chips.join('')
+}
+
+function shRenderCands(){
+  var host = shEl('sh-cands')
+  host.innerHTML = ''
+  SH.cands.forEach(function(c, i){
+    var row = document.createElement('div')
+    row.className = 'sh-cand' + (c.keep ? '' : ' off')
+    var thumb = c.thumb
+      ? '<img src="' + c.thumb + '" alt="" loading="lazy" decoding="async">'
+      : ''
+    row.innerHTML =
+      '<div class="sh-thumb">' + thumb +
+        '<button type=button class="sh-play" aria-label="Preview this moment" data-act="preview" data-i="' + i + '">&#9654;</button></div>' +
+      '<div style="min-width:0">' +
+        '<div class="sh-head">' +
+          '<input type=checkbox data-act="keep" data-i="' + i + '"' + (c.keep ? ' checked' : '') + ' aria-label="Render this moment">' +
+          '<input type=text data-act="title" data-i="' + i + '" maxlength=80 value="' + escapeHtmlLite(c.title || '') + '" aria-label="Title">' +
+        '</div>' +
+        '<div class="sh-times">In <input type=text data-act="start" data-i="' + i + '" value="' + shFmt(c.start) + '" aria-label="In point">' +
+          ' Out <input type=text data-act="end" data-i="' + i + '" value="' + shFmt(c.end) + '" aria-label="Out point">' +
+          ' <span data-dur="' + i + '">' + (c.end - c.start).toFixed(1) + ' s</span>' +
+          ' <button type=button class="btn-sm" data-act="preview" data-i="' + i + '">Preview</button></div>' +
+        '<div class="score-chips">' + shCandMeta(c) + '</div>' +
+        (c.hook ? '<div class="sh-note"><b>Hook:</b> ' + escapeHtmlLite(c.hook) + '</div>' : '') +
+        (c.why ? '<div class="sh-note"><b>Why:</b> ' + escapeHtmlLite(c.why) + '</div>' : '') +
+        (c.text ? '<details class="sh-note"><summary style="cursor:pointer">Dialogue</summary>' +
+                  '<div style="margin-top:4px;color:var(--ink)">' + escapeHtmlLite(c.text) + '</div></details>' : '') +
+      '</div>'
+    host.appendChild(row)
+  })
+  shUpdateRenderBtn()
+}
+
+function shUpdateRenderBtn(){
+  var n = SH.cands.filter(function(c){ return c.keep }).length
+  var b = shEl('sh-render-btn')
+  b.textContent = n ? 'Render ' + n + ' short' + (n === 1 ? '' : 's') : 'Render selected'
+  b.disabled = SH.busy || !n
+}
+
+function shortsSelectAll(on){
+  SH.cands.forEach(function(c){ c.keep = on })
+  shRenderCands()
+}
+
+// One listener on the list rather than one per input: the list is rebuilt
+// whenever a moment is added or selection changes, and delegated handlers
+// survive that without re-binding.
+(function(){
+  var host = shEl('sh-cands')
+  if(!host) return
+  host.addEventListener('click', function(e){
+    var t = e.target.closest('[data-act=preview]')
+    if(t) shortsPreview(parseInt(t.getAttribute('data-i'), 10))
+  })
+  host.addEventListener('change', function(e){
+    var t = e.target, act = t.getAttribute && t.getAttribute('data-act')
+    if(!act) return
+    var c = SH.cands[parseInt(t.getAttribute('data-i'), 10)]
+    if(!c) return
+    if(act === 'keep'){
+      c.keep = t.checked
+      t.closest('.sh-cand').classList.toggle('off', !c.keep)
+      shUpdateRenderBtn()
+    }else if(act === 'title'){
+      c.title = t.value.trim()
+    }else if(act === 'start' || act === 'end'){
+      var v = shParse(t.value)
+      var dur = SH.analysis ? SH.analysis.duration : 0
+      var other = act === 'start' ? c.end : c.start
+      var ok = v != null && v >= 0 && v <= dur + 0.05 && (act === 'start' ? v < other : v > other)
+      t.classList.toggle('bad', !ok)
+      if(!ok) return
+      c[act] = Math.min(v, dur)
+      t.value = shFmt(c[act])
+      var d = host.querySelector('[data-dur="' + t.getAttribute('data-i') + '"]')
+      if(d) d.textContent = (c.end - c.start).toFixed(1) + ' s'
+    }
+  })
+})()
+
+function shortsAddCustom(){
+  var note = shEl('sh-add-note'), a = SH.analysis
+  note.textContent = ''
+  if(!a) return
+  var s = shParse(shEl('sh-add-in').value), e = shParse(shEl('sh-add-out').value)
+  var lim = SH.options || {min_clip: 3, max_clip: 300}
+  if(s == null || e == null){ note.textContent = 'Enter in and out as m:ss (e.g. 12:31.0).'; return }
+  if(e > a.duration) e = a.duration
+  if(e - s < lim.min_clip){ note.textContent = 'Out must be at least ' + lim.min_clip + ' s after in, inside the video (' + shFmt(a.duration) + ').'; return }
+  if(e - s > lim.max_clip){ note.textContent = 'At most ' + lim.max_clip + ' s per short.'; return }
+  SH.cands.unshift({id: 'm' + Date.now(), start: s, end: e, duration: e - s, keep: true, source: 'manual',
+                    title: shEl('sh-add-title').value.trim() || 'My moment', score: null, flags: []})
+  shEl('sh-add-in').value = ''; shEl('sh-add-out').value = ''; shEl('sh-add-title').value = ''
+  shRenderCands()
+}
+
+function shOpenPlayer(title, statusText){
+  var overlay = shEl('clip-modal-overlay'), v = shEl('clip-modal-video'), status = shEl('clip-modal-status')
+  shEl('clip-modal-title').textContent = title
+  status.textContent = statusText || ''
+  status.style.color = ''
+  overlay.classList.add('open')
+  document.addEventListener('keydown', _clipEscHandler)
+  v.removeAttribute('src')
+  v.onloadedmetadata = null; v.ontimeupdate = null
+  v.onerror = function(){ status.style.color = 'var(--amber)'; status.textContent = "This couldn't be played back." }
+  return {video: v, status: status}
+}
+
+// Plays a source-framed proxy of the range as it is typed in right now, so
+// an in/out edit can be checked before spending a render on it.
+function shortsPreview(i){
+  var c = SH.cands[i]
+  if(!c || !SH.analysis) return
+  var p = shOpenPlayer(c.title || 'Moment', 'Preparing preview…')
+  fetch('/api/shorts/clip', {method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({analysis_id: SH.analysis.analysis_id, start: c.start, end: c.end})})
+    .then(function(r){ return r.json() })
+    .then(function(d){
+      if(!d.ok){ p.status.style.color = 'var(--amber)'; p.status.textContent = d.error || 'Could not prepare the preview.'; return }
+      p.status.textContent = shFmt(c.start) + ' → ' + shFmt(c.end) + ' (source framing)'
+      p.video.src = d.url; p.video.load(); p.video.play().catch(function(){})
+    })
+    .catch(function(e){ p.status.style.color = 'var(--amber)'; p.status.textContent = 'Request failed: ' + e })
+}
+
+function shortsPlay(url, title){
+  var p = shOpenPlayer(title || 'Short', '')
+  p.video.src = url; p.video.load(); p.video.play().catch(function(){})
+}
+
+async function shortsRenderSelected(){
+  if(SH.busy || !SH.analysis) return
+  if(document.querySelector('#sh-cands input.bad')){
+    alert('Fix the in/out points marked in red first.'); return
+  }
+  var items = SH.cands.filter(function(c){ return c.keep }).map(function(c){
+    return {start: c.start, end: c.end, title: c.title}
+  })
+  if(!items.length) return
+  shBusy(true, 'Starting render...')
+  shEl('sh-progress').scrollIntoView({behavior: 'smooth', block: 'nearest'})
+  var start
+  try{
+    start = await (await fetch('/api/shorts/render', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({analysis_id: SH.analysis.analysis_id, items: items,
+                            reframe: shEl('sh-reframe').value, subtitles: shEl('sh-captions').checked,
+                            subtitle_size: shEl('sh-caption-size').value})})).json()
+  }catch(err){ shBusy(false); shUpdateRenderBtn(); alert('Could not start the render: ' + err); return }
+  if(start.error){ shBusy(false); shUpdateRenderBtn(); shShowResultError(start.error); return }
+  SH.jobId = start.job_id
+  if(window.refreshMonitor) refreshMonitor()
+  var res = await shPoll(start.job_id)
+  SH.jobId = null
+  shBusy(false); shUpdateRenderBtn()
+  if(res.error){ shShowResultError(res.error); return }
+  var host = shEl('sh-results')
+  host.innerHTML = ''
+  host.appendChild(shBatchCard(res.batch, true))
+  host.style.display = 'block'
+  host.scrollIntoView({behavior: 'smooth', block: 'start'})
+}
+
+function shShowResultError(msg){
+  var host = shEl('sh-results')
+  host.innerHTML = '<div class="sh-warn" style="color:var(--tally);border-color:var(--tally)">' + escapeHtmlLite(msg) + '</div>'
+  host.style.display = 'block'
+}
+
+function shLayoutNote(l){
+  if(!l) return ''
+  var bits = []
+  if(l.crop) bits.push(l.crop + ' cropped' + (l.tracked ? ' (' + l.tracked + ' following movement)' : ''))
+  if(l.fit) bits.push(l.fit + ' shown whole')
+  return bits.length ? 'Shots: ' + bits.join(', ') : ''
+}
+
+function shBatchCard(b, fresh){
+  var card = document.createElement('div')
+  card.className = 'card'
+  card.setAttribute('data-batch', b.batch_id)
+  var when = b.created ? new Date(b.created * 1000).toLocaleString() : ''
+  var o = b.options || {}
+  var reframe = {auto: 'auto reframe', crop: 'always crop', fit: 'fit'}[o.reframe] || ''
+  var head = '<div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline">' +
+    '<div><b>' + escapeHtmlLite(b.orig_name || 'Untitled') + '</b> <span style="font-size:12px;opacity:.7">' +
+      b.shorts.length + ' short' + (b.shorts.length === 1 ? '' : 's') + (reframe ? ' &middot; ' + reframe : '') +
+      (o.subtitles ? ' &middot; captions' : '') + (when ? ' &middot; ' + when : '') +
+      (IS_ADMIN && b.username && b.username !== CURRENT_USERNAME ? ' &middot; by ' + escapeHtmlLite(b.username) : '') +
+      (b.status === 'partial' ? ' &middot; <span style="color:var(--amber)">incomplete</span>' : '') + '</span></div>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+      '<a class="btn-sm" href="/api/shorts/batches/' + b.batch_id + '/zip">Download all (.zip)</a>' +
+      '<span data-send></span>' +
+      '<button type=button class="btn-sm" style="color:var(--tally);border-color:var(--tally)" data-del>Delete</button>' +
+    '</div></div>'
+  var notes = (b.warnings || []).map(function(w){ return '<div class="sh-warn">' + escapeHtmlLite(w) + '</div>' }).join('') +
+    (b.errors || []).map(function(e){
+      return '<div class="sh-warn" style="color:var(--tally);border-color:var(--tally)"><b>' + escapeHtmlLite(e.title || ('Short ' + e.index)) +
+             '</b> could not be rendered: ' + escapeHtmlLite(e.error || 'unknown error') + '</div>'
+    }).join('')
+  var tiles = b.shorts.map(function(s, i){
+    return '<div class="sh-tile">' +
+      '<div class="sh-poster">' + (s.thumb_url ? '<img src="' + s.thumb_url + '" alt="" loading="lazy" decoding="async">' : '') +
+        '<button type=button class="sh-play" aria-label="Play" data-play="' + i + '">&#9654;</button></div>' +
+      '<div class="sh-tile-body"><div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' +
+          escapeHtmlLite(s.title || '') + '">' + escapeHtmlLite(s.title || ('Short ' + s.index)) + '</div>' +
+        '<div style="opacity:.7">' + (s.duration || 0).toFixed(1) + ' s &middot; ' + shBytes(s.size || 0) + '</div>' +
+        '<div style="opacity:.6;font-size:11px" title="Source range">' + shFmt(s.start) + ' → ' + shFmt(s.end) + '</div>' +
+        '<div style="opacity:.6;font-size:11px">' + shLayoutNote(s.layouts) + '</div>' +
+        '<div style="display:flex;gap:6px;margin-top:6px">' +
+          '<a class="btn-sm" href="' + s.url + '?download=1">MP4</a>' +
+          (s.srt_url ? '<a class="btn-sm" href="' + s.srt_url + '?download=1">SRT</a>' : '') +
+        '</div></div></div>'
+  }).join('')
+  card.innerHTML = head + notes + '<div class="sh-grid">' + tiles + '</div>' +
+    (fresh ? '<p class="sh-note">Saved under <b>Saved shorts</b>. Render again with a different reframe or other moments at any time while this analysis is open.</p>' : '')
+  card.addEventListener('click', function(e){
+    var p = e.target.closest('[data-play]')
+    if(p){ var s = b.shorts[parseInt(p.getAttribute('data-play'), 10)]; shortsPlay(s.url, s.title); return }
+    if(e.target.closest('[data-del]')) shortsDeleteBatch(b.batch_id, card)
+  })
+  shFillSend(card.querySelector('[data-send]'), b.batch_id)
+  return card
+}
+
+// The same destinations the promo generator sends to (Config > Network),
+// limited to the ones set up to receive finished video.
+async function shFillSend(host, bid){
+  if(!host) return
+  if(SH.destinations === null){
+    try{
+      var d = await (await fetch('/api/network/destinations')).json()
+      SH.destinations = (d.ok && d.items ? d.items : []).filter(function(x){ return x.delivery_kind === 'video' })
+    }catch(e){ SH.destinations = [] }
+  }
+  if(!SH.destinations.length) return
+  host.style.cssText = 'display:inline-flex;gap:6px;align-items:center'
+  host.innerHTML = '<select style="width:auto;margin:0;padding:4px 28px 4px 8px;font-size:12px">' +
+    SH.destinations.map(function(x){ return '<option value="' + x.id + '">' + escapeHtmlLite(x.name) + '</option>' }).join('') +
+    '</select><button type=button class="btn-sm">Send</button><span style="font-size:12px"></span>'
+  var sel = host.querySelector('select'), btn = host.querySelector('button'), out = host.querySelector('span')
+  btn.addEventListener('click', async function(e){
+    e.stopPropagation()
+    btn.disabled = true
+    out.style.color = ''; out.textContent = 'Sending…'
+    try{
+      var r = await (await fetch('/api/shorts/batches/' + bid + '/send', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({destination_id: parseInt(sel.value, 10), include_srt: true})})).json()
+      if(r.ok){ out.style.color = 'var(--phosphor)'; out.textContent = 'Sent ' + r.sent.length + ' file' + (r.sent.length === 1 ? '' : 's') + ' to ' + r.destination }
+      else{ out.style.color = 'var(--tally)'; out.textContent = r.error || 'Send failed' }
+    }catch(err){ out.style.color = 'var(--tally)'; out.textContent = 'Send failed: ' + err }
+    btn.disabled = false
+  })
+}
+
+async function shortsDeleteBatch(bid, card){
+  if(!confirm('Delete this batch and all of its rendered shorts? This cannot be undone.')) return
+  try{
+    var r = await (await fetch('/api/shorts/batches/' + bid, {method: 'DELETE'})).json()
+    if(!r.ok){ alert(r.error || 'Could not delete.'); return }
+    document.querySelectorAll('[data-batch="' + bid + '"]').forEach(function(el){ el.remove() })
+    if(shEl('sh-saved') && !shEl('sh-saved').children.length) shortsLoadSaved()
+  }catch(e){ alert('Could not delete: ' + e) }
+}
+
+async function shortsLoadSaved(){
+  var host = shEl('sh-saved')
+  if(!host) return
+  host.innerHTML = '<div class=no-data>Loading&hellip;</div>'
+  try{
+    var d = await (await fetch('/api/shorts/batches')).json()
+    host.innerHTML = ''
+    if(!d.ok || !d.items.length){
+      host.innerHTML = '<div class=no-data>No shorts rendered yet.</div>'
+      return
+    }
+    d.items.forEach(function(b){ host.appendChild(shBatchCard(b, false)) })
+  }catch(e){
+    host.innerHTML = '<div class=no-data><span style="color:var(--amber)">Could not load saved shorts: ' + escapeHtmlLite(String(e)) + '</span></div>'
+  }
+}
+
+document.addEventListener('DOMContentLoaded', function(){
+  var p = shEl('p-shorts')
+  if(p && p.classList.contains('active')) shortsOnTabOpen()
+})
+</script>
+
 <!-- API -->
 <div id="p-music" class="panel{{ ' active' if default_tab == 'p-music' else '' }}">
 <h2>Music Generation &mdash; ACE-Step</h2>
@@ -7381,6 +8068,7 @@ job. Configured via env vars:
 <div class="sub-tabs">
   <button type="button" class="docs-tab docs-nav-item active" data-docs="docs-overview" onclick="switchDocs(this)">Overview</button>
   <button type="button" class="docs-tab docs-nav-item" data-docs="docs-workflow" onclick="switchDocs(this)">Workflow</button>
+  <button type="button" class="docs-tab docs-nav-item" data-docs="docs-shorts" onclick="switchDocs(this)">Vertical Shorts</button>
   <button type="button" class="docs-tab docs-nav-item" data-docs="docs-media" onclick="switchDocs(this)">Media &amp; Library</button>
   <button type="button" class="docs-tab docs-nav-item" data-docs="docs-tools" onclick="switchDocs(this)">Tools</button>
   <button type="button" class="docs-tab docs-nav-item" data-docs="docs-templates" onclick="switchDocs(this)">Templates</button>
@@ -7395,6 +8083,10 @@ job. Configured via env vars:
         <button type="button" class="docs-card" onclick="switchDocs(document.querySelector('[data-docs=docs-workflow]'))">
           <strong>Workflow</strong>
           <span>From scene detection to export, step by step.</span>
+        </button>
+        <button type="button" class="docs-card" onclick="switchDocs(document.querySelector('[data-docs=docs-shorts]'))">
+          <strong>Vertical Shorts</strong>
+          <span>Stand-alone 9:16 shorts from a full episode.</span>
         </button>
         <button type="button" class="docs-card" onclick="switchDocs(document.querySelector('[data-docs=docs-media]'))">
           <strong>Media &amp; Library</strong>
@@ -7487,6 +8179,40 @@ job. Configured via env vars:
         <li><strong>Export</strong> — MP4, ProRes, or AVC-Intra-style packages.</li>
       </ol>
       <p>Jobs use a concurrency-limited queue (default 2) so local model servers are not overloaded. Position in queue is shown while waiting.</p>
+    </div>
+
+    <div class="docs-pane" id="docs-shorts">
+      <h3 style="margin-top:0">Vertical Shorts</h3>
+      <p>Cuts a long-form programme into stand-alone 9:16 shorts (1080&times;1920 H.264, AAC, &minus;14 LUFS). It is separate from the promo generator and does not change how a plug is built; it shares the same services, job queue and network folders.</p>
+      <h3>1. Find moments</h3>
+      <p>Pick a full episode and choose <strong>Find moments</strong>. Nothing is rendered in this step.</p>
+      <ul style="line-height:1.8;padding-left:20px">
+        <li><strong>How it looks.</strong> A bounded number of frames, spread across the whole video, are rated 1&ndash;5 by the AI Vision model for visible drama.</li>
+        <li><strong>What it means.</strong> The dialogue is transcribed, and a story model reads it in overlapping five-minute stretches &mdash; with those visual notes placed in line &mdash; and proposes moments that stand on their own: a setup, a turn, a payoff.</li>
+        <li><strong>Where it cuts.</strong> Each proposal is fitted to your length range (too long loses its opening lines, never its ending), then its in and out points are moved so they never fall inside a spoken word and land on a shot change when one is close.</li>
+      </ul>
+      <p>Each candidate's score (0&ndash;100) weighs story most, then visual drama, then dialogue pace. Both Ollama and faster-whisper must be reachable; the job refuses to start otherwise rather than choose on half the evidence. A warning above the list tells you when a fallback was used (no story found, or no dialogue at all).</p>
+      <h3>2. Review</h3>
+      <p>Play any candidate, edit its title and its in/out (type <code>m:ss.s</code> or seconds), untick the ones you do not want, or add a range of your own. The preview shows the source framing; reframing happens at render.</p>
+      <h3>3. Render</h3>
+      <ul style="line-height:1.8;padding-left:20px">
+        <li><strong>Auto</strong> reframes shot by shot: it crops to the face or faces, follows a subject that really moves, and for a shot where two similar-sized faces are too far apart to fit a vertical frame it shows the whole picture over a blurred copy of itself rather than cut someone out.</li>
+        <li><strong>Always crop</strong> fills the screen on every shot and commits to one side of a wide two-shot. <strong>Fit</strong> always shows the whole picture.</li>
+        <li><strong>Captions</strong> are burned in from the transcript a few words at a time, and an <code>.srt</code> is saved next to each MP4.</li>
+      </ul>
+      <p>Batches are kept under <strong>Saved shorts</strong> until deleted: play, download one or all (.zip), or send to a video network destination.</p>
+      <h3>Limits worth knowing</h3>
+      <ul style="line-height:1.8;padding-left:20px">
+        <li>Candidates are proposals. A local model can misjudge what stands alone &mdash; preview before rendering.</li>
+        <li>One continuous stretch per short; it does not assemble a short from separate scenes, and adds no music, titles or graphics.</li>
+        <li>No speaker detection: in a wide two-shot it cannot tell who is talking, which is why Auto shows the whole frame there.</li>
+        <li>Face tracking uses OpenCV's built-in Haar cascades unless a YuNet model file is supplied (<code>SHORTS_FACE_MODEL</code>). The cascades miss many profile and tilted faces; a shot with no detected face is centre-cropped.</li>
+      </ul>
+      <pre>POST /api/shorts/analyze  + shorts_file_network, min_dur, max_dur, count, focus?
+GET  /api/shorts/progress/&lt;job_id&gt;
+GET  /api/shorts/analysis/&lt;analysis_id&gt;
+POST /api/shorts/render   {analysis_id, items:[{start,end,title}], reframe, subtitles}
+GET  /api/shorts/batches</pre>
     </div>
 
     <div class="docs-pane" id="docs-media">

@@ -23,6 +23,26 @@ with mock.patch('requests.post'), mock.patch('requests.get'):
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _assume_ai_services_reachable(monkeypatch):
+    """_run_trailer_job now refuses to start a job at all when AI Vision
+    (Ollama) or faster-whisper is unreachable (see the module docstring
+    above for why this sandbox never has either actually running, and
+    test_service_preflight_check.py for the dedicated coverage of that
+    refusal itself). Every OTHER test that exercises generation end-to-end
+    predates that gate and depends on the *previous* behavior -- a request
+    to an unreachable service failing individually and the pipeline
+    degrading gracefully (a neutral AI score, no dialogue-aware cutting) --
+    to actually reach the scene-selection/rendering logic it's testing.
+    Autouse, so every test gets the preflight check itself stubbed out
+    (reporting every service 'up') without needing to remember to opt in
+    file by file; the *actual* per-call requests.post/get still go out
+    unmocked (or mocked per-test) exactly as before, so the graceful
+    degradation this suite already relies on is unaffected."""
+    monkeypatch.setattr(pipeline, '_check_service',
+                        lambda name, url, path='/', timeout=3: {'name': name, 'url': url, 'status': 'up'})
+
+
 @pytest.fixture
 def users_db(tmp_path, monkeypatch):
     """A throwaway users.db for one test, so account/TOTP/lockout tests can

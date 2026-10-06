@@ -9,6 +9,7 @@ Self-hosted toolkit for producing broadcast episodic promos end to end — from 
 ## Features
 
 - **Promo generator** — Drop in an episode (or pick one from a network SMB share). Scene cuts are detected (PySceneDetect Content or Adaptive), scored for quality and AI vision content, then assembled into a trailer at your target length with music, SFX, narration, and title/end cards mixed via ffmpeg. Preview the cut first, swap scenes, then render without re-running analysis.
+- **Vertical shorts** — Cut a full episode into stand-alone 9:16 shorts. A vision model rates how dramatic the picture looks, the dialogue is transcribed, and a story model proposes moments that make sense on their own; you review, re-time and pick, then each is reframed shot by shot (face-tracked crop, or the whole frame over a blurred background where two people won't fit) with burned-in captions. Batches are kept, downloadable, and can be sent to a network destination.
 - **Music generation** (ACE-Step) — Prompt-driven original music, sung or instrumental. Control duration, tempo, key, time signature, negative styles, an LM planning pass, and audio2audio restyling from a reference track.
 - **Text to SFX** (Woosh) and **Text to speech** (Fish Audio, voice cloning from a reference sample) — Build a reusable library of sound effects and narration outside the main generator.
 - **Speech to text** (Whisper) — Transcribe audio/video. Used internally for beat-syncing narration and available as a standalone tool.

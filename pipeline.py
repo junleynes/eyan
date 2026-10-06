@@ -1560,10 +1560,18 @@ GATE = JobGate(MAX_CONCURRENT_JOBS)
 JOB_QUEUE = []  # job_ids waiting for a free slot, in submission order
 JOB_QUEUE_LOCK = threading.Lock()
 
-def run_trailer_job_gated(jid, params):
+def run_trailer_job_gated(jid, params, runner=None):
     """Entry point used for every submitted job: waits for a free concurrency
     slot (reporting queue position while it waits), then runs the job, then
-    frees the slot for the next one in line."""
+    frees the slot for the next one in line.
+
+    `runner` is the job body to run once a slot is free -- a callable taking
+    (jid, params). Left as None it is the promo render (run_trailer_job),
+    exactly as before this parameter existed. It exists so other heavy jobs
+    (Vertical Shorts' analyse and render, in shorts.py) queue behind the SAME
+    limit instead of each feature keeping its own: MAX_CONCURRENT_JOBS is a
+    cap on what the server can run at once, and a second, separate gate would
+    quietly let twice as many ffmpeg/GPU jobs run as that setting says."""
     with JOB_QUEUE_LOCK:
         JOB_QUEUE.append(jid)
     acquired_slot = False
@@ -1583,7 +1591,7 @@ def run_trailer_job_gated(jid, params):
             if jid in JOB_QUEUE:
                 JOB_QUEUE.remove(jid)
         job_set(jid, step='Starting', percent=1, status='running')
-        run_trailer_job(jid, params)
+        (runner or run_trailer_job)(jid, params)
     finally:
         # Only release a slot this job actually acquired -- a real,
         # confirmed bug: cancelling a job while it was still QUEUED (the
@@ -4480,6 +4488,11 @@ AI Vision: 1-5, from the vision model actually judging scene content -- the stro
 Speech/dialogue: 1-2, if faster-whisper found dialogue over that scene (2 if it's a question or exclamation).
 Script priority (if used): a large boost (up to ~8, deliberately dominant) for scenes matching an uploaded script's cue timecodes, since supplying a script means that intent should generally win over automatic scoring.
 
+VERTICAL SHORTS TAB (separate from promo generation; does not change how a plug is built)
+Cuts a long-form programme into stand-alone 9:16 shorts (1080x1920 H.264 MP4) in two steps. "Find moments" analyses the source: detects cuts, has the AI Vision model rate sampled frames for how dramatic they look, transcribes the dialogue, then has a story model read the transcript (with those visual notes) and propose moments that make sense on their own -- a setup, a turn, a payoff -- rather than just the loudest peaks. It returns ranked candidates and renders nothing yet. The editor then previews each one, re-times or retitles it, drops it, or adds a range by hand, and "Render" produces the shorts.
+Each candidate's score (0-100) combines the story model's rating (1-10, the largest weight), the visual drama of frames inside it (1-5), and dialogue pace. In/out points are placed so they never cut a spoken word, and land on a shot change when one is close.
+Reframing is decided per shot: "Auto" crops to follow the face(s) and, when two similar-sized faces are too far apart to fit a vertical frame, shows the whole picture over a blurred background for that shot instead of cutting one person out; "Always crop" commits to one side; "Fit" always shows the whole picture. Captions are burned in from the transcript and an .srt is saved alongside. Finished batches are kept under Saved shorts and can be downloaded (individually or as a zip) or sent to a video network destination.
+
 OTHER TABS
 Speech to Text: standalone faster-whisper transcription.
 Scene Search: detects every cut in a hires video, describes each with AI Vision, aligns Whisper dialogue, then finds scenes matching a typed prompt (with an optional negative prompt to exclude some) -- no rating/scoring, separate from a full generate.
@@ -4496,6 +4509,8 @@ KNOWN LIMITATIONS -- be upfront about these rather than implying the app can do 
 - ACE-Step "turbo"/distilled model checkpoints ignore CFG guidance by design, so the guidance-scale/CFG-type controls may have no audible effect depending on which checkpoint is actually loaded.
 - Woosh (sound effects) has no duration parameter -- generated SFX come back at whatever length the model produces, not a requested duration.
 - A hosted ACE-Step endpoint (vs. self-hosted) may use a different API contract than this app expects by default -- if music generation fails against a hosted service specifically, that's the first thing to check.
+- Vertical Shorts needs both Ollama and faster-whisper reachable and refuses to analyse without them. Its candidates are proposals, not finished edits: a local model can misjudge what stands alone, so each should be previewed before rendering. It finds single continuous stretches only (it does not assemble a short from several separate scenes), has no speaker detection (in a wide two-shot it cannot tell who is talking), and adds no music, titles or graphics.
+- Vertical Shorts face tracking uses OpenCV's built-in Haar cascades unless a YuNet model file is supplied (SHORTS_FACE_MODEL); the cascades miss many profile and tilted faces, and a shot with no detected face is centre-cropped.
 - If asked about something not covered here or that seems like it may have changed, say so rather than guessing, and suggest checking the Docs tab or the relevant Config section directly."""
 
 
@@ -6807,6 +6822,54 @@ def api_music_genres():
     return jsonify(ok=True, genres=[{'key': g, 'prompt': GENRE_PROMPTS.get(g, '')}
                                     for g in GENRE_NAMES])
 
+class _FileThenCleanup:
+    """Response body that streams a file and then runs `cleanup` -- reliably.
+
+    The obvious way to do this, send_file() + response.call_on_close(), does
+    NOT work: a send_file response is handed to the server in
+    direct-passthrough mode and its close callbacks never fire (measured
+    under both waitress and Flask's own test client -- the temp file was
+    still there afterwards every time). A WSGI server does always call
+    close() on the body iterable itself, though, whether the download
+    finished, was aborted half-way, or never started, so the cleanup lives
+    there instead."""
+
+    def __init__(self, path, cleanup, chunk=1 << 20):
+        self._f = open(path, 'rb')
+        self._cleanup = cleanup
+        self._chunk = chunk
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        data = self._f.read(self._chunk)
+        if not data:
+            raise StopIteration
+        return data
+
+    def close(self):
+        try:
+            self._f.close()
+        finally:
+            cb, self._cleanup = self._cleanup, None
+            if cb:
+                try:
+                    cb()
+                except Exception as e:
+                    print(f'Download cleanup failed (non-fatal): {e}')
+
+
+def send_temp_download(path, download_name, mimetype, cleanup):
+    """Sends `path` as an attachment named `download_name`, then calls
+    cleanup() once the response is closed. For downloads built on demand
+    (a converted file, a zip) that must not outlive the request."""
+    resp = Response(_FileThenCleanup(path, cleanup), mimetype=mimetype)
+    resp.headers['Content-Length'] = str(os.path.getsize(path))
+    resp.headers.set('Content-Disposition', 'attachment', filename=download_name)
+    return resp
+
+
 def _demucs_available():
     return shutil.which(DEMUCS_BIN) is not None
 
@@ -6905,10 +6968,8 @@ def api_music_export():
         with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
             for label, path in stems:
                 zf.write(path, arcname=f'{base_name}_{label}{os.path.splitext(path)[1]}')
-        resp = send_file(zip_path, as_attachment=True, download_name=f'{base_name}_stems.zip',
-                          mimetype='application/zip')
-        resp.call_on_close(lambda: shutil.rmtree(work_dir, ignore_errors=True))
-        return resp
+        return send_temp_download(zip_path, f'{base_name}_stems.zip', 'application/zip',
+                                  cleanup=lambda: shutil.rmtree(work_dir, ignore_errors=True))
 
     src_ext = os.path.splitext(filename)[1].lower()
     if fmt == 'wav' and src_ext != '.wav':
@@ -6920,9 +6981,8 @@ def api_music_export():
             return jsonify(ok=False, error='Conversion to WAV timed out.'), 500
         if not (os.path.exists(out_path) and os.path.getsize(out_path) > 0):
             return jsonify(ok=False, error='Conversion to WAV failed.'), 500
-        resp = send_file(out_path, as_attachment=True, download_name=f'{base_name}.wav', mimetype='audio/wav')
-        resp.call_on_close(lambda: os.path.exists(out_path) and os.remove(out_path))
-        return resp
+        return send_temp_download(out_path, f'{base_name}.wav', 'audio/wav',
+                                  cleanup=lambda: os.path.exists(out_path) and os.remove(out_path))
 
     out_ext = src_ext.lstrip('.') or 'wav'
     return send_file(src_path, as_attachment=True, download_name=f'{base_name}.{out_ext}')
