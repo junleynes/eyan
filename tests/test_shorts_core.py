@@ -12,10 +12,16 @@ milliseconds and pin the behaviour the tab's docs promise an editor:
   * the same moment found by two overlapping transcript chunks appears once;
   * a wide two-shot is shown whole in Auto rather than cropping a person out;
   * the crop only moves when the subject really does, and every frame of a
-    clip is covered by exactly one reframing instruction.
+    clip is covered by exactly one reframing instruction;
+  * "Follow the speaker" only ever changes a wide two-shot, only cuts to a
+    mouth that is moving while words are being spoken, and leaves a shot it
+    cannot call exactly as it would have been with the option off.
 """
 import json
 import re
+
+import cv2
+import numpy as np
 
 import shorts_core as sc
 
@@ -567,3 +573,149 @@ def test_lead_in_and_tail_never_push_a_candidate_past_the_maximum():
                               [{'start': 10.0, 'end': 80.0, 'text': 'x ' * 100}], [], [], [], 100.0,
                               min_dur=10, max_dur=30, fps=25.0)
     assert out[0]['duration'] <= 30.0 + 1e-6 and 'trimmed' in out[0]['flags']
+
+
+# ---- following the speaker ----
+
+def _face_frame(shift=(0, 0), mouth_open=0, size=400, box=(100, 100, 200, 200), seed=7):
+    """A textured stand-in for a face inside a frame: fixed 'features' in the
+    upper half of `box`, a mouth that can be opened, the whole lot movable."""
+    rng = np.random.default_rng(seed)
+    img = cv2.GaussianBlur(rng.integers(40, 215, (size, size)).astype(np.float32), (0, 0), 6)
+    img = (img - img.min()) / (img.max() - img.min()) * 200 + 25
+    x, y, w, h = box
+    cv2.circle(img, (x + w // 3, y + h // 3), 14, 30, -1)                 # eyes
+    cv2.circle(img, (x + 2 * w // 3, y + h // 3), 14, 30, -1)
+    cv2.ellipse(img, (x + w // 2, y + int(0.8 * h)), (36, 6 + mouth_open), 0, 0, 360, 20, -1)
+    m = np.float32([[1, 0, shift[0]], [0, 1, shift[1]]])
+    return cv2.warpAffine(img, m, (size, size), borderMode=cv2.BORDER_REFLECT).astype(np.uint8)
+
+
+def test_mouth_activity_sees_the_mouth_and_not_the_head():
+    box = (100, 100, 200, 200)
+    still = _face_frame()
+    assert sc.mouth_activity(still, still, box) == 0.0
+    nod = sc.mouth_activity(still, _face_frame(shift=(4, 6)), box)
+    talk = sc.mouth_activity(still, _face_frame(mouth_open=14), box)
+    both = sc.mouth_activity(still, _face_frame(shift=(4, 6), mouth_open=14), box)
+    assert nod < sc.SPEAKER_FLOOR, 'a head that only moved is not a mouth moving'
+    assert talk > 3 * sc.SPEAKER_FLOOR and both > 3 * sc.SPEAKER_FLOOR
+    assert both > 5 * max(nod, 1e-4), 'the mouth still reads through a moving head'
+    brighter = np.clip(_face_frame().astype(np.int16) + 30, 0, 255).astype(np.uint8)
+    assert sc.mouth_activity(still, brighter, box) < sc.SPEAKER_FLOOR, 'a flash is not movement'
+
+
+def test_mouth_activity_declines_what_it_cannot_measure():
+    still = _face_frame()
+    assert sc.mouth_activity(still, still, (100, 100, 20, 20)) is None, 'too small'
+    flat = np.full((400, 400), 128, np.uint8)
+    assert sc.mouth_activity(flat, flat, (100, 100, 200, 200)) is None, 'nothing to lock on to'
+    assert sc.mouth_activity(still, still, (390, 390, 200, 200)) is None, 'almost wholly out of frame'
+
+
+def _words(spans, step=0.3, length=0.25):
+    out = []
+    for a, b in spans:
+        t = a
+        while t < b - 1e-6:
+            out.append((round(t, 3), round(t + length, 3)))
+            t += step
+    return out
+
+
+def _acts(grid, fps, *spans_per_person, level=0.1):
+    return [[level if any(a <= i / fps < b for a, b in spans) else 0.0 for i in grid] for spans in spans_per_person]
+
+
+def test_speaker_turns_cut_to_whoever_is_talking_just_ahead_of_their_line():
+    grid, fps = list(range(0, 200, 5)), 25.0
+    speech = _words([(0, 4), (4.6, 8)])
+    runs = sc.speaker_turns(grid, _acts(grid, fps, [(0, 4)], [(4.6, 8)]), 0, 199, fps, speech)
+    assert runs == [(0, 110, 0), (111, 199, 1)], 'the change lands 0.15 s before the word at 4.6 s (frame 115)'
+
+
+def test_a_mouth_moving_in_silence_does_not_take_the_frame():
+    grid, fps = list(range(0, 200, 5)), 25.0
+    speech = _words([(0, 4), (5.5, 8)])
+    # Person 1 laughs through the pause; person 0 has every spoken word.
+    acts = _acts(grid, fps, [(0, 4), (5.5, 8)], [(4.2, 5.3)])
+    assert sc.speaker_turns(grid, acts, 0, 199, fps, speech) == [(0, 199, 0)]
+
+
+def test_a_brief_interjection_does_not_buy_two_cuts():
+    grid, fps = list(range(0, 250, 5)), 25.0
+    speech = _words([(0, 10)])
+    acts = _acts(grid, fps, [(0, 4.6), (5.2, 10)], [(4.6, 5.2)])
+    assert sc.speaker_turns(grid, acts, 0, 249, fps, speech) == [(0, 249, 0)]
+
+
+def test_speaker_turns_decline_when_the_evidence_is_not_there():
+    grid, fps = list(range(0, 200, 5)), 25.0
+    speech = _words([(0, 8)])
+    one = _acts(grid, fps, [(0, 8)], [])
+    assert sc.speaker_turns(grid, one, 0, 199, fps, speech) == [(0, 199, 0)]
+    assert sc.speaker_turns(grid, one, 0, 199, fps, []) is None, 'no transcript, nothing to time mouths against'
+    assert sc.speaker_turns(grid, _acts(grid, fps, [(0, 8)], [(0, 8)]), 0, 199, fps, speech) is None, 'two mouths alike'
+    assert sc.speaker_turns(grid, _acts(grid, fps, [(0, 8)], [], level=0.005), 0, 199, fps, speech) is None, 'too faint'
+    unknown = [[None] * len(grid), [None] * len(grid)]
+    assert sc.speaker_turns(grid, unknown, 0, 199, fps, speech) is None, 'mouths never measured'
+    assert sc.speaker_turns(grid, one, 0, 199, fps, _words([(20, 30)])) is None, 'nobody speaks during this shot'
+
+
+def _talking(n_frames, left, right, fps=25.0, step=5, lx=500, rx=1500):
+    """A wide two-shot: a face at lx and one at rx, each with mouth activity
+    during its own spans (seconds)."""
+    def act(i, spans):
+        return 0.1 if any(a <= i / fps < b for a, b in spans) else 0.0
+    return [(i, [_face(lx) + (act(i, left),), _face(rx) + (act(i, right),)]) for i in range(0, n_frames, step)]
+
+
+def test_follow_the_speaker_cuts_a_wide_two_shot_between_the_two_people():
+    samples = _talking(200, [(0, 4)], [(4.6, 8)])
+    speech = _words([(0, 4), (4.6, 8)])
+    segs = sc.plan_reframe(samples, [], 200, 1920, 1080, 608, speaker=True, speech=speech)
+    assert [(s['a'], s['b'], s['layout'], round(s['x'])) for s in segs] == [
+        (0, 110, 'crop', 500 - 304), (111, 199, 'crop', 1500 - 304)]
+    assert all(s['speaker'] and s['keys'] is None for s in segs)
+    expr = sc.crop_x_expr(segs)
+    for n in range(200):
+        assert sum(1 for a, b in re.findall(r'between\(n,(\d+),(\d+)\)', expr) if int(a) <= n <= int(b)) == 1, n
+    assert _eval_expr(expr, 110) == 196 and _eval_expr(expr, 111) == 1196
+    # The same option in "always crop" mode: the speaker, not the side with more face on it.
+    crop = sc.plan_reframe(samples, [], 200, 1920, 1080, 608, mode='crop', speaker=True, speech=speech)
+    assert [(s['a'], round(s['x'])) for s in crop] == [(0, 196), (111, 1196)]
+
+
+def test_follow_the_speaker_changes_nothing_when_it_is_off_or_cannot_tell():
+    samples = _talking(200, [(0, 4)], [(4.6, 8)])
+    speech = _words([(0, 4), (4.6, 8)])
+
+    def plan(s, **kw):
+        return [(x['a'], x['b'], x['layout'], x['x'], x['keys']) for x in sc.plan_reframe(s, [], 200, 1920, 1080, 608, **kw)]
+    whole = [(0, 199, 'fit', None, None)]
+    assert plan(samples) == whole, 'off: mouth data in the samples is ignored'
+    assert plan(samples, speaker=True) == whole and plan(samples, speaker=True, speech=[]) == whole, 'no transcript'
+    alike = _talking(200, [(0, 8)], [(0, 8)])
+    assert plan(alike, speaker=True, speech=speech) == whole, 'both mouths moving: show both people'
+    unmeasured = [(i, [f[:4] for f in fs]) for i, fs in samples]
+    assert plan(unmeasured, speaker=True, speech=speech) == whole, 'no mouth data'
+    for mode in ('auto', 'crop', 'fit'):
+        assert plan(alike, mode=mode, speaker=True, speech=speech) == plan(alike, mode=mode)
+
+
+def test_follow_the_speaker_leaves_every_other_kind_of_shot_alone():
+    speech = _words([(0, 16)])
+    # Two people close enough to share the frame; one person; nobody.
+    together = _talking(200, [(0, 4)], [(4, 8)], lx=800, rx=1050)
+    alone = [(i, [_face(500) + (0.1,)]) for i in range(0, 200, 5)]
+    empty = _samples(200, lambda i: [])
+    for samples in (together, alone, empty):
+        on = sc.plan_reframe(samples, [], 200, 1920, 1080, 608, speaker=True, speech=speech)
+        off = sc.plan_reframe(samples, [], 200, 1920, 1080, 608)
+        assert on == off and not any(s.get('speaker') for s in on)
+    # And it works shot by shot: a wide two-shot followed by a single.
+    mixed = _talking(200, [(0, 4)], [(4.6, 8)]) + [(i, [_face(900)]) for i in range(200, 300, 5)]
+    segs = sc.plan_reframe(mixed, [200], 300, 1920, 1080, 608, speaker=True,
+                           speech=_words([(0, 4), (4.6, 8), (8.2, 12)]))
+    assert [(s['a'], s['b'], bool(s.get('speaker'))) for s in segs] == [
+        (0, 110, True), (111, 199, True), (200, 299, False)]

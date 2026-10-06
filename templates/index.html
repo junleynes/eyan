@@ -7001,12 +7001,15 @@ document.getElementById('vf').addEventListener('submit', async function(e){
   <div id=sh-review-warnings></div>
   <div class="sh-bar">
     <span style="display:inline-flex;gap:6px;align-items:center;font-size:12px">Reframe
-      <select id=sh-reframe title="How a 16:9 picture becomes 9:16, decided shot by shot">
+      <select id=sh-reframe title="How a 16:9 picture becomes 9:16, decided shot by shot" onchange="shSyncSpeaker()">
         <option value=auto selected>Auto &mdash; follow faces, keep wide two-shots whole</option>
         <option value=crop>Always crop &mdash; fill the screen</option>
         <option value=fit>Fit &mdash; whole frame, blurred background</option>
       </select>
     </span>
+    <label title="In a shot where two people are too far apart to share a vertical frame, cut between close framings of whoever is talking instead of showing the whole picture. Judged from mouth movement during the transcribed words; a shot it cannot call is reframed as usual." style="display:inline-flex;align-items:center;gap:6px;margin:0;cursor:pointer;text-transform:none;letter-spacing:0;font-size:12px;font-family:inherit;color:var(--ink)">
+      <input type=checkbox id=sh-speaker> Follow the speaker
+    </label>
     <label style="display:inline-flex;align-items:center;gap:6px;margin:0;cursor:pointer;text-transform:none;letter-spacing:0;font-size:12px;font-family:inherit;color:var(--ink)">
       <input type=checkbox id=sh-captions checked> Burn in captions
     </label>
@@ -7088,6 +7091,16 @@ function shortsOnTabOpen(){
   }, 0)
 }
 
+// "Follow the speaker" has nothing to act on when every shot is shown whole
+// (Fit), or when this server has no face detector at all.
+function shSyncSpeaker(){
+  var box = shEl('sh-speaker')
+  if(!box) return
+  var off = shEl('sh-reframe').value === 'fit' || !!(SH.options && !SH.options.face_detector)
+  box.disabled = off
+  box.parentNode.style.opacity = off ? '.5' : ''
+}
+
 async function shortsLoadOptions(){
   var vis = shEl('sh-vision-model'), story = shEl('sh-story-model'), cap = shEl('sh-capability')
   if(!vis) return
@@ -7111,6 +7124,8 @@ async function shortsLoadOptions(){
       story.appendChild(o)
     })
     shEl('sh-frames').value = d.vision_frames || 90
+    shEl('sh-speaker').checked = !!d.speaker_default
+    shSyncSpeaker()
     var bits = []
     if(d.error) bits.push('<span style="color:var(--amber)">' + escapeHtmlLite(d.error) + '</span>')
     bits.push(d.face_detector === 'yunet' ? 'Face tracking: YuNet.'
@@ -7434,7 +7449,9 @@ async function shortsRenderSelected(){
   try{
     start = await (await fetch('/api/shorts/render', {method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({analysis_id: SH.analysis.analysis_id, items: items,
-                            reframe: shEl('sh-reframe').value, subtitles: shEl('sh-captions').checked,
+                            reframe: shEl('sh-reframe').value,
+                            speaker: shEl('sh-speaker').checked && !shEl('sh-speaker').disabled,
+                            subtitles: shEl('sh-captions').checked,
                             subtitle_size: shEl('sh-caption-size').value})})).json()
   }catch(err){ shBusy(false); shUpdateRenderBtn(); alert('Could not start the render: ' + err); return }
   if(start.error){ shBusy(false); shUpdateRenderBtn(); shShowResultError(start.error); return }
@@ -7460,7 +7477,10 @@ function shShowResultError(msg){
 function shLayoutNote(l){
   if(!l) return ''
   var bits = []
-  if(l.crop) bits.push(l.crop + ' cropped' + (l.tracked ? ' (' + l.tracked + ' following movement)' : ''))
+  var how = []
+  if(l.tracked) how.push(l.tracked + ' following movement')
+  if(l.speaker) how.push(l.speaker + ' on the speaker')
+  if(l.crop) bits.push(l.crop + ' cropped' + (how.length ? ' (' + how.join(', ') + ')' : ''))
   if(l.fit) bits.push(l.fit + ' shown whole')
   return bits.length ? 'Shots: ' + bits.join(', ') : ''
 }
@@ -7475,6 +7495,7 @@ function shBatchCard(b, fresh){
   var head = '<div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline">' +
     '<div><b>' + escapeHtmlLite(b.orig_name || 'Untitled') + '</b> <span style="font-size:12px;opacity:.7">' +
       b.shorts.length + ' short' + (b.shorts.length === 1 ? '' : 's') + (reframe ? ' &middot; ' + reframe : '') +
+      (o.speaker ? ' &middot; follows speaker' : '') +
       (o.subtitles ? ' &middot; captions' : '') + (when ? ' &middot; ' + when : '') +
       (IS_ADMIN && b.username && b.username !== CURRENT_USERNAME ? ' &middot; by ' + escapeHtmlLite(b.username) : '') +
       (b.status === 'partial' ? ' &middot; <span style="color:var(--amber)">incomplete</span>' : '') + '</span></div>' +
@@ -8198,6 +8219,7 @@ job. Configured via env vars:
       <ul style="line-height:1.8;padding-left:20px">
         <li><strong>Auto</strong> reframes shot by shot: it crops to the face or faces, follows a subject that really moves, and for a shot where two similar-sized faces are too far apart to fit a vertical frame it shows the whole picture over a blurred copy of itself rather than cut someone out.</li>
         <li><strong>Always crop</strong> fills the screen on every shot and commits to one side of a wide two-shot. <strong>Fit</strong> always shows the whole picture.</li>
+        <li><strong>Follow the speaker</strong> (off unless ticked) changes only those wide two-shots: it cuts between close framings of whoever is talking, holding each for at least a second or so and changing just before the next line. It decides from how much each mouth moves while the transcript says words are being spoken. Where it cannot tell &mdash; nobody speaking, a face turned away, two mouths moving alike &mdash; the shot is reframed exactly as it would be with the option off.</li>
         <li><strong>Captions</strong> are burned in from the transcript a few words at a time, and an <code>.srt</code> is saved next to each MP4.</li>
       </ul>
       <p>Batches are kept under <strong>Saved shorts</strong> until deleted: play, download one or all (.zip), or send to a video network destination.</p>
@@ -8205,13 +8227,13 @@ job. Configured via env vars:
       <ul style="line-height:1.8;padding-left:20px">
         <li>Candidates are proposals. A local model can misjudge what stands alone &mdash; preview before rendering.</li>
         <li>One continuous stretch per short; it does not assemble a short from separate scenes, and adds no music, titles or graphics.</li>
-        <li>No speaker detection: in a wide two-shot it cannot tell who is talking, which is why Auto shows the whole frame there.</li>
+        <li>Follow the speaker reads mouth movement, not voices. It can pick the wrong person when a listener laughs, chews or mouths along while someone else talks, and it cannot follow a speaker who is off screen or facing away. Check wide two-shots before publishing, and render again with it unticked if one is wrong.</li>
         <li>Face tracking uses OpenCV's built-in Haar cascades unless a YuNet model file is supplied (<code>SHORTS_FACE_MODEL</code>). The cascades miss many profile and tilted faces; a shot with no detected face is centre-cropped.</li>
       </ul>
       <pre>POST /api/shorts/analyze  + shorts_file_network, min_dur, max_dur, count, focus?
 GET  /api/shorts/progress/&lt;job_id&gt;
 GET  /api/shorts/analysis/&lt;analysis_id&gt;
-POST /api/shorts/render   {analysis_id, items:[{start,end,title}], reframe, subtitles}
+POST /api/shorts/render   {analysis_id, items:[{start,end,title}], reframe, speaker?, subtitles}
 GET  /api/shorts/batches</pre>
     </div>
 

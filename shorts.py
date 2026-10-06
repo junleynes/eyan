@@ -78,6 +78,11 @@ SHORTS_LOUDNESS = _env_num('SHORTS_LOUDNESS', -14.0)
 SHORTS_TRUE_PEAK = _env_num('SHORTS_TRUE_PEAK', -1.5)
 SHORTS_SUB_FONT = os.environ.get('SHORTS_SUB_FONT', 'Arial')
 SHORTS_FACE_MODEL = os.environ.get('SHORTS_FACE_MODEL', '')
+# Whether "Follow the speaker" starts ticked in the tab. It is a per-render
+# choice either way; this only sets where the checkbox begins. Off unless
+# asked for: it is a judgement from mouth movement, and when it is wrong it
+# crops out the person talking, which showing the whole frame never does.
+SHORTS_SPEAKER_CROP = os.environ.get('SHORTS_SPEAKER_CROP', '').strip().lower() in ('1', 'true', 'yes', 'on')
 
 SHORTS_MAX_ITEMS = 20      # shorts per render job
 SHORTS_MIN_CLIP = 3.0      # seconds
@@ -473,6 +478,14 @@ def _run_render(jid, params):
             detector = None
             warnings.append('No face detector is available in this OpenCV build, so shots were centre-cropped.')
 
+    # Following the speaker needs faces to compare and words to time them
+    # against; without either it is simply not applied, and says so.
+    speaker = bool(params.get('speaker')) and detector is not None
+    if speaker and not (a['words'] or a['segments']):
+        speaker = False
+        warnings.append('No dialogue was transcribed for this video, so "Follow the speaker" had nothing to go on '
+                        'and was not applied.')
+
     bid = f'{int(time.time())}_{secrets.token_hex(3)}'
     bdir = os.path.join(SHORTS_DIR, bid)
     os.makedirs(bdir, exist_ok=True)
@@ -482,7 +495,8 @@ def _run_render(jid, params):
                 'username': params.get('username'), 'orig_name': a['orig_name'], 'status': 'rendering',
                 'options': {'reframe': reframe, 'subtitles': want_captions,
                             'subtitle_size': params['subtitle_size'],
-                            'face_detector': detector.kind if detector else None},
+                            'face_detector': detector.kind if detector else None,
+                            'speaker': speaker},
                 'shorts': [], 'errors': [], 'warnings': warnings}
     _write_manifest(bdir, manifest)
 
@@ -501,10 +515,14 @@ def _run_render(jid, params):
             continue
 
         pipeline.job_set(jid, percent=int(base), step=f'Short {n}/{total}: finding faces')
-        samples = sc.sample_faces(src, start_f, n_frames, fps, detector, sar=info['sar']) if detector else []
+        samples = (sc.sample_faces(src, start_f, n_frames, fps, detector, sar=info['sar'], mouth=speaker)
+                   if detector else [])
         shot_starts = [c - start_f for c in a['cut_frames'] if start_f < c < end_f]
+        t0, t1 = start_f / fps, end_f / fps
+        speech = ([(s - t0, e - t0) for s, e in sc.speech_units(a['words'], a['segments']) if e > t0 and s < t1]
+                  if speaker else None)
         segs = sc.plan_reframe(samples, shot_starts, n_frames, info['disp_w'], info['disp_h'], crop_w,
-                               mode=reframe, fps=fps)
+                               mode=reframe, fps=fps, speaker=speaker, speech=speech)
         cues = sc.subtitle_cues(a['words'], a['segments'], start_f / fps, end_f / fps, max_chars=max_chars)
 
         name = f"{stem}_short_{n:02d}_{sc.slugify(it['title'], 40) or 'clip'}"
@@ -539,7 +557,8 @@ def _run_render(jid, params):
                  'duration': round(n_frames / fps, 2), 'size': os.path.getsize(out_path),
                  'layouts': {'crop': sum(1 for s in segs if s['layout'] == 'crop'),
                              'fit': sum(1 for s in segs if s['layout'] == 'fit'),
-                             'tracked': sum(1 for s in segs if s.get('keys'))},
+                             'tracked': sum(1 for s in segs if s.get('keys')),
+                             'speaker': sum(1 for s in segs if s.get('speaker'))},
                  'captions': bool(ass_name)}
         if cues:
             sc.write_srt(cues, os.path.join(bdir, name + '.srt'))
@@ -698,6 +717,7 @@ def api_shorts_options():
     return jsonify(ok=True, vision_models=vision, text_models=names, error=error,
                    default_vision_model=prod.get('vision_model'),
                    face_detector=det.kind, captions_available=_captions_available(),
+                   speaker_default=SHORTS_SPEAKER_CROP,
                    vision_frames=SHORTS_VISION_FRAMES, max_items=SHORTS_MAX_ITEMS,
                    min_clip=SHORTS_MIN_CLIP, max_clip=SHORTS_MAX_CLIP)
 
@@ -882,7 +902,11 @@ def api_shorts_render():
         items.append({'start': start, 'end': end, 'title': title})
     reframe = data.get('reframe') if data.get('reframe') in ('auto', 'crop', 'fit') else 'auto'
     size = data.get('subtitle_size') if data.get('subtitle_size') in sc.SUBTITLE_SIZES else 'm'
+    # Absent means "whatever this server defaults to", so a client that
+    # predates the option, or a script, gets the configured behaviour.
+    speaker = data.get('speaker', SHORTS_SPEAKER_CROP) in (True, 1, '1', 'true', 'on', 'yes')
     params = {'analysis': a, 'items': items, 'reframe': reframe,
+              'speaker': speaker and reframe != 'fit',
               'subtitles': data.get('subtitles', True) not in (False, 0, '0', 'false', 'off', None),
               'subtitle_size': size,
               'user_id': session.get('user_id'), 'username': session.get('username')}

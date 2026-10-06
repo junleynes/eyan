@@ -663,6 +663,18 @@ def test_render_validates_every_item(env, monkeypatch):
     assert [(i['start'], i['title'][:8]) for i in p['items']] == [(0.0, 'Short 1'), (16.0, 'xxxxxxxx')]
     assert abs(p['items'][1]['end'] - 24.0) < 0.1 and len(p['items'][1]['title']) == 80
     assert (p['reframe'], p['subtitle_size'], p['subtitles']) == ('auto', 'm', False)
+    assert p['speaker'] is False, '"Follow the speaker" is off unless asked for'
+
+    # "Follow the speaker": a per-render choice; the server setting is only what an unspecified request gets.
+    one = [{'start': 0, 'end': 8, 'title': 'T'}]
+    post(one, speaker=True)
+    post(one, speaker=True, reframe='fit')
+    post(one, speaker='yes please')
+    monkeypatch.setattr(shorts, 'SHORTS_SPEAKER_CROP', True)
+    post(one)
+    post(one, speaker=False)
+    assert [q['speaker'] for q in started[1:]] == [True, False, False, True, False], \
+        'on when asked; never with Fit (nothing is cropped); junk is not a yes; default from the server; off wins'
 
 
 def test_full_flow_render_save_download_send_delete(env, monkeypatch):
@@ -682,7 +694,8 @@ def test_full_flow_render_save_download_send_delete(env, monkeypatch):
     s1, s2 = batch['shorts']
     assert s1['file'] == 'episode_short_01_Ang_lihim_ni_Ramon.mp4', 'a safe filename from the title'
     assert s2['file'] == 'episode_short_02_Short_2.mp4' and s2['title'] == 'Short 2'
-    assert abs(s2['duration'] - 4.0) < 0.05 and s2['layouts'] == {'crop': 1, 'fit': 0, 'tracked': 0}, \
+    assert batch['options']['speaker'] is False
+    assert abs(s2['duration'] - 4.0) < 0.05 and s2['layouts'] == {'crop': 1, 'fit': 0, 'tracked': 0, 'speaker': 0}, \
         'two faceless shots, both centre-cropped at the same x, merge into one instruction'
     bdir = os.path.join(shorts.SHORTS_DIR, batch['batch_id'])
     assert sorted(os.listdir(bdir)) == sorted(['batch.json'] + [s[k] for s in (s1, s2) for k in ('file', 'srt')] +
@@ -786,6 +799,71 @@ def test_batch_ids_cannot_escape_the_shorts_folder(env, tmp_path):
     assert shorts._batch_dir('1700000000_abcdef') == os.path.join(shorts.SHORTS_DIR, '1700000000_abcdef')
 
 
+def test_follow_the_speaker_is_applied_only_when_asked_and_recorded_on_the_batch(env, monkeypatch):
+    """The render job's side of "Follow the speaker": mouths are only
+    measured when the option is on, the transcript is handed over in the
+    clip's own time, and what was done is written where the editor sees it.
+    (How a speaker is chosen is pinned in test_shorts_core.py.)"""
+    Services(monkeypatch)
+    client, headers = _client()
+    aid = _analyze(client, headers, env)['result']['analysis_id']
+    asked = []
+
+    def two_people(path, start_f, n_frames, fps, detector, step_sec=0.2, sar=1.0, mouth=False):
+        # A wide two-shot throughout. The one on the left has the first two
+        # lines of the transcript (1.0-4.5 s), the one on the right the next two.
+        asked.append(mouth)
+        out = []
+        for i in range(0, n_frames, 5):
+            t = (start_f + i) / fps
+            left, right = (40.0, 60.0, 30.0, 30.0), (280.0, 60.0, 30.0, 30.0)
+            if mouth:
+                left, right = left + (0.1 if 1.0 <= t < 4.6 else 0.0,), right + (0.1 if 5.0 <= t < 8.6 else 0.0,)
+            out.append((i, [left, right]))
+        return out
+    monkeypatch.setattr(sc, 'sample_faces', two_people)
+    items = [{'start': 1.0, 'end': 9.0, 'title': 'Two people'}]
+
+    off = _render(client, headers, aid, items, subtitles=False)['result']['batch']
+    assert off['options']['speaker'] is False
+    assert off['shorts'][0]['layouts'] == {'crop': 0, 'fit': 1, 'tracked': 0, 'speaker': 0}, 'shown whole, as before'
+
+    on = _render(client, headers, aid, items, subtitles=False, speaker=True)['result']['batch']
+    assert on['options']['speaker'] is True and on['warnings'] == []
+    assert on['shorts'][0]['layouts'] == {'crop': 2, 'fit': 0, 'tracked': 0, 'speaker': 2}, \
+        'one framing per person: the cut between them falls inside the 3-6 s shot, not on a shot change'
+    assert asked == [False, True]
+    fr = _frames(os.path.join(shorts.SHORTS_DIR, on['batch_id'], on['shorts'][0]['file']))
+    assert len(fr) == 200 and fr[0].shape[:2] == (1920, 1080)
+
+    # "Fit" crops nothing, so there is nothing for the option to do.
+    fit = _render(client, headers, aid, items, subtitles=False, speaker=True, reframe='fit')['result']['batch']
+    assert fit['options']['speaker'] is False and fit['shorts'][0]['layouts']['speaker'] == 0
+
+
+def test_follow_the_speaker_without_a_transcript_is_skipped_with_a_warning(env, monkeypatch):
+    Services(monkeypatch, words=[], segs=[])
+    client, headers = _client()
+    aid = _analyze(client, headers, env)['result']['analysis_id']
+    batch = _render(client, headers, aid, [{'start': 1.0, 'end': 9.0, 'title': 'Silent'}],
+                    subtitles=False, speaker=True)['result']['batch']
+    assert batch['status'] == 'complete' and batch['options']['speaker'] is False
+    assert any('Follow the speaker' in w for w in batch['warnings'])
+
+
+def test_sampling_faces_measures_mouths_only_when_asked(split_source):
+    class Fixed:
+        def detect(self, frame):
+            return [(40.0, 60.0, 120.0, 160.0, 1.0)]
+    plain = sc.sample_faces(str(split_source), 0, 30, 25.0, Fixed())
+    assert [i for i, _ in plain] == [0, 5, 10, 15, 20, 25] and all(len(f) == 4 for _, fs in plain for f in fs)
+    mouths = sc.sample_faces(str(split_source), 0, 30, 25.0, Fixed(), mouth=True)
+    assert [i for i, _ in mouths] == [i for i, _ in plain], 'the same samples, on the same frames'
+    assert [fs[0][:4] for _, fs in mouths] == [fs[0] for _, fs in plain]
+    assert all(len(f) == 5 and f[4] is None for _, fs in mouths for f in fs), \
+        'a flat colour has no face to lock on to, so the measurement is declined, not invented'
+
+
 def test_one_failed_short_does_not_lose_the_others(env, monkeypatch):
     Services(monkeypatch)
     client, headers = _client()
@@ -804,7 +882,7 @@ def test_one_failed_short_does_not_lose_the_others(env, monkeypatch):
     assert batch['status'] == 'partial'
     assert [s['title'] for s in batch['shorts']] == ['One', 'Three']
     assert batch['errors'] == [{'index': 2, 'title': 'Two', 'error': 'Conversion failed!'}]
-    assert all(s['layouts'] == {'crop': 0, 'fit': 1, 'tracked': 0} and s['captions'] is False for s in batch['shorts'])
+    assert all(s['layouts'] == {'crop': 0, 'fit': 1, 'tracked': 0, 'speaker': 0} and s['captions'] is False for s in batch['shorts'])
     assert all(s['srt'] for s in batch['shorts']), 'the .srt is written even when captions are not burned in'
 
 
@@ -876,6 +954,9 @@ def test_options_reports_models_and_what_this_server_can_do(env, monkeypatch):
     assert d['ok'] and d['vision_models'] == ['qwen3-vl:8b'] and d['text_models'] == ['qwen3-vl:8b', 'llama3.1:8b']
     assert d['face_detector'] in ('haar', 'yunet') and isinstance(d['captions_available'], bool)
     assert d['max_items'] == 20 and d['default_vision_model']
+    assert d['speaker_default'] is False, '"Follow the speaker" starts unticked unless SHORTS_SPEAKER_CROP says otherwise'
+    monkeypatch.setattr(shorts, 'SHORTS_SPEAKER_CROP', True)
+    assert client.get('/api/shorts/options').get_json()['speaker_default'] is True
 
     def down(url, timeout=None, **kw):
         raise ConnectionError('refused')

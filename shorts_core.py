@@ -838,27 +838,111 @@ class FaceDetector:
         return out
 
 
-def sample_faces(path, start_f, n_frames, fps, detector, step_sec=0.2, sar=1.0):
+# Where, top to bottom of a face box, the mouth is and where the rigid upper
+# face (eyes, nose bridge) used to steady it is; and how wide either is.
+# Deliberately generous: both detectors box a face a little differently, and
+# a band that clips the lower lip measures nothing.
+MOUTH_BAND = (0.62, 0.98)
+MOUTH_ANCHOR_BAND = (0.15, 0.58)
+MOUTH_MIN_FACE = 28         # px; below this the mouth is a handful of pixels of noise
+MOUTH_LAG_SEC = 0.08        # the two frames compared are this far apart
+_MOUTH_CANVAS = 96          # every face is measured at this size, whatever its size on screen
+_MOUTH_SEARCH = 8           # how far (canvas px) the head may have moved between the two frames
+
+
+def mouth_activity(gray_a, gray_b, box):
+    """How much a face's MOUTH moved between two greyscale frames a few
+    hundredths of a second apart, as a fraction of that face's own contrast.
+    None when it can't be measured (face too small, half out of frame, or
+    featureless).
+
+    A plain frame difference over the mouth mostly measures the HEAD moving:
+    people nod and sway as they listen, and a listener's nod is a bigger
+    change in those pixels than a speaker's syllable. So the head is taken
+    out first. The upper face is rigid, so it is located again in the second
+    frame, the mouth is read at that same offset, and what is left is the
+    part of the change the head's own motion doesn't explain. Whatever the
+    upper face itself failed to line up by (noise, blur, a blink) is then
+    subtracted as the floor."""
+    x, y, w, h = (float(v) for v in box[:4])
+    if w < MOUTH_MIN_FACE or h < MOUTH_MIN_FACE:
+        return None
+    fh, fw = gray_a.shape[:2]
+    c, sr, mg = _MOUTH_CANVAS, _MOUTH_SEARCH, 0.15
+    rx0, ry0 = int(max(0, math.floor(x - mg * w))), int(max(0, math.floor(y - mg * h)))
+    rx1, ry1 = int(min(fw, math.ceil(x + (1 + mg) * w))), int(min(fh, math.ceil(y + (1 + mg) * h)))
+    if rx1 - rx0 < 24 or ry1 - ry0 < 24:
+        return None
+    pa = cv2.resize(gray_a[ry0:ry1, rx0:rx1], (c, c), interpolation=cv2.INTER_AREA).astype(np.float32)
+    pb = cv2.resize(gray_b[ry0:ry1, rx0:rx1], (c, c), interpolation=cv2.INTER_AREA).astype(np.float32)
+    kx, ky = c / float(rx1 - rx0), c / float(ry1 - ry0)
+
+    def rect(band, left, right):
+        return (int(round((x + left * w - rx0) * kx)), int(round((y + band[0] * h - ry0) * ky)),
+                int(round((x + right * w - rx0) * kx)), int(round((y + band[1] * h - ry0) * ky)))
+
+    ax0, ay0, ax1, ay1 = rect(MOUTH_ANCHOR_BAND, 0.15, 0.85)
+    ax0, ay0, ax1, ay1 = max(sr, ax0), max(sr, ay0), min(c - sr, ax1), min(c - sr, ay1)
+    if ax1 - ax0 < 16 or ay1 - ay0 < 10:
+        return None
+    anchor = pa[ay0:ay1, ax0:ax1]
+    if float(anchor.std()) < 3.0:
+        return None
+    found = cv2.matchTemplate(pb[ay0 - sr:ay1 + sr, ax0 - sr:ax1 + sr], anchor, cv2.TM_CCOEFF_NORMED)
+    _, _, _, loc = cv2.minMaxLoc(found)
+    dx, dy = loc[0] - sr, loc[1] - sr
+
+    def unexplained(r):
+        x0, y0, x1, y1 = max(0, r[0]), max(0, r[1]), min(c, r[2]), min(c, r[3])
+        if x1 - x0 < 10 or y1 - y0 < 6 or x0 + dx < 0 or y0 + dy < 0 or x1 + dx > c or y1 + dy > c:
+            return None
+        qa = cv2.GaussianBlur(pa[y0:y1, x0:x1], (3, 3), 0)
+        qb = cv2.GaussianBlur(pb[y0 + dy:y1 + dy, x0 + dx:x1 + dx], (3, 3), 0)
+        # Means removed, so a flash or a fade isn't read as motion either.
+        return float(np.abs((qa - qa.mean()) - (qb - qb.mean())).mean())
+
+    mouth, floor = unexplained(rect(MOUTH_BAND, 0.2, 0.8)), unexplained((ax0, ay0, ax1, ay1))
+    if mouth is None or floor is None:
+        return None
+    return max(0.0, mouth - floor) / max(12.0, float(pa.std()))
+
+
+def sample_faces(path, start_f, n_frames, fps, detector, step_sec=0.2, sar=1.0, mouth=False):
     """Runs the detector over a clip at ~1/step_sec samples a second.
 
     Returns [(frame index relative to the clip start, [(cx, cy, w, h), ...])]
     with x already in DISPLAY pixels (multiplied by the pixel aspect ratio),
     so the planner never has to think about anamorphic sources. Frames
     between samples are grab()bed, not decoded to an image, which is what
-    keeps this several times faster than real time."""
+    keeps this several times faster than real time.
+
+    With mouth=True each face gains a fifth value: mouth_activity() between
+    the sampled frame and one MOUTH_LAG_SEC later (None where it couldn't be
+    measured). That costs one more decoded frame per sample and no extra
+    detection; it is what plan_reframe's speaker option reads."""
     out = []
     cap = cv2.VideoCapture(path)
     try:
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(start_f))
         step = max(1, int(round(step_sec * fps)))
+        lag = min(step - 1, max(1, int(round(MOUTH_LAG_SEC * fps)))) if mouth else 0
+        pending = None
         for i in range(int(n_frames)):
             if i % step == 0:
                 ok, frame = cap.read()
                 if not ok:
                     break
-                faces = [((x + w / 2.0) * sar, y + h / 2.0, w * sar, h)
-                         for (x, y, w, h, _) in detector.detect(frame)]
-                out.append((i, faces))
+                dets = detector.detect(frame)
+                out.append((i, [((x + w / 2.0) * sar, y + h / 2.0, w * sar, h) for (x, y, w, h, _) in dets]))
+                pending = (cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), dets) if lag and dets else None
+            elif pending is not None and i % step == lag:
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                idx, faces = out[-1]
+                out[-1] = (idx, [f + (mouth_activity(pending[0], gray, d),) for f, d in zip(faces, pending[1])])
+                pending = None
             elif not cap.grab():
                 break
     finally:
@@ -878,8 +962,201 @@ def _frame_target(faces, crop_w, disp_h, min_face_frac):
     return {'big_cx': fs[0][0], 'span_cx': (left + right) / 2.0, 'span_w': right - left, 'sig': sig}
 
 
+# ---- Following the speaker (optional) ----
+# A face counts as speaking at a moment when its mouth is moving by at
+# least SPEAKER_FLOOR and by SPEAKER_RATIO times as much as anyone else's.
+# Below either, nobody is named and the planner does what it did before.
+SPEAKER_FLOOR = 0.02
+SPEAKER_RATIO = 1.5
+SPEAKER_MIN_HOLD = 1.2      # seconds a framing is held before it may change again
+SPEAKER_MIN_DECIDED = 0.4   # share of a shot's spoken samples that must name someone
+
+
+def _face_tracks(hits):
+    """Groups one shot's detections into people, by where they are: a face
+    belongs to the person last seen nearest to it, within about a face
+    width. Enough for the only case this is used for (faces too far apart
+    to share a vertical frame), with no model and nothing to drift."""
+    tracks = []
+    for i, t in hits:
+        taken = set()
+        for f in sorted(t['sig'], key=lambda f: f[2] * f[3], reverse=True):
+            best, best_d = None, None
+            for k, tr in enumerate(tracks):
+                if k in taken:
+                    continue
+                d = abs(f[0] - tr['cx'])
+                if (d <= 0.75 * max(f[2], tr['w']) and abs(f[1] - tr['cy']) <= max(f[3], tr['h'])
+                        and (best_d is None or d < best_d)):
+                    best, best_d = k, d
+            if best is None:
+                tracks.append({'obs': []})
+                best = len(tracks) - 1
+            taken.add(best)
+            tr = tracks[best]
+            tr['cx'], tr['cy'], tr['w'], tr['h'] = f[0], f[1], f[2], f[3]
+            tr['obs'].append((i, f))
+    return tracks
+
+
+def _in_speech(t, speech, starts, pad=0.12):
+    k = bisect.bisect_right(starts, t + pad) - 1
+    while k >= 0 and speech[k][0] > t - 12.0:
+        if speech[k][0] - pad <= t <= speech[k][1] + pad:
+            return True
+        k -= 1
+    return False
+
+
+def _hold_runs(labels, min_len):
+    """Absorbs every run shorter than min_len samples into its neighbour
+    (the one before it; the one after for the first), shortest first, so a
+    half-second interjection doesn't buy a cut there and a cut back."""
+    labels = list(labels)
+    while True:
+        runs, k = [], 0
+        while k < len(labels):
+            j = k
+            while j < len(labels) and labels[j] == labels[k]:
+                j += 1
+            runs.append((k, j))
+            k = j
+        short = [r for r in range(len(runs)) if runs[r][1] - runs[r][0] < min_len]
+        if len(runs) <= 1 or not short:
+            return labels
+        r = min(short, key=lambda r: runs[r][1] - runs[r][0])
+        src = runs[r - 1] if r > 0 else runs[r + 1]
+        for k in range(*runs[r]):
+            labels[k] = labels[src[0]]
+
+
+def speaker_turns(grid, acts, a, b, fps, speech, min_hold=SPEAKER_MIN_HOLD, floor=SPEAKER_FLOOR,
+                  ratio=SPEAKER_RATIO, min_decided=SPEAKER_MIN_DECIDED):
+    """Who to frame, and from which frame to which, across one shot.
+
+    grid is the shot's sampled frame numbers; acts holds, per person, the
+    mouth activity at each of those samples (None where unknown); speech is
+    [(start, end)] of the spoken words in clip seconds. Returns
+    [(first frame, last frame, person index)] covering a..b, or None when
+    the evidence doesn't name a speaker for enough of the shot's dialogue
+    -- nobody is talking, the mouths can't be measured, or two people are
+    moving theirs about equally.
+
+    Only moments inside a spoken word vote: a mouth moving in silence is
+    someone chewing or laughing, not a reason to cut to them. Activity is
+    averaged over about a second first, because a talking mouth is caught
+    closed on plenty of individual samples. Between lines the framing
+    stays on whoever spoke last, and a change of speaker is placed just
+    ahead of the next word after a pause, where an editor would cut."""
+    if not speech or len(grid) < 3 or len(acts) < 2:
+        return None
+    speech = sorted((float(s), float(e)) for s, e in speech)
+    starts = [s for s, _ in speech]
+    n = len(grid)
+    dt = float(np.median(np.diff(grid))) / fps
+    half = max(1, int(round(0.4 / max(dt, 1e-3))))
+    talking = [_in_speech(i / fps, speech, starts) for i in grid]
+    raw = np.array([[np.nan if v is None else min(float(v), 0.5) for v in row] for row in acts], dtype=float)
+    # Samples outside speech are blanked BEFORE averaging, not just denied a
+    # vote: otherwise a laugh in the pause after a line leaks into the
+    # average for the line's last word and takes the frame from there.
+    raw[:, [k for k in range(n) if not talking[k]]] = np.nan
+    smooth = np.full_like(raw, np.nan)
+    for k in range(n):
+        win = raw[:, max(0, k - half):k + half + 1]
+        seen = (~np.isnan(win)).sum(axis=1)
+        vals = np.nansum(win, axis=1) / np.maximum(seen, 1)
+        smooth[:, k] = np.where(seen >= min(2, win.shape[1]), vals, np.nan)
+
+    labels, spoken, decided = [None] * n, 0, 0
+    for k in range(n):
+        if not talking[k]:
+            continue
+        spoken += 1
+        col = smooth[:, k]
+        if np.isnan(col).any():
+            continue
+        order = np.argsort(col)[::-1]
+        if col[order[0]] >= floor and col[order[0]] >= ratio * col[order[1]]:
+            labels[k] = int(order[0])
+            decided += 1
+    if spoken < max(3, int(round(0.6 / max(dt, 1e-3)))) or decided < min_decided * spoken:
+        return None
+
+    last = next(v for v in labels if v is not None)
+    for k in range(n):
+        if labels[k] is None:
+            labels[k] = last
+        last = labels[k]
+    labels = _hold_runs(labels, max(2, int(round(min_hold / max(dt, 1e-3)))))
+
+    lead = max(1, int(round(0.15 * fps)))
+    min_gap = max(2, int(round(0.5 * fps)))
+    runs, start = [], a
+    for k in range(1, n):
+        if labels[k] == labels[k - 1]:
+            continue
+        t = grid[k] / fps
+        cut = grid[k]
+        # The next word that follows a pause, nearest to where the mouths
+        # say the speaker changed: that is the new line starting.
+        best = None
+        j = bisect.bisect_left(starts, t - 0.9)
+        while j < len(speech) and speech[j][0] <= t + 0.5:
+            if j == 0 or speech[j][0] - speech[j - 1][1] >= 0.2:
+                if best is None or abs(speech[j][0] - t) < abs(speech[best][0] - t):
+                    best = j
+            j += 1
+        if best is not None:
+            floor_f = int(math.ceil(speech[best - 1][1] * fps)) if best > 0 else a
+            cut = max(floor_f, int(round(speech[best][0] * fps)) - lead)
+        if not (start + min_gap <= cut <= b - min_gap):
+            cut = grid[k]
+        if not (start < cut <= b):
+            continue
+        runs.append((start, cut - 1, labels[k - 1]))
+        start = cut
+    runs.append((start, b, labels[-1]))
+    return runs
+
+
+def _speaker_segments(hits, a, b, fps, speech, crop_w, max_x, static_px):
+    """Reframe segments for a shot whose faces don't fit one vertical frame,
+    cut between them by who is speaking -- or None to leave the shot to the
+    planner's ordinary handling."""
+    if not speech or len(hits) < 3:
+        return None
+    need = max(2, int(math.ceil(0.3 * len(hits))))
+    tracks = [t for t in _face_tracks(hits) if len(t['obs']) >= need]
+    if len(tracks) < 2:
+        return None
+    grid = [i for i, _ in hits]
+    # A sample whose second frame falls past the cut compared two different
+    # shots; what it measured is the cut, not a mouth.
+    guard = b - int(round(MOUTH_LAG_SEC * fps)) - 1
+    acts = []
+    for t in tracks:
+        seen = {i: (f[4] if len(f) > 4 and i <= guard else None) for i, f in t['obs']}
+        acts.append([seen.get(i) for i in grid])
+    runs = speaker_turns(grid, acts, a, b, fps, speech)
+    if not runs:
+        return None
+    out = []
+    for fa, fb, who in runs:
+        obs = tracks[who]['obs']
+        allx = [f[0] for _, f in obs]
+        # A person who stays put gets one framing for the whole shot, so
+        # cutting back to them lands exactly where it was; one who drifts
+        # is framed where they are during this turn.
+        near = [f[0] for i, f in obs if fa <= i <= fb] or allx
+        cx = np.median(allx) if max(allx) - min(allx) <= static_px else np.median(near)
+        out.append({'a': fa, 'b': fb, 'layout': 'crop', 'x': float(np.clip(cx - crop_w / 2.0, 0.0, max_x)),
+                    'keys': None, 'speaker': True})
+    return out
+
+
 def plan_reframe(samples, shot_starts, n_frames, disp_w, disp_h, crop_w, mode='auto', fps=25.0,
-                 min_face_frac=0.05):
+                 min_face_frac=0.05, speaker=False, speech=None):
     """Decides, shot by shot, how a landscape clip becomes a portrait one.
 
     Returns segments [{'a', 'b', 'layout', 'x', 'keys'}] covering frames
@@ -900,7 +1177,14 @@ def plan_reframe(samples, shot_starts, n_frames, disp_w, disp_h, crop_w, mode='a
 
     Within a shot the window is locked off unless the subject really moves
     (more than ~12% of the window's width); then it follows on a heavily
-    smoothed path, never frame-by-frame detections, which jitter."""
+    smoothed path, never frame-by-frame detections, which jitter.
+
+    speaker=True changes the second case only, and only when the evidence
+    is there (samples carrying mouth activity from sample_faces(mouth=True),
+    and `speech`, the [(start, end)] of the spoken words in clip seconds):
+    the shot is then cut between tight framings of whoever is speaking,
+    see speaker_turns(). A shot it can't call falls through to what `mode`
+    would have done anyway."""
     n_frames = int(n_frames)
     max_x = max(0.0, float(disp_w - crop_w))
     center = max_x / 2.0
@@ -929,6 +1213,9 @@ def plan_reframe(samples, shot_starts, n_frames, disp_w, disp_h, crop_w, mode='a
         fits = [t['span_w'] <= 0.9 * crop_w for _, t in hits]
         if sum(fits) >= 0.6 * len(hits):
             targets = [(i, t['span_cx'] if ok else t['big_cx']) for (i, t), ok in zip(hits, fits)]
+        elif speaker and (turns := _speaker_segments(hits, a, b, fps, speech, crop_w, max_x, static_px)):
+            segs.extend(turns)
+            continue
         elif mode == 'auto':
             segs.append({'a': a, 'b': b, 'layout': 'fit', 'x': None, 'keys': None})
             continue
