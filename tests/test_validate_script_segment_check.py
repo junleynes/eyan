@@ -49,7 +49,7 @@ def test_named_segment_with_no_combine_offsets_is_reported_as_skipped():
     # with the same line (drops it entirely).
     kept_times = [c['raw_time'] for c in (body.get('cues') or [])]
     assert 5.0 not in kept_times
-    assert any('not combined' in (s.get('reason') or '') for s in (body.get('skipped') or []))
+    assert any('not loaded' in (s.get('reason') or '') for s in (body.get('skipped') or []))
 
 
 def test_segment_1_with_no_combine_offsets_is_still_usable():

@@ -4,15 +4,10 @@ Everything else in this app (auth, the trailer library, the media pipeline)
 imports `app` from here. Kept dependency-free of the other modules so there's
 no risk of circular imports.
 """
-import os, cv2, numpy as np, tempfile, threading, time, pathlib, base64, json, requests, subprocess, shutil, re, sqlite3, uuid, secrets, hmac, io
-from concurrent.futures import ThreadPoolExecutor
+import os, tempfile, threading, time, secrets, hmac
 from collections import deque
-from scenedetect import open_video, SceneManager
-from scenedetect.detectors import ContentDetector
-from flask import Flask, render_template_string, request, send_from_directory, jsonify, Response, session, redirect, url_for
-from werkzeug.utils import secure_filename
-from werkzeug.security import generate_password_hash, check_password_hash
-import smbclient
+from flask import Flask, request, jsonify, session, redirect, url_for
+from werkzeug.security import generate_password_hash
 
 try:
     from dotenv import load_dotenv
@@ -55,8 +50,8 @@ if _upload_temp_dir:
         print('=' * 64)
         print(f' UPLOAD_TEMP_DIR is set to "{_upload_temp_dir}" but could not be')
         print(f' created or used: {e}')
-        print(f' Falling back to the system temp location for this run --')
-        print(f' fix the path or its permissions, then restart.')
+        print(' Falling back to the system temp location for this run --')
+        print(' fix the path or its permissions, then restart.')
         print('=' * 64)
 
 _SECRET_KEY_FILE = os.environ.get('SECRET_KEY_FILE',
@@ -115,7 +110,6 @@ _file_route_limiter = _RateLimiter(limit=int(os.environ.get('FILE_ROUTE_RATE_LIM
 _job_submit_limiter = _RateLimiter(limit=int(os.environ.get('JOB_SUBMIT_RATE_LIMIT', 12)), window=300)
 _login_limiter = _RateLimiter(limit=int(os.environ.get('LOGIN_RATE_LIMIT', 8)), window=300)
 _DUMMY_PW_HASH = generate_password_hash(secrets.token_hex(16))
-DEFAULT_ADMIN_PASSWORD = 'Aimp#Admin2026!'
 
 @app.after_request
 def _security_headers(resp):

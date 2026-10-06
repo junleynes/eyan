@@ -7,7 +7,7 @@ import os, time, sqlite3, functools, secrets
 from flask import request, session, redirect, jsonify, render_template
 from markupsafe import escape
 from werkzeug.security import generate_password_hash, check_password_hash
-from core import app, _client_ip, _login_limiter, _DUMMY_PW_HASH, DEFAULT_ADMIN_PASSWORD, ensure_csrf_token
+from core import app, _client_ip, _login_limiter, _DUMMY_PW_HASH, ensure_csrf_token
 from library_db import LIBRARY_DIR, _sqlite_connect, load_branding, audit_log
 
 def _safe_next(dest):
@@ -362,9 +362,9 @@ def users_db_init():
         # Bootstrap: no accounts exist yet, so create a default admin rather
         # than locking the first deploy out entirely. Override with
         # ADMIN_USERNAME/ADMIN_PASSWORD env vars; otherwise this falls back to
-        # the hardcoded DEFAULT_ADMIN_PASSWORD above.
+        # a random one-time password, printed below.
         username = (os.environ.get('ADMIN_USERNAME', '').strip() or 'admin')
-        password = os.environ.get('ADMIN_PASSWORD', '').strip() or DEFAULT_ADMIN_PASSWORD
+        password = os.environ.get('ADMIN_PASSWORD', '').strip() or secrets.token_urlsafe(12)
         conn.execute(
             'INSERT INTO users (username, password_hash, role, is_active, created_at) VALUES (?,?,?,1,?)',
             (username, generate_password_hash(password), 'admin', time.time()))
@@ -373,9 +373,8 @@ def users_db_init():
         print(' * No user accounts found -- created a default admin account:')
         print(f'     username: {username}')
         print(f'     password: {password}')
-        print('   Sign in, add real accounts from Admin > Users, and change')
-        print('   this admin password (Admin > Users > Set) afterward --')
-        print('   the default is hardcoded in this file, not a secret.')
+        print('   This password is random and shown only now. Sign in, add real')
+        print('   accounts from Admin > Users, and change it (Admin > Users > Set).')
         print('=' * 64)
     conn.close()
 
@@ -802,7 +801,7 @@ def admin_reset_if_requested():
     if os.environ.get('RESET_ADMIN', '').strip().lower() not in ('1', 'true', 'yes'):
         return
     username = (os.environ.get('ADMIN_USERNAME', '').strip() or 'admin')
-    password = os.environ.get('ADMIN_PASSWORD', '').strip() or DEFAULT_ADMIN_PASSWORD
+    password = os.environ.get('ADMIN_PASSWORD', '').strip() or secrets.token_urlsafe(12)
     existing = user_get_by_username(username)
     conn = _users_db()
     if existing:
@@ -851,15 +850,13 @@ def _admin_users_page(error=None, notice=None):
     groups = group_list()
     brand = load_branding()
     brand_name = escape(brand['name'])
-    brand_tagline = escape(brand['tagline'])
     theme = brand['theme_colors']
-    group_options = ''.join(f'<option value={g["id"]}>{g["name"]}</option>' for g in groups)
     rows = ''
     for u in users:
         created = time.strftime('%Y-%m-%d', time.localtime(u['created_at'])) if u['created_at'] else '—'
         last_login = time.strftime('%Y-%m-%d %H:%M', time.localtime(u['last_login'])) if u['last_login'] else 'never'
         is_you = (u['id'] == session.get('user_id'))
-        this_group_options = f'<option value="">\u2014 none (unrestricted) \u2014</option>' + ''.join(
+        this_group_options = '<option value="">\u2014 none (unrestricted) \u2014</option>' + ''.join(
             f'<option value={g["id"]} {"selected" if u["group_id"] == g["id"] else ""}>{g["name"]}</option>' for g in groups)
         rows += f'''<tr>
 <td>{u['username']}{' <span class="you">(you)</span>' if is_you else ''}</td>

@@ -12,3 +12,6 @@ network_shares.json
 network_folders.json
 .env
 production_defaults.json
+shorts/
+models/
+.pytest_cache/

@@ -5,7 +5,7 @@ shell, upload/download passthroughs), and starts the server.
 Run this file instead of any of the individual modules: `python3 main.py`.
 """
 import os, subprocess, threading
-from flask import request, jsonify, session, send_from_directory, render_template, redirect
+from flask import request, jsonify, session, send_from_directory, render_template
 
 from core import app, ensure_csrf_token
 import library_db      # noqa: F401
@@ -16,7 +16,7 @@ from pipeline import (
     _sweeper_loop, sweep_upload_folder, free_disk_mb, load_config_overrides, load_branding,
     ALLOW_LOCAL_MEDIA_UPLOAD,
 )
-import pipeline
+import pipeline         # noqa: F401 -- exposed as main.pipeline (tests patch it)
 import shorts           # noqa: F401 -- registers the Vertical Shorts tab's /api/shorts/* routes
 
 

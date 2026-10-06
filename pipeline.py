@@ -17,10 +17,9 @@ not blind in a sandbox that has none of those available.
 import os, cv2, numpy as np, tempfile, threading, time, pathlib, base64, json, requests, subprocess, shutil, re, sqlite3, uuid, secrets, io, mimetypes, hashlib
 from xml.sax.saxutils import escape as xml_escape
 from concurrent.futures import ThreadPoolExecutor
-from collections import deque
 from scenedetect import open_video, SceneManager, FrameTimecode
 from scenedetect.detectors import ContentDetector, AdaptiveDetector
-from flask import request, jsonify, redirect, url_for, Response, send_from_directory, send_file, session
+from flask import request, jsonify, redirect, Response, send_from_directory, send_file, session
 import zipfile
 from werkzeug.utils import secure_filename
 import smbclient  # pip install smbprotocol -- lets the upload panels browse a Windows/SMB network share directly
@@ -1870,7 +1869,7 @@ def _detect_silence_intervals(audio_path, noise_db=-35, min_dur=0.35, timeout=12
     pcm_path = None
     try:
         pcm_path = os.path.join(app.config['UPLOAD_FOLDER'], f'sildet_{uuid.uuid4().hex}.wav')
-        conv = subprocess.run([FFMPEG, '-y', '-i', audio_path, '-ac', '1', '-ar', '44100',
+        subprocess.run([FFMPEG, '-y', '-i', audio_path, '-ac', '1', '-ar', '44100',
                                 '-c:a', 'pcm_s16le', pcm_path],
                                capture_output=True, text=True, timeout=timeout)
         analyze_path = pcm_path if (os.path.exists(pcm_path) and os.path.getsize(pcm_path) > 0) else audio_path
@@ -2247,7 +2246,6 @@ def beat_match_audio(video_path, bgm_path, target_dur, output_path):
 
     try:
         y_bgm, sr_bgm = librosa_load(bgm_path, sr=22050)
-        orig_len = len(y_bgm)
         # Detect BGM tempo
         tempo_bgm, _ = librosa.beat.beat_track(y=y_bgm, sr=sr_bgm)
         tempo_bgm = _to_scalar(tempo_bgm)
@@ -2729,7 +2727,7 @@ def finalize_bgm_duration(src_path, duration, base_ts, fade_in=2.0, fade_out=3.0
     duration (used when the early beat-sync pass generated it against an
     estimate that ended up slightly off from the final trailer length)."""
     out = os.path.join(app.config['UPLOAD_FOLDER'], f'bgmfit_{base_ts}_{int(time.time()*1000)%100000}.m4a')
-    r = subprocess.run([FFMPEG, '-y', '-i', src_path,
+    subprocess.run([FFMPEG, '-y', '-i', src_path,
                         '-af', (f'atrim=duration={duration},apad=whole_dur={duration},'
                                 f'afade=t=in:d={fade_in},'
                                 f'afade=t=out:st={max(duration - fade_out, 0)}:d={min(fade_out, duration)}'),
@@ -3230,7 +3228,7 @@ def _match_to_seconds(m, pat_idx, fps=25.0):
         # range only when the 2nd group is discarded, not treated as minutes
         # of its own. The leading group is kept as hours in case a future
         # script's raw source ever runs past an hour.
-        h, _padding, mnt, s = int(g[0]), g[1], int(g[2]), int(g[3])
+        h, mnt, s = int(g[0]), int(g[2]), int(g[3])
         return h * 3600 + mnt * 60 + s
     if pat_idx == 3:
         return int(g[0]) * 60 + int(g[1])
@@ -4781,12 +4779,6 @@ def api_validate_script():
         return jsonify(ok=False, error='That file has no readable text.'), 400
 
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    cues = parse_script_cues(
-        text,
-        segment_offsets=(None if available is not None else (segment_offsets or None)),
-        available_materials=available,
-    )
-
     # Per-line diagnostics so the UI can show what was kept vs skipped.
     # A single timecode is enough to select a scene; in/out pairs use the in-point.
     kept = []
@@ -4849,9 +4841,14 @@ def api_validate_script():
                     'reason': 'Referenced a source that was not loaded — cue ignored',
                 })
                 continue
+        # Legacy combine: a render shifts a segment's cue onto the combined
+        # timeline (parse_script_cues), so the preview shows the shifted time.
+        shifted = secs
+        if seg_match and available is None:
+            shifted = secs + (segment_offsets.get(int(seg_match.group(1))) or 0.0)
         kept.append({
-            'time': round(secs, 3),
-            'timecode': _seconds_to_tc(secs),
+            'time': round(shifted, 3),
+            'timecode': _seconds_to_tc(shifted),
             'raw_time': round(secs, 3),
             'raw_timecode': _seconds_to_tc(secs),
             'out_timecode': _seconds_to_tc(meta['out']) if meta.get('out') is not None else None,
@@ -9309,7 +9306,6 @@ def _run_trailer_job(jid, params):
             return
 
         med_lap = median([s['laplacian'] for s in scenes_data])
-        med_bri = median([s['brightness'] for s in scenes_data])
         for s in scenes_data:
             # Quality (OpenCV heuristics) is scored 1-3, deliberately the
             # smallest of the three components: it's the crudest signal
