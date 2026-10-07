@@ -786,6 +786,26 @@ def test_a_source_with_nothing_to_hear_still_falls_back_and_says_what_was_found(
     assert any(w.startswith('No dialogue was transcribed (the file has no audio track)') for w in a['warnings'])
 
 
+def test_dialogue_found_on_another_track_is_reported_and_the_shorts_use_that_audio(env, monkeypatch):
+    svc = Services(monkeypatch)
+    svc.heard = {'ok': True, 'reason': None, 'audio': 'tracks 3+4', 'take': [[2, 0], [3, 0]]}
+    client, headers = _client()
+    job = _analyze(client, headers, env)
+    a = _analysis(client, job)
+    assert "The dialogue was read from tracks 3+4 of this file's audio; the shorts use the same audio." in a['warnings']
+    assert shorts.ANALYSES[job['result']['analysis_id']]['info']['audio_take'] == [[2, 0], [3, 0]]
+    # A surround mix: said, but the shorts keep the whole mix.
+    svc.heard = {'ok': True, 'reason': None, 'audio': 'channel 3'}
+    job = _analyze(client, headers, env)
+    a = _analysis(client, job)
+    assert "The dialogue was read from channel 3 of this file's audio." in a['warnings']
+    assert 'audio_take' not in shorts.ANALYSES[job['result']['analysis_id']]['info']
+    # An ordinary file: nothing to say.
+    svc.heard = {'ok': True, 'reason': None}
+    a = _analysis(client, _analyze(client, headers, env))
+    assert not any('dialogue was read from' in w for w in a['warnings'])
+
+
 def test_a_source_too_short_for_the_requested_length_is_refused(env, monkeypatch):
     Services(monkeypatch)
     client, headers = _client()

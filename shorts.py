@@ -393,6 +393,13 @@ def _run_analysis(jid, params):
     words, segments = sc.normalize_transcript(words, segments)
 
     warnings = []
+    if heard.get('take'):
+        # A master with its sound on separate tracks: the shorts take their
+        # audio from where the dialogue was found, not from the first track.
+        info['audio_take'] = heard['take']
+    if heard.get('audio'):
+        warnings.append(f"The dialogue was read from {heard['audio']} of this file's audio"
+                        + ('; the shorts use the same audio.' if heard.get('take') else '.'))
     if errors:
         warnings.append(f'{len(errors)} of {len(items)} frames could not be rated by the vision model '
                         f'({errors[0][:120]}); the rest were used.')
@@ -949,8 +956,13 @@ def api_shorts_clip():
         # an MP4 -- which the browser then caches as broken.
         part = os.path.join(app.config['UPLOAD_FOLDER'], f'shpart_{secrets.token_hex(6)}.mp4')
         try:
+            # The same sound the shorts will have (see sc.take_to_stereo).
+            take = a['info'].get('audio_take')
+            sound = (['-filter_complex', sc.take_to_stereo(take) + '[a]', '-map', '0:v:0', '-map', '[a]']
+                     if take else [])
             r = pipeline.run_ffmpeg([pipeline.FFMPEG, '-y', '-ss', f'{start:.3f}', '-i', a['path'],
-                                     '-t', f'{dur:.3f}', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26',
+                                     '-t', f'{dur:.3f}'] + sound +
+                                    ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '26',
                                      '-vf', "scale='min(640,iw)':-2", '-pix_fmt', 'yuv420p',
                                      '-c:a', 'aac', '-b:a', '96k', '-ac', '2', '-movflags', '+faststart', part],
                                     timeout=pipeline.FFMPEG_TIMEOUT, label='shorts preview clip')

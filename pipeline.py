@@ -21,6 +21,7 @@ from scenedetect import open_video, SceneManager, FrameTimecode
 from scenedetect.detectors import ContentDetector, AdaptiveDetector
 from flask import request, jsonify, redirect, Response, send_from_directory, send_file, session
 import zipfile
+import math
 from werkzeug.utils import secure_filename
 import smbclient  # pip install smbprotocol -- lets the upload panels browse a Windows/SMB network share directly
 from smbprotocol.exceptions import SharingViolation
@@ -2985,6 +2986,12 @@ def _whisper_reply(data):
     if words and not segments:
         import shorts_core      # no PRISM imports of its own, so nothing circular
         segments = shorts_core.segments_from_words(words)
+    if not words and not segments and str(data.get('text') or '').strip():
+        # It heard the dialogue and sent it back as one block of text. Reading
+        # that as "no speech" would send an editor looking for a fault in the
+        # file when the fault is in what the server was able to return.
+        raise ValueError('it returned the dialogue as plain text with no timings; PRISM needs the start and '
+                         'end of each line or word (response_format=verbose_json with timestamps)')
     return words, segments
 
 
@@ -3002,57 +3009,283 @@ def _whisper_problem(e):
     return f'the speech-to-text service at {WHISPER_URL} sent a reply that could not be read ({e})'
 
 
+# --- Which of a file's audio to transcribe -----------------------------------
+#
+# "ffmpeg -i file -ac 1" takes the audio stream with the most channels and
+# folds all of its channels into one. That is right for a stereo MP4 and wrong
+# for a broadcast master in several different ways: the first of eight mono
+# tracks may be silent or music-and-effects, dialogue may sit on tracks 3-4, a
+# dual-mono pair recorded out of phase cancels to nothing when summed, and a
+# full mix folded in with six silent channels is seven times quieter. Each of
+# those reaches the speech-to-text service as audio with no speech in it, and
+# comes back as "no dialogue" for a programme that is nothing but dialogue.
+#
+# So the file's channels are measured first, the silent ones are set aside,
+# and the rest are tried in turn -- as they are, never as a blind fold-down --
+# until one of them has speech in it.
+
+STT_SILENT_DB = -55.0       # a channel whose loudest sampled stretch is below this carries nothing
+STT_MAX_TAKES = 4           # how many different channels/pairs are tried before giving up
+STT_TARGET_DB = -23.0       # quiet takes are raised toward this before they are sent
+
+
+def _audio_streams(path):
+    """[{'channels', 'layout'}] for each audio stream, in file order ([] if
+    there are none or the file cannot be probed)."""
+    try:
+        r = run_ffprobe([FFPROBE, '-v', 'error', '-select_streams', 'a', '-show_entries',
+                         'stream=channels,channel_layout', '-of', 'json', path])
+        rows = json.loads(r.stdout or '{}').get('streams', [])
+    except (MediaToolTimeout, ValueError):
+        return []
+    out = []
+    for row in rows:
+        try:
+            n = int(row.get('channels') or 0)
+        except (TypeError, ValueError):
+            n = 0
+        if n > 0:
+            out.append({'channels': n, 'layout': str(row.get('channel_layout') or '').lower()})
+    return out
+
+
+def _audio_samples(path, streams, duration):
+    """Ten short stretches spread through the file, every channel of every
+    audio stream side by side: float array (samples, total channels) at
+    8 kHz, or None if it could not be read. Enough to tell which channels
+    carry sound and which of them are the same sound; cheap enough to do
+    before every transcription."""
+    total = sum(st['channels'] for st in streams)
+    if not total or total > 64:
+        return None
+    if len(streams) == 1:
+        graph = ['-map', '0:a:0']
+    else:
+        graph = ['-filter_complex', ''.join(f'[0:a:{k}]' for k in range(len(streams)))
+                 + f'amerge=inputs={len(streams)}[a]', '-map', '[a]']
+    span = 15.0
+    if not duration or duration <= 10 * span:
+        windows = [(0.0, max(1.0, float(duration or 10 * span)))]
+    else:
+        windows = [((k + 0.5) * duration / 10.0 - span / 2.0, span) for k in range(10)]
+    chunks = []
+    for start, length in windows:
+        cmd = [FFMPEG, '-v', 'error', '-nostdin', '-ss', f'{max(0.0, start):.3f}', '-t', f'{length:.3f}', '-i', path,
+               '-vn'] + graph + ['-ar', '8000', '-c:a', 'pcm_s16le', '-f', 's16le', '-']
+        try:
+            r = subprocess.run(cmd, capture_output=True, timeout=120)
+        except (subprocess.TimeoutExpired, OSError):
+            return None
+        raw = r.stdout or b''
+        usable = len(raw) - len(raw) % (2 * total)
+        if r.returncode != 0 and not usable:
+            return None
+        if usable:
+            chunks.append(np.frombuffer(raw[:usable], dtype='<i2').reshape(-1, total).astype(np.float32) / 32768.0)
+    return np.concatenate(chunks) if chunks else None
+
+
+def stt_takes(streams, samples):
+    """What to try transcribing, best guess first: ([take], levels) where a
+    take is the list of channels to send as one (one channel, or two that
+    are a stereo pair of the same programme) and levels is the dBFS of
+    every channel. Channels are numbered straight through the file's audio
+    streams, in order.
+
+      * A channel that is silent is never part of a take.
+      * A surround stream's centre channel goes first: that is where a film
+        or drama mix puts the dialogue.
+      * Otherwise in file order -- the full mix is conventionally first --
+        pairing a channel with the next one when they carry the same
+        programme. Two channels that are the same sound upside down are not
+        a pair: summed they are silence, so one of them is sent alone.
+      * A channel that only repeats one already chosen is skipped."""
+    total = sum(st['channels'] for st in streams)
+    rms = np.sqrt(np.mean(np.square(samples.astype(np.float64)), axis=0)) if len(samples) else np.zeros(total)
+    levels = [float(20.0 * math.log10(v)) if v > 1e-9 else -120.0 for v in rms]
+    live = [c for c in range(total) if levels[c] > STT_SILENT_DB]
+
+    def alike(a, b):
+        x, y = samples[:, a].astype(np.float64), samples[:, b].astype(np.float64)
+        den = math.sqrt(float(np.dot(x, x)) * float(np.dot(y, y)))
+        return float(np.dot(x, y)) / den if den > 0 else 0.0
+
+    takes, taken = [], []
+    base = 0
+    for st in streams:
+        # Tried first, not instead: eight separate tracks are often written
+        # out labelled "7.1", and then channel 3 is just the third track.
+        if st['channels'] >= 6 and st['layout'].startswith(('5.1', '6.1', '7.1')) and base + 2 in live:
+            takes.append([base + 2])
+            taken.append(base + 2)
+        base += st['channels']
+    rest = [c for c in live if c not in taken]
+    k = 0
+    while k < len(rest):
+        a = rest[k]
+        k += 1
+        if any(abs(alike(a, t)) > 0.97 for t in taken):
+            continue                                    # the same sound as something already chosen
+        take = [a]
+        if k < len(rest):
+            r = alike(a, rest[k])
+            if r > 0.3:
+                take.append(rest[k])                    # a stereo pair of one programme
+                k += 1
+            elif r < -0.6:
+                k += 1                                  # the same thing out of phase: one side says it all
+        takes.append(take)
+        taken.extend(take)
+    return takes[:STT_MAX_TAKES], levels
+
+
+def _channel_home(streams, channel):
+    """(audio stream, channel within it), both from 0."""
+    for k, st in enumerate(streams):
+        if channel < st['channels']:
+            return k, channel
+        channel -= st['channels']
+    raise IndexError(channel)
+
+
+def describe_take(streams, take):
+    """'track 3 channels 1+2' -- how an editor would point at it. A track
+    with one channel is just 'track 3'; a file with one track just
+    'channels 1+2'."""
+    homes = [_channel_home(streams, c) for c in take]
+    many = len(streams) > 1
+    if len({h[0] for h in homes}) > 1:
+        return 'tracks ' + '+'.join(str(h[0] + 1) for h in homes)
+    stream = homes[0][0]
+    chans = '+'.join(str(h[1] + 1) for h in homes)
+    if streams[stream]['channels'] == 1:
+        return f'track {stream + 1}' if many else 'the audio track'
+    part = f"channel{'s' if len(homes) > 1 else ''} {chans}"
+    return f'track {stream + 1} {part}' if many else part
+
+
+def _take_filter(streams, take, level_db):
+    """-filter_complex for one take as mono on [m]: the chosen channel, or
+    the two averaged, raised toward STT_TARGET_DB if it is quiet."""
+    homes = [_channel_home(streams, c) for c in take]
+    if len(homes) == 1:
+        g = f'[0:a:{homes[0][0]}]pan=mono|c0=c{homes[0][1]}'
+    elif homes[0][0] == homes[1][0]:
+        g = f'[0:a:{homes[0][0]}]pan=mono|c0=0.5*c{homes[0][1]}+0.5*c{homes[1][1]}'
+    else:
+        g = (f'[0:a:{homes[0][0]}]pan=mono|c0=c{homes[0][1]}[p];[0:a:{homes[1][0]}]pan=mono|c0=c{homes[1][1]}[q];'
+             '[p][q]amerge=inputs=2,pan=mono|c0=0.5*c0+0.5*c1')
+    gain = min(30.0, STT_TARGET_DB - level_db)
+    if gain > 3.0:
+        g += f',volume={gain:.1f}dB'
+    return g + '[m]'
+
+
 def transcribe_video_detailed(path):
     """Transcribe the source's dialogue via the local whisper service
     (WHISPER_URL, an OpenAI-compatible /v1/audio/transcriptions endpoint), with
     word-level timestamps. Returns (words, segments, outcome):
       words:    [{'start','end','word'}, ...]
       segments: [{'start','end','text'}, ...]
-      outcome:  {'ok': bool, 'reason': str or None}
+      outcome:  {'ok': bool, 'reason': str or None} and, for a file with
+                more in it than one mono or stereo track, 'audio': where the
+                dialogue was found ('track 3 channels 1+2') and 'take': the
+                same as [[audio stream, channel], ...] counted from 0, for a
+                caller that goes on to use that file's sound -- except for a
+                surround mix, which should be folded down whole, not reduced
+                to the channel the dialogue was read from
 
     The outcome is what tells an empty result apart. ok=False: it FAILED
     (audio could not be extracted, the service refused, errored or timed
     out) and `reason` says how -- nothing is known about the dialogue.
     ok=True with nothing transcribed: it worked and there was nothing to
-    hear, `reason` saying whether that is a file with no audio track or
-    audio with no speech in it. The two used to be indistinguishable, so a
-    whisper server answering HTTP 500 was reported to editors as "the file
-    contains no speech".
+    hear, `reason` saying whether that is a file with no audio track, audio
+    that is silent, or audio with no speech in it -- and, for a file with
+    more than plain stereo in it, which channels were tried at what level.
+    The two used to be indistinguishable, so a whisper server answering
+    HTTP 500 was reported to editors as "the file contains no speech".
 
-    The audio is extracted to 16 kHz mono WAV first. This used to POST the
-    whole source container -- for a 45-minute episode that meant pushing
-    several GB over HTTP so the service could demux and discard the video
-    track anyway. Whisper resamples to 16 kHz mono internally regardless, so
-    doing it here costs one cheap ffmpeg pass and cuts the upload by ~100x."""
+    What is sent is chosen by stt_takes() (see the note above it) and
+    extracted to 16 kHz mono WAV. This used to POST the whole source
+    container -- for a 45-minute episode that meant pushing several GB over
+    HTTP so the service could demux and discard the video track anyway.
+    Whisper resamples to 16 kHz mono internally regardless, so doing it here
+    costs one cheap ffmpeg pass and cuts the upload by ~100x."""
     audio_path = None
     try:
-        audio_path = os.path.join(app.config['UPLOAD_FOLDER'],
-                                  f'stt_{uuid.uuid4().hex}.wav')
-        try:
-            r = run_ffmpeg([FFMPEG, '-y', '-i', path, '-vn', '-ac', '1', '-ar', '16000',
-                            '-c:a', 'pcm_s16le', audio_path],
-                           timeout=FFMPEG_LONG_TIMEOUT, label='STT audio extract')
-        except MediaToolTimeout as e:
-            print(f'Whisper: audio extraction timed out ({e}); skipping transcription.')
-            return [], [], {'ok': False, 'reason': f'extracting the audio took too long and was stopped ({e})'}
-        if not (os.path.exists(audio_path) and os.path.getsize(audio_path) > 0):
-            print('Whisper: could not extract an audio track from the source; skipping transcription.')
-            if not probe_media_info(path).get('has_audio'):
-                return [], [], {'ok': True, 'reason': 'the file has no audio track'}
-            import shorts_core
-            why = shorts_core.ffmpeg_error(getattr(r, 'stderr', '') or '', 300)
-            return [], [], {'ok': False, 'reason': 'ffmpeg could not read the audio track' + (f' ({why})' if why else '')}
+        audio_path = os.path.join(app.config['UPLOAD_FOLDER'], f'stt_{uuid.uuid4().hex}.wav')
+        streams = _audio_streams(path)
+        plain = ['-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le']
+        # (ffmpeg arguments, description or None for "the audio, as ffmpeg takes it")
+        attempts, layout, homes = [(plain, None)], '', {}
+        if streams:
+            samples = _audio_samples(path, streams, probe_media_info(path).get('duration'))
+            if samples is not None and len(samples):
+                takes, levels = stt_takes(streams, samples)
+                n_ch = sum(st['channels'] for st in streams)
+                layout = (f'{len(streams)} audio tracks' if len(streams) > 1 else f'one audio track of {n_ch} channels')
+                if not takes:
+                    print(f'Whisper: every audio channel of the source is silent ({layout}); nothing to transcribe.')
+                    return [], [], {'ok': True, 'reason': 'every audio channel in the file is silent '
+                                                          f'(below {int(STT_SILENT_DB)} dB; {layout})'}
+                attempts, homes = [], {}
+                for take in takes:
+                    level = max(levels[c] for c in take)
+                    what = f'{describe_take(streams, take)} at {level:.0f} dB'
+                    attempts.append((['-vn', '-filter_complex', _take_filter(streams, take, level), '-map', '[m]',
+                                      '-ar', '16000', '-c:a', 'pcm_s16le'], what))
+                    homes[what] = [list(_channel_home(streams, c)) for c in take]
         upload_name = os.path.splitext(os.path.basename(path))[0] + '.wav'
-        try:
-            r = _whisper_request(audio_path, upload_name)
-            r.raise_for_status()
-            words, segments = _whisper_reply(r.json())
-        except Exception as e:
-            print(f'Whisper transcription error (service at {WHISPER_URL}): {e}')
-            return [], [], {'ok': False, 'reason': _whisper_problem(e)}
-        if not words and not segments:
-            return [], [], {'ok': True, 'reason': 'the speech-to-text service found no speech in the audio'}
-        return words, segments, {'ok': True, 'reason': None}
+        tried = []
+        for n, (args, what) in enumerate(attempts):
+            if os.path.exists(audio_path):
+                os.remove(audio_path)
+            try:
+                r = run_ffmpeg([FFMPEG, '-y', '-i', path] + args + [audio_path],
+                               timeout=FFMPEG_LONG_TIMEOUT, label='STT audio extract')
+            except MediaToolTimeout as e:
+                print(f'Whisper: audio extraction timed out ({e}); skipping transcription.')
+                return [], [], {'ok': False, 'reason': f'extracting the audio took too long and was stopped ({e})'}
+            if not (os.path.exists(audio_path) and os.path.getsize(audio_path) > 0):
+                if what is not None and args is not plain:
+                    # The chosen channels could not be cut out (an ffmpeg that
+                    # cannot address this layout): the plain fold-down is
+                    # still better than nothing, once.
+                    print(f'Whisper: could not extract {what}; falling back to the default audio.')
+                    if not any(a is plain for a, _ in attempts):
+                        attempts.append((plain, None))
+                    continue
+                print('Whisper: could not extract an audio track from the source; skipping transcription.')
+                if not probe_media_info(path).get('has_audio'):
+                    return [], [], {'ok': True, 'reason': 'the file has no audio track'}
+                import shorts_core
+                why = shorts_core.ffmpeg_error(getattr(r, 'stderr', '') or '', 300)
+                return [], [], {'ok': False,
+                                'reason': 'ffmpeg could not read the audio track' + (f' ({why})' if why else '')}
+            try:
+                r = _whisper_request(audio_path, upload_name)
+                r.raise_for_status()
+                words, segments = _whisper_reply(r.json())
+            except Exception as e:
+                print(f'Whisper transcription error (service at {WHISPER_URL}): {e}')
+                return [], [], {'ok': False, 'reason': _whisper_problem(e)}
+            if words or segments:
+                outcome = {'ok': True, 'reason': None}
+                if what is not None and (n > 0 or len(streams) > 1 or streams[0]['channels'] > 2):
+                    outcome['audio'] = what.split(' at ')[0]
+                    surround = any(st['layout'].startswith(('5.1', '6.1', '7.1')) for st in streams)
+                    if not surround and what in homes:
+                        outcome['take'] = homes[what]
+                    print(f'Whisper: dialogue transcribed from {what} ({layout}).')
+                return words, segments, outcome
+            tried.append(what)
+            if what is not None:
+                print(f'Whisper: no speech found in {what}' + ('; trying the next.' if n + 1 < len(attempts) else '.'))
+        reason = 'the speech-to-text service found no speech in the audio'
+        named = [t for t in tried if t]
+        if named and (len(named) > 1 or len(streams) > 1 or streams[0]['channels'] > 2):
+            reason += '; tried ' + ', '.join(named) + (f'; the file has {layout}' if layout else '')
+        return [], [], {'ok': True, 'reason': reason}
     except Exception as e:
         print(f'Whisper transcription error (service at {WHISPER_URL}): {e}')
         return [], [], {'ok': False, 'reason': f'unexpected error ({e})'}

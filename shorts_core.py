@@ -1852,6 +1852,26 @@ def probe_source(ffprobe, path, timeout=30):
     return info
 
 
+def take_to_stereo(take):
+    """ffmpeg filter chain (inputs named, no output label) that makes a
+    stereo programme out of chosen channels of the source:
+    [[audio stream, channel], ...] counted from 0, one channel or two.
+
+    For a master that keeps its sound as separate tracks -- eight mono
+    tracks, say, with the full mix on 3 and 4. The default there, the first
+    track or all of them folded together, is the wrong sound: silence, or
+    music and effects without the dialogue. The take is whatever the
+    transcription found the dialogue on."""
+    (s0, c0) = take[0]
+    if len(take) == 1:
+        return f'[0:a:{s0}]pan=stereo|c0=c{c0}|c1=c{c0}'
+    (s1, c1) = take[1]
+    if s0 == s1:
+        return f'[0:a:{s0}]pan=stereo|c0=c{c0}|c1=c{c1}'
+    return (f'[0:a:{s0}]pan=mono|c0=c{c0}[tl];[0:a:{s1}]pan=mono|c0=c{c1}[tr];'
+            '[tl][tr]amerge=inputs=2,pan=stereo|c0=c0|c1=c1')
+
+
 def build_render_cmd(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=None,
                      crf=18, preset='medium', loudness=-14.0, true_peak=-1.5):
     fps = info['fps']
@@ -1863,14 +1883,22 @@ def build_render_cmd(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_n
     # encoder then sometimes rounds it up and pads slot 0 with a duplicate
     # (measured -- which also pushes the last frame off the end).
     ss = max(0.0, info.get('v_offset', 0.0) + (start_f - 0.25) / fps)
+    graph = build_filtergraph(info, segs, ass_name=ass_name)
+    fade_out = max(0.0, dur - 0.12)
+    polish = (f'afade=t=in:st=0:d=0.04,afade=t=out:st={fade_out:.3f}:d=0.12,'
+              f'loudnorm=I={loudness}:TP={true_peak}:LRA=11')
+    take = info.get('audio_take')
+    if take:
+        # The channels the dialogue was found on (see take_to_stereo), not
+        # whichever stream ffmpeg would pick.
+        graph += f';{take_to_stereo(take)},{polish}[aout]'
     cmd = [ffmpeg, '-y', '-hide_banner', '-nostats', '-loglevel', 'error',
            '-ss', f'{ss:.6f}', '-i', src, '-t', f'{dur:.6f}', '-frames:v', str(int(n_frames)),
-           '-filter_complex', build_filtergraph(info, segs, ass_name=ass_name), '-map', '[vout]']
-    if info.get('audio_index') is not None:
-        fade_out = max(0.0, dur - 0.12)
-        cmd += ['-map', f"0:a:{info['audio_index']}",
-                '-af', f'afade=t=in:st=0:d=0.04,afade=t=out:st={fade_out:.3f}:d=0.12,'
-                       f'loudnorm=I={loudness}:TP={true_peak}:LRA=11',
+           '-filter_complex', graph, '-map', '[vout]']
+    if take:
+        cmd += ['-map', '[aout]', '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2']
+    elif info.get('audio_index') is not None:
+        cmd += ['-map', f"0:a:{info['audio_index']}", '-af', polish,
                 '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2']
     else:
         cmd += ['-an']
