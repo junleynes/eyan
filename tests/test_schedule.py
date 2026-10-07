@@ -209,8 +209,9 @@ def test_layered_psd_with_music_and_the_example_prompt_end_to_end(env, artwork):
     plug = job['result']['plug']
     assert plug['title'] == 'Primetime_Week_42.psd' and plug['file'] == 'Primetime_Week_42_schedule_10s.mp4'
     assert plug['duration'] == 10 and plug['format'] == 'mp4_high' and plug['layers'] == LAYERS and plug['layered']
-    assert plug['animation'] == ('background: fade; 1 layer: fade; Schedule Mon: wipe right; '
-                                 'Schedule Tue: wipe right; stop motion')
+    assert plug['animation'] == ('background: static; 1 layer: fade; Schedule Mon: wipe right; '
+                                 'Schedule Tue: wipe right; stop motion; then light sweep')
+    assert (plug['style'], plug['style_label']) == ('fade_shine', 'Fade in + light sweep'), 'the default style'
     assert plug['read_by'] == 'built-in' and plug['music'] == 'bed.wav' and plug['notes'] == []
     assert plug['preview_url'] is None, 'an MP4 plays in the browser as it is'
 
@@ -224,7 +225,9 @@ def test_layered_psd_with_music_and_the_example_prompt_end_to_end(env, artwork):
 
     fr = _frames(os.path.join(pdir, plug['file']))
     assert len(fr) == 300
-    assert fr[0].mean() < 20, 'opens on black'
+    bare = np.full_like(fr[0], artwork['want'][1000, 100])
+    assert _diff(fr[0], bare) < 3.0, 'opens on the background, whole, with nothing on it yet'
+    assert all(_diff(f[700:], bare[700:]) < 3.0 for f in fr[::10]), 'which never moves'
     assert _diff(fr[-1], artwork['want']) < 3.0, 'ends on the artwork itself'
     assert _diff(fr[150], artwork['want']) < 3.0, 'and has been holding on it since well before half way'
     monday = lambda f: f[360, 950].min() > 180        # noqa: E731
@@ -256,7 +259,7 @@ def test_flat_image_no_music_prores_at_its_own_frame_rate_with_a_browser_preview
     assert job['error'] is None
     plug = job['result']['plug']
     assert not plug['layered'] and plug['layers'] == ['Image'] and plug['music'] is None
-    assert plug['animation'] == 'picture: wipe right' and plug['file'].endswith('_schedule_10s.mov')
+    assert plug['animation'] == 'picture: wipe right; then light sweep' and plug['file'].endswith('_schedule_10s.mov')
     pdir = os.path.join(schedule.SCHEDULE_DIR, plug['plug_id'])
     st = _probe(os.path.join(pdir, plug['file']))
     assert st['video']['codec_name'] == 'prores' and st['video']['r_frame_rate'] == '24000/1001'
@@ -287,7 +290,8 @@ def test_the_ai_model_refines_the_prompt_when_it_is_there_and_is_not_needed_when
     plug = _render(client, headers, schedule_image_network=env['psd'], duration='10',
                    prompt='bring the title in with a bounce and float the rest up')['result']['plug']
     assert plug['read_by'].startswith('AI model (') and plug['notes'] == []
-    assert plug['animation'] == 'background: fade; 2 layers: slide up; Title: pop'
+    assert plug['animation'] == 'background: static; 2 layers: slide up; Title: pop; then light sweep'
+    assert '"ambient": "shine"' in asked[0]['prompt'], 'the model is shown the style it is refining'
     assert all(n in asked[0]['prompt'] for n in LAYERS) and 'float the rest up' in asked[0]['prompt']
     assert len(unloaded) == 1, 'the GPU is handed back, as after any other use of the model'
 
@@ -306,7 +310,36 @@ def test_the_ai_model_refines_the_prompt_when_it_is_there_and_is_not_needed_when
     asked.clear()
     monkeypatch.setattr(schedule.shorts_core, 'ollama_generate', model)
     plug = _render(client, headers, schedule_image_network=env['psd'], duration='10')['result']['plug']
-    assert asked == [] and plug['animation'] == 'background: fade; 3 layers: fade'
+    assert asked == [] and plug['animation'] == 'background: static; 3 layers: fade; then light sweep'
+
+
+def test_the_animation_style_is_chosen_from_a_list_and_carried_through_to_the_result(env, artwork):
+    client, headers = _client()
+    opts = client.get('/api/schedule/options').get_json()
+    assert [s['key'] for s in opts['styles']] == [k for k, _, _ in sk.STYLES] and opts['default_style'] == 'fade_shine'
+    assert all(s['label'] for s in opts['styles'])
+    r = client.post('/api/schedule/render', headers=headers,
+                    data={'schedule_image_network': env['psd'], 'duration': '10', 'style': 'fireworks'})
+    assert r.status_code == 400 and 'animation styles' in r.get_json()['error']
+
+    plug = _render(client, headers, schedule_image_network=env['psd'], duration='10', style='slide_float',
+                   prompt='title pops in')['result']['plug']
+    assert (plug['style'], plug['style_label']) == ('slide_float', 'Slide up + gentle float')
+    assert plug['animation'] == 'background: static; 2 layers: slide up; Title: pop; then gentle float'
+    assert plug['notes'] == []
+    fr = _frames(os.path.join(schedule.SCHEDULE_DIR, plug['plug_id'], plug['file']))
+    bare = np.full_like(fr[0], artwork['want'][1000, 100])
+    assert _diff(fr[0], bare) < 3.0, 'the background is there from the first frame'
+    assert all(_diff(f[800:], bare[800:]) < 3.0 for f in fr[::10]), 'and does not move'
+    assert max(_diff(f, artwork['want']) for f in fr[200:270]) > 0.5, 'the layers are still moving late in the plug'
+    assert _diff(fr[-1], artwork['want']) < 3.0, 'and come to rest on the artwork'
+    listed = client.get('/api/schedule/items').get_json()['items'][0]
+    assert listed['style_label'] == 'Slide up + gentle float'
+
+    # A flat picture cannot float over itself: it says so and holds still.
+    plug = _render(client, headers, schedule_image_network=env['png'], duration='10',
+                   style='slide_float')['result']['plug']
+    assert plug['animation'] == 'picture: slide up' and any('one flat picture' in n for n in plug['notes'])
 
 
 def test_artwork_that_cannot_be_used_ends_the_job_with_the_reason_and_leaves_nothing_behind(env):

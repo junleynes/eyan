@@ -6,13 +6,18 @@ What an editor is promised, pinned here:
 
   * the last frame IS the artwork, to the pixel -- the whole reason this is
     drawn rather than generated is that a schedule's text must not change;
-  * a layered Photoshop file animates layer by layer, bottom first, and one
+  * in a layered Photoshop file the background is on screen, still, from
+    the first frame and the layers above it arrive one by one; a file
     whose layers cannot be put back together faithfully is animated as one
     flat picture and says so, rather than shown wrong;
+  * a flat picture has no background of its own, so it arrives from black;
   * the prompt's words map onto the animator's small vocabulary whether or
     not a language model is there to help, and a bad model reply can never
     make the result worse than no reply;
-  * everything is on screen, complete, for more than half the plug.
+  * everything is on screen, complete, for more than half the plug;
+  * an animation style is a way of arriving plus something the layers keep
+    doing until the end, the background takes no part in either, and the
+    prompt changes only what it names on top of the style.
 """
 import json
 
@@ -132,24 +137,29 @@ def test_the_example_prompt_reads_as_stop_motion_with_the_schedule_wiping_in():
     assert r['layers'] == {'schedule mon': {'effect': 'wipe', 'direction': 'right'},
                            'schedule tue': {'effect': 'wipe', 'direction': 'right'}}
     assert r['default']['effect'] == 'fade', 'the title was not mentioned, so it keeps the default'
-    assert sk.describe_recipe(r, NAMES) == ('background: fade; 1 layer: fade; Schedule Mon: wipe right; '
+    assert r['background']['effect'] == 'static'
+    assert sk.describe_recipe(r, NAMES) == ('background: static; 1 layer: fade; Schedule Mon: wipe right; '
                                             'Schedule Tue: wipe right; stop motion')
     # The same words for a flat picture: the wipe is for the picture itself.
     flat = sk.parse_prompt('stop motion effect. wipe in reveal schedule.', ['Image'])
-    assert flat['background'] == {'effect': 'wipe', 'direction': 'right'} and flat['stop_motion']
+    assert flat['default'] == {'effect': 'wipe', 'direction': 'right'} and flat['stop_motion']
     assert sk.describe_recipe(flat, ['Image']) == 'picture: wipe right; stop motion'
+    assert sk.describe_recipe(sk.parse_prompt('', ['Image']), ['Image']) == 'picture: fade'
 
 
 @pytest.mark.parametrize('prompt, says', [
-    ('', 'background: fade; 3 layers: fade'),
-    ('make it look amazing', 'background: fade; 3 layers: fade'),
-    ('wipe in from the left, slow push in', 'background: wipe right; 3 layers: wipe right; slow push in'),
-    ('Slide everything in from the bottom, quickly', 'background: slide up; 3 layers: slide up; fast'),
+    ('', 'background: static; 3 layers: fade'),
+    ('make it look amazing', 'background: static; 3 layers: fade'),
+    # "Everything" is everything that arrives. The background does not arrive.
+    ('wipe in from the left, slow push in', 'background: static; 3 layers: wipe right; slow push in'),
+    ('Slide everything in from the bottom, quickly', 'background: static; 3 layers: slide up; fast'),
     ('title pops in, schedule slides in from the right',
-     'background: fade; Title: pop; Schedule Mon: slide left; Schedule Tue: slide left'),
+     'background: static; Title: pop; Schedule Mon: slide left; Schedule Tue: slide left'),
+    ('gentle fades, claymation feel', 'background: static; 3 layers: fade; stop motion; slow'),
+    # Only its own name moves it.
     ('fade in the background and wipe the schedule top to bottom',
      'background: fade; 1 layer: fade; Schedule Mon: wipe down; Schedule Tue: wipe down'),
-    ('gentle fades, claymation feel', 'background: fade; 3 layers: fade; stop motion; slow'),
+    ('wipe the background in from the left, title pops', 'background: wipe right; 2 layers: fade; Title: pop'),
 ])
 def test_prompts_map_onto_the_animators_vocabulary(prompt, says):
     assert sk.describe_recipe(sk.parse_prompt(prompt, NAMES), NAMES) == says
@@ -163,6 +173,10 @@ def test_a_model_reply_refines_the_reading_and_a_bad_one_cannot_spoil_it():
         'layers': [{'name': 'title', 'effect': 'slide', 'direction': 'down'}, {'name': 'Logo', 'effect': 'wipe'},
                    {'name': 'Schedule Tue', 'effect': 'teleport'}]}), NAMES, base)
     assert good['push_in'] and good['speed'] == 'fast'
+    assert good['background']['effect'] == 'static', 'the background is not the model\'s to animate'
+    moved = sk.parse_recipe_reply(json.dumps({'speed': 'slow', 'layers': [{'name': 'Background', 'effect': 'wipe'}]}),
+                                  NAMES, sk.parse_prompt('fade in the background', NAMES))
+    assert moved['background']['effect'] == 'fade' and 'background' not in moved['layers'], 'only the editor\'s words'
     assert good['default'] == {'effect': 'pop', 'direction': 'right'}, 'an unknown direction keeps the old one'
     assert good['layers']['title'] == {'effect': 'slide', 'direction': 'down'}, 'names match whatever their case'
     assert 'logo' not in good['layers'], 'a layer that does not exist is dropped, not guessed at'
@@ -185,10 +199,18 @@ def test_everything_is_in_place_early_and_then_holds(duration):
             tl = sk.build_timeline(dict(sk.default_recipe(), speed=speed), names, duration)
             assert len(tl) == len(names)
             starts = [t['start'] for t in tl]
-            assert starts == sorted(starts) and starts[0] > 0, 'bottom layer first, after a beat of black'
-            assert all(t['dur'] >= 0.3 for t in tl)
+            assert starts == sorted(starts)
+            if len(names) == 1:
+                assert starts[0] > 0 and tl[0]['dur'] >= 0.3, 'a flat picture arrives, after a beat of black'
+            else:
+                assert (tl[0]['effect'], tl[0]['start'], tl[0]['dur']) == ('cut', 0.0, 0.0), 'the background is there'
+                assert starts[1] >= 0.4, 'and is seen bare for a beat before anything lands on it'
+            assert all(t['dur'] >= 0.3 for t in tl[1:])
             assert sk.settle_time(tl) <= duration * 0.75, (names, speed, sk.settle_time(tl))
     assert sk.settle_time(sk.build_timeline(sk.default_recipe(), NAMES, duration)) <= max(duration * 0.5, 4.0)
+    # Asked for by name, the background arrives first and the rest wait for it.
+    tl = sk.build_timeline(sk.parse_prompt('fade in the background', NAMES), NAMES, duration)
+    assert tl[0]['effect'] == 'fade' and tl[0]['start'] > 0 and tl[1]['start'] > tl[0]['start']
 
 
 # ---- drawing ----
@@ -204,9 +226,60 @@ def _animator(art, prompt, duration=10, names=None):
 def test_the_last_frame_is_the_artwork_exactly(layered, prompt):
     for src in ('psd', 'png'):
         an = _animator(sk.load_artwork(layered[src]), prompt)
-        assert an.frame(0.0).max() == 0, 'opens on black'
+        if src == 'png':
+            assert an.frame(0.0).max() == 0, 'a flat picture opens on black'
         assert _diff(an.frame(10.0), layered['want']) < 0.5, (src, prompt)
         assert _diff(an.frame(an.settled_at + 0.2), layered['want']) < 0.5, 'and holds from the moment it settles'
+
+
+@pytest.mark.parametrize('prompt', ['', 'wipe in reveal schedule', 'slide everything in from the left', 'cut in',
+                                    'stop motion effect. wipe in reveal schedule.', 'everything pops in, quickly'])
+def test_the_background_is_on_screen_and_still_from_the_first_frame(layered, prompt):
+    art = sk.load_artwork(layered['psd'])
+    an = _animator(art, prompt)
+    bare = sk._flatten(art['layers'][:1], sk.CANVAS)
+    assert _diff(an.frame(0.0), bare) == 0, 'frame 0 is the background, whole, with nothing on it yet'
+    # Outside the other layers it never changes at all -- no fade, no wipe,
+    # and none of stop motion's wobble -- from the first frame to the last.
+    for t in np.arange(0.0, 10.0, 1.0 / 12):
+        f = an.frame(float(t))
+        assert np.array_equal(f[:70], bare[:70]) and np.array_equal(f[600:], bare[600:]), (prompt, t)
+        if 'slide' not in prompt:                    # a slide from the left travels through the left margin
+            assert np.array_equal(f[:, :100], bare[:, :100]) and np.array_equal(f[:, 1800:], bare[:, 1800:]), (prompt, t)
+    # ...and under them it is already there while they arrive.
+    assert an.frame(0.2)[150, 950].tolist() == bare[150, 950].tolist()
+
+
+def test_the_background_arrives_only_when_asked_for_by_name(layered):
+    an = _animator(sk.load_artwork(layered['psd']), 'fade in the background, then wipe the schedule')
+    assert an.frame(0.0).max() == 0
+    assert _diff(an.frame(10.0), layered['want']) < 0.5
+
+
+def test_layers_covering_the_whole_picture_over_the_bottom_one_are_background_too(tmp_path):
+    def wash():
+        return Image.new('RGBA', (W, H), (255, 0, 80, 60))
+
+    def border():
+        im = Image.new('RGBA', (W, H), (0, 0, 0, 0))
+        ImageDraw.Draw(im).rectangle([0, 0, W - 1, H - 1], outline=(255, 255, 255, 255), width=12)
+        return im
+    parts = [PARTS[0], ('Texture', wash), ('Glow', wash), ('Frame', border)] + PARTS[1:]
+    want = _psd(tmp_path / 'tex.psd', parts=parts)
+    art = sk.load_artwork(str(tmp_path / 'tex.psd'))
+    names = [ly['name'] for ly in art['layers']]
+    assert names == ['Background', 'Frame', 'Title', 'Schedule Mon', 'Schedule Tue'], 'a border only reaches the edges'
+    assert any('"Background", "Texture", "Glow" each cover the whole picture' in n for n in art['notes'])
+    assert _diff(sk._flatten(art['layers'], sk.CANVAS), want) < 0.5
+    an = _animator(art, 'wipe in reveal schedule')
+    f0 = an.frame(0.0)
+    assert f0[540, 100].tolist() == want[540, 100].tolist(), 'the washes are there on frame 0, not fading in'
+    assert f0[5, 960].max() < 200 and an.frame(10.0)[5, 960].min() > 200, 'the frame is not, and arrives'
+    # A file that is nothing but full-picture layers keeps its top one to animate.
+    _psd(tmp_path / 'two.psd', parts=[PARTS[0], ('Texture', wash)])
+    assert [ly['name'] for ly in sk.load_artwork(str(tmp_path / 'two.psd'))['layers']] == ['Background', 'Texture']
+    _psd(tmp_path / 'three.psd', parts=[PARTS[0], ('Texture', wash), ('Glow', wash)])
+    assert [ly['name'] for ly in sk.load_artwork(str(tmp_path / 'three.psd'))['layers']] == ['Background', 'Glow']
 
 
 def test_layers_arrive_one_after_another_and_a_wipe_uncovers_along_its_direction(layered):
@@ -279,3 +352,98 @@ def test_delivery_formats_are_drawn_at_their_own_frame_rate():
     assert 'in_range=pc:out_range=tv' in joined and 'loudnorm=I=-14.0' in joined and 'afade=t=out:st=13.500' in joined
     silent = ' '.join(sk.build_encode_cmd('ffmpeg', 'out.mov', sk.CANVAS, (30000, 1001), 15))
     assert 'anullsrc' in silent and 'loudnorm' not in silent
+
+
+# ---- animation styles: arriving + what goes on until the end ----
+
+def test_the_styles_on_offer():
+    assert [k for k, _, _ in sk.STYLES] == ['fade_shine', 'wipe_shine', 'slide_float', 'pop_pulse', 'stop_motion',
+                                           'fade_still']
+    assert sk.DEFAULT_STYLE == 'fade_shine' and sk.style_label('slide_float') == 'Slide up + gentle float'
+    assert sk.style_label('nope') is None and sk.style_recipe('nope') == sk.style_recipe(sk.DEFAULT_STYLE)
+    says = {k: sk.describe_recipe(sk.style_recipe(k), NAMES) for k, _, _ in sk.STYLES}
+    assert says == {'fade_shine': 'background: static; 3 layers: fade; then light sweep',
+                    'wipe_shine': 'background: static; 3 layers: wipe right; then light sweep',
+                    'slide_float': 'background: static; 3 layers: slide up; then gentle float',
+                    'pop_pulse': 'background: static; 3 layers: pop; then pulse one by one',
+                    'stop_motion': 'background: static; 3 layers: wipe right; stop motion; then wobble',
+                    'fade_still': 'background: static; 3 layers: fade'}
+
+
+@pytest.mark.parametrize('style, prompt, says', [
+    ('slide_float', '', 'background: static; 3 layers: slide up; then gentle float'),
+    ('slide_float', 'title pops in', 'background: static; 2 layers: slide up; Title: pop; then gentle float'),
+    ('slide_float', 'from the left', 'background: static; 3 layers: slide right; then gentle float'),
+    ('fade_shine', 'wipe in reveal schedule, then everything floats',
+     'background: static; 1 layer: fade; Schedule Mon: wipe right; Schedule Tue: wipe right; then gentle float'),
+    ('fade_shine', 'stop motion effect. wipe in reveal schedule.',
+     'background: static; 1 layer: fade; Schedule Mon: wipe right; Schedule Tue: wipe right; stop motion; '
+     'then light sweep'),
+    ('pop_pulse', 'quickly, and hold still', 'background: static; 3 layers: pop; fast'),
+    ('fade_still', 'a light sweep across it', 'background: static; 3 layers: fade; then light sweep'),
+    ('fade_still', 'make the rows breathe', 'background: static; 3 layers: fade; then pulse one by one'),
+    ('wipe_shine', 'shaky', 'background: static; 3 layers: wipe right; then wobble'),
+    # "Float up" is a way of arriving, not something to go on doing.
+    ('fade_shine', 'bring the title in with a bounce and float the rest up',
+     'background: static; 2 layers: slide up; Title: pop; then light sweep'),
+    ('fade_still', 'title pops in, schedule slides up', 'background: static; Title: pop; Schedule Mon: slide up; '
+                                                        'Schedule Tue: slide up'),
+])
+def test_the_prompt_changes_only_what_it_names_on_top_of_the_style(style, prompt, says):
+    base = sk.style_recipe(style)
+    assert sk.describe_recipe(sk.parse_prompt(prompt, NAMES, base=base), NAMES) == says
+    assert base == sk.style_recipe(style), 'the style itself is not altered by being used'
+
+
+def test_the_model_is_shown_the_style_and_may_change_what_happens_afterwards():
+    base = sk.parse_prompt('title pops in', NAMES, base=sk.style_recipe('slide_float'))
+    asked = sk.recipe_prompt('title pops in', NAMES, base)
+    assert '"ambient": "float"' in asked and '"effect": "slide", "direction": "up"' in asked and '"name": "title"' in asked
+    kept = sk.parse_recipe_reply('{"speed": "fast"}', NAMES, base)
+    assert kept['ambient'] == 'float' and kept['default'] == {'effect': 'slide', 'direction': 'up'}
+    assert sk.parse_recipe_reply('{"ambient": "pulse"}', NAMES, base)['ambient'] == 'pulse'
+    assert sk.parse_recipe_reply('{"ambient": "fireworks", "speed": "slow"}', NAMES, base)['ambient'] == 'float'
+
+
+@pytest.mark.parametrize('style', [k for k, _, _ in sk.STYLES])
+def test_layers_keep_moving_until_the_end_over_a_background_that_never_does(layered, style):
+    art = sk.load_artwork(layered['psd'])
+    r = sk.style_recipe(style)
+    an = sk.Animator(art, sk.build_timeline(r, NAMES, 10), r, 10)
+    bare, want = sk._flatten(art['layers'][:1], sk.CANVAS), layered['want']
+    assert np.array_equal(an.frame(0.0), bare), 'opens on the background, whole'
+    moving = []
+    for t in np.arange(0.0, 10.0, 1.0 / 15):
+        f = an.frame(float(t))
+        assert np.array_equal(f[:60], bare[:60]) and np.array_equal(f[800:], bare[800:]), (style, t)
+        assert np.array_equal(f[:, :100], bare[:, :100]) and np.array_equal(f[:, 1800:], bare[:, 1800:]), (style, t)
+        if t > an.settled_at + 0.1:
+            moving.append((float(t), _diff(f, want)))
+    if style == 'fade_still':
+        assert max(d for _, d in moving) == 0, 'nothing moves once it is built'
+    else:
+        assert max(d for t, d in moving if t < 6.5) > 0.2, 'moving soon after the build'
+        assert max(d for t, d in moving if t > 7.5) > 0.2, 'and still moving late in the plug'
+        assert max(d for _, d in moving) < 12, 'but never by much: it has to stay readable'
+    assert _diff(an.frame(10.0), want) < 0.5, 'the last frame is the artwork exactly'
+    # Rewinding gives the same picture as getting there in order.
+    late = an.frame(7.3)
+    an.frame(1.0)
+    assert np.array_equal(an.frame(7.3), late)
+
+
+def test_a_flat_picture_takes_a_light_sweep_and_nothing_that_would_move_its_background(layered):
+    art = sk.load_artwork(layered['png'])
+    for style in ('slide_float', 'pop_pulse', 'stop_motion'):
+        r, note = sk.fit_to_artwork(sk.style_recipe(style), ['Image'])
+        assert r['ambient'] == 'none' and 'one flat picture' in note and sk.style_recipe(style)['ambient'] != 'none'
+        an = sk.Animator(art, sk.build_timeline(r, ['Image'], 10), r, 10)
+        assert all(_diff(an.frame(t), layered['want']) < 0.5 for t in (an.settled_at + 0.2, 5.0, 8.0, 10.0))
+    for style in ('fade_shine', 'fade_still'):
+        assert sk.fit_to_artwork(sk.style_recipe(style), ['Image']) == (sk.style_recipe(style), None)
+    assert sk.fit_to_artwork(sk.style_recipe('slide_float'), NAMES)[1] is None, 'layered artwork can do all of them'
+    r = sk.style_recipe('fade_shine')
+    an = sk.Animator(art, sk.build_timeline(r, ['Image'], 10), r, 10)
+    seen = [_diff(an.frame(float(t)), layered['want']) for t in np.arange(an.settled_at + 0.1, 9.0, 0.1)]
+    assert max(seen) > 0.2 and _diff(an.frame(10.0), layered['want']) < 0.5
+    assert an.frame(0.0).max() == 0, 'and it still arrives from black'

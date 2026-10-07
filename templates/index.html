@@ -7659,7 +7659,7 @@ document.addEventListener('DOMContentLoaded', function(){
 </div>
 <input type=hidden id=schedule_image_network name=schedule_image_network value="">
 <span class="net-file-chip" id=schedule_image_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('schedule_image')">&#10005;</span></span>
-<p class="sh-note" style="margin-top:6px">PNG, JPEG, TIFF or a Photoshop file, ideally 1920&times;1080. In a PSD, each top-level layer or group animates on its own, bottom layer first &mdash; group the things that should move together, and name the layers so the prompt can refer to them.</p>
+<p class="sh-note" style="margin-top:6px">PNG, JPEG, TIFF or a Photoshop file, ideally 1920&times;1080. In a PSD, the bottom layer is the background and stays still; each top-level layer or group above it animates on its own &mdash; group the things that should move together, and name the layers so the direction can refer to them.</p>
 
 <div class="sh-row" style="margin-top:10px">
   <div>
@@ -7684,9 +7684,13 @@ document.addEventListener('DOMContentLoaded', function(){
 <span class="net-file-chip" id=schedule_music_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('schedule_music')">&#10005;</span></span>
 <p class="sh-note" style="margin-top:6px">Trimmed to the length with a fade out, looped if it is shorter, and levelled to the loudness target under Config &gt; Production. Without music the plug is silent.</p>
 
-<label style="margin-top:12px">How should it animate? (optional)</label>
-<input type=text id=sp-prompt class=input-box maxlength=600 placeholder="e.g. stop motion effect. wipe in reveal schedule.">
-<p class="sh-note" style="margin-top:6px">Say it in your own words. What it can do: <b>wipe</b>, <b>slide</b>, <b>fade</b>, <b>pop</b> or <b>cut</b> each layer in, from a direction (&ldquo;from the left&rdquo;, &ldquo;bottom to top&rdquo;); <b>stop motion</b>; a <b>slow push in</b>; <b>fast</b> or <b>slow</b>. Name a layer to treat it differently (&ldquo;title pops in, schedule slides up&rdquo;). Left empty, everything fades in.</p>
+<label style="margin-top:12px">Animation style:</label>
+<select id=sp-style style="width:300px"><option value=fade_shine selected>Fade in + light sweep</option><option value=wipe_shine>Wipe reveal + light sweep</option><option value=slide_float>Slide up + gentle float</option><option value=pop_pulse>Pop in + pulse one by one</option><option value=stop_motion>Stop motion wipe + wobble</option><option value=fade_still>Fade in + hold still</option></select>
+<p class="sh-note" style="margin-top:6px">How the layers arrive + what they keep doing until the end. In layered artwork the <b>background is static</b>: on screen from the first frame, with the other layers appearing over it and then moving as the style says. <b>Light sweep</b>: a glint passes across them every few seconds. <b>Gentle float</b>: they drift slowly up and down. <b>Pulse</b>: each in turn swells slightly. <b>Wobble</b>: a hand-made tremble. The motion eases off just before the end, so the last frame is the artwork exactly. A flat picture has no separate layers: the whole picture arrives, and only the light sweep can run on it afterwards.</p>
+
+<label style="margin-top:12px">Extra direction (optional):</label>
+<input type=text id=sp-prompt class=input-box maxlength=600 placeholder="e.g. title pops in, wipe in reveal schedule from the left">
+<p class="sh-note" style="margin-top:6px">Changes whatever it names on top of the style. What it can say: <b>wipe</b>, <b>slide</b>, <b>fade</b>, <b>pop</b> or <b>cut</b> each layer in, from a direction (&ldquo;from the left&rdquo;, &ldquo;bottom to top&rdquo;); <b>stop motion</b>; <b>fast</b> or <b>slow</b>; <b>light sweep</b>, <b>float</b>, <b>pulse</b>, <b>wobble</b> or <b>hold still</b> for afterwards. Name a layer to treat it differently (&ldquo;title pops in, schedule slides up&rdquo;).</p>
 
 <div class="promo-actions" style="margin-top:14px">
   <button class="btn btn-primary-promo" type=button id=sp-go-btn onclick="scheduleRender()">Generate schedule plug</button>
@@ -7741,6 +7745,14 @@ async function scheduleOnTabOpen(){
       var o = document.createElement('option'); o.value = f.key; o.textContent = f.label; sel.appendChild(o)
     })
     if(keep) sel.value = keep
+    var st = spEl('sp-style'), was = st.value
+    if(d.styles && d.styles.length){
+      st.innerHTML = ''
+      d.styles.forEach(function(x){
+        var o = document.createElement('option'); o.value = x.key; o.textContent = x.label; st.appendChild(o)
+      })
+      st.value = d.styles.some(function(x){ return x.key === was }) ? was : d.default_style
+    }
     if(!d.psd_supported){
       spNote('Photoshop files cannot be read on this server yet (the <code>psd-tools</code> package is not installed). PNG, JPEG and TIFF artwork works now.', true)
     }
@@ -7819,6 +7831,7 @@ async function scheduleRender(){
   else if(musNet) fd.append('schedule_music_network', musNet)
   fd.append('duration', spEl('sp-duration').value)
   fd.append('delivery_format', spEl('sp-format').value)
+  fd.append('style', spEl('sp-style').value)
   fd.append('prompt', spEl('sp-prompt').value)
 
   spEl('sp-result').style.display = 'none'
@@ -7861,11 +7874,12 @@ function spCard(p, fresh){
     '<video controls preload="metadata" playsinline style="width:100%;max-width:720px;aspect-ratio:16/9;background:#000;border-radius:8px;margin-top:10px"' +
       (p.poster_url ? ' poster="' + p.poster_url + '"' : '') + ' src="' + playable + '"></video>' +
     (p.preview_url ? '<p class="sh-note">The player shows a lightweight preview; <b>Download</b> and <b>Send</b> hand over the ' + escapeHtmlLite(p.format_label || 'delivery') + ' file.</p>' : '') +
-    '<p class="sh-note"><b>Animation:</b> ' + escapeHtmlLite(p.animation || 'fade') +
+    '<p class="sh-note">' + (p.style_label ? '<b>Style:</b> ' + escapeHtmlLite(p.style_label) + ' &middot; ' : '') +
+      '<b>Animation:</b> ' + escapeHtmlLite(p.animation || 'fade') +
       (p.layered ? ' &middot; ' + (p.layers || []).length + ' layers' : ' &middot; one flat picture') +
       (p.music ? ' &middot; music: ' + escapeHtmlLite(p.music) : ' &middot; no music') +
       (p.read_by ? ' &middot; prompt read by ' + escapeHtmlLite(p.read_by) : '') + '</p>' +
-    (fresh ? '<p class="sh-note">Saved under <b>Saved plugs</b>. Not what you meant? Reword the prompt and generate again &mdash; it takes seconds.</p>' : '')
+    (fresh ? '<p class="sh-note">Saved under <b>Saved plugs</b>. Not what you meant? Pick another style or reword the direction and generate again &mdash; it takes under a minute.</p>' : '')
   card.addEventListener('click', function(e){
     if(e.target.closest('[data-del]')) scheduleDelete(p.plug_id)
   })
@@ -8586,17 +8600,19 @@ GET  /api/shorts/batches</pre>
       <h3>Artwork</h3>
       <ul style="line-height:1.8;padding-left:20px">
         <li><strong>Flat image</strong> (PNG, JPEG, TIFF): animated as one picture.</li>
-        <li><strong>Layered Photoshop file</strong>: each visible top-level layer or group animates on its own, bottom layer first. Group the things that should arrive together and give layers plain names (&ldquo;Title&rdquo;, &ldquo;Schedule Mon&rdquo;) so the prompt can refer to them. More than twelve top-level layers: the lowest are merged into the background.</li>
+        <li><strong>Layered Photoshop file</strong>: the bottom layer is the static background; each visible top-level layer or group above it animates on its own, lowest first. Group the things that should arrive together and give layers plain names (&ldquo;Title&rdquo;, &ldquo;Schedule Mon&rdquo;) so the prompt can refer to them. More than twelve top-level layers: the lowest are merged into the background.</li>
         <li>Layers must be plain pixels in Normal mode. If the file uses blend modes, layer effects, clipping or adjustment layers at the top level, it is animated as one flat picture instead and the result says so &mdash; merge or rasterise those layers to get layer-by-layer animation.</li>
         <li>Design at 1920&times;1080. Other shapes are shown whole with black around them, never cropped.</li>
       </ul>
-      <h3>The animation prompt</h3>
-      <p>Optional. What the animator can do: <strong>wipe</strong>, <strong>slide</strong>, <strong>fade</strong>, <strong>pop</strong> or <strong>cut</strong> each layer in, from a direction; <strong>stop motion</strong> (stepped, slightly unsteady, while things arrive &mdash; the finished picture holds still so it can be read); a <strong>slow push in</strong>; <strong>fast</strong> or <strong>slow</strong>. Layers are all in place within the first part of the plug and it then holds. The words are matched directly and, when Ollama is reachable, also read by the AI model so it can tell which named layer an instruction is about. Each result states how the prompt was understood.</p>
+      <h3>Animation style and direction</h3>
+      <p>In a layered file the bottom layer is the <strong>background</strong>: it is static, on screen from the first frame, and never animates (unless the direction says &ldquo;fade in the background&rdquo;). Layers directly above it that cover the whole picture, such as a texture or a gradient, count as background too. Every other layer appears over it, one after another, all in place within the first part of the plug, and then keeps moving until the end.</p>
+      <p>The <strong>Animation style</strong> dropdown picks the combination: how the layers arrive + what they do afterwards &mdash; <strong>Fade in + light sweep</strong>, <strong>Wipe reveal + light sweep</strong>, <strong>Slide up + gentle float</strong>, <strong>Pop in + pulse one by one</strong>, <strong>Stop motion wipe + wobble</strong>, or <strong>Fade in + hold still</strong> for no motion after the build. The ongoing motion is small enough to read through and eases off before the end, so the last frame is the artwork exactly. A flat picture arrives whole from black; only the light sweep can run on it, because the other motions would move its background.</p>
+      <p><strong>Extra direction</strong> is optional and changes whatever it names on top of the style: <strong>wipe</strong>, <strong>slide</strong>, <strong>fade</strong>, <strong>pop</strong> or <strong>cut</strong>, from a direction; <strong>stop motion</strong>; a <strong>slow push in</strong> (this one moves the whole frame, background included); <strong>fast</strong> or <strong>slow</strong>; <strong>light sweep</strong>, <strong>float</strong>, <strong>pulse</strong>, <strong>wobble</strong> or <strong>hold still</strong>. Name a layer to treat it differently. The words are matched directly and, when Ollama is reachable, also read by the AI model so it can tell which named layer an instruction is about. Each result states the style and how the direction was understood.</p>
       <h3>Music</h3>
       <p>Optional, from the Music network folder. Trimmed to the length with a fade out, looped if shorter, and levelled to the loudness target under Config &gt; Production.</p>
       <h3>Setup</h3>
       <p>Set the artwork folder under <strong>Config &gt; Network &gt; Schedule plug artwork</strong>. Photoshop files need the <code>psd-tools</code> package on the server.</p>
-      <pre>POST /api/schedule/render   + schedule_image_network, duration (10|15|20|30), delivery_format, prompt?, schedule_music_network?
+      <pre>POST /api/schedule/render   + schedule_image_network, duration (10|15|20|30), delivery_format, style?, prompt?, schedule_music_network?
 GET  /api/schedule/progress/&lt;job_id&gt;
 GET  /api/schedule/items</pre>
     </div>

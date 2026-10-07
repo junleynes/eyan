@@ -27,6 +27,7 @@ frame is the artwork exactly.
      clip, and Animator.frame() draws any moment of it.
   4. encode() pipes the frames to ffmpeg with the music.
 """
+import copy
 import json
 import math
 import os
@@ -46,6 +47,24 @@ DIRECTIONS = ('left', 'right', 'up', 'down')
 SPEEDS = {'slow': 1.5, 'normal': 1.0, 'fast': 0.6}
 STOP_MOTION_FPS = 12.0      # "animated on twos": the stepping that reads as stop motion
 PUSH_IN = 0.05              # how much larger the picture is by the last frame of a push-in
+
+# What the layers do once they have arrived, until the end of the plug. The
+# background takes no part in any of them.
+AMBIENTS = ('none', 'shine', 'float', 'pulse', 'wobble')
+AMBIENT_LABELS = {'none': 'hold still', 'shine': 'light sweep', 'float': 'gentle float',
+                  'pulse': 'pulse one by one', 'wobble': 'wobble'}
+# Animation styles: how the layers arrive + what they do afterwards. The
+# prompt, if there is one, changes whatever it names on top of the style.
+STYLES = (
+    ('fade_shine', 'Fade in + light sweep', {'effect': 'fade', 'direction': 'right', 'ambient': 'shine'}),
+    ('wipe_shine', 'Wipe reveal + light sweep', {'effect': 'wipe', 'direction': 'right', 'ambient': 'shine'}),
+    ('slide_float', 'Slide up + gentle float', {'effect': 'slide', 'direction': 'up', 'ambient': 'float'}),
+    ('pop_pulse', 'Pop in + pulse one by one', {'effect': 'pop', 'direction': 'right', 'ambient': 'pulse'}),
+    ('stop_motion', 'Stop motion wipe + wobble', {'effect': 'wipe', 'direction': 'right', 'ambient': 'wobble',
+                                                  'stop_motion': True}),
+    ('fade_still', 'Fade in + hold still', {'effect': 'fade', 'direction': 'right', 'ambient': 'none'}),
+)
+DEFAULT_STYLE = 'fade_shine'
 
 
 class ArtworkError(ValueError):
@@ -123,6 +142,38 @@ def _flatten(layers, canvas):
     for ly in layers:
         paste(out, ly['px'], ly['x'], ly['y'])
     return out
+
+
+def _merge_backdrop(layers, doc, canvas, notes):
+    """Folds every layer that sits directly on the bottom layer and covers
+    the whole picture into the bottom layer.
+
+    The bottom layer is the background and does not animate. A texture, a
+    gradient or a colour wash laid over all of it is, to the eye, more
+    background: left as a layer of its own it would fade in over the
+    backdrop half a second into the plug, and the background would be seen
+    to change. A layer that only reaches the edges (a border, a frame) does
+    not cover the picture and still arrives."""
+    k = _fit(doc, canvas)[0]
+    area = 0.9 * (doc[0] * k) * (doc[1] * k)
+
+    def covers(ly):
+        return int((ly['px'][:, :, 3] > 0).sum()) >= area
+    if len(layers) < 2 or not covers(layers[0]):
+        return layers
+    k = 1
+    while k < len(layers) - 1 and covers(layers[k]):    # the top layer is never taken: something must arrive
+        k += 1
+    if k == 1:
+        return layers
+    base = np.zeros((canvas[1], canvas[0], 4), np.uint8)
+    for ly in layers[:k]:
+        paste(base, ly['px'], ly['x'], ly['y'])
+    px, x, y = _crop_to_content(base)
+    names = ', '.join(f'"{ly["name"]}"' for ly in layers[:k])
+    notes.append(f'{names} each cover the whole picture, so together they are the background and stay still. '
+                 'The layers above them animate.')
+    return [{'px': px, 'x': x, 'y': y, 'name': layers[0]['name']}] + layers[k:]
 
 
 def _load_flat(path, canvas):
@@ -220,6 +271,7 @@ def _load_psd(path, canvas):
                      'is plain pixels in Normal mode.')
         return [dict(_place(reference, 0, 0, doc, canvas), name='Image')], doc, notes
 
+    layers = _merge_backdrop(layers, doc, canvas, notes)
     if len(layers) > MAX_LAYERS:
         # The lowest layers are the backdrop; merging them costs the least.
         keep = MAX_LAYERS - 1
@@ -263,15 +315,64 @@ def load_artwork(path, canvas=CANVAS):
 # --------------------------------------------------------------------------
 
 def default_recipe():
-    return {'stop_motion': False, 'push_in': False, 'speed': 'normal',
-            'background': {'effect': 'fade', 'direction': 'right'},
+    """'background' is the bottom layer of layered artwork and is 'static'
+    unless the editor says otherwise: on screen, complete, from the first
+    frame, with the other layers arriving over it. A plug is a schedule
+    appearing on its backdrop, not a backdrop appearing. 'default' is how
+    every other layer arrives -- and how a flat picture does, which has no
+    backdrop to stand on and so is itself the thing that arrives."""
+    return {'stop_motion': False, 'push_in': False, 'speed': 'normal', 'ambient': 'none',
+            'background': {'effect': 'static', 'direction': 'right'},
             'default': {'effect': 'fade', 'direction': 'right'},
             'layers': {}}
 
 
+def style_recipe(key):
+    """The recipe one of STYLES stands for (the default style for a key
+    that isn't one)."""
+    by_key = {k: v for k, _, v in STYLES}
+    v = by_key.get(key) or by_key[DEFAULT_STYLE]
+    r = default_recipe()
+    r['default'] = {'effect': v['effect'], 'direction': v['direction']}
+    r['ambient'] = v['ambient']
+    r['stop_motion'] = bool(v.get('stop_motion'))
+    return r
+
+
+def style_label(key):
+    return next((label for k, label, _ in STYLES if k == key), None)
+
+
+def fit_to_artwork(recipe, layer_names):
+    """(recipe, note or None): the recipe as this artwork can carry it out.
+
+    Floating, pulsing and wobbling move layers over a background that stays
+    put. A flat picture has no layers to move and its background is part of
+    it, so those would shake the whole frame; it holds still instead. A light
+    sweep moves nothing, so it works on anything."""
+    if len(layer_names) > 1 or recipe.get('ambient', 'none') in ('none', 'shine'):
+        return recipe, None
+    was = AMBIENT_LABELS[recipe['ambient']]
+    return dict(recipe, ambient='none'), (
+        f'This artwork is one flat picture, so the "{was}" part of the style was left out: it moves layers '
+        'over a still background, and a flat picture has no separate layers. It holds still once it has '
+        'arrived. A light-sweep style works on flat pictures; for the rest, use a layered Photoshop file.')
+
+
+_AMBIENT_WORDS = (
+    ('none', r'\bhold(s|ing)?\s+still\b|\bstay(s|ing)?\s+still\b|\bthen\s+(hold|freeze)s?\b|\bno\s+loop(ing)?\b'),
+    ('shine', r'\blight\s+sweeps?\b|\bshin(e|es|ing|y)\b|\bshimmer\w*|\bglint\w*|\bsheen\b|\bgloss\w*|\bglimmer\w*'),
+    # "float the rest up" is a way of arriving; "then everything floats" is what it does afterwards.
+    ('float', r'\bfloat(s|ing)?\b(?!\s+(\w+\s+){0,3}(up|in|into|on|down)\b)|\bhover(s|ing)?\b|\bbob(s|bing)?\b'),
+    ('pulse', r'\bpuls(e|es|ing)\b|\bbreath(e|es|ing)\b|\bthrob\w*|\bheartbeat\b'),
+    ('wobble', r'\bwobbl\w*|\bjitter\w*|\bwiggl\w*|\bshak(e|es|ing|y)\b'),
+)
+
+
 _EFFECT_WORDS = (
     ('wipe', r'\bwip(e|es|ed|ing)\b|\breveal'),
-    ('slide', r'\bslid(e|es|ing)\b|\bfl(y|ies|ying)\s+in\b|\bmov(e|es|ing)\s+in\b|\bswe(ep|eps|pt)\b'),
+    ('slide', r'\bslid(e|es|ing)\b|\bfl(y|ies|ying)\s+in\b|\bmov(e|es|ing)\s+in\b|\bswe(ep|eps|pt)\b'
+              r'|\bfloat(s|ing)?\s+(\w+\s+){0,3}(up|in|into|on|down)\b'),
     ('pop', r'\bpop(s|ped|ping)?\b|\bbounc(e|es|ing)\b|\bscal(e|es|ing)\s+(in|up)\b|\bpunch'),
     ('fade', r'\bfad(e|es|ing)\b|\bdissolv'),
     ('cut', r'\bcut(s)?\s+in\b|\bsnap(s)?\s+(in|on)\b|\bhard\s+cut\b'),
@@ -280,8 +381,8 @@ _EFFECT_WORDS = (
 _DIRECTION_WORDS = (
     ('right', r'left\s+to\s+right|from\s+(the\s+)?left|rightwards?|to\s+the\s+right'),
     ('left', r'right\s+to\s+left|from\s+(the\s+)?right|leftwards?|to\s+the\s+left'),
-    ('down', r'top\s+to\s+bottom|from\s+(the\s+)?(top|above)|downwards?'),
-    ('up', r'bottom\s+to\s+top|from\s+(the\s+)?(bottom|below)|upwards?'),
+    ('down', r'top\s+to\s+bottom|from\s+(the\s+)?(top|above)|downwards?|\bdown\b'),
+    ('up', r'bottom\s+to\s+top|from\s+(the\s+)?(bottom|below)|upwards?|\bup\b'),
 )
 
 
@@ -292,19 +393,33 @@ def _clause_choice(clause):
     return effect, direction
 
 
-def parse_prompt(prompt, layer_names=()):
+def parse_prompt(prompt, layer_names=(), base=None):
     """A recipe read straight from the editor's words, with no model.
 
-    Understands the vocabulary the animator has and nothing else: which
-    effect (wipe, slide, fade, pop, cut), which way, how fast, and the two
-    looks that apply to the whole clip (stop motion, a slow push in). A
-    clause that names a layer applies to that layer; one that doesn't sets
-    the default for all of them. Anything it doesn't recognise is ignored --
-    this is the floor the result never drops below, not the ceiling."""
-    r = default_recipe()
+    Starts from `base` (the chosen style's recipe; the plain default without
+    one) and changes only what the words name. Understands the vocabulary
+    the animator has and nothing else: which effect (wipe, slide, fade, pop,
+    cut), which way, how fast, the two looks that apply to the whole clip
+    (stop motion, a slow push in) and what the layers do once they are in
+    (light sweep, float, pulse, wobble, hold still). A clause that names a
+    layer applies to that layer; one that doesn't sets the default for all
+    of them. Anything it doesn't recognise is ignored -- this is the floor
+    the result never drops below, not the ceiling.
+
+    The background stays static unless a clause is about the background by
+    name ("fade in the background"): "wipe everything in" means everything
+    that arrives, and the backdrop does not arrive."""
+    r = copy.deepcopy(base) if base else default_recipe()
     text = ' '.join(str(prompt or '').lower().split())
     if not text:
         return r
+    for name, pat in _AMBIENT_WORDS:
+        if re.search(pat, text):
+            r['ambient'] = name
+            break
+    # Those words are spoken for: "light sweep" is not also a slide.
+    for _, pat in _AMBIENT_WORDS:
+        text = re.sub(pat, ' ', text)
     if re.search(r'stop[\s-]?motion|stopmotion|claymation|frame[\s-]by[\s-]frame|choppy|jerky', text):
         r['stop_motion'] = True
     if re.search(r'push[\s-]?in|zoom(s|ing)?\s*(in|slowly)?\b|ken\s+burns|slow\s+zoom|drift', text):
@@ -327,7 +442,9 @@ def parse_prompt(prompt, layer_names=()):
                if len(low) >= 3 and (re.search(r'\b' + re.escape(low) + r'\b', plain)
                                      or any(len(w) >= 4 and re.search(r'\b' + re.escape(w) + r's?\b', plain)
                                             for w in low.split()))]
-        choice = {'effect': effect or 'fade', 'direction': direction or 'right'}
+        # A direction on its own turns the style's effect that way round.
+        choice = {'effect': effect or r['default']['effect'],
+                  'direction': direction or ('right' if effect else r['default']['direction'])}
         if hit and 'background' not in plain:
             for name in hit:
                 r['layers'][name.lower()] = dict(choice)
@@ -337,21 +454,24 @@ def parse_prompt(prompt, layer_names=()):
             general = choice
     if general:
         r['default'] = general
-        if not r['layers']:
-            # One instruction for everything covers the backdrop too -- most
-            # of all when the backdrop is the only layer there is.
-            r['background'] = dict(general)
     return r
 
 
-def recipe_prompt(prompt, layer_names):
+def recipe_prompt(prompt, layer_names, base=None):
     """The instruction for a language model: the editor's words in, a recipe
-    in this module's vocabulary out."""
+    in this module's vocabulary out. `base` is what is already decided (the
+    chosen style, as read so far); the model is shown it and asked to change
+    only what the brief calls for."""
     names = '\n'.join(f'- {n}' for n in layer_names) or '- Image'
+    b = base or default_recipe()
+    now = json.dumps({'stop_motion': b['stop_motion'], 'push_in': b['push_in'], 'speed': b['speed'],
+                      'ambient': b.get('ambient', 'none'), 'default': b['default'],
+                      'layers': [dict(v, name=k) for k, v in b['layers'].items()]})
     return (
         'You turn a motion designer\'s brief into settings for a simple layer animator. '
         'A still graphic (a TV schedule) is built up on screen layer by layer, bottom layer first, '
-        'then holds until the end.\n\n'
+        'then stays until the end. The bottom layer is the background: it is on screen from the first '
+        'frame and is not yours to animate.\n\n'
         f'The layers, bottom first:\n{names}\n\n'
         'Each layer can arrive with one effect:\n'
         '- "wipe": uncovered progressively, as if a card slid off it\n'
@@ -363,13 +483,15 @@ def recipe_prompt(prompt, layer_names):
         'Settings for the whole clip:\n'
         '- "stop_motion": true for a stepped, hand-made, frame-by-frame look\n'
         '- "push_in": true for a slow continuous zoom toward the picture\n'
-        '- "speed": "slow", "normal" or "fast"\n\n'
-        'Reply with JSON only, in exactly this shape:\n'
-        '{"stop_motion": false, "push_in": false, "speed": "normal", '
-        '"background": {"effect": "fade", "direction": "right"}, '
-        '"default": {"effect": "fade", "direction": "right"}, '
-        '"layers": [{"name": "<a layer name from the list>", "effect": "wipe", "direction": "right"}]}\n'
-        '"background" is the bottom layer. "default" is for every other layer you do not list. List a layer '
+        '- "speed": "slow", "normal" or "fast"\n'
+        '- "ambient": what the layers do once they have arrived, until the end: "shine" (a light sweeps '
+        'across them), "float" (they drift gently up and down), "pulse" (each in turn swells slightly), '
+        '"wobble" (a hand-made tremble) or "none" (they hold still)\n\n'
+        f'The settings so far:\n{now}\n\n'
+        'Reply with JSON only, in exactly that shape, with "layers" as a list of '
+        '{"name": "<a layer name from the list>", "effect": "wipe", "direction": "right"}. '
+        'Keep every setting the brief does not ask to change.\n'
+        '"default" is for every layer above the background that you do not list. List a layer '
         'under "layers" only when the brief treats it differently from the rest. Use only the words given '
         'above; if the brief asks for something this animator cannot do, choose the closest of them.\n\n'
         f'THE BRIEF\n{" ".join(str(prompt or "").split())[:600]}'
@@ -401,15 +523,18 @@ def parse_recipe_reply(text, layer_names, base=None):
     except ValueError:
         return None
     if not isinstance(obj, dict) or not any(k in obj for k in ('stop_motion', 'push_in', 'speed', 'background',
-                                                                'default', 'layers')):
+                                                                'ambient', 'default', 'layers')):
         return None
     r = {'stop_motion': bool(obj.get('stop_motion', base['stop_motion'])),
          'push_in': bool(obj.get('push_in', base['push_in'])),
          'speed': obj.get('speed') if obj.get('speed') in SPEEDS else base['speed'],
-         'background': _choice(obj.get('background'), base['background']),
+         'ambient': obj.get('ambient') if obj.get('ambient') in AMBIENTS else base.get('ambient', 'none'),
+         # Not the model's to decide: static unless the editor's own words
+         # were about the background (which parse_prompt has already read).
+         'background': dict(base['background']),
          'default': _choice(obj.get('default'), base['default']),
          'layers': dict(base['layers'])}
-    real = {n.lower(): n for n in layer_names}
+    real = {n.lower(): n for n in layer_names[1:]}
     rows = obj.get('layers')
     if isinstance(rows, dict):
         rows = [dict(v, name=k) for k, v in rows.items() if isinstance(v, dict)]
@@ -423,7 +548,7 @@ def describe_recipe(recipe, layer_names):
     """One line saying what was understood, for the editor to check against
     what they meant."""
     def say(c):
-        return c['effect'] if c['effect'] in ('fade', 'pop', 'cut') else f"{c['effect']} {c['direction']}"
+        return c['effect'] if c['effect'] in ('fade', 'pop', 'cut', 'static') else f"{c['effect']} {c['direction']}"
     bits = []
     if len(layer_names) > 1:
         bits.append(f"background: {say(recipe['background'])}")
@@ -433,13 +558,15 @@ def describe_recipe(recipe, layer_names):
             bits.append(f"{rest} layer{'s' if rest != 1 else ''}: {say(recipe['default'])}")
         bits.extend(special)
     else:
-        bits.append(f"picture: {say(recipe['background'])}")
+        bits.append(f"picture: {say(recipe['default'])}")
     if recipe['stop_motion']:
         bits.append('stop motion')
     if recipe['push_in']:
         bits.append('slow push in')
     if recipe['speed'] != 'normal':
         bits.append(recipe['speed'])
+    if recipe.get('ambient', 'none') != 'none':
+        bits.append(f"then {AMBIENT_LABELS[recipe['ambient']]}")
     return '; '.join(bits)
 
 
@@ -450,23 +577,29 @@ def describe_recipe(recipe, layer_names):
 def build_timeline(recipe, layer_names, duration):
     """[{'effect', 'direction', 'start', 'dur'}] per layer, bottom first.
 
-    The backdrop comes on first; the rest follow one after another in
-    stacking order and are all in place within the opening part of the clip
-    (never more than about 45% of it, or six seconds), which then holds: a
-    schedule has to be on screen, complete, long enough to be read."""
+    The background of layered artwork is there from the first frame (unless
+    the recipe animates it); the rest follow one after another in stacking
+    order and are all in place within the opening part of the clip (never
+    more than about 45% of it, or six seconds), which then holds: a schedule
+    has to be on screen, complete, long enough to be read. A flat picture
+    has nothing to stand on, so it arrives itself, from black."""
     n = len(layer_names)
     k = SPEEDS.get(recipe.get('speed'), 1.0)
     lead = 0.25
-    bg = dict(recipe['background'], start=lead, dur=min(1.0, max(0.4, 0.7 * k)))
     if n <= 1:
-        bg['dur'] = min(max(0.8, 1.6 * k), duration * 0.4)
-        return [bg]
+        return [dict(recipe['default'], start=lead, dur=min(max(0.8, 1.6 * k), duration * 0.4))]
+    if recipe['background']['effect'] == 'static':
+        # 'cut' at time zero with no duration: drawn in full on frame 0.
+        bg = {'effect': 'cut', 'direction': recipe['background']['direction'], 'start': 0.0, 'dur': 0.0}
+    else:
+        bg = dict(recipe['background'], start=lead, dur=min(1.0, max(0.4, 0.7 * k)))
     rest = n - 1
     window = min(duration * 0.45, 6.0, max(1.2, rest * 0.9)) * k
     window = min(window, duration * 0.6)
     each = float(np.clip(window / rest * 1.6, 0.35, 1.2 * max(k, 1.0)))
     gap = (window - each) / (rest - 1) if rest > 1 else 0.0
-    first = bg['start'] + bg['dur'] * 0.6
+    # A beat on the bare background before anything lands on it.
+    first = max(0.4, bg['start'] + bg['dur'] * 0.6)
     out = [bg]
     for i, name in enumerate(layer_names[1:]):
         c = recipe['layers'].get(name.lower(), recipe['default'])
@@ -536,18 +669,51 @@ def _jitter(layer_index, step):
     return int(rng.integers(-3, 4)), int(rng.integers(-2, 3))
 
 
+def _smooth(x):
+    x = min(1.0, max(0.0, x))
+    return x * x * (3.0 - 2.0 * x)
+
+
+def _paste_shifted(dst, px, x, y, dx, dy):
+    """paste() at a position that need not be a whole pixel. A slow drift
+    in whole pixels is a visible tick every few frames; this is continuous."""
+    ix, iy = int(math.floor(dx)), int(math.floor(dy))
+    fx, fy = dx - ix, dy - iy
+    if fx < 0.02 and fy < 0.02:
+        paste(dst, px, x + ix, y + iy)
+        return
+    h, w = px.shape[:2]
+    moved = cv2.warpAffine(px, np.float32([[1, 0, 1 + fx], [0, 1, 1 + fy]]), (w + 2, h + 2),
+                           flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    paste(dst, moved, x + ix - 1, y + iy - 1)
+
+
+SHINE_EVERY, SHINE_LASTS, SHINE_WIDTH, SHINE_GAIN, SHINE_LEAN = 3.2, 1.2, 90.0, 0.38, 0.4
+PULSE_EVERY, PULSE_LASTS, PULSE_GROW = 1.1, 0.9, 0.04
+FLOAT_RISE, FLOAT_PERIOD = 4.0, 4.5
+EASE_OFF = 0.8              # ongoing motion eases away over the last moments: the final frame is the artwork
+
+
 class Animator:
     """Draws any moment of the animation: frame(t) -> BGR at canvas size.
 
-    Layers that have finished arriving are baked into one picture as time
-    advances, so the long hold at the end costs a copy per frame rather than
-    a full composite. frame() is therefore meant to be called with rising t
-    (rewinding works, it just rebuilds)."""
+    Layers that will not change again are baked into one picture as time
+    advances -- every arrived layer when nothing moves afterwards, only the
+    background when the layers keep moving -- so a still hold costs a copy
+    per frame rather than a full composite. frame() is therefore meant to be
+    called with rising t (rewinding works, it just rebuilds).
+
+    Whatever the layers do after arriving, they have stopped doing it by the
+    last frame, which is the artwork exactly."""
 
     def __init__(self, artwork, timeline, recipe, duration, canvas=CANVAS):
         self.layers, self.timeline, self.recipe = artwork['layers'], timeline, recipe
         self.duration, self.canvas = float(duration), canvas
         self.settled_at = settle_time(timeline)
+        n = len(self.layers)
+        self.ambient = fit_to_artwork(recipe, [None] * n)[0].get('ambient', 'none')
+        # Layers from here up keep moving after they arrive; below it, never.
+        self._movers = n if self.ambient == 'none' else (1 if n > 1 else 0)
         self._base = np.zeros((canvas[1], canvas[0], 3), np.uint8)
         self._baked = 0
         self._last_t = -1.0
@@ -556,14 +722,76 @@ class Animator:
         self._base[:] = 0
         self._baked = 0
 
-    def _draw_layer(self, dst, i, t, step):
+    def _draw_arrived(self, dst, i, tm):
+        """Layer i, in place, doing whatever the style has it do until the end."""
+        ly, tl = self.layers[i], self.timeline[i]
+        px, x, y = ly['px'], ly['x'], ly['y']
+        w, h = self.canvas
+        if self.ambient in ('float', 'wobble'):
+            env = _smooth((tm - tl['start'] - tl['dur']) / EASE_OFF) * _smooth((self.duration - tm) / EASE_OFF)
+            if self.ambient == 'float':
+                # One slow wave running up the stack, each layer a little behind the one below.
+                ph = 2.0 * math.pi * tm / FLOAT_PERIOD - 0.7 * i
+                _paste_shifted(dst, px, x, y, 1.5 * env * math.sin(0.5 * ph + i), FLOAT_RISE * env * math.sin(ph))
+            elif env < 0.5:
+                paste(dst, px, x, y)
+            else:
+                # Held for two steps: the tremble of a hand-placed cel, not a vibration.
+                rng = np.random.default_rng(7919 * (i + 1) + int(math.floor(tm * STOP_MOTION_FPS + 1e-6)) // 2)
+                paste(dst, px, x + int(rng.integers(-2, 3)), y + int(rng.integers(-1, 2)))
+            return
+        if self.ambient == 'shine':
+            since = tm - (self.settled_at + 0.3)
+            k = math.floor(since / SHINE_EVERY) if since >= 0 else -1
+            u = (since - k * SHINE_EVERY) / SHINE_LASTS
+            ends = self.settled_at + 0.3 + k * SHINE_EVERY + SHINE_LASTS
+            if k < 0 or u >= 1.0 or ends > self.duration - 0.15:      # a sweep that could not finish does not start
+                paste(dst, px, x, y)
+                return
+            centre = -0.25 * w + u * 1.5 * w
+            reach = 3.0 * SHINE_WIDTH + SHINE_LEAN * h / 2.0
+            ph_, pw_ = px.shape[:2]
+            c0, c1 = max(0, int(centre - reach) - x), min(pw_, int(centre + reach) + 1 - x)
+            if c1 <= c0:
+                paste(dst, px, x, y)
+                return
+            xs = (x + np.arange(c0, c1, dtype=np.float32))[None, :]
+            ys = (y + np.arange(ph_, dtype=np.float32))[:, None]
+            gain = SHINE_GAIN * np.exp(-(((xs - SHINE_LEAN * (ys - h / 2.0)) - centre) / SHINE_WIDTH) ** 2)
+            lit = px.copy()
+            part = lit[:, c0:c1].astype(np.float32)
+            # Toward white, inside the layer's own shape only (pixels are premultiplied).
+            part[:, :, :3] += (part[:, :, 3:4] - part[:, :, :3]) * gain[:, :, None]
+            lit[:, c0:c1] = (part + 0.5).astype(np.uint8)
+            paste(dst, lit, x, y)
+            return
+        if self.ambient == 'pulse':
+            since = tm - (self.settled_at + 0.4)
+            beat = math.floor(since / PULSE_EVERY) if since >= 0 else -1
+            u = (since - beat * PULSE_EVERY) / PULSE_LASTS
+            ends = self.settled_at + 0.4 + beat * PULSE_EVERY + PULSE_LASTS
+            turn = beat % (len(self.layers) - self._movers) + self._movers if beat >= 0 else -1
+            if turn != i or u >= 1.0 or ends > self.duration - 0.15:
+                paste(dst, px, x, y)
+                return
+            s = 1.0 + PULSE_GROW * math.sin(math.pi * u) ** 2
+            ph_, pw_ = px.shape[:2]
+            nw, nh = max(1, int(round(pw_ * s))), max(1, int(round(ph_ * s)))
+            paste(dst, cv2.resize(px, (nw, nh), interpolation=cv2.INTER_LINEAR), x + (pw_ - nw) // 2, y + (ph_ - nh) // 2)
+            return
+        paste(dst, px, x, y)
+
+    def _draw_layer(self, dst, i, t, step, tm):
         ly, tl = self.layers[i], self.timeline[i]
         if t < tl['start']:
             return
         raw = (t - tl['start']) / tl['dur'] if tl['dur'] > 0 else 1.0
         px, x, y = ly['px'], ly['x'], ly['y']
         if raw >= 1.0 or tl['effect'] == 'cut':
-            paste(dst, px, x, y)
+            if i >= self._movers:
+                self._draw_arrived(dst, i, tm)
+            else:
+                paste(dst, px, x, y)
             return
         u = ease_out(raw)
         dx = dy = 0
@@ -590,15 +818,15 @@ class Animator:
     def frame(self, t):
         t = min(max(0.0, float(t)), self.duration)
         stop = bool(self.recipe.get('stop_motion'))
-        # Stop motion steps time itself while things are arriving. Once the
-        # picture is complete it holds dead still: a schedule that keeps
-        # twitching for twenty seconds is not charming, it is unreadable.
+        # Stop motion steps time itself: `ta` for the arrivals, `tm` for
+        # whatever the layers go on doing afterwards.
         step = int(math.floor(t * STOP_MOTION_FPS + 1e-6))
         ta = min(step / STOP_MOTION_FPS, t) if stop and t < self.settled_at + 1.0 / STOP_MOTION_FPS else t
+        tm = min(step / STOP_MOTION_FPS, t) if stop and t < self.duration else t
         if ta < self._last_t:
             self._reset()
         self._last_t = ta
-        while self._baked < len(self.layers):
+        while self._baked < self._movers:
             tl = self.timeline[self._baked]
             if ta < tl['start'] + tl['dur'] and not (tl['effect'] == 'cut' and ta >= tl['start']):
                 break
@@ -607,7 +835,7 @@ class Animator:
             self._baked += 1
         out = self._base.copy()
         for i in range(self._baked, len(self.layers)):
-            self._draw_layer(out, i, ta, step)
+            self._draw_layer(out, i, ta, step, tm)
         if self.recipe.get('push_in'):
             tp = (step / STOP_MOTION_FPS if stop else t) / self.duration
             s = 1.0 + PUSH_IN * min(1.0, max(0.0, tp))

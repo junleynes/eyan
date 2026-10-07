@@ -80,6 +80,7 @@ def _public(m):
             'duration': m.get('duration'), 'format': m.get('format'), 'format_label': m.get('format_label'),
             'size': m.get('size'), 'file': m.get('file'), 'layers': m.get('layers'), 'layered': m.get('layered'),
             'prompt': m.get('prompt'), 'animation': m.get('animation'), 'read_by': m.get('read_by'),
+            'style': m.get('style'), 'style_label': m.get('style_label'),
             'music': m.get('music'), 'notes': m.get('notes') or [],
             'url': f"/api/schedule/file/{pid}/{m['file']}",
             'preview_url': f"/api/schedule/file/{pid}/{m['preview']}" if m.get('preview') else None,
@@ -90,11 +91,12 @@ def _public(m):
 # The job
 # --------------------------------------------------------------------------
 
-def _read_prompt(prompt, layer_names, notes):
-    """(recipe, who read it). The built-in reading always runs; the language
-    model, when it is reachable, gets to refine it. Nothing here can fail
-    the job: a plug with a plain fade is still a plug."""
-    base = sk.parse_prompt(prompt, layer_names)
+def _read_prompt(prompt, layer_names, notes, style=None):
+    """(recipe, who read it). The chosen style is the starting point and the
+    prompt changes what it names. The built-in reading always runs; the
+    language model, when it is reachable, gets to refine it. Nothing here
+    can fail the job: a plug in the plain style is still a plug."""
+    base = sk.parse_prompt(prompt, layer_names, base=sk.style_recipe(style))
     if not (prompt and SCHEDULE_USE_LLM):
         return base, 'built-in'
     prod = pipeline.load_production_defaults()
@@ -103,7 +105,7 @@ def _read_prompt(prompt, layer_names, notes):
         if pipeline._check_service('ollama', pipeline.OLLAMA_URL, '/api/tags')['status'] != 'up':
             raise RuntimeError('Ollama is not reachable')
         reply, _ = shorts_core.ollama_generate(pipeline.OLLAMA_URL, {
-            'model': model, 'prompt': sk.recipe_prompt(prompt, layer_names), 'stream': False, 'format': 'json',
+            'model': model, 'prompt': sk.recipe_prompt(prompt, layer_names, base), 'stream': False, 'format': 'json',
             'options': {'temperature': 0.1, 'num_predict': 400}}, timeout=90)
         recipe = sk.parse_recipe_reply(reply, layer_names, base)
         if recipe is None:
@@ -114,7 +116,7 @@ def _read_prompt(prompt, layer_names, notes):
     except Exception as e:
         print(f'Schedule Plug: animation prompt read without the language model ({e}).')
         notes.append('The animation prompt was read by keyword matching, because the AI model could not be used '
-                     f'({str(e)[:120]}). Simple instructions (wipe, slide, fade, pop, stop motion, a direction) '
+                     f'({str(e)[:120]}). Simple instructions (wipe, slide, fade, pop, stop motion, float, a direction) '
                      'work the same either way.')
         return base, 'built-in'
 
@@ -132,7 +134,10 @@ def _run(jid, params):
     notes = list(art['notes'])
 
     report(percent=10, step='Planning the animation')
-    recipe, read_by = _read_prompt(params.get('prompt'), names, notes)
+    recipe, read_by = _read_prompt(params.get('prompt'), names, notes, params.get('style'))
+    recipe, cannot = sk.fit_to_artwork(recipe, names)
+    if cannot:
+        notes.append(cannot)
     timeline = sk.build_timeline(recipe, names, duration)
     animation = sk.describe_recipe(recipe, names)
 
@@ -192,6 +197,7 @@ def _run(jid, params):
                     'format': fmt, 'format_label': pipeline.EXPORT_FORMATS[fmt]['label'], 'file': name,
                     'size': os.path.getsize(out), 'preview': preview, 'poster': poster,
                     'layers': names, 'layered': art['layered'], 'prompt': params.get('prompt') or '',
+                    'style': params.get('style'), 'style_label': sk.style_label(params.get('style')),
                     'animation': animation, 'read_by': read_by, 'music': params.get('music_name'),
                     'fps': f'{fps[0]}/{fps[1]}', 'notes': notes}
         _write_manifest(pdir, manifest)
@@ -254,6 +260,7 @@ def api_schedule_options():
         psd = False
     return jsonify(ok=True, durations=list(sk.DURATIONS),
                    formats=[{'key': k, 'label': v['label']} for k, v in pipeline.EXPORT_FORMATS.items()],
+                   styles=[{'key': k, 'label': label} for k, label, _ in sk.STYLES], default_style=sk.DEFAULT_STYLE,
                    effects=list(sk.EFFECTS), psd_supported=psd, max_layers=sk.MAX_LAYERS,
                    extensions=sorted(sk.IMAGE_EXTENSIONS if psd else sk.IMAGE_EXTENSIONS - {'psd', 'psb'}))
 
@@ -270,6 +277,9 @@ def api_schedule_render():
     if duration not in sk.DURATIONS:
         return jsonify(error='Choose a length of ' + ', '.join(str(d) for d in sk.DURATIONS) + ' seconds.'), 400
     fmt = pipeline.resolve_delivery_format(request.form.get('delivery_format'))
+    style = (request.form.get('style') or '').strip() or sk.DEFAULT_STYLE
+    if not sk.style_label(style):
+        return jsonify(error='Choose one of the listed animation styles.'), 400
     image = pipeline._resolve_upload('schedule_image', sk.IMAGE_EXTENSIONS)
     if not image:
         return jsonify(error='Pick the schedule artwork first, using Browse library.'), 400
@@ -290,7 +300,7 @@ def api_schedule_render():
     orig = original('schedule_image', image)
     params = {'image': image, 'orig_name': orig, 'music': music,
               'music_name': (original('schedule_music', music) if music else None),
-              'duration': duration, 'format': fmt,
+              'duration': duration, 'format': fmt, 'style': style,
               'prompt': ' '.join((request.form.get('prompt') or '').split())[:600],
               'user_id': session.get('user_id'), 'username': session.get('username')}
     jid = pipeline.job_new(user_id=session.get('user_id'), username=session.get('username'))
