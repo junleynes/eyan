@@ -2945,54 +2945,212 @@ def nearest_beat(target, beats, lo, hi):
 WHISPER_TIMEOUT = int(os.environ.get('WHISPER_TIMEOUT', 1800))
 
 
-def _whisper_request(audio_path, upload_name):
-    """One transcription request. Both granularities are asked for by name:
-    asked for 'word' alone, some servers leave `segments` out or send it as
-    null, which is not the same as there being no speech."""
+class WhisperNoTimings(ValueError):
+    """The service transcribed the audio but said nothing usable about WHEN
+    anything was said. `text` is what it heard."""
+
+    def __init__(self, message, text=''):
+        super().__init__(message)
+        self.text = text
+
+
+# How each speech-to-text server has been found to answer with timings, so
+# the search below is paid for once per server, not once per file.
+_WHISPER_FORMAT = {}
+WHISPER_FORMATS = ('verbose_json', 'srt', 'vtt')
+
+
+def _whisper_request(audio_path, upload_name, fmt='verbose_json'):
+    """One transcription request. For verbose_json both granularities are
+    asked for by name: asked for 'word' alone, some servers leave `segments`
+    out or send it as null, which is not the same as there being no speech."""
+    data = {'model': WHISPER_MODEL, 'response_format': fmt}
+    if fmt == 'verbose_json':
+        data['timestamp_granularities[]'] = ['word', 'segment']
     with open(audio_path, 'rb') as f:
         return requests.post(
             f'{WHISPER_URL}/v1/audio/transcriptions',
             files={'file': (upload_name, f, 'audio/wav')},
-            data={
-                'model': WHISPER_MODEL,
-                'response_format': 'verbose_json',
-                'timestamp_granularities[]': ['word', 'segment'],
-            },
+            data=data,
             timeout=WHISPER_TIMEOUT,
         )
 
 
+def _clock(v):
+    """Seconds, from a number or from a timestamp such as '00:01:02,500',
+    '1:02.5' or '62.5'. None if it is neither."""
+    if isinstance(v, bool) or v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    m = re.match(r'^\s*(?:(\d+):)?(?:(\d+):)?(\d+(?:[.,]\d+)?)\s*$', str(v))
+    if not m:
+        return None
+    parts = [float(p.replace(',', '.')) for p in m.groups() if p is not None]
+    return sum(p * 60 ** k for k, p in enumerate(reversed(parts)))
+
+
+def _row_times(row):
+    """(start, end) in seconds for one line or word of a reply, however the
+    server spells it: start/end (OpenAI, faster-whisper), timestamp: [s, e]
+    (transformers), offsets: {from, to} in milliseconds or timestamps:
+    {from, to} as clock text (whisper.cpp), t0/t1 in hundredths."""
+    for a, b in (('start', 'end'), ('start_time', 'end_time'), ('from', 'to'), ('begin', 'end')):
+        if a in row and b in row:
+            x, y = _clock(row[a]), _clock(row[b])
+            if x is not None and y is not None:
+                return x, y
+    off = row.get('offsets')
+    if isinstance(off, dict) and _clock(off.get('from')) is not None and _clock(off.get('to')) is not None:
+        return _clock(off['from']) / 1000.0, _clock(off['to']) / 1000.0
+    ts = row.get('timestamp', row.get('timestamps'))
+    if isinstance(ts, (list, tuple)) and len(ts) == 2:
+        x, y = _clock(ts[0]), _clock(ts[1])
+        if x is not None:
+            return x, (y if y is not None else x)       # transformers leaves the last end open
+    if isinstance(ts, dict):
+        x, y = _clock(ts.get('from')), _clock(ts.get('to'))
+        if x is not None and y is not None:
+            return x, y
+    if 't0' in row and 't1' in row:
+        x, y = _clock(row['t0']), _clock(row['t1'])
+        if x is not None and y is not None:
+            return x / 100.0, y / 100.0
+    raise ValueError('no times')
+
+
 def _whisper_reply(data):
-    """(words, segments) from a verbose_json reply, whatever the server left
-    out: a missing or null list is an empty one, a row without usable times
-    is skipped, and lines are built from the words when only words came."""
+    """(words, segments) from a JSON reply, whatever the server left out or
+    spelled its own way: a missing or null list is an empty one, a row
+    without usable times is skipped, lines are built from the words when
+    only words came, and the lines may be under `segments`, `chunks` or
+    `transcription` with their times in any of the forms _row_times reads.
+
+    Raises WhisperNoTimings when the reply holds the dialogue's text but no
+    timing for any of it. Reading that as "no speech" sent editors looking
+    for a fault in the file when the fault was in what the server returned."""
+    if isinstance(data, list) and data and all(isinstance(r, dict) for r in data):
+        data = {'segments': data}
     if not isinstance(data, dict):
         raise ValueError(f'unexpected reply ({type(data).__name__}, not a JSON object)')
-    words, segments = [], []
-    for seg in data.get('segments') or []:
+    rows = next((data[k] for k in ('segments', 'chunks', 'transcription') if isinstance(data.get(k), list)), [])
+    words, segments, nested = [], [], []
+    for seg in rows:
         try:
             text = (seg.get('text') or '').strip()
             if text:
-                segments.append({'start': float(seg['start']), 'end': float(seg['end']), 'text': text})
+                start, end = _row_times(seg)
+                segments.append({'start': start, 'end': end, 'text': text})
+            nested.extend(seg.get('words') or [])
         except (AttributeError, KeyError, TypeError, ValueError):
             continue
-    for w in data.get('words') or []:
+    for w in (data.get('words') or nested):
         try:
-            word = (w.get('word') or '').strip()
+            word = (w.get('word') or w.get('text') or '').strip()
             if word:
-                words.append({'start': float(w['start']), 'end': float(w['end']), 'word': word})
+                start, end = _row_times(w)
+                words.append({'start': start, 'end': end, 'word': word})
         except (AttributeError, KeyError, TypeError, ValueError):
             continue
     if words and not segments:
         import shorts_core      # no PRISM imports of its own, so nothing circular
         segments = shorts_core.segments_from_words(words)
-    if not words and not segments and str(data.get('text') or '').strip():
-        # It heard the dialogue and sent it back as one block of text. Reading
-        # that as "no speech" would send an editor looking for a fault in the
-        # file when the fault is in what the server was able to return.
-        raise ValueError('it returned the dialogue as plain text with no timings; PRISM needs the start and '
-                         'end of each line or word (response_format=verbose_json with timestamps)')
+    text = str(data.get('text') or '').strip() or ' '.join(
+        str(r.get('text') or '').strip() for r in rows if isinstance(r, dict)).strip()
+    if not words and not segments and text:
+        # What it did send, so the next person to read this knows what to fix.
+        shape = 'fields ' + ', '.join(sorted(str(k) for k in data)[:10])
+        first = next((r for r in rows if isinstance(r, dict)), None)
+        if first is not None:
+            shape += '; each line has ' + ', '.join(sorted(str(k) for k in first)[:10])
+        raise WhisperNoTimings('it returned the dialogue as text with no timings for it; PRISM needs the start '
+                               f'and end of each line or word (its reply had {shape})', text)
     return words, segments
+
+
+_CUE_TIMES = re.compile(r'^\s*((?:\d+:)?\d{1,2}:\d{2}[.,]\d{1,3})\s*-->\s*((?:\d+:)?\d{1,2}:\d{2}[.,]\d{1,3})')
+
+
+def _subtitle_segments(body):
+    """Lines with their times from an SRT or WebVTT body ([] if it is neither)."""
+    segments, times, lines = [], None, []
+
+    def flush():
+        text = ' '.join(re.sub(r'<[^>]+>', '', ln).strip() for ln in lines).strip()
+        if times and text:
+            segments.append({'start': times[0], 'end': times[1], 'text': text})
+    for ln in str(body or '').replace('\r', '').split('\n'):
+        m = _CUE_TIMES.match(ln)
+        if m:
+            flush()
+            times, lines = (_clock(m.group(1)), _clock(m.group(2))), []
+        elif not ln.strip():
+            flush()
+            times, lines = None, []
+        elif times:
+            lines.append(ln)
+    flush()
+    return segments
+
+
+def _whisper_transcribe(audio_path, upload_name):
+    """(words, segments) for one audio file, asking the service in whichever
+    way gets timings out of it.
+
+    The OpenAI way is response_format=verbose_json, and a good many servers
+    that are otherwise compatible answer it with the text alone. Every one
+    of them can write subtitles, though, and a subtitle file is lines with
+    times. So when verbose_json comes back without timings the same audio
+    is asked for as SRT, then as WebVTT -- line timings rather than word
+    timings, which is enough for everything PRISM does with a transcript --
+    and the format that worked is remembered for that server.
+
+    Raises what requests raises for a failed request (see _whisper_problem),
+    and WhisperNoTimings if no format gave any timing."""
+    known = _WHISPER_FORMAT.get(WHISPER_URL)
+    order = ([known] if known else []) + [f for f in WHISPER_FORMATS if f != known]
+    untimed, refused = None, None
+    for fmt in order:
+        r = _whisper_request(audio_path, upload_name, fmt)
+        try:
+            r.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            # A server that does not offer this format says so with a 4xx.
+            # Anything else -- or the first format failing -- is a failure.
+            status = getattr(e.response, 'status_code', None)
+            if fmt != 'verbose_json' and status in (400, 404, 415, 422) and (untimed or len(order) > 1):
+                refused = refused or e
+                continue
+            raise
+        words, segments, heard = [], [], ''
+        body = r.text if isinstance(getattr(r, 'text', None), str) else ''
+        try:
+            if fmt == 'verbose_json' or body.lstrip()[:1] in ('{', '['):
+                words, segments = _whisper_reply(r.json())
+            else:
+                segments = _subtitle_segments(body)
+                heard = '' if segments else re.sub(r'^WEBVTT.*$', '', body, flags=re.M).strip()
+        except WhisperNoTimings as e:
+            untimed = untimed or e
+            continue
+        if words or segments:
+            if _WHISPER_FORMAT.get(WHISPER_URL) != fmt:
+                _WHISPER_FORMAT[WHISPER_URL] = fmt
+                if fmt != 'verbose_json':
+                    print(f'Whisper: this service gives no timings as verbose_json; using {fmt} for it from now on '
+                          '(line timings, no word timings).')
+            return words, segments
+        if heard:
+            untimed = untimed or WhisperNoTimings(f'asked for {fmt}, it returned text with no timings', heard)
+            continue
+        if untimed is None:
+            return [], []               # asked properly, answered properly, nothing said: no speech
+    if untimed is not None:
+        raise WhisperNoTimings(f'{untimed}. It was also asked for subtitles (SRT and WebVTT) and gave no timings '
+                               'that way either', untimed.text)
+    if refused is not None:
+        raise refused
+    return [], []
 
 
 def _whisper_problem(e):
@@ -3006,6 +3164,10 @@ def _whisper_problem(e):
         body = ' '.join((e.response.text or '').split())[:240]
         return (f'the speech-to-text service at {WHISPER_URL} answered with an error '
                 f'(HTTP {e.response.status_code} for model "{WHISPER_MODEL}")' + (f': {body}' if body else ''))
+    if isinstance(e, WhisperNoTimings):
+        return (f'the speech-to-text service at {WHISPER_URL} heard the dialogue but gave no timings for it: {e}. '
+                'This is the service, not the file: it needs to support response_format=verbose_json with '
+                'timestamps, or srt, or vtt')
     return f'the speech-to-text service at {WHISPER_URL} sent a reply that could not be read ({e})'
 
 
@@ -3263,9 +3425,7 @@ def transcribe_video_detailed(path):
                 return [], [], {'ok': False,
                                 'reason': 'ffmpeg could not read the audio track' + (f' ({why})' if why else '')}
             try:
-                r = _whisper_request(audio_path, upload_name)
-                r.raise_for_status()
-                words, segments = _whisper_reply(r.json())
+                words, segments = _whisper_transcribe(audio_path, upload_name)
             except Exception as e:
                 print(f'Whisper transcription error (service at {WHISPER_URL}): {e}')
                 return [], [], {'ok': False, 'reason': _whisper_problem(e)}
@@ -3333,15 +3493,12 @@ def transcribe_audio_file(path, trim_start=0.0, trim_end=None):
         if not (os.path.exists(audio_path) and os.path.getsize(audio_path) > 0):
             return [], []
         upload_name = os.path.splitext(os.path.basename(path))[0] + '.wav'
-        r = _whisper_request(audio_path, upload_name)
-        r.raise_for_status()
-        data = r.json()
-        words, segments = _whisper_reply(data)
-        # Some servers only return text without segments
-        if not segments:
-            full = (data.get('text') or '').strip()
-            if full:
-                segments.append({'start': 0.0, 'end': 0.0, 'text': full})
+        try:
+            words, segments = _whisper_transcribe(audio_path, upload_name)
+        except WhisperNoTimings as e:
+            # A service that can give the words but not when: the text alone
+            # still tells VO selection what the read says.
+            words, segments = [], ([{'start': 0.0, 'end': 0.0, 'text': e.text}] if e.text else [])
         return words, segments
     except Exception as e:
         print(f'Whisper VO transcription error (service at {WHISPER_URL}): {e}')

@@ -21,6 +21,7 @@ Pinned here:
     back, saying why, for a source that truly has no dialogue.
 """
 import io
+import json
 import shutil
 import subprocess
 import unittest.mock as mock
@@ -347,3 +348,126 @@ def test_the_shorts_take_their_sound_from_where_the_dialogue_was_found(tmp_path)
     assert '[aout]' in cmd and '-af' not in cmd and 'loudnorm' in cmd[cmd.index('-filter_complex') + 1]
     plain = sc.build_render_cmd('ffmpeg', src, 'o.mp4', 0, 50, info, segs)
     assert '-af' in plain and '[aout]' not in plain, 'a file with ordinary audio is rendered exactly as before'
+
+
+# ---- servers that answer in their own way ----
+#
+# "OpenAI-compatible" covers a lot of ground. A server can take the request,
+# transcribe the audio and answer verbose_json with the text alone -- which
+# PRISM read first as "no speech" and then as a failure. Every such server
+# can still write subtitles, and subtitles are lines with times.
+
+@pytest.fixture(autouse=True)
+def _forget_what_was_learned_about_the_server():
+    pipeline._WHISPER_FORMAT.clear()
+    yield
+    pipeline._WHISPER_FORMAT.clear()
+
+
+SRT = ('1\n00:00:00,500 --> 00:00:01,400\nKumusta ka.\n\n'
+       '2\n00:00:02,000 --> 00:00:04,250\n<i>Mabuti</i> naman,\nsalamat.\n\n')
+VTT = 'WEBVTT\n\n00:00.500 --> 00:01.400\nKumusta ka.\n\n01:02:03.000 --> 01:02:04.500\nPaalam.\n'
+LINES = [{'start': 0.5, 'end': 1.4, 'text': 'Kumusta ka.'}, {'start': 2.0, 'end': 4.25, 'text': 'Mabuti naman, salamat.'}]
+
+
+def test_subtitles_are_read_as_lines_with_times():
+    assert pipeline._subtitle_segments(SRT) == LINES
+    assert pipeline._subtitle_segments(SRT.replace('\n', '\r\n')) == LINES
+    assert pipeline._subtitle_segments(VTT) == [{'start': 0.5, 'end': 1.4, 'text': 'Kumusta ka.'},
+                                                {'start': 3723.0, 'end': 3724.5, 'text': 'Paalam.'}]
+    for not_subtitles in ('', 'Kumusta ka. Mabuti naman.', '{"text": "Kumusta"}', None):
+        assert pipeline._subtitle_segments(not_subtitles) == []
+
+
+@pytest.mark.parametrize('reply', [
+    {'text': 'Kumusta ka.', 'chunks': [{'timestamp': [0.5, 1.4], 'text': ' Kumusta ka.'}]},                 # transformers
+    {'text': 'Kumusta ka.', 'segments': [{'text': 'Kumusta ka.', 'offsets': {'from': 500, 'to': 1400}}]},    # whisper.cpp
+    {'transcription': [{'timestamps': {'from': '00:00:00,500', 'to': '00:00:01,400'}, 'text': ' Kumusta ka.'}]},
+    {'segments': [{'text': 'Kumusta ka.', 't0': 50, 't1': 140}]},
+    {'segments': [{'text': 'Kumusta ka.', 'start': '0.5', 'end': '00:00:01.400'}]},
+    [{'start': 0.5, 'end': 1.4, 'text': 'Kumusta ka.'}],
+])
+def test_lines_are_found_however_the_server_spells_them(reply):
+    assert pipeline._whisper_reply(reply) == ([], [{'start': 0.5, 'end': 1.4, 'text': 'Kumusta ka.'}])
+
+
+def test_words_inside_the_lines_are_used_when_there_is_no_list_of_their_own():
+    reply = {'segments': [{'start': 0.5, 'end': 1.4, 'text': ' Kumusta ka.',
+                           'words': [{'word': ' Kumusta', 'start': 0.5, 'end': 1.0}, {'text': 'ka.', 'timestamp': [1.0, 1.4]}]}]}
+    words, segs = pipeline._whisper_reply(reply)
+    assert [w['word'] for w in words] == ['Kumusta', 'ka.'] and words[1]['start'] == 1.0 and len(segs) == 1
+
+
+def test_text_with_no_timings_says_what_the_reply_did_contain():
+    with pytest.raises(pipeline.WhisperNoTimings) as e:
+        pipeline._whisper_reply({'text': 'Kumusta ka.', 'language': 'tl', 'segments': [{'id': 0, 'text': 'Kumusta ka.'}]})
+    assert 'fields language, segments, text' in str(e.value) and 'each line has id, text' in str(e.value)
+    assert e.value.text == 'Kumusta ka.'
+
+
+class _Server:
+    """A speech-to-text server with its own idea of each response format:
+    `answers` maps a format to (status, JSON payload or body text)."""
+
+    def __init__(self, **answers):
+        self.answers, self.asked = answers, []
+
+    def __call__(self, url, files=None, data=None, timeout=None):
+        fmt = data['response_format']
+        self.asked.append(fmt)
+        assert ('timestamp_granularities[]' in data) == (fmt == 'verbose_json')
+        status, body = self.answers.get(fmt, (400, 'unsupported response_format'))
+        r = _reply(body if isinstance(body, (dict, list)) else None, status, body if isinstance(body, str) else json.dumps(body))
+        if isinstance(body, str):
+            r.json.side_effect = ValueError('not JSON')
+        return r
+
+
+def test_a_server_that_gives_no_timings_as_json_is_asked_for_subtitles_and_remembered(src):
+    server = _Server(verbose_json=(200, {'text': 'Kumusta ka. Mabuti naman, salamat.'}), srt=(200, SRT))
+    with mock.patch.object(pipeline.requests, 'post', side_effect=server):
+        words, segs, outcome = pipeline.transcribe_video_detailed(src)
+        assert (words, segs) == ([], LINES) and outcome == {'ok': True, 'reason': None}
+        assert server.asked == ['verbose_json', 'srt']
+        # The next file is asked for the way that worked, once.
+        del server.asked[:]
+        assert pipeline.transcribe_video(src) == ([], LINES) and server.asked == ['srt']
+        assert pipeline.transcribe_audio_file(src) == ([], LINES)
+
+
+def test_subtitles_refused_one_way_are_asked_for_the_other(src):
+    server = _Server(verbose_json=(200, {'text': 'Kumusta ka.'}), srt=(422, 'bad format'), vtt=(200, VTT))
+    with mock.patch.object(pipeline.requests, 'post', side_effect=server):
+        words, segs, outcome = pipeline.transcribe_video_detailed(src)
+    assert server.asked == ['verbose_json', 'srt', 'vtt'] and len(segs) == 2 and outcome['ok'] and outcome['reason'] is None
+
+
+def test_a_server_with_no_timings_any_way_is_named_as_the_problem_with_what_it_sent(src):
+    text_only = (200, {'text': 'Kumusta ka.', 'language': 'tl'})
+    server = _Server(verbose_json=text_only, srt=text_only, vtt=(200, 'Kumusta ka.'))
+    with mock.patch.object(pipeline.requests, 'post', side_effect=server):
+        words, segs, outcome = pipeline.transcribe_video_detailed(src)
+        assert (words, segs) == ([], []) and outcome['ok'] is False and server.asked == ['verbose_json', 'srt', 'vtt']
+        reason = outcome['reason']
+        assert 'heard the dialogue but gave no timings' in reason and 'its reply had fields language, text' in reason
+        assert 'also asked for subtitles (SRT and WebVTT)' in reason and 'This is the service, not the file' in reason
+        # The voice-over reader only needs the words, and still gets them.
+        assert pipeline.transcribe_audio_file(src) == ([], [{'start': 0.0, 'end': 0.0, 'text': 'Kumusta ka.'}])
+    assert pipeline._WHISPER_FORMAT == {}
+
+
+def test_no_speech_and_real_failures_are_not_asked_about_twice(src):
+    quiet = _Server(verbose_json=(200, {'text': '', 'segments': []}), srt=(200, SRT))
+    with mock.patch.object(pipeline.requests, 'post', side_effect=quiet):
+        _, _, outcome = pipeline.transcribe_video_detailed(src)
+    assert quiet.asked == ['verbose_json'] and outcome == {'ok': True, 'reason': 'the speech-to-text service found no '
+                                                                              'speech in the audio'}
+    broken = _Server(verbose_json=(500, 'CUDA out of memory'), srt=(200, SRT))
+    with mock.patch.object(pipeline.requests, 'post', side_effect=broken):
+        _, _, outcome = pipeline.transcribe_video_detailed(src)
+    assert broken.asked == ['verbose_json'] and outcome['ok'] is False and 'HTTP 500' in outcome['reason']
+    # A server that answers the subtitle request in JSON after all is read as JSON.
+    odd = _Server(verbose_json=(200, {'text': 'Kumusta ka.'}), srt=(200, {'segments': SEGS}))
+    with mock.patch.object(pipeline.requests, 'post', side_effect=odd):
+        words, segs, outcome = pipeline.transcribe_video_detailed(src)
+    assert len(segs) == 1 and outcome['ok'] and outcome['reason'] is None
