@@ -21,6 +21,7 @@ import time
 import traceback
 
 import cv2
+from werkzeug.utils import secure_filename
 from flask import request, jsonify, session, send_from_directory
 
 from core import app, _job_submit_limiter, _client_ip
@@ -412,11 +413,38 @@ def api_schedule_delete(pid):
     return jsonify(ok=True)
 
 
+_MEDIA_EXT = re.compile(r'\.(mp4|mov|mxf|m4v|mkv|avi|webm)$', re.I)
+
+
+def _send_name(custom, original):
+    """(filename to write at the destination, error or None).
+
+    `custom` is what the editor typed, or nothing for the plug's own name.
+    The extension is always the delivery file's own -- renaming must not be
+    able to make an MP4 look like a ProRes .mov -- so one typed on the end
+    is dropped, while a dot that is part of the name ("Promo v1.2") stays.
+    The rest is reduced to what is safe as a filename on a network share:
+    the same rule the promo generator applies to its custom export names."""
+    custom = ' '.join(str(custom or '').split())
+    if not custom:
+        return original, None
+    ext = os.path.splitext(original)[1]
+    # Both kinds of slash become word breaks first, so the result is the same
+    # on the Windows server as anywhere else, and is never a path.
+    stem = secure_filename(re.sub(r'[\\/]+', ' ', _MEDIA_EXT.sub('', custom)))[:120].rstrip('._-')
+    if not stem:
+        return None, ('That name has nothing in it that can be used in a filename. Use letters, numbers, '
+                      'spaces, dashes or underscores.')
+    return stem + ext, None
+
+
 @app.route('/api/schedule/items/<pid>/send', methods=['POST'])
 @require_permission('schedule_plug')
 def api_schedule_send(pid):
     """Copies the delivery file to one of the video destinations configured
-    under Config > Network -- the same ones the promo generator delivers to."""
+    under Config > Network -- the same ones the promo generator delivers to
+    -- under its own name, or under `filename` if one is given. The saved
+    plug keeps its name either way: this names the copy, not the original."""
     m, err = _plug_or_error(pid)
     if err:
         return err
@@ -427,13 +455,17 @@ def api_schedule_send(pid):
     if dest.get('delivery_kind') != 'video':
         return jsonify(ok=False, error=f'"{dest["name"]}" is set up for scene lists or edit packages, not '
                        'finished video. Pick a video destination.'), 400
+    name, bad = _send_name(data.get('filename'), m['file'])
+    if bad:
+        return jsonify(ok=False, error=bad), 400
     try:
-        pipeline.send_file_to_network_destination(os.path.join(_plug_dir(pid), m['file']), m['file'], dest)
+        pipeline.send_file_to_network_destination(os.path.join(_plug_dir(pid), m['file']), name, dest)
     except ValueError as e:
         return jsonify(ok=False, error=str(e)), 502
-    audit_log('schedule_plug_send_to_destination', target=f'{dest["name"]}: {m["file"]}',
+    audit_log('schedule_plug_send_to_destination',
+              target=f'{dest["name"]}: {name}' + ('' if name == m['file'] else f' (saved as {m["file"]})'),
               user_id=session.get('user_id'), username=session.get('username'), ip=_client_ip())
-    return jsonify(ok=True, sent=[m['file']], destination=dest['name'])
+    return jsonify(ok=True, sent=[name], destination=dest['name'])
 
 
 def settle_interrupted():
