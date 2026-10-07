@@ -576,12 +576,13 @@ def _run_render(jid, params):
                 'options': {'reframe': reframe, 'subtitles': want_captions,
                             'subtitle_size': params['subtitle_size'],
                             'face_detector': detector.kind if detector else None,
-                            'speaker': speaker},
+                            'speaker': speaker, 'ending': params.get('ending') or 'none'},
                 'numbering': 'episode',       # short N is the Nth of these moments in the episode
                 'shorts': [], 'errors': [], 'warnings': warnings}
     _write_manifest(bdir, manifest)
 
     work = app.config['UPLOAD_FOLDER']
+    ending = params.get('ending') == 'freeze'
     max_chars = sc.SUBTITLE_SIZES[params['subtitle_size']][1]
     total = len(items)
     for n, it in enumerate(items, 1):
@@ -619,7 +620,7 @@ def _run_render(jid, params):
             ok, err = sc.render_short(pipeline.FFMPEG, src, out_path, start_f, n_frames, info, segs,
                                       ass_name=ass_name, work_dir=work, crf=SHORTS_CRF, preset=SHORTS_PRESET,
                                       loudness=SHORTS_LOUDNESS, true_peak=SHORTS_TRUE_PEAK,
-                                      timeout=pipeline.FFMPEG_LONG_TIMEOUT)
+                                      timeout=pipeline.FFMPEG_LONG_TIMEOUT, ending=ending)
         except sc.ToolTimeout as e:
             ok, err = False, f'Encoding took too long and was stopped ({e}).'
         finally:
@@ -636,7 +637,8 @@ def _run_render(jid, params):
 
         entry = {'index': n, 'title': it['title'], 'file': name + '.mp4', 'srt': None, 'thumb': None,
                  'start': round(start_f / fps, 3), 'end': round(end_f / fps, 3),
-                 'duration': round(n_frames / fps, 2), 'size': os.path.getsize(out_path),
+                 'duration': round((n_frames + (sum(sc.ending_frames(fps)) if ending else 0)) / fps, 2),
+                 'size': os.path.getsize(out_path),
                  'layouts': {'crop': sum(1 for s in segs if s['layout'] == 'crop'),
                              'fit': sum(1 for s in segs if s['layout'] == 'fit'),
                              'tracked': sum(1 for s in segs if s.get('keys')),
@@ -831,7 +833,7 @@ def _form_num(name, default, lo, hi, cast=float):
 
 
 def _render_options(data):
-    """reframe / speaker / subtitles / subtitle_size from a request body --
+    """reframe / speaker / subtitles / subtitle_size / ending from a request body --
     JSON for /render, form fields for /analyze's one-button path -- with
     anything unrecognised falling back to the default rather than failing."""
     reframe = data.get('reframe') if data.get('reframe') in ('auto', 'split', 'crop', 'fit') else 'auto'
@@ -841,7 +843,10 @@ def _render_options(data):
     return {'reframe': reframe,
             'speaker': speaker and reframe != 'fit',
             'subtitles': data.get('subtitles', True) not in (False, 0, '0', 'false', 'off', None),
-            'subtitle_size': data.get('subtitle_size') if data.get('subtitle_size') in sc.SUBTITLE_SIZES else 'm'}
+            'subtitle_size': data.get('subtitle_size') if data.get('subtitle_size') in sc.SUBTITLE_SIZES else 'm',
+            # How each short finishes: on its last frame ('none'), or held on
+            # it while the colour drains and it fades out in silence ('freeze').
+            'ending': data.get('ending') if data.get('ending') in ('none', 'freeze') else 'none'}
 
 
 @app.route('/api/shorts/options')
@@ -868,7 +873,8 @@ def api_shorts_options():
                    face_detector=det.kind, captions_available=_captions_available(),
                    speaker_default=SHORTS_SPEAKER_CROP,
                    vision_frames=SHORTS_VISION_FRAMES, max_items=SHORTS_MAX_ITEMS,
-                   min_clip=SHORTS_MIN_CLIP, max_clip=SHORTS_MAX_CLIP)
+                   min_clip=SHORTS_MIN_CLIP, max_clip=SHORTS_MAX_CLIP,
+                   ending_seconds=round(sum(sc.ENDING[k] for k in ('dissolve', 'hold', 'fade')), 1))
 
 
 @app.route('/api/shorts/analyze', methods=['POST'])

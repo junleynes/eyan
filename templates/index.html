@@ -7071,6 +7071,12 @@ document.getElementById('vf').addEventListener('submit', async function(e){
     <span style="display:inline-flex;gap:6px;align-items:center;font-size:12px">Size
       <select id=sh-caption-size><option value=s>Small</option><option value=m selected>Medium</option><option value=l>Large</option></select>
     </span>
+    <span style="display:inline-flex;gap:6px;align-items:center;font-size:12px">Ending
+      <select id=sh-ending title="How every short in this render finishes">
+        <option value=none selected>Cut on the last frame</option>
+        <option value=freeze>Freeze, drain the colour, fade out in silence (+3.2 s)</option>
+      </select>
+    </span>
   </div>
 
 <div class="promo-actions" style="margin-top:14px">
@@ -7318,7 +7324,8 @@ function shRenderOptions(){
   return {reframe: shEl('sh-reframe').value,
           speaker: shEl('sh-speaker').checked && !shEl('sh-speaker').disabled,
           subtitles: shEl('sh-captions').checked,
-          subtitle_size: shEl('sh-caption-size').value}
+          subtitle_size: shEl('sh-caption-size').value,
+          ending: shEl('sh-ending').value}
 }
 
 // auto=false: "Preview the cut" -- analyse, then stop at the review list.
@@ -7640,7 +7647,8 @@ function shBatchCard(b, fresh){
     '<div><b>' + escapeHtmlLite(b.orig_name || 'Untitled') + '</b> <span style="font-size:12px;opacity:.7">' +
       b.shorts.length + ' short' + (b.shorts.length === 1 ? '' : 's') + (reframe ? ' &middot; ' + reframe : '') +
       (o.speaker ? ' &middot; follows speaker' : '') +
-      (o.subtitles ? ' &middot; captions' : '') + (when ? ' &middot; ' + when : '') +
+      (o.subtitles ? ' &middot; captions' : '') + (o.ending === 'freeze' ? ' &middot; freeze-and-fade ending' : '') +
+      (when ? ' &middot; ' + when : '') +
       (IS_ADMIN && b.username && b.username !== CURRENT_USERNAME ? ' &middot; by ' + escapeHtmlLite(b.username) : '') +
       (b.status === 'partial' ? ' &middot; <span style="color:var(--amber)">incomplete</span>' : '') + '</span></div>' +
     '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
@@ -9027,6 +9035,7 @@ job. Configured via env vars:
         <li><strong>Always crop</strong> fills the screen on every shot and commits to one side of a wide two-shot. <strong>Fit</strong> always shows the whole picture.</li>
         <li><strong>Follow the speaker</strong> (off unless ticked) changes only those wide two-shots: it cuts between close framings of whoever is talking, holding each for at least a second or so and changing just before the next line. It decides from how much each mouth moves while the transcript says words are being spoken. Where it cannot tell &mdash; nobody speaking, a face turned away, two mouths moving alike &mdash; the shot is reframed exactly as it would be with the option off. With <strong>Split screen</strong> it works the other way round: the screen is split while both people talk, and a shot where only one of them talks is framed on that one.</li>
         <li><strong>Captions</strong> are burned in from the transcript a few words at a time, and an <code>.srt</code> is saved next to each MP4.</li>
+        <li><strong>Ending</strong> is how every short in the render finishes. <em>Cut on the last frame</em> stops where the moment stops. <em>Freeze, drain the colour, fade out in silence</em> holds the moment&rsquo;s last frame: over 0.8 s its colour drains to near black-and-white while the sound falls away to nothing, it sits like that in complete silence for 0.8 s, then fades to black over 1.6 s. That adds 3.2 s to each short. No caption is drawn over the held frame, and the silence is true digital silence, added after the loudness levelling.</li>
       </ul>
       <p>Batches are kept in their <strong>project</strong> until deleted: play, download one or all (.zip), or send to a video network destination.</p>
       <h3>Projects</h3>

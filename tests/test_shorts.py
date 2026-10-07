@@ -713,8 +713,8 @@ def test_generate_without_preview_analyses_then_renders_everything_as_one_job(en
     assert [s['title'] for s in batch['shorts']] == [c['title'] for c in a['candidates']]
     assert [(s['start'], s['end']) for s in batch['shorts']] == \
         [(round(c['start'] * 25) / 25, round(c['end'] * 25) / 25) for c in a['candidates']]
-    assert batch['options'] == {'reframe': 'fit', 'subtitles': False, 'subtitle_size': 'l',
-                                'face_detector': None, 'speaker': False}, 'the Output settings sent with the request'
+    assert batch['options'] == {'reframe': 'fit', 'subtitles': False, 'subtitle_size': 'l', 'face_detector': None,
+                                'speaker': False, 'ending': 'none'}, 'the Output settings sent with the request'
     assert all(s['layouts']['fit'] >= 1 and s['layouts']['crop'] == 0 for s in batch['shorts'])
     assert batch['username'] == 'ana'
     for s in batch['shorts']:
@@ -925,6 +925,66 @@ def test_render_validates_every_item(env, monkeypatch):
     post(one, speaker=False)
     assert [q['speaker'] for q in started[1:]] == [True, False, False, True, False], \
         'on when asked; never with Fit (nothing is cropped); junk is not a yes; default from the server; off wins'
+
+
+def test_the_freeze_ending_holds_the_last_frame_drains_it_and_fades_out_in_silence(env, monkeypatch):
+    Services(monkeypatch)
+    client, headers = _client()
+    a = _analysis(client, _analyze(client, headers, env))
+    item = [{'start': 2.0, 'end': 6.0, 'title': 'Moment'}]
+    plain = _render(client, headers, a['analysis_id'], item, reframe='fit', subtitles=False)['result']['batch']
+    ended = _render(client, headers, a['analysis_id'], item, reframe='fit', subtitles=True,
+                    ending='freeze')['result']['batch']
+    assert plain['options']['ending'] == 'none' and ended['options']['ending'] == 'freeze'
+    assert client.get('/api/shorts/options').get_json()['ending_seconds'] == 3.2
+    p, e = plain['shorts'][0], ended['shorts'][0]
+    assert abs(p['duration'] - 4.0) < 0.05 and abs(e['duration'] - 7.2) < 0.05
+
+    fr_p = _frames(os.path.join(shorts.SHORTS_DIR, plain['batch_id'], p['file']))
+    fr = _frames(os.path.join(shorts.SHORTS_DIR, ended['batch_id'], e['file']))
+    assert len(fr_p) == 100 and len(fr) == 180, '100 frames of the moment, then 20 + 20 + 40 of ending'
+
+    # Read as the planes the file holds -- brightness, and the two colour
+    # planes -- rather than through an RGB conversion, which would turn the
+    # removal of colour into an apparent change of brightness.
+    def planes(path, k):
+        raw = subprocess.run(['ffmpeg', '-v', 'error', '-i', path, '-vf', f"select='eq(n,{k})'", '-frames:v', '1',
+                              '-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-'], capture_output=True, timeout=120).stdout
+        size = 1080 * 1920
+        y = np.frombuffer(raw[:size], np.uint8).astype(int)
+        colour = float(np.abs(np.frombuffer(raw[size:size + size // 2], np.uint8).astype(int) - 128).mean())
+        return y, colour
+    end_path = os.path.join(shorts.SHORTS_DIR, ended['batch_id'], e['file'])
+    last_y, last_c = planes(end_path, 99)
+    held_y, held_c = planes(end_path, 125)                # after the 20-frame drain, before the fade
+    assert last_c > 8, 'the moment itself keeps its colour'
+    assert float(np.abs(held_y - last_y).mean()) < 1.5, 'the same picture, held, no darker and no brighter'
+    assert held_c < 0.2 * last_c, 'with most of its colour gone'
+    assert last_c > planes(end_path, 106)[1] > planes(end_path, 114)[1] > held_c, 'draining, not switching'
+    assert float(planes(end_path, 160)[0].mean()) < float(held_y.mean()) - 2 and float(fr[179].mean()) < 6, \
+        'then down to black'
+    # No caption over the held frame: its brightness plane is the uncaptioned render's last frame.
+    plain_last = planes(os.path.join(shorts.SHORTS_DIR, plain['batch_id'], p['file']), 99)[0]
+    assert float(np.abs(planes(end_path, 104)[0] - plain_last).mean()) < 1.5
+
+    def sound(path):
+        wav = path + '.wav'
+        subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', path, '-vn', '-ac', '1', '-ar', '8000',
+                        '-c:a', 'pcm_s16le', wav], check=True, timeout=60)
+        import wave
+        w = wave.open(wav)
+        x = np.frombuffer(w.readframes(w.getnframes()), dtype='<i2').astype(float) / 32768.0
+        os.remove(wav)
+        return x
+    x = sound(os.path.join(shorts.SHORTS_DIR, ended['batch_id'], e['file']))
+    assert abs(len(x) / 8000.0 - 7.2) < 0.15, 'the sound runs the whole length'
+
+    def level(a, b):
+        seg = x[int(a * 8000):int(b * 8000)]
+        return 20 * np.log10(max(1e-9, float(np.sqrt(np.mean(seg ** 2)))))
+    assert level(1.0, 3.5) > -40, 'the moment is heard'
+    assert level(4.0, 4.3) > level(4.5, 4.8) and level(4.5, 4.8) < level(1.0, 3.5) - 15, 'it falls away under the held frame'
+    assert float(np.abs(x[int(5.0 * 8000):]).max()) == 0.0, 'and after that there is nothing at all'
 
 
 # --------------------------------------------------------------------------

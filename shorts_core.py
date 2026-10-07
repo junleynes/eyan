@@ -1554,7 +1554,46 @@ def fitted_crop_x_expr(segs):
     return expr
 
 
-def build_filtergraph(info, segs, out_w=OUT_W, out_h=OUT_H, ass_name=None):
+# The optional ending: the last frame of the moment is held, its colour
+# drains away, and the picture then fades slowly to black -- while the sound
+# falls away to nothing during the drain and stays at nothing after it.
+#   dissolve    seconds over which the held frame goes from full colour to
+#               desaturated, and over which the sound fades to silence
+#   hold        seconds the desaturated frame then sits, in silence
+#   fade        seconds of the fade to black that ends the short
+#   saturation  how much colour is left (0 = black and white, 1 = untouched)
+ENDING = {'dissolve': 0.8, 'hold': 0.8, 'fade': 1.6, 'saturation': 0.12}
+
+
+def ending_frames(fps):
+    """(dissolve, hold, fade) of the ending in whole frames at `fps`."""
+    return tuple(max(1, int(round(ENDING[k] * float(fps)))) for k in ('dissolve', 'hold', 'fade'))
+
+
+def ending_filters(n_frames, fps):
+    """The video filters that put the ending on a clip of `n_frames`, as
+    (before, after): what goes before the clip's timestamps are reset to
+    start at zero, and what goes after.
+
+    Everything is counted in frames, like the rest of the graph. `trim`
+    stops the picture at exactly the last frame of the moment whatever
+    else the file holds after it, and `tpad` repeats that frame for the
+    length of the ending. Those two come BEFORE the reset, because the reset
+    (setpts) marks the stream as having no fixed frame rate, and tpad needs
+    the frame rate to space the frames it adds: after it, newer ffmpeg gives
+    them all one timestamp and the encoder keeps two of the eighty.
+    Afterwards, `hue` takes the colour out of the repeated frames only (it
+    is switched off for the moment itself, which passes untouched) and
+    `fade` takes the last of them to black."""
+    n = int(n_frames)
+    dissolve, hold, fade = ending_frames(fps)
+    left = ENDING['saturation']
+    return (f"trim=end_frame={n},tpad=stop_mode=clone:stop={dissolve + hold + fade},",
+            f"hue=s='max({left},1-{1 - left:.4f}*(n-{n - 1})/{dissolve})':enable='gte(n,{n})',"
+            f"fade=t=out:start_frame={n + dissolve + hold}:nb_frames={fade},")
+
+
+def build_filtergraph(info, segs, out_w=OUT_W, out_h=OUT_H, ass_name=None, ending=None):
     """The -filter_complex string for one short. Video in on [0:v], out on
     [vout].
 
@@ -1566,7 +1605,10 @@ def build_filtergraph(info, segs, out_w=OUT_W, out_h=OUT_H, ass_name=None):
     clip and the 'fit' one is overlaid only during its shots, switched by
     frame number. That costs some redundant filtering on the shots that
     don't use it, in exchange for a graph whose size doesn't grow with the
-    number of shots and whose switches are frame-exact."""
+    number of shots and whose switches are frame-exact.
+
+    `ending` is the clip's length in frames when it is to finish on the
+    held, desaturated, fading frame (see ending_filters), or None."""
     disp_w, disp_h = info['disp_w'], info['disp_h']
     crop_w, crop_h = crop_geometry(disp_w, disp_h, out_w, out_h)
     pre = ['yadif=mode=send_frame:parity=auto:deint=interlaced']
@@ -1632,7 +1674,11 @@ def build_filtergraph(info, segs, out_w=OUT_W, out_h=OUT_H, ass_name=None):
             base = out
     # setpts first: frame 0 at time 0 exactly, so captions (timed from the
     # clip start) and the encoder's frame slots both line up with `n`.
-    tail = 'setpts=PTS-STARTPTS,' + (f'ass={ass_name},' if ass_name else '') + 'format=yuv420p,setsar=1'
+    # The ending goes before the captions: they are timed, so none is drawn
+    # over the held frame, where one burnt in already would have frozen with it.
+    before, after = ending_filters(ending, info['fps']) if ending else ('', '')
+    tail = (before + 'setpts=PTS-STARTPTS,' + after
+            + (f'ass={ass_name},' if ass_name else '') + 'format=yuv420p,setsar=1')
     return f'{g};[v1]{tail}[vout]'
 
 
@@ -1872,8 +1918,17 @@ def take_to_stereo(take):
             '[tl][tr]amerge=inputs=2,pan=stereo|c0=c0|c1=c1')
 
 
+def frame_rate_arg(fps):
+    """`fps` as ffmpeg wants a frame rate written: '30000/1001', '25', '24000/1001'."""
+    from fractions import Fraction
+    r = Fraction(float(fps)).limit_denominator(1001)
+    if abs(float(r) - float(fps)) > 1e-3:           # not a rate with a small denominator: say it as measured
+        r = Fraction(float(fps)).limit_denominator(100000)
+    return f'{r.numerator}/{r.denominator}' if r.denominator != 1 else str(r.numerator)
+
+
 def build_render_cmd(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=None,
-                     crf=18, preset='medium', loudness=-14.0, true_peak=-1.5):
+                     crf=18, preset='medium', loudness=-14.0, true_peak=-1.5, ending=False):
     fps = info['fps']
     dur = n_frames / fps
     # A quarter of a frame early, so accurate seek lands on exactly start_f
@@ -1883,17 +1938,30 @@ def build_render_cmd(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_n
     # encoder then sometimes rounds it up and pads slot 0 with a duplicate
     # (measured -- which also pushes the last frame off the end).
     ss = max(0.0, info.get('v_offset', 0.0) + (start_f - 0.25) / fps)
-    graph = build_filtergraph(info, segs, ass_name=ass_name)
-    fade_out = max(0.0, dur - 0.12)
-    polish = (f'afade=t=in:st=0:d=0.04,afade=t=out:st={fade_out:.3f}:d=0.12,'
-              f'loudnorm=I={loudness}:TP={true_peak}:LRA=11')
+    graph = build_filtergraph(info, segs, ass_name=ass_name, ending=n_frames if ending else None)
+    extra = sum(ending_frames(fps)) if ending else 0
+    if ending:
+        # The sound does what the picture does. Under the held frame it runs
+        # on for the length of the dissolve, falling away fast (cubic: down
+        # 18 dB by half-way, so a line starting just after the out point is
+        # gone before it is a word) and ending at nothing. Everything after
+        # is padding added AFTER the loudness stage, so it is true digital
+        # silence and not a levelled-up noise floor.
+        drain = ending_frames(fps)[0] / fps
+        polish = (f'afade=t=in:st=0:d=0.04,atrim=end={dur + drain:.3f},'
+                  f'afade=t=out:st={dur:.3f}:d={drain:.3f}:curve=cub,'
+                  f'loudnorm=I={loudness}:TP={true_peak}:LRA=11,apad=whole_dur={dur + extra / fps:.3f}')
+    else:
+        fade_out = max(0.0, dur - 0.12)
+        polish = (f'afade=t=in:st=0:d=0.04,afade=t=out:st={fade_out:.3f}:d=0.12,'
+                  f'loudnorm=I={loudness}:TP={true_peak}:LRA=11')
     take = info.get('audio_take')
     if take:
         # The channels the dialogue was found on (see take_to_stereo), not
         # whichever stream ffmpeg would pick.
         graph += f';{take_to_stereo(take)},{polish}[aout]'
     cmd = [ffmpeg, '-y', '-hide_banner', '-nostats', '-loglevel', 'error',
-           '-ss', f'{ss:.6f}', '-i', src, '-t', f'{dur:.6f}', '-frames:v', str(int(n_frames)),
+           '-ss', f'{ss:.6f}', '-i', src, '-t', f'{dur + extra / fps:.6f}', '-frames:v', str(int(n_frames) + extra),
            '-filter_complex', graph, '-map', '[vout]']
     if take:
         cmd += ['-map', '[aout]', '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2']
@@ -1902,6 +1970,13 @@ def build_render_cmd(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_n
                 '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2']
     else:
         cmd += ['-an']
+    # The frame rate is stated, not left for ffmpeg to work out. The graph
+    # resets the timestamps (setpts), which newer ffmpeg takes to mean the
+    # stream has no fixed rate; with none stated it then assumes 25 and
+    # drops frames to fit -- a 29.97 source came out as 25 fps with one frame
+    # in six missing. Every frame already sits exactly on this rate's grid,
+    # so stating it changes nothing where it was being worked out correctly.
+    cmd += ['-r', frame_rate_arg(fps)]
     cmd += ['-c:v', 'libx264', '-preset', str(preset), '-crf', str(crf), '-pix_fmt', 'yuv420p',
             '-profile:v', 'high']
     if info.get('tag_709'):
@@ -1934,7 +2009,7 @@ def ffmpeg_error(stderr, limit=600):
 
 
 def render_short(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=None, work_dir=None,
-                 crf=18, preset='medium', loudness=-14.0, true_peak=-1.5, timeout=900):
+                 crf=18, preset='medium', loudness=-14.0, true_peak=-1.5, timeout=900, ending=False):
     """Renders one short. Returns (ok, error_text).
 
     Runs ffmpeg with `work_dir` as its working directory and refers to the
@@ -1945,7 +2020,7 @@ def render_short(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=
     # Absolute, because ffmpeg is about to run from a different directory.
     src, out_path = os.path.abspath(src), os.path.abspath(out_path)
     cmd = build_render_cmd(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=ass_name,
-                           crf=crf, preset=preset, loudness=loudness, true_peak=true_peak)
+                           crf=crf, preset=preset, loudness=loudness, true_peak=true_peak, ending=ending)
     try:
         r = run_tool(cmd, timeout, cwd=work_dir, label='shorts render')
     except ToolTimeout:

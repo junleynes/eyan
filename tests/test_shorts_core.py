@@ -582,6 +582,55 @@ def test_render_command_seeks_to_the_exact_frame_including_the_video_start_offse
     assert float(cmd[cmd.index('-ss') + 1]) >= 0.0
 
 
+def test_the_frame_rate_is_stated_so_newer_ffmpeg_does_not_assume_25():
+    """The graph resets the timestamps, which newer ffmpeg takes to mean
+    the stream has no fixed rate; left to guess, it assumed 25 and dropped
+    one frame in six of a 29.97 source (84 frames written for 100)."""
+    assert [sc.frame_rate_arg(f) for f in (25.0, 29.97002997, 23.976023976, 59.94005994, 30.0, 50.0, 24.0)] == [
+        '25', '30000/1001', '24000/1001', '60000/1001', '30', '50', '24']
+    assert sc.frame_rate_arg(29.97) == '2997/100' and sc.frame_rate_arg(12.5) == '25/2', 'an odd rate, as measured'
+    info = {'width': 1920, 'height': 1080, 'disp_w': 1920, 'disp_h': 1080, 'sar': 1.0, 'sd_matrix': False,
+            'fps': 30000 / 1001.0, 'audio_index': 0, 'tag_709': True, 'v_offset': 0.0}
+    segs = [{'a': 0, 'b': 299, 'layout': 'crop', 'x': 656.0, 'keys': None}]
+    cmd = sc.build_render_cmd('ffmpeg', '/in.mp4', '/out.mp4', 0, 300, info, segs)
+    assert cmd[cmd.index('-r') + 1] == '30000/1001' and cmd.index('-r') > cmd.index('-i'), 'an output option'
+
+
+def test_the_freeze_ending_is_built_in_frames_and_in_the_right_order():
+    assert sc.ending_frames(25.0) == (20, 20, 40) and sc.ending_frames(30000 / 1001.0) == (24, 24, 48)
+    before, after = sc.ending_filters(250, 25.0)
+    assert before == 'trim=end_frame=250,tpad=stop_mode=clone:stop=80,'
+    assert after == ("hue=s='max(0.12,1-0.8800*(n-249)/20)':enable='gte(n,250)',"
+                     "fade=t=out:start_frame=290:nb_frames=40,")
+    info = {'width': 1920, 'height': 1080, 'disp_w': 1920, 'disp_h': 1080, 'sar': 1.0, 'sd_matrix': False,
+            'fps': 25.0, 'audio_index': 1, 'tag_709': True, 'v_offset': 0.0}
+    segs = [{'a': 0, 'b': 249, 'layout': 'crop', 'x': 656.0, 'keys': None}]
+    plain = sc.build_filtergraph(info, segs, ass_name='c.ass')
+    g = sc.build_filtergraph(info, segs, ass_name='c.ass', ending=250)
+    assert plain.endswith('[v1]setpts=PTS-STARTPTS,ass=c.ass,format=yuv420p,setsar=1[vout]'), 'unchanged without it'
+    assert g.endswith(f'[v1]{before}setpts=PTS-STARTPTS,{after}ass=c.ass,format=yuv420p,setsar=1[vout]')
+    # The frame is held BEFORE the timestamps are reset (tpad needs the frame
+    # rate, which the reset takes away), and captions come after the ending
+    # so none is frozen onto the held frame.
+    assert g.index('tpad=') < g.index('setpts=') < g.index('hue=') < g.index('fade=t=out') < g.index('ass=')
+
+    cmd = sc.build_render_cmd('ffmpeg', '/in.mp4', '/out.mp4', 0, 250, info, segs, ending=True)
+    assert cmd[cmd.index('-frames:v') + 1] == '330' and abs(float(cmd[cmd.index('-t') + 1]) - 13.2) < 1e-6
+    af = cmd[cmd.index('-af') + 1]
+    assert af == ('afade=t=in:st=0:d=0.04,atrim=end=10.800,afade=t=out:st=10.000:d=0.800:curve=cub,'
+                  'loudnorm=I=-14.0:TP=-1.5:LRA=11,apad=whole_dur=13.200')
+    assert af.index('loudnorm') < af.index('apad'), 'silence added after levelling stays silence'
+    # Audio taken from chosen channels gets the same ending, inside the graph.
+    cmd = sc.build_render_cmd('ffmpeg', '/in.mp4', '/out.mp4', 0, 250, dict(info, audio_take=[[2, 0], [3, 0]]), segs,
+                              ending=True)
+    graph = cmd[cmd.index('-filter_complex') + 1]
+    assert 'curve=cub' in graph and 'apad=whole_dur=13.200[aout]' in graph and '-af' not in cmd
+    # Without it, nothing about the command changes but the stated frame rate.
+    cmd = sc.build_render_cmd('ffmpeg', '/in.mp4', '/out.mp4', 0, 250, info, segs)
+    assert cmd[cmd.index('-frames:v') + 1] == '250' and 'apad' not in cmd[cmd.index('-af') + 1]
+    assert 'afade=t=out:st=9.880:d=0.12' in cmd[cmd.index('-af') + 1]
+
+
 # ---- found in review ----
 
 def test_the_next_lines_first_word_is_not_adopted_when_speech_runs_on():
