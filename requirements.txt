@@ -27,6 +27,11 @@ pypdf==5.9.0
 # here so a fresh install gets the real, working feature by default.
 pdfplumber==0.11.9
 msgpack>=1.0
+# Layered Photoshop files for the Schedule Plug tab (brings Pillow with it).
+# Imported lazily: without it the tab still animates PNG/JPEG/TIFF artwork
+# and says plainly that a .psd needs this package.
+psd-tools>=1.10
+Pillow>=10.3
 waitress>=3.0
 # Two-factor authentication (TOTP). pyotp does the actual verification;
 # qrcode renders the enrolment QR so a phone can scan the secret instead of

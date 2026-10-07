@@ -26,6 +26,7 @@ import smbclient  # pip install smbprotocol -- lets the upload panels browse a W
 from smbprotocol.exceptions import SharingViolation
 
 from core import app, ALLOWED_EXTENSIONS, _job_submit_limiter, _client_ip
+from schedule_core import IMAGE_EXTENSIONS as SCHEDULE_IMAGE_EXTENSIONS
 from library_db import (LIBRARY_DIR, _sqlite_connect, library_add, library_list, library_stats, library_get_row, library_delete,
     audit_log, audit_log_list, network_favorites_list, network_favorite_add, network_favorite_remove,
     load_branding, save_branding_text, save_branding_color, save_branding_logo, save_branding_favicon,
@@ -443,6 +444,10 @@ def _network_categories():
         # an admin gives it a path it reads the Video (HIRES) folder, so the
         # tab keeps working on a server set up before this category existed.
         'shorts': {'exts': ALLOWED_EXTENSIONS, 'label': 'Vertical Shorts video (HIRES)', 'fallback': 'hires'},
+        # Artwork for the Schedule Plug tab: stills, not video -- a flat
+        # image or a layered Photoshop file. No fallback: nothing else that
+        # is configured holds images.
+        'schedule': {'exts': SCHEDULE_IMAGE_EXTENSIONS, 'label': 'Schedule plug artwork (image / PSD)'},
         # NOTE the legacy form-field names: 'end_card_video' is the TITLE
         # card and 'schedule_video' is the END card (see TEMPLATE_SLOTS for
         # the same mapping).

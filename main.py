@@ -18,6 +18,7 @@ from pipeline import (
 )
 import pipeline         # noqa: F401 -- exposed as main.pipeline (tests patch it)
 import shorts           # noqa: F401 -- registers the Vertical Shorts tab's /api/shorts/* routes
+import schedule         # noqa: F401 -- registers the Schedule Plug tab's /api/schedule/* routes
 
 
 @app.route('/')
@@ -42,6 +43,7 @@ def index():
     role = session.get('role')
     tab_order = [
         ('p-dashboard', None), ('p-trailer', 'promo_generation'), ('p-shorts', 'vertical_shorts'),
+        ('p-schedule', 'schedule_plug'),
         ('p-music', 'music_generation'),
         ('p-sfx', 'text_to_sfx'), ('p-fish', 'text_to_speech'),
         ('p-stt', 'speech_to_text'), ('p-vision', 'scene_detection'),

@@ -880,6 +880,9 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
     {% if current_role == 'admin' or 'vertical_shorts' in current_permissions %}
     <div class="tab{{ ' active' if default_tab == 'p-shorts' else '' }}" onclick="switchTab('p-shorts',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="6.5" y="3" width="11" height="18" rx="2"/><path d="M10.5 9.5v5l4-2.5-4-2.5z"/></svg></span><span class=tab-text>Vertical Shorts</span></div>
     {% endif %}
+    {% if current_role == 'admin' or 'schedule_plug' in current_permissions %}
+    <div class="tab{{ ' active' if default_tab == 'p-schedule' else '' }}" onclick="switchTab('p-schedule',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4M7.5 14h4M7.5 17h7"/></svg></span><span class=tab-text>Schedule Plug</span></div>
+    {% endif %}
     {% if current_role == 'admin' or 'music_generation' in current_permissions %}
     <div class="tab{{ ' active' if default_tab == 'p-music' else '' }}" onclick="switchTab('p-music',this)" role="button" tabindex="0"><span class="tab-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l11-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg></span><span class=tab-text>Music Generation</span></div>
     {% endif %}
@@ -928,7 +931,7 @@ var CURRENT_USERNAME = {{ current_username|tojson }}
 </nav>
 <div class="container">
 
-<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadNetworkFolders==='function'&&!networkFoldersLoaded){loadNetworkFolders()}if(id==='p-config'&&typeof loadNetworkDestinations==='function'&&!networkDestinationsLoaded){loadNetworkDestinations()}if(id==='p-config'&&typeof loadProductionTab==='function'&&!productionTabLoaded){loadProductionTab()}if(id==='p-config'&&typeof loadTwofaStatus==='function'&&!twofaLoaded){loadTwofaStatus()}if(id==='p-config'&&typeof loadUsersTab==='function'&&!usersTabLoaded){loadUsersTab()}if(id==='p-config'&&typeof loadAuditLog==='function'&&!auditLogLoaded){loadAuditLog()}if(id==='p-music'&&typeof loadAceStepModels==='function'){loadAceStepModels()}if(id==='p-music'&&typeof loadAceStepLoras==='function'){loadAceStepLoras()}if(id==='p-music'&&typeof loadLoraDatasets==='function'){loadLoraDatasets()}if(id==='p-shorts'&&typeof shortsOnTabOpen==='function'){shortsOnTabOpen()}if(id==='p-jobs'&&typeof loadAdminJobs==='function'){loadAdminJobs()}if(id==='p-dashboard'&&typeof loadDashboard==='function'){loadDashboard()}try{localStorage.setItem('prism_last_tab',id)}catch(e){}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active');try{var panel=btn.closest('.panel');if(panel)localStorage.setItem('prism_subtab_'+panel.id,id)}catch(e){}}
+<script>function switchTab(id,btn){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));btn.classList.add('active');var panel=document.getElementById(id);panel.classList.add('active');var firstSubTab=panel.querySelector('.sub-tab');var firstSubPanel=panel.querySelector('.sub-panel');if(firstSubTab&&firstSubPanel){firstSubTab.classList.add('active');firstSubPanel.classList.add('active')}if(id==='p-config'&&typeof loadConfigTab==='function'&&!configTabLoaded){loadConfigTab()}if(id==='p-config'&&typeof loadBrandingTab==='function'){loadBrandingTab()}if(id==='p-config'&&typeof loadNetworkFolders==='function'&&!networkFoldersLoaded){loadNetworkFolders()}if(id==='p-config'&&typeof loadNetworkDestinations==='function'&&!networkDestinationsLoaded){loadNetworkDestinations()}if(id==='p-config'&&typeof loadProductionTab==='function'&&!productionTabLoaded){loadProductionTab()}if(id==='p-config'&&typeof loadTwofaStatus==='function'&&!twofaLoaded){loadTwofaStatus()}if(id==='p-config'&&typeof loadUsersTab==='function'&&!usersTabLoaded){loadUsersTab()}if(id==='p-config'&&typeof loadAuditLog==='function'&&!auditLogLoaded){loadAuditLog()}if(id==='p-music'&&typeof loadAceStepModels==='function'){loadAceStepModels()}if(id==='p-music'&&typeof loadAceStepLoras==='function'){loadAceStepLoras()}if(id==='p-music'&&typeof loadLoraDatasets==='function'){loadLoraDatasets()}if(id==='p-shorts'&&typeof shortsOnTabOpen==='function'){shortsOnTabOpen()}if(id==='p-schedule'&&typeof scheduleOnTabOpen==='function'){scheduleOnTabOpen()}if(id==='p-jobs'&&typeof loadAdminJobs==='function'){loadAdminJobs()}if(id==='p-dashboard'&&typeof loadDashboard==='function'){loadDashboard()}try{localStorage.setItem('prism_last_tab',id)}catch(e){}}function switchSubTab(id,btn){document.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));document.querySelectorAll('.sub-panel').forEach(p=>p.classList.remove('active'));btn.classList.add('active');document.getElementById(id).classList.add('active');try{var panel=btn.closest('.panel');if(panel)localStorage.setItem('prism_subtab_'+panel.id,id)}catch(e){}}
 document.addEventListener('DOMContentLoaded',function(){
   // Restore the tab (and, within it, the sub-tab) the user was last on,
   // since switchTab()/switchSubTab() only toggle CSS classes client-side
@@ -7638,6 +7641,299 @@ document.addEventListener('DOMContentLoaded', function(){
 })
 </script>
 
+<!-- Schedule Plug -->
+<div id="p-schedule" class="panel{{ ' active' if default_tab == 'p-schedule' else '' }}">
+<h2>Schedule Plug</h2>
+<div class="sub-tabs">
+  <div class="sub-tab active" onclick="switchSubTab('p-schedule-create',this)" role="button" tabindex="0">Create</div>
+  <div class="sub-tab" onclick="switchSubTab('p-schedule-saved',this);scheduleLoadSaved()" role="button" tabindex="0">Saved plugs</div>
+</div>
+
+<div id="p-schedule-create" class="sub-panel active">
+<p style="font-size:12px;opacity:.75;margin-top:-6px">Turns a schedule still into an animated 16:9 plug with a music bed. The artwork is drawn on frame by frame &mdash; its layers wipe, slide, fade or pop into place &mdash; not regenerated, so every title, date and time stays exactly as designed.</p>
+
+<label>Schedule artwork (image or layered PSD):</label>
+<div class="browse-row">
+  {% if allow_local_upload %}<input type=file id=sp-image name=schedule_image accept="image/*,.psd,.psb,.tif,.tiff" data-net-field="schedule_image" style="max-width:320px">{% endif %}
+  <button type=button class="browse-btn" onclick="openNetworkBrowser('schedule_image','schedule','Schedule plug artwork')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
+</div>
+<input type=hidden id=schedule_image_network name=schedule_image_network value="">
+<span class="net-file-chip" id=schedule_image_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('schedule_image')">&#10005;</span></span>
+<p class="sh-note" style="margin-top:6px">PNG, JPEG, TIFF or a Photoshop file, ideally 1920&times;1080. In a PSD, each top-level layer or group animates on its own, bottom layer first &mdash; group the things that should move together, and name the layers so the prompt can refer to them.</p>
+
+<div class="sh-row" style="margin-top:10px">
+  <div>
+    <label>Length:</label>
+    <select id=sp-duration style="width:130px">
+      <option value=10>10 seconds</option><option value=15 selected>15 seconds</option>
+      <option value=20>20 seconds</option><option value=30>30 seconds</option>
+    </select>
+  </div>
+  <div>
+    <label>Delivery format:</label>
+    <select id=sp-format style="width:300px"><option value=mp4_high>MP4 (H.264 High Profile)</option></select>
+  </div>
+</div>
+
+<label style="margin-top:12px">Music (optional):</label>
+<div class="browse-row">
+  {% if allow_local_upload %}<input type=file id=sp-music name=schedule_music accept="audio/*" data-net-field="schedule_music" style="max-width:320px">{% endif %}
+  <button type=button class="browse-btn" onclick="openNetworkBrowser('schedule_music','music','Music')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
+</div>
+<input type=hidden id=schedule_music_network name=schedule_music_network value="">
+<span class="net-file-chip" id=schedule_music_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('schedule_music')">&#10005;</span></span>
+<p class="sh-note" style="margin-top:6px">Trimmed to the length with a fade out, looped if it is shorter, and levelled to the loudness target under Config &gt; Production. Without music the plug is silent.</p>
+
+<label style="margin-top:12px">How should it animate? (optional)</label>
+<input type=text id=sp-prompt class=input-box maxlength=600 placeholder="e.g. stop motion effect. wipe in reveal schedule.">
+<p class="sh-note" style="margin-top:6px">Say it in your own words. What it can do: <b>wipe</b>, <b>slide</b>, <b>fade</b>, <b>pop</b> or <b>cut</b> each layer in, from a direction (&ldquo;from the left&rdquo;, &ldquo;bottom to top&rdquo;); <b>stop motion</b>; a <b>slow push in</b>; <b>fast</b> or <b>slow</b>. Name a layer to treat it differently (&ldquo;title pops in, schedule slides up&rdquo;). Left empty, everything fades in.</p>
+
+<div class="promo-actions" style="margin-top:14px">
+  <button class="btn btn-primary-promo" type=button id=sp-go-btn onclick="scheduleRender()">Generate schedule plug</button>
+  <button class=btn type=button id=sp-cancel-btn style="display:none;color:var(--tally);border-color:var(--tally)" onclick="scheduleCancel()">Cancel</button>
+</div>
+
+<div id=sp-progress class=no-data style="display:none;text-align:left;padding:20px 24px;margin-top:14px">
+  <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;color:var(--ink)">
+    <span id=sp-progress-step>Working&hellip;</span>
+    <span><span id=sp-progress-elapsed style="opacity:.6;margin-right:8px"></span><span id=sp-progress-pct>0%</span></span>
+  </div>
+  <div style="background:var(--panel-2,#1f232b);border-radius:6px;overflow:hidden;height:10px">
+    <div id=sp-progress-bar style="background:var(--accent,#4f8cff);height:100%;width:0%;transition:width .3s ease"></div>
+  </div>
+  <div id=sp-stage-list style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px"></div>
+</div>
+
+<div id=sp-note class=no-data style="margin-top:14px">Pick the artwork, a length and optionally a music bed, then choose <b>Generate schedule plug</b>. A 15-second plug takes well under a minute.</div>
+<div id=sp-result style="display:none;margin-top:18px"></div>
+</div>
+
+<div id="p-schedule-saved" class="sub-panel">
+<p style="font-size:12px;opacity:.75;margin-top:-6px">Every plug is kept here until you delete it{% if current_role == 'admin' %} (as an admin you see everyone's){% endif %}.</p>
+<div id=sp-saved></div>
+</div>
+</div>
+
+<script>
+// ---- Schedule Plug ----
+var SP = {busy: false, jobId: null, options: null, destinations: null}
+function spEl(id){ return document.getElementById(id) }
+function spBytes(b){
+  if(b >= 1024 * 1024 * 1024) return (b / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
+  if(b >= 1024 * 1024) return (b / (1024 * 1024)).toFixed(1) + ' MB'
+  return Math.max(1, Math.round(b / 1024)) + ' KB'
+}
+function spNote(html, isError){
+  var el = spEl('sp-note')
+  el.style.display = 'block'
+  el.innerHTML = isError ? '<span style="color:var(--amber)">' + html + '</span>' : html
+}
+
+async function scheduleOnTabOpen(){
+  if(SP.options) return
+  try{
+    var d = await (await fetch('/api/schedule/options')).json()
+    if(!d.ok) return
+    SP.options = d
+    var sel = spEl('sp-format'), keep = sel.value
+    sel.innerHTML = ''
+    d.formats.forEach(function(f){
+      var o = document.createElement('option'); o.value = f.key; o.textContent = f.label; sel.appendChild(o)
+    })
+    if(keep) sel.value = keep
+    if(!d.psd_supported){
+      spNote('Photoshop files cannot be read on this server yet (the <code>psd-tools</code> package is not installed). PNG, JPEG and TIFF artwork works now.', true)
+    }
+  }catch(e){}
+  var saved = spEl('p-schedule-saved')
+  if(saved && saved.classList.contains('active')) scheduleLoadSaved()
+}
+
+function spProgress(j){
+  var pct = j.percent || 0
+  spEl('sp-progress-bar').style.width = pct + '%'
+  spEl('sp-progress-pct').textContent = pct + '%'
+  spEl('sp-progress-step').textContent = j.step || 'Working...'
+  spEl('sp-progress-elapsed').textContent = (typeof fmtElapsed === 'function' && j.elapsed != null) ? fmtElapsed(j.elapsed) : ''
+  var host = spEl('sp-stage-list'), stages = j.stages || []
+  host.innerHTML = ''
+  var activeIdx = 0
+  stages.forEach(function(s, i){ if(pct >= s.percent) activeIdx = i })
+  stages.forEach(function(s, i){
+    var done = i < activeIdx || pct >= 100, cur = i === activeIdx && pct < 100
+    var el = document.createElement('span')
+    el.style.cssText = 'font-size:11px;padding:3px 9px;border-radius:11px;border:1px solid ' +
+      (cur ? 'var(--accent,#4f8cff)' : 'var(--line)') + ';' +
+      (cur ? 'color:var(--accent,#4f8cff);font-weight:600' : (done ? 'opacity:.55' : 'opacity:.32'))
+    el.textContent = (done ? '✓ ' : '') + s.label
+    host.appendChild(el)
+  })
+}
+
+function spBusy(on, label){
+  SP.busy = on
+  spEl('sp-go-btn').disabled = on
+  spEl('sp-cancel-btn').style.display = on ? 'inline-block' : 'none'
+  spEl('sp-cancel-btn').disabled = false
+  spEl('sp-progress').style.display = on ? 'block' : 'none'
+  if(on){ spProgress({percent: 0, step: label || 'Starting...', stages: []}); spEl('sp-note').style.display = 'none' }
+}
+
+function spPoll(jobId){
+  return new Promise(function(resolve){
+    var misses = 0
+    var tick = async function(){
+      var j
+      try{ j = await (await fetch('/api/schedule/progress/' + jobId)).json() }
+      catch(err){
+        // Retried for about a minute, then reported -- never left hanging,
+        // which would keep the button disabled until the page was reloaded.
+        if(++misses > 40){ resolve({error: 'Lost contact with the server while waiting for this job. It may still be running: check the Jobs tab, then look under Saved plugs.'}); return }
+        setTimeout(tick, 1500); return
+      }
+      misses = 0
+      if(j.error){ resolve({error: j.error}); return }
+      spProgress(j)
+      if(j.done){ resolve(j.result || {error: 'Job finished with no result.'}); return }
+      setTimeout(tick, 700)
+    }
+    tick()
+  })
+}
+
+async function scheduleCancel(){
+  if(!SP.jobId) return
+  spEl('sp-cancel-btn').disabled = true
+  try{ await fetch('/api/schedule/cancel/' + SP.jobId, {method: 'POST'}) }catch(e){}
+}
+
+async function scheduleRender(){
+  if(SP.busy) return
+  var img = spEl('sp-image'), imgNet = spEl('schedule_image_network').value
+  var hasLocalImg = img && img.files && img.files[0]
+  if(!hasLocalImg && !imgNet){ spNote('Pick the schedule artwork first, using Browse library.', true); return }
+  var fd = new FormData()
+  if(hasLocalImg) fd.append('schedule_image', img.files[0]); else fd.append('schedule_image_network', imgNet)
+  var mus = spEl('sp-music'), musNet = spEl('schedule_music_network').value
+  if(mus && mus.files && mus.files[0]) fd.append('schedule_music', mus.files[0])
+  else if(musNet) fd.append('schedule_music_network', musNet)
+  fd.append('duration', spEl('sp-duration').value)
+  fd.append('delivery_format', spEl('sp-format').value)
+  fd.append('prompt', spEl('sp-prompt').value)
+
+  spEl('sp-result').style.display = 'none'
+  spBusy(true, 'Starting...')
+  var start
+  try{ start = await (await fetch('/api/schedule/render', {method: 'POST', body: fd})).json() }
+  catch(err){ spBusy(false); spNote('Could not start: ' + escapeHtmlLite(String(err)), true); return }
+  if(start.error){ spBusy(false); spNote(escapeHtmlLite(start.error), true); return }
+  SP.jobId = start.job_id
+  if(window.refreshMonitor) refreshMonitor()
+  var res = await spPoll(start.job_id)
+  SP.jobId = null
+  spBusy(false)
+  if(res.error){ spNote(escapeHtmlLite(res.error), true); return }
+  var host = spEl('sp-result')
+  host.innerHTML = ''
+  host.appendChild(spCard(res.plug, true))
+  host.style.display = 'block'
+  host.scrollIntoView({behavior: 'smooth', block: 'nearest'})
+}
+
+function spCard(p, fresh){
+  var card = document.createElement('div')
+  card.className = 'card'
+  card.setAttribute('data-plug', p.plug_id)
+  var when = p.created ? new Date(p.created * 1000).toLocaleString() : ''
+  var playable = p.preview_url || p.url
+  var notes = (p.notes || []).map(function(w){ return '<div class="sh-warn">' + escapeHtmlLite(w) + '</div>' }).join('')
+  card.innerHTML =
+    '<div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline">' +
+      '<div><b>' + escapeHtmlLite(p.title || 'Schedule plug') + '</b> <span style="font-size:12px;opacity:.7">' +
+        (p.duration || 0) + ' s &middot; ' + escapeHtmlLite(p.format_label || '') + ' &middot; ' + spBytes(p.size || 0) +
+        (when ? ' &middot; ' + when : '') +
+        (IS_ADMIN && p.username && p.username !== CURRENT_USERNAME ? ' &middot; by ' + escapeHtmlLite(p.username) : '') + '</span></div>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
+        '<a class="btn-sm" href="' + p.url + '?download=1">Download</a>' +
+        '<span data-send></span>' +
+        '<button type=button class="btn-sm" style="color:var(--tally);border-color:var(--tally)" data-del>Delete</button>' +
+      '</div></div>' + notes +
+    '<video controls preload="metadata" playsinline style="width:100%;max-width:720px;aspect-ratio:16/9;background:#000;border-radius:8px;margin-top:10px"' +
+      (p.poster_url ? ' poster="' + p.poster_url + '"' : '') + ' src="' + playable + '"></video>' +
+    (p.preview_url ? '<p class="sh-note">The player shows a lightweight preview; <b>Download</b> and <b>Send</b> hand over the ' + escapeHtmlLite(p.format_label || 'delivery') + ' file.</p>' : '') +
+    '<p class="sh-note"><b>Animation:</b> ' + escapeHtmlLite(p.animation || 'fade') +
+      (p.layered ? ' &middot; ' + (p.layers || []).length + ' layers' : ' &middot; one flat picture') +
+      (p.music ? ' &middot; music: ' + escapeHtmlLite(p.music) : ' &middot; no music') +
+      (p.read_by ? ' &middot; prompt read by ' + escapeHtmlLite(p.read_by) : '') + '</p>' +
+    (fresh ? '<p class="sh-note">Saved under <b>Saved plugs</b>. Not what you meant? Reword the prompt and generate again &mdash; it takes seconds.</p>' : '')
+  card.addEventListener('click', function(e){
+    if(e.target.closest('[data-del]')) scheduleDelete(p.plug_id)
+  })
+  spFillSend(card.querySelector('[data-send]'), p.plug_id)
+  return card
+}
+
+// The same video destinations the promo generator sends to (Config > Network).
+async function spFillSend(host, pid){
+  if(!host) return
+  if(SP.destinations === null){
+    try{
+      var d = await (await fetch('/api/network/destinations')).json()
+      SP.destinations = (d.ok && d.items ? d.items : []).filter(function(x){ return x.delivery_kind === 'video' })
+    }catch(e){ SP.destinations = [] }
+  }
+  if(!SP.destinations.length) return
+  host.style.cssText = 'display:inline-flex;gap:6px;align-items:center'
+  host.innerHTML = '<select style="width:auto;margin:0;padding:4px 28px 4px 8px;font-size:12px">' +
+    SP.destinations.map(function(x){ return '<option value="' + x.id + '">' + escapeHtmlLite(x.name) + '</option>' }).join('') +
+    '</select><button type=button class="btn-sm">Send</button><span style="font-size:12px"></span>'
+  var sel = host.querySelector('select'), btn = host.querySelector('button'), out = host.querySelector('span')
+  btn.addEventListener('click', async function(e){
+    e.stopPropagation()
+    btn.disabled = true
+    out.style.color = ''; out.textContent = 'Sending…'
+    try{
+      var r = await (await fetch('/api/schedule/items/' + pid + '/send', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({destination_id: parseInt(sel.value, 10)})})).json()
+      if(r.ok){ out.style.color = 'var(--phosphor)'; out.textContent = 'Sent to ' + r.destination }
+      else{ out.style.color = 'var(--tally)'; out.textContent = r.error || 'Send failed' }
+    }catch(err){ out.style.color = 'var(--tally)'; out.textContent = 'Send failed: ' + err }
+    btn.disabled = false
+  })
+}
+
+async function scheduleDelete(pid){
+  if(!confirm('Delete this schedule plug? This cannot be undone.')) return
+  try{
+    var r = await (await fetch('/api/schedule/items/' + pid, {method: 'DELETE'})).json()
+    if(!r.ok){ alert(r.error || 'Could not delete.'); return }
+    document.querySelectorAll('[data-plug="' + pid + '"]').forEach(function(el){ el.remove() })
+    if(spEl('sp-result') && !spEl('sp-result').children.length) spEl('sp-result').style.display = 'none'
+    if(spEl('sp-saved') && !spEl('sp-saved').children.length) scheduleLoadSaved()
+  }catch(e){ alert('Could not delete: ' + e) }
+}
+
+async function scheduleLoadSaved(){
+  var host = spEl('sp-saved')
+  if(!host) return
+  host.innerHTML = '<div class=no-data>Loading&hellip;</div>'
+  try{
+    var d = await (await fetch('/api/schedule/items')).json()
+    host.innerHTML = ''
+    if(!d.ok || !d.items.length){ host.innerHTML = '<div class=no-data>No schedule plugs made yet.</div>'; return }
+    d.items.forEach(function(p){ var c = spCard(p, false); c.style.marginBottom = '14px'; host.appendChild(c) })
+  }catch(e){
+    host.innerHTML = '<div class=no-data><span style="color:var(--amber)">Could not load saved plugs: ' + escapeHtmlLite(String(e)) + '</span></div>'
+  }
+}
+
+document.addEventListener('DOMContentLoaded', function(){
+  var p = spEl('p-schedule')
+  if(p && p.classList.contains('active')) scheduleOnTabOpen()
+})
+</script>
+
 <!-- API -->
 <div id="p-music" class="panel{{ ' active' if default_tab == 'p-music' else '' }}">
 <h2>Music Generation &mdash; ACE-Step</h2>
@@ -8093,7 +8389,7 @@ document.addEventListener('DOMContentLoaded', function(){
 </div>
 </div>
 <p><strong>Player</strong>:</p>
-<pre>GET  /api/network/list?category=hires|shorts|tcard|endcard|music|vo|sfx
+<pre>GET  /api/network/list?category=hires|shorts|schedule|tcard|endcard|music|vo|sfx
 POST /api/network/fetch  + name, category   stage a file locally, returns url
 POST /api/stt/transcribe + file             transcript + .srt</pre>
 <p><strong>Narration (Fish Audio S2)</strong>:</p>
@@ -8131,6 +8427,7 @@ job. Configured via env vars:
   <button type="button" class="docs-tab docs-nav-item active" data-docs="docs-overview" onclick="switchDocs(this)">Overview</button>
   <button type="button" class="docs-tab docs-nav-item" data-docs="docs-workflow" onclick="switchDocs(this)">Workflow</button>
   <button type="button" class="docs-tab docs-nav-item" data-docs="docs-shorts" onclick="switchDocs(this)">Vertical Shorts</button>
+  <button type="button" class="docs-tab docs-nav-item" data-docs="docs-schedule" onclick="switchDocs(this)">Schedule Plug</button>
   <button type="button" class="docs-tab docs-nav-item" data-docs="docs-media" onclick="switchDocs(this)">Media &amp; Library</button>
   <button type="button" class="docs-tab docs-nav-item" data-docs="docs-tools" onclick="switchDocs(this)">Tools</button>
   <button type="button" class="docs-tab docs-nav-item" data-docs="docs-templates" onclick="switchDocs(this)">Templates</button>
@@ -8279,6 +8576,29 @@ GET  /api/shorts/progress/&lt;job_id&gt;
 GET  /api/shorts/analysis/&lt;analysis_id&gt;
 POST /api/shorts/render   {analysis_id, items:[{start,end,title}], reframe: auto|split|crop|fit, speaker?, subtitles}
 GET  /api/shorts/batches</pre>
+    </div>
+
+    <div class="docs-pane" id="docs-schedule">
+      <h3 style="margin-top:0">Schedule Plug</h3>
+      <p>Turns one schedule still into an animated 16:9 plug of 10, 15, 20 or 30 seconds with a music bed, in any of the delivery formats the promo generator offers.</p>
+      <h3>Why it is drawn, not generated</h3>
+      <p>A schedule is text: titles, dates, times. A video model repaints every pixel of every frame, so that text would come back warped. Here each layer's own pixels are moved, faded or uncovered, and the last frame is the artwork exactly.</p>
+      <h3>Artwork</h3>
+      <ul style="line-height:1.8;padding-left:20px">
+        <li><strong>Flat image</strong> (PNG, JPEG, TIFF): animated as one picture.</li>
+        <li><strong>Layered Photoshop file</strong>: each visible top-level layer or group animates on its own, bottom layer first. Group the things that should arrive together and give layers plain names (&ldquo;Title&rdquo;, &ldquo;Schedule Mon&rdquo;) so the prompt can refer to them. More than twelve top-level layers: the lowest are merged into the background.</li>
+        <li>Layers must be plain pixels in Normal mode. If the file uses blend modes, layer effects, clipping or adjustment layers at the top level, it is animated as one flat picture instead and the result says so &mdash; merge or rasterise those layers to get layer-by-layer animation.</li>
+        <li>Design at 1920&times;1080. Other shapes are shown whole with black around them, never cropped.</li>
+      </ul>
+      <h3>The animation prompt</h3>
+      <p>Optional. What the animator can do: <strong>wipe</strong>, <strong>slide</strong>, <strong>fade</strong>, <strong>pop</strong> or <strong>cut</strong> each layer in, from a direction; <strong>stop motion</strong> (stepped, slightly unsteady, while things arrive &mdash; the finished picture holds still so it can be read); a <strong>slow push in</strong>; <strong>fast</strong> or <strong>slow</strong>. Layers are all in place within the first part of the plug and it then holds. The words are matched directly and, when Ollama is reachable, also read by the AI model so it can tell which named layer an instruction is about. Each result states how the prompt was understood.</p>
+      <h3>Music</h3>
+      <p>Optional, from the Music network folder. Trimmed to the length with a fade out, looped if shorter, and levelled to the loudness target under Config &gt; Production.</p>
+      <h3>Setup</h3>
+      <p>Set the artwork folder under <strong>Config &gt; Network &gt; Schedule plug artwork</strong>. Photoshop files need the <code>psd-tools</code> package on the server.</p>
+      <pre>POST /api/schedule/render   + schedule_image_network, duration (10|15|20|30), delivery_format, prompt?, schedule_music_network?
+GET  /api/schedule/progress/&lt;job_id&gt;
+GET  /api/schedule/items</pre>
     </div>
 
     <div class="docs-pane" id="docs-media">
@@ -8952,7 +9272,7 @@ async function saveProductionTab(){
 }
 window.saveProductionTab = saveProductionTab
 
-var NETWORK_CATEGORY_LABELS = {hires: 'Video (HIRES)', shorts: 'Vertical Shorts video (HIRES)', tcard: 'Title card', endcard: 'End card', music: 'Music', vo: 'VO', sfx: 'SFX', script: 'Script / rundown'}
+var NETWORK_CATEGORY_LABELS = {hires: 'Video (HIRES)', shorts: 'Vertical Shorts video (HIRES)', schedule: 'Schedule plug artwork (image / PSD)', tcard: 'Title card', endcard: 'End card', music: 'Music', vo: 'VO', sfx: 'SFX', script: 'Script / rundown'}
 var networkFoldersLoaded = false
 var networkDestinationsLoaded = false
 async function loadNetworkFolders(){

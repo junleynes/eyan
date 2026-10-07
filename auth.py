@@ -284,6 +284,7 @@ def _users_db():
 AVAILABLE_PERMISSIONS = [
     ('promo_generation', 'Generate Promo Plug'),
     ('vertical_shorts', 'Vertical Shorts'),
+    ('schedule_plug', 'Schedule Plug'),
     ('music_generation', 'Music Generation'),
     ('text_to_sfx', 'Text to SFX'),
     ('text_to_speech', 'Text to Speech (voice cloning/narration)'),
