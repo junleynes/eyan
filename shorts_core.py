@@ -1318,7 +1318,8 @@ def plan_reframe(samples, shot_starts, n_frames, disp_w, disp_h, crop_w, mode='a
     crop that drifts or jumps inside a shot looks like a mistake, one that
     changes on a cut is invisible.
 
-      * faces all fit inside the 9:16 window -> crop centred on them;
+      * one face, or faces that all fit inside the 9:16 window -> crop
+        centred on them (one face is cropped to however large it is);
       * two or more similar-sized faces too far apart to fit -> 'auto'
         shows the whole frame (cutting to one of them would silently drop
         whoever is speaking half the time), 'crop' commits to the side
@@ -1367,7 +1368,13 @@ def plan_reframe(samples, shot_starts, n_frames, disp_w, disp_h, crop_w, mode='a
             segs.append({'a': a, 'b': b, 'layout': 'crop', 'x': center, 'keys': None})
             continue
 
-        fits = [t['span_w'] <= 0.9 * crop_w for _, t in hits]
+        # "Too wide for one frame" is a question about TWO people. One face
+        # always fits, in the sense that matters: there is nobody to lose by
+        # cropping to it. A close-up boxed wider than the window (the Haar
+        # cascades box a face generously) used to fail this test and be
+        # handled like a wide two-shot -- a single person shown small over a
+        # blurred background, the opposite of what a close-up should get.
+        fits = [len(t['sig']) < 2 or t['span_w'] <= 0.9 * crop_w for _, t in hits]
         if sum(fits) >= 0.6 * len(hits):
             targets = [(i, t['span_cx'] if ok else t['big_cx']) for (i, t), ok in zip(hits, fits)]
         elif (placed := _wide_shot(hits, a, b, fps, mode, speaker, speech, disp_w, disp_h,

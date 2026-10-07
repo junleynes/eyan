@@ -365,6 +365,27 @@ def test_two_faces_that_fit_are_framed_together_and_a_small_background_face_is_i
     assert extra[0]['layout'] == 'crop' and abs(extra[0]['x'] - (600 - 304)) <= 2
 
 
+def test_a_close_up_wider_than_the_window_is_cropped_not_shown_whole():
+    """Real, reported case: a solo close-up rendered small over a blurred
+    background. The Haar cascades had boxed the face 606 px wide on a
+    1920-wide picture; the window is 608 and "fits" meant 90% of that, so one
+    person failed a test meant for two people standing far apart."""
+    big = _samples(100, lambda i: [_face(975, 606)])
+    for mode in ('auto', 'split', 'crop'):
+        segs = sc.plan_reframe(big, [], 100, 1920, 1080, 608, mode=mode)
+        assert [(s['a'], s['b'], s['layout'], s['keys']) for s in segs] == [(0, 99, 'crop', None)], mode
+        assert abs(segs[0]['x'] - (975 - 304)) <= 2, 'centred on the face'
+    # Even one far larger than the window: there is still nobody else to lose.
+    huge = sc.plan_reframe(_samples(100, lambda i: [_face(960, 900)]), [], 100, 1920, 1080, 608)
+    assert [s['layout'] for s in huge] == ['crop']
+    # A small face in the background does not turn it into a two-shot...
+    extra = sc.plan_reframe(_samples(100, lambda i: [_face(975, 606), _face(1800, 90)]), [], 100, 1920, 1080, 608)
+    assert [s['layout'] for s in extra] == ['crop']
+    # ...but two real faces too far apart still are one.
+    two = sc.plan_reframe(_samples(100, lambda i: [_face(400, 300), _face(1500, 300)]), [], 100, 1920, 1080, 608)
+    assert [s['layout'] for s in two] == ['fit']
+
+
 def test_no_faces_means_a_centre_crop_and_fit_mode_never_crops():
     none = sc.plan_reframe(_samples(100, lambda i: []), [], 100, 1920, 1080, 608)
     assert none[0]['layout'] == 'crop' and none[0]['x'] == (1920 - 608) / 2
