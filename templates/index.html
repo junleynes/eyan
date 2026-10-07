@@ -7909,12 +7909,12 @@ function spCard(p, fresh){
   card.addEventListener('click', function(e){
     if(e.target.closest('[data-del]')) scheduleDelete(p.plug_id)
   })
-  spFillSend(card.querySelector('[data-send]'), p.plug_id)
+  spFillSend(card.querySelector('[data-send]'), p.plug_id, p.file)
   return card
 }
 
 // The same video destinations the promo generator sends to (Config > Network).
-async function spFillSend(host, pid){
+async function spFillSend(host, pid, file){
   if(!host) return
   if(SP.destinations === null){
     try{
@@ -7923,20 +7923,39 @@ async function spFillSend(host, pid){
     }catch(e){ SP.destinations = [] }
   }
   if(!SP.destinations.length) return
-  host.style.cssText = 'display:inline-flex;gap:6px;align-items:center'
-  host.innerHTML = '<select style="width:auto;margin:0;padding:4px 28px 4px 8px;font-size:12px">' +
+  // The name the copy gets at the destination. The extension is the file's
+  // own and is shown, not typed: renaming cannot change what the file is.
+  file = file || ''
+  var dot = file.lastIndexOf('.'), stem = dot > 0 ? file.slice(0, dot) : file, ext = dot > 0 ? file.slice(dot) : ''
+  host.style.cssText = 'display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap'
+  host.innerHTML = '<select style="width:auto;margin:0;padding:4px 28px 4px 8px;font-size:12px" aria-label="Send to">' +
     SP.destinations.map(function(x){ return '<option value="' + x.id + '">' + escapeHtmlLite(x.name) + '</option>' }).join('') +
-    '</select><button type=button class="btn-sm">Send</button><span style="font-size:12px"></span>'
-  var sel = host.querySelector('select'), btn = host.querySelector('button'), out = host.querySelector('span')
+    '</select>' +
+    '<span style="display:inline-flex;align-items:center;gap:2px;font-size:12px">as ' +
+      '<input type=text data-send-name maxlength=120 spellcheck=false aria-label="Filename at the destination" ' +
+        'title="The filename this plug gets at the destination. The saved plug keeps its own name." ' +
+        'style="width:230px;margin:0 0 0 4px;padding:4px 8px;font-size:12px">' +
+      '<span style="opacity:.7">' + escapeHtmlLite(ext) + '</span></span>' +
+    '<button type=button class="btn-sm">Send</button><span data-send-out style="font-size:12px"></span>'
+  var sel = host.querySelector('select'), btn = host.querySelector('button')
+  var name = host.querySelector('[data-send-name]'), out = host.querySelector('[data-send-out]')
+  name.value = stem
+  name.addEventListener('click', function(e){ e.stopPropagation() })
+  name.addEventListener('keydown', function(e){ if(e.key === 'Enter'){ e.preventDefault(); btn.click() } })
   btn.addEventListener('click', async function(e){
     e.stopPropagation()
     btn.disabled = true
     out.style.color = ''; out.textContent = 'Sending…'
+    var typed = name.value.trim()
     try{
       var r = await (await fetch('/api/schedule/items/' + pid + '/send', {method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({destination_id: parseInt(sel.value, 10)})})).json()
-      if(r.ok){ out.style.color = 'var(--phosphor)'; out.textContent = 'Sent to ' + r.destination }
+        // Left as it was, nothing is sent: the server uses the plug's own name.
+        body: JSON.stringify({destination_id: parseInt(sel.value, 10), filename: typed === stem ? '' : typed})})).json()
+      if(r.ok){
+        out.style.color = 'var(--phosphor)'
+        out.textContent = 'Sent to ' + r.destination + ' as ' + ((r.sent || [])[0] || file)
+      }
       else{ out.style.color = 'var(--tally)'; out.textContent = r.error || 'Send failed' }
     }catch(err){ out.style.color = 'var(--tally)'; out.textContent = 'Send failed: ' + err }
     btn.disabled = false
@@ -8646,7 +8665,10 @@ GET  /api/shorts/batches</pre>
       <p>Set the artwork folder under <strong>Config &gt; Network &gt; Schedule plug artwork</strong>. Photoshop files need the <code>psd-tools</code> package on the server.</p>
       <pre>POST /api/schedule/render   + schedule_image_network, duration (10|15|20|30), delivery_format, style?, text_motion? (hold|breathe), prompt?, schedule_music_network?
 GET  /api/schedule/progress/&lt;job_id&gt;
-GET  /api/schedule/items</pre>
+GET  /api/schedule/items
+POST /api/schedule/items/&lt;id&gt;/send   {destination_id, filename?}</pre>
+      <h3>Sending</h3>
+      <p>Each plug has a <strong>Send</strong> control for the video destinations set up under <strong>Config &gt; Network</strong>. The box beside it is the filename the copy gets there, filled in with the plug&rsquo;s own name &mdash; change it to rename the file as it is sent. The extension is fixed to the delivery file&rsquo;s own; spaces become underscores and characters that are not safe on a network share are dropped. The saved plug and its Download keep the original name, and a file of the same name already at the destination is replaced.</p>
     </div>
 
     <div class="docs-pane" id="docs-media">

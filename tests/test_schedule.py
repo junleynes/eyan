@@ -407,6 +407,27 @@ def test_send_to_a_video_destination(env, monkeypatch):
     assert r == {'ok': True, 'sent': [plug['file']], 'destination': 'Playout inbox'}
     assert sent == [(plug['file'], plug['file'], 'Playout inbox')]
 
+    # Renamed on the way out: the copy takes the typed name, the delivery
+    # file's own extension, and the saved plug keeps its name.
+    ext = os.path.splitext(plug['file'])[1]
+    for typed, lands_as in (('GMA Prime Week 42', 'GMA_Prime_Week_42' + ext),
+                            ('  GMA_Prime_wk42.mov ', 'GMA_Prime_wk42' + ext),       # a typed extension is dropped
+                            ('Promo v1.2', 'Promo_v1.2' + ext),                      # a dot in the name is not one
+                            ('..\\..\\windows\\evil', 'windows_evil' + ext),         # never a path
+                            ('x' * 300, 'x' * 120 + ext),
+                            ('', plug['file']), ('   ', plug['file']), (None, plug['file'])):
+        sent.clear()
+        r = client.post(url, json={'destination_id': 1, 'filename': typed}, headers=headers).get_json()
+        assert r == {'ok': True, 'sent': [lands_as], 'destination': 'Playout inbox'}, typed
+        assert sent == [(plug['file'], lands_as, 'Playout inbox')], typed
+    sent.clear()
+    for unusable in ('...', '///', '\u30d7\u30ed\u30e2'):
+        r = client.post(url, json={'destination_id': 1, 'filename': unusable}, headers=headers)
+        assert r.status_code == 400 and 'can be used in a filename' in r.get_json()['error'], unusable
+    assert sent == [], 'nothing is sent under a name that could not be used'
+    assert client.get('/api/schedule/items').get_json()['items'][0]['file'] == plug['file']
+    assert os.path.exists(os.path.join(schedule.SCHEDULE_DIR, plug['plug_id'], plug['file']))
+
     def unreachable(local, name, dest):
         raise ValueError('Could not reach \\\\playout\\inbox')
     monkeypatch.setattr(pipeline, 'send_file_to_network_destination', unreachable)
