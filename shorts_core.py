@@ -1259,12 +1259,35 @@ def _finish_split(segs, disp_w, disp_h):
         s['panes'] = [tuple(int(round(v)) for v in _pane_origin(f, w, h, disp_w, disp_h)) for f in s['people']]
 
 
+EXPR_SUM_GROUP = 8
+
+
+def expr_sum(terms):
+    """`terms` added together as one ffmpeg expression, however many there
+    are ('0' for none).
+
+    Not simply '+'.join(terms). ffmpeg reads a+b+c+d as ((a+b)+c)+d, one
+    level deeper per term, and since FFmpeg 8 refuses an expression more
+    than 100 levels deep -- without saying so: the filter just reports
+    "Failed to configure input pad", and the render is lost. A short with a
+    hundred pieces to its crop path (a minute of following someone around)
+    is ordinary. So the terms are added in groups of eight, the groups in
+    groups of eight, and so on: thousands of terms stay a few dozen levels
+    deep. Eight or fewer come out exactly as a plain sum."""
+    terms = list(terms)
+    if not terms:
+        return '0'
+    while len(terms) > EXPR_SUM_GROUP:
+        terms = ['(' + '+'.join(terms[i:i + EXPR_SUM_GROUP]) + ')' for i in range(0, len(terms), EXPR_SUM_GROUP)]
+    return '+'.join(terms)
+
+
 def split_exprs(segs):
     """ffmpeg expressions for the two panes' crop origins, as functions of
     the frame number: ((top x, top y), (bottom x, bottom y))."""
     def expr(pane, axis):
-        return '+'.join(f"between(n,{s['a']},{s['b']})*{s['panes'][pane][axis]}"
-                        for s in segs if s['layout'] == 'split') or '0'
+        return expr_sum(f"between(n,{s['a']},{s['b']})*{s['panes'][pane][axis]}"
+                        for s in segs if s['layout'] == 'split')
     return (expr(0, 0), expr(0, 1)), (expr(1, 0), expr(1, 1))
 
 
@@ -1461,20 +1484,50 @@ def plan_reframe(samples, shot_starts, n_frames, disp_w, disp_h, crop_w, mode='a
     return merged
 
 
-def crop_x_expr(segs):
+def thin_keys(keys, tol=1.0):
+    """The same path through fewer keys: every key that straight-line
+    interpolation between its kept neighbours already reproduces to within
+    `tol` pixels is dropped (Ramer-Douglas-Peucker on x against frame).
+
+    The planner keys a moving window every 0.4 s whether or not it is
+    turning. A smoothed path is mostly straight runs, so most of those keys
+    say nothing, and each one costs a term in the crop expression."""
+    if len(keys) <= 2 or tol <= 0:
+        return list(keys)
+    keep = [False] * len(keys)
+    keep[0] = keep[-1] = True
+    todo = [(0, len(keys) - 1)]
+    while todo:
+        i, j = todo.pop()
+        (f0, x0), (f1, x1) = keys[i], keys[j]
+        worst, at = 0.0, None
+        for k in range(i + 1, j):
+            f, x = keys[k]
+            err = abs(x - (x0 + (x1 - x0) * (f - f0) / float(f1 - f0 or 1)))
+            if err > worst:
+                worst, at = err, k
+        if at is not None and worst > tol:
+            keep[at] = True
+            todo += [(i, at), (at, j)]
+    return [k for k, kept in zip(keys, keep) if kept]
+
+
+def crop_x_expr(segs, tol=1.0):
     """ffmpeg expression for the crop window's x, as a function of the frame
     number `n`.
 
-    A flat sum of between(n,a,b)*value terms, one active per frame, rather
-    than nested if()s: it stays shallow however many shots there are, and
-    keying on the integer frame number instead of the timestamp makes every
-    boundary frame-exact with no float comparison to get wrong at 29.97."""
+    A sum of between(n,a,b)*value terms, one active per frame, rather than
+    nested if()s, and keyed on the integer frame number instead of the
+    timestamp, which makes every boundary frame-exact with no float
+    comparison to get wrong at 29.97. See expr_sum() for how the sum is
+    written, and thin_keys() for `tol`: how far, in source pixels, the
+    window may stray from the planned path for the sake of fewer terms."""
     terms = []
     for s in segs:
         if s['layout'] != 'crop':
             continue
         if s.get('keys'):
-            ks = s['keys']
+            ks = thin_keys(s['keys'], tol)
             for (f0, x0), (f1, x1) in zip(ks, ks[1:]):
                 if f1 <= f0:
                     continue
@@ -1482,7 +1535,23 @@ def crop_x_expr(segs):
                 terms.append(f'between(n,{f0},{hi})*({x0:.1f}+({x1 - x0:.1f})*(n-{f0})/{f1 - f0})')
         else:
             terms.append(f"between(n,{s['a']},{s['b']})*{int(round(s['x'] or 0))}")
-    return '+'.join(terms) or '0'
+    return expr_sum(terms)
+
+
+# The whole ffmpeg command has to fit on a Windows command line (32,767
+# characters). The crop path is the one part of it that grows with the clip.
+MAX_CROP_EXPR = 16000
+
+
+def fitted_crop_x_expr(segs):
+    """crop_x_expr() at the finest tolerance that keeps it a sane length:
+    1 px for anything ordinary, coarser only for a clip of several minutes
+    spent following movement throughout."""
+    for tol in (1.0, 2.0, 4.0, 8.0, 16.0, 32.0):
+        expr = crop_x_expr(segs, tol)
+        if len(expr) <= MAX_CROP_EXPR:
+            break
+    return expr
 
 
 def build_filtergraph(info, segs, out_w=OUT_W, out_h=OUT_H, ass_name=None):
@@ -1522,7 +1591,7 @@ def build_filtergraph(info, segs, out_w=OUT_W, out_h=OUT_H, ass_name=None):
     pre = ','.join(pre)
 
     y = even((disp_h - crop_h) / 2.0) if disp_h > crop_h else 0
-    crop_chain = (f"crop={crop_w}:{crop_h}:x='{crop_x_expr(segs)}':y={y},"
+    crop_chain = (f"crop={crop_w}:{crop_h}:x='{fitted_crop_x_expr(segs)}':y={y},"
                   f"scale={out_w}:{out_h}:flags=lanczos")
     k = min(out_w / float(disp_w), out_h / float(disp_h))
     fg_w, fg_h = min(out_w, even(disp_w * k)), min(out_h, even(disp_h * k))
@@ -1557,7 +1626,7 @@ def build_filtergraph(info, segs, out_w=OUT_W, out_h=OUT_H, ass_name=None):
         g += ';'.join(f'[{tag[u]}0]{chains[u]}[{tag[u]}v]' for u in used) + ';'
         base = f'[{tag[used[0]]}v]'
         for i, u in enumerate(used[1:]):
-            enable = '+'.join(f"between(n,{s['a']},{s['b']})" for s in segs if s['layout'] == u)
+            enable = expr_sum(f"between(n,{s['a']},{s['b']})" for s in segs if s['layout'] == u)
             out = '[v1]' if i == len(used) - 2 else f'[m{i}]'
             g += f"{base}[{tag[u]}v]overlay=0:0:enable='{enable}'{out}" + ('' if out == '[v1]' else ';')
             base = out

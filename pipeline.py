@@ -2012,10 +2012,11 @@ def _build_duck_volume_expr(duck_windows, duck_depth_db, attack=None, release=No
     is a broadband click, and there were typically 9-13 of them in a 30s promo, so
     it read as a fault rather than as ducking.
 
-    The envelope is built as a FLAT sum of trapezoids rather than a nested if
+    The envelope is built as a sum of trapezoids rather than a nested if
     chain, which matters as much as the ramps do: the old form nested one if()
-    per window, so expression depth grew with the amount of dialogue. Here depth
-    is constant and only the length grows.
+    per window, so expression depth grew with the amount of dialogue. The sum
+    is written with shorts_core.expr_sum(), because a plain a+b+c+... is one
+    level deeper per term too, and FFmpeg 8 refuses anything over 100 levels.
 
         gain(t) = 1 - (1 - g) * min(1, SUM_i trapezoid_i(t))
         trapezoid_i(t) = clip((t - s_i + a)/a, 0, 1) * clip((e_i + r - t)/r, 0, 1)
@@ -2027,12 +2028,13 @@ def _build_duck_volume_expr(duck_windows, duck_depth_db, attack=None, release=No
     anyway."""
     if not duck_windows:
         return None
+    import shorts_core      # no PRISM imports of its own, so nothing circular
     a = max(0.01, attack if attack is not None else DUCK_ATTACK)
     r = max(0.01, release if release is not None else DUCK_RELEASE)
     gain = 10 ** (duck_depth_db / 20)
     terms = [f'clip((t-{s:.3f}+{a})/{a},0,1)*clip(({e:.3f}+{r}-t)/{r},0,1)'
              for s, e in duck_windows]
-    return f'1-{1 - gain:.5f}*min(1,{"+".join(terms)})'
+    return f'1-{1 - gain:.5f}*min(1,{shorts_core.expr_sum(terms)})'
 
 
 def build_export_cmd(src, dst, fmt_key):
