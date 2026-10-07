@@ -582,7 +582,7 @@ def _run_render(jid, params):
     _write_manifest(bdir, manifest)
 
     work = app.config['UPLOAD_FOLDER']
-    ending = params.get('ending') == 'freeze'
+    ending = params.get('ending') == 'cliffhanger'
     max_chars = sc.SUBTITLE_SIZES[params['subtitle_size']][1]
     total = len(items)
     for n, it in enumerate(items, 1):
@@ -600,6 +600,12 @@ def _run_render(jid, params):
         samples = (sc.sample_faces(src, start_f, n_frames, fps, detector, sar=info['sar'], mouth=speaker)
                    if detector else [])
         shot_starts = [c - start_f for c in a['cut_frames'] if start_f < c < end_f]
+        # How long the clip's last shot has been on screen by its last frame:
+        # the cliffhanger hold is made from the end of it, never across a cut.
+        room = n_frames - max(shot_starts) if shot_starts else n_frames
+        if ending:
+            # ...and never from frames in which the pose is still changing.
+            room = sc.still_frames(src, end_f - 1, fps, room)
         t0, t1 = start_f / fps, end_f / fps
         speech = ([(s - t0, e - t0) for s, e in sc.speech_units(a['words'], a['segments']) if e > t0 and s < t1]
                   if speaker else None)
@@ -620,7 +626,7 @@ def _run_render(jid, params):
             ok, err = sc.render_short(pipeline.FFMPEG, src, out_path, start_f, n_frames, info, segs,
                                       ass_name=ass_name, work_dir=work, crf=SHORTS_CRF, preset=SHORTS_PRESET,
                                       loudness=SHORTS_LOUDNESS, true_peak=SHORTS_TRUE_PEAK,
-                                      timeout=pipeline.FFMPEG_LONG_TIMEOUT, ending=ending)
+                                      timeout=pipeline.FFMPEG_LONG_TIMEOUT, ending=ending, ending_room=room)
         except sc.ToolTimeout as e:
             ok, err = False, f'Encoding took too long and was stopped ({e}).'
         finally:
@@ -637,7 +643,7 @@ def _run_render(jid, params):
 
         entry = {'index': n, 'title': it['title'], 'file': name + '.mp4', 'srt': None, 'thumb': None,
                  'start': round(start_f / fps, 3), 'end': round(end_f / fps, 3),
-                 'duration': round((n_frames + (sum(sc.ending_frames(fps)) if ending else 0)) / fps, 2),
+                 'duration': round((n_frames + (sc.cliffhanger_extra(n_frames, fps, room) if ending else 0)) / fps, 2),
                  'size': os.path.getsize(out_path),
                  'layouts': {'crop': sum(1 for s in segs if s['layout'] == 'crop'),
                              'fit': sum(1 for s in segs if s['layout'] == 'fit'),
@@ -844,9 +850,9 @@ def _render_options(data):
             'speaker': speaker and reframe != 'fit',
             'subtitles': data.get('subtitles', True) not in (False, 0, '0', 'false', 'off', None),
             'subtitle_size': data.get('subtitle_size') if data.get('subtitle_size') in sc.SUBTITLE_SIZES else 'm',
-            # How each short finishes: on its last frame ('none'), or held on
-            # it while the colour drains and it fades out in silence ('freeze').
-            'ending': data.get('ending') if data.get('ending') in ('none', 'freeze') else 'none'}
+            # How each short finishes: on its last frame ('none'), or stopped
+            # dead on its last beat, held, and cut to black ('cliffhanger').
+            'ending': data.get('ending') if data.get('ending') in ('none', 'cliffhanger') else 'none'}
 
 
 @app.route('/api/shorts/options')
@@ -874,7 +880,7 @@ def api_shorts_options():
                    speaker_default=SHORTS_SPEAKER_CROP,
                    vision_frames=SHORTS_VISION_FRAMES, max_items=SHORTS_MAX_ITEMS,
                    min_clip=SHORTS_MIN_CLIP, max_clip=SHORTS_MAX_CLIP,
-                   ending_seconds=round(sum(sc.ENDING[k] for k in ('dissolve', 'hold', 'fade')), 1))
+                   ending_seconds=round(sc.CLIFFHANGER['hold'] + sc.CLIFFHANGER['black'] - sc.CLIFFHANGER['loop'], 1))
 
 
 @app.route('/api/shorts/analyze', methods=['POST'])

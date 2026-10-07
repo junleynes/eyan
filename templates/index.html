@@ -756,7 +756,7 @@ input.sh-num[type=number]{width:92px}
 .sh-proj-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 14px}
 .sh-tile{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--panel)}
 .sh-poster{position:relative;aspect-ratio:9/16;background:#000}
-.sh-num{position:absolute;top:8px;left:8px;z-index:1;min-width:26px;padding:3px 7px;border-radius:999px;background:rgba(0,0,0,.72);color:#fff;font:600 13px/1.2 var(--mono,monospace);text-align:center;pointer-events:none}
+.sh-place{position:absolute;top:8px;left:8px;z-index:1;min-width:26px;padding:3px 7px;border-radius:999px;background:rgba(0,0,0,.72);color:#fff;font:600 13px/1.2 var(--mono,monospace);text-align:center;pointer-events:none}
 .sh-tile-body{padding:8px 10px;font-size:12px;line-height:1.45}
 .sh-warn{font-size:12px;line-height:1.5;padding:8px 10px;border-radius:6px;border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);color:var(--amber);margin:8px 0}
 @media (max-width:640px){.sh-cand{grid-template-columns:1fr}}
@@ -6937,13 +6937,7 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <!-- Vertical Shorts -->
 <div id="p-shorts" class="panel{{ ' active' if default_tab == 'p-shorts' else '' }}">
 <h2>Vertical Shorts</h2>
-<div class="sub-tabs">
-  <div class="sub-tab active" onclick="switchSubTab('p-shorts-projects',this);shortsLoadProjects()" role="button" tabindex="0">Projects</div>
-  <div class="sub-tab" onclick="switchSubTab('p-shorts-create',this);shProjectFillPicker()" role="button" tabindex="0">Create shorts</div>
-</div>
-
-<div id="p-shorts-projects" class="sub-panel active">
-<p style="font-size:12px;opacity:.75;margin-top:-6px">Shorts are filed by project: the episode they are cut from. Create the project first &mdash; programme, episode, air date, a description and a picture &mdash; then generate its shorts, and every batch you render for it is kept together here. Everyone with access to Vertical Shorts sees every project.</p>
+<p id=sh-intro style="font-size:12px;opacity:.75;margin-top:-6px">Shorts are made inside a project: the episode they are cut from. Create the project first &mdash; programme, episode, air date, a description and a picture &mdash; or open one, then create its shorts there. Every batch you render for it is kept together in it. Everyone with access to Vertical Shorts sees every project.</p>
 
 <div id=sh-proj-list-view>
   <div class="sh-bar">
@@ -6984,18 +6978,18 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <div id=sh-proj-open style="display:none">
   <button type=button class="btn-sm" onclick="shProjectClose()">&larr; All projects</button>
   <div id=sh-proj-head></div>
+  <div class="sub-tabs" style="margin-top:18px">
+    <div class="sub-tab active" onclick="switchSubTab('p-shorts-list',this);shInnerShown('p-shorts-list')" role="button" tabindex="0">Shorts in this project</div>
+    <div class="sub-tab" onclick="switchSubTab('p-shorts-create',this);shInnerShown('p-shorts-create')" role="button" tabindex="0">Create shorts</div>
+  </div>
+
+<div id="p-shorts-list" class="sub-panel active">
   <div id=sh-saved></div>
-</div>
 </div>
 
 <div id="p-shorts-create" class="sub-panel">
-<label for=sh-project>Project:</label>
-<div class="browse-row">
-  <select id=sh-project style="max-width:420px" onchange="shProjectPicked()"><option value="">Loading&hellip;</option></select>
-  <button type=button class="btn-sm" onclick="shGoNewProject()">New project&hellip;</button>
-</div>
-<p class="sh-note" id=sh-project-note style="margin-top:6px">The shorts you generate are filed under this project.</p>
-
+<div id=sh-create-elsewhere class=no-data style="display:none;text-align:left"></div>
+<div id=sh-create-form>
 <p style="font-size:12px;opacity:.75;margin-top:-6px">Cuts a long-form programme into stand-alone 9:16 shorts. Step one finds the moments: the AI Vision model rates how dramatic the picture looks, the dialogue is transcribed, and a story model reads it to propose stretches that make sense on their own &mdash; a setup, a turn, a payoff &mdash; not just the loudest peaks. <b>Preview the cut</b> renders nothing until you have reviewed them; <b>Generate without preview</b> renders them all straight away.</p>
 
 <label>Long-form video (HIRES):</label>
@@ -7074,7 +7068,7 @@ document.getElementById('vf').addEventListener('submit', async function(e){
     <span style="display:inline-flex;gap:6px;align-items:center;font-size:12px">Ending
       <select id=sh-ending title="How every short in this render finishes">
         <option value=none selected>Cut on the last frame</option>
-        <option value=freeze>Freeze, drain the colour, fade out in silence (+3.2 s)</option>
+        <option value=cliffhanger>Cliffhanger &mdash; freeze, slow push-in, cut to black (+2.3 s)</option>
       </select>
     </span>
   </div>
@@ -7126,6 +7120,8 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <div id=sh-results style="display:none;margin-top:18px"></div>
 <div id=sh-prompt class=no-data style="margin-top:14px">Pick a full episode and choose <b>Preview the cut</b> or <b>Generate without preview</b>. Analysing a 45-minute episode takes several minutes: cut detection and transcription each read the whole file.</div>
 </div>
+</div>
+</div>
 
 </div>
 
@@ -7136,7 +7132,10 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 // changed them (kept or dropped, re-timed, retitled, added by hand), and the
 // job currently being polled so Cancel knows what to cancel.
 var SH = {analysis: null, cands: [], jobId: null, options: null, destinations: null, busy: false,
-          projects: null, openProject: null, editing: null}
+          projects: null, openProject: null, editing: null,
+          // Inside a project: which of its two views is showing, which project
+          // the create form's job or cut belongs to, and why its job stopped.
+          inner: null, formProject: null, formNote: null, settling: false}
 
 function shFmt(t){
   t = Math.max(0, Number(t) || 0)
@@ -7173,7 +7172,9 @@ function shortsOnTabOpen(){
   // After the current call stack, so this also sees a sub-tab that the
   // page's own restore-last-view code is about to re-select.
   setTimeout(function(){
-    // Always: the list is also what the Create tab's project picker is filled from.
+    // Coming back from another tab resets every sub-tab to its first; put
+    // back the one that was showing, which may hold a cut under review.
+    if(SH.inner && SH.openProject) shInnerTab(SH.inner, true)
     shortsLoadProjects()
   }, 0)
 }
@@ -7336,12 +7337,8 @@ async function shortsAnalyze(auto){
   if(SH.busy) return
   var f = shEl('sh-file'), net = shEl('shorts_file_network').value
   var hasLocal = f && f.files && f.files[0]
-  var project = shEl('sh-project').value
-  if(!project){
-    shNote(SH.projects && SH.projects.length ? 'Choose the project these shorts are for first.'
-           : 'Create a project first, under <b>Projects</b>: shorts are filed by project.', true)
-    shEl('sh-project').focus(); return
-  }
+  var project = SH.openProject
+  if(!project){ shNote('Open the project these shorts are for first.', true); return }
   if(!hasLocal && !net){ shNote('Pick a video first, using Browse library.', true); return }
   var minD = parseFloat(shEl('sh-min').value), maxD = parseFloat(shEl('sh-max').value)
   if(!(minD >= 5) || !(maxD >= minD + 5)){
@@ -7365,17 +7362,37 @@ async function shortsAnalyze(auto){
 
   shEl('sh-review').style.display = 'none'
   shEl('sh-results').style.display = 'none'
+  SH.analysis = null; SH.cands = []
+  SH.formProject = project; SH.formNote = null
   shBusy(true, 'Starting...')
   var start
   try{ start = await shStart(fd) }
-  catch(err){ shBusy(false); shNote('Could not start: ' + escapeHtmlLite(String(err)), true); return }
-  if(start.error){ shBusy(false); shNote(escapeHtmlLite(start.error), true); return }
+  catch(err){ shJobFailed('Could not start: ' + escapeHtmlLite(String(err))); return }
+  if(start.error){ shJobFailed(escapeHtmlLite(start.error)); return }
   SH.jobId = start.job_id
   if(window.refreshMonitor) refreshMonitor()
   var res = await shPoll(start.job_id)
   SH.jobId = null
+  if(res.error){ shJobFailed(escapeHtmlLite(res.error)); return }
+  // Until the cut is on the form it still counts as this project's, so
+  // opening another project meanwhile cannot take the form over.
+  SH.settling = true
   shBusy(false)
-  if(res.error){ shNote(escapeHtmlLite(res.error), true); return }
+  try{ await shShowAnalysis(res, auto) }
+  finally{ SH.settling = false; shCreateSync() }
+}
+
+// The job stopped. Said on the form, and remembered so that a project the
+// user has wandered into meanwhile can say so too.
+function shJobFailed(html){
+  SH.jobId = null
+  shBusy(false)
+  shNote(html, true)
+  SH.formNote = html
+  shCreateSync()
+}
+
+async function shShowAnalysis(res, auto){
   var host = shEl('sh-results')
   if(auto && res.batch){
     host.innerHTML = ''
@@ -7610,6 +7627,7 @@ async function shortsRenderSelected(){
   var res = await shPoll(start.job_id)
   SH.jobId = null
   shBusy(false); shUpdateRenderBtn()
+  shCreateSync()
   if(res.error){ shShowResultError(res.error); return }
   var host = shEl('sh-results')
   host.innerHTML = ''
@@ -7647,7 +7665,7 @@ function shBatchCard(b, fresh){
     '<div><b>' + escapeHtmlLite(b.orig_name || 'Untitled') + '</b> <span style="font-size:12px;opacity:.7">' +
       b.shorts.length + ' short' + (b.shorts.length === 1 ? '' : 's') + (reframe ? ' &middot; ' + reframe : '') +
       (o.speaker ? ' &middot; follows speaker' : '') +
-      (o.subtitles ? ' &middot; captions' : '') + (o.ending === 'freeze' ? ' &middot; freeze-and-fade ending' : '') +
+      (o.subtitles ? ' &middot; captions' : '') + (o.ending === 'cliffhanger' ? ' &middot; cliffhanger ending' : '') +
       (when ? ' &middot; ' + when : '') +
       (IS_ADMIN && b.username && b.username !== CURRENT_USERNAME ? ' &middot; by ' + escapeHtmlLite(b.username) : '') +
       (b.status === 'partial' ? ' &middot; <span style="color:var(--amber)">incomplete</span>' : '') + '</span></div>' +
@@ -7668,7 +7686,7 @@ function shBatchCard(b, fresh){
     }).join('')
   var tiles = b.shorts.map(function(s, i){
     return '<div class="sh-tile">' +
-      '<div class="sh-poster"><span class="sh-num" title="Its place in the episode">' + (s.number || (i + 1)) + '</span>' +
+      '<div class="sh-poster"><span class="sh-place" title="Its place in the episode">' + (s.number || (i + 1)) + '</span>' +
         (s.thumb_url ? '<img src="' + s.thumb_url + '" alt="" loading="lazy" decoding="async">' : '') +
         '<button type=button class="sh-play" aria-label="Play" data-play="' + i + '">&#9654;</button></div>' +
       '<div class="sh-tile-body"><div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' +
@@ -7686,7 +7704,7 @@ function shBatchCard(b, fresh){
         '</div></div>'
   }).join('')
   card.innerHTML = head + notes + '<div class="sh-grid">' + tiles + '</div>' +
-    (fresh ? '<p class="sh-note">Saved in the project <b>' + escapeHtmlLite(b.project_name || 'chosen above') + '</b> (under <b>Projects</b>). Render again with a different reframe or other moments at any time while this analysis is open.</p>' : '')
+    (fresh ? '<p class="sh-note">Saved in this project' + (b.project_name ? ', <b>' + escapeHtmlLite(b.project_name) + '</b>' : '') + ': see <b>Shorts in this project</b>. Render again with a different reframe or other moments at any time while this cut is open.</p>' : '')
   card.addEventListener('click', function(e){
     var p = e.target.closest('[data-play]')
     if(p){ var s = b.shorts[parseInt(p.getAttribute('data-play'), 10)]; shortsPlay(s.url, s.title); return }
@@ -7825,13 +7843,14 @@ function shProjectThumb(p, cls){
     (p.thumb_url ? '' : escapeHtmlLite(initials)) + '</div>'
 }
 
-// Loads the projects, redraws whichever view of them is showing, and
-// refills the Create tab's picker. Called on opening the tab and after
-// anything that changes a project or what is filed under one.
+// Loads the projects and redraws whichever view of them is showing. Called
+// on opening the tab and after anything that changes a project or what is
+// filed under one.
 async function shortsLoadProjects(){
   var grid = shEl('sh-proj-grid')
   if(!grid) return
-  if(SH.projects === null) grid.innerHTML = '<div class=no-data>Loading&hellip;</div>'
+  var first = SH.projects === null
+  if(first) grid.innerHTML = '<div class=no-data>Loading&hellip;</div>'
   try{
     var d = await (await fetch('/api/shorts/projects')).json()
     SH.projects = d.ok ? d.items : []
@@ -7840,10 +7859,9 @@ async function shortsLoadProjects(){
     grid.innerHTML = '<div class=no-data><span style="color:var(--amber)">Could not load the projects: ' + escapeHtmlLite(String(e)) + '</span></div>'
     return
   }
-  shProjectFillPicker()
   grid.className = SH.projects.length ? 'sh-proj-grid' : ''
   grid.innerHTML = SH.projects.length ? '' :
-    '<div class=no-data>No projects yet. Choose <b>New project</b> to create the first one, then generate its shorts.</div>'
+    '<div class=no-data>No projects yet. Choose <b>New project</b> to create the first one: shorts are made inside a project.</div>'
   SH.projects.forEach(function(p){
     var card = document.createElement('button')
     card.type = 'button'
@@ -7860,8 +7878,13 @@ async function shortsLoadProjects(){
     card.addEventListener('click', function(){ shProjectOpen(p.project_id) })
     grid.appendChild(card)
   })
+  // A reload comes back to the project that was open, on the sub-tab the
+  // page has just restored.
+  if(first && !SH.openProject){
+    try{ SH.openProject = localStorage.getItem('prism_sh_project') || null }catch(e){}
+  }
   if(SH.openProject){
-    if(SH.projects.some(function(p){ return p.project_id === SH.openProject })) shProjectOpen(SH.openProject)
+    if(SH.projects.some(function(p){ return p.project_id === SH.openProject })) shProjectOpen(SH.openProject, true)
     else shProjectClose()
   }
   shLoadUnfiled()
@@ -7890,45 +7913,82 @@ async function shBatchMove(bid, pid){
   }catch(e){ alert('Could not move it: ' + e) }
 }
 
-function shProjectFillPicker(){
-  var sel = shEl('sh-project')
-  if(!sel || SH.projects === null) return
-  var want = sel.value || SH.picked || ''
-  try{ want = want || localStorage.getItem('prism_sh_project') || '' }catch(e){}
-  sel.innerHTML = SH.projects.length
-    ? '<option value="">Choose a project&hellip;</option>' + SH.projects.map(function(p){
-        return '<option value="' + p.project_id + '">' + escapeHtmlLite(p.name) + '</option>' }).join('')
-    : '<option value="">No projects yet &mdash; create one first</option>'
-  sel.value = SH.projects.some(function(p){ return p.project_id === want }) ? want : ''
-  shProjectPicked()
+// The two views inside an open project. `quiet` only shows the tab; without
+// it the click handler's side effects (shInnerShown) run too.
+function shInnerTab(id, quiet){
+  var tabs = document.querySelectorAll('#sh-proj-open > .sub-tabs .sub-tab')
+  switchSubTab(id, tabs[id === 'p-shorts-list' ? 0 : 1])
+  if(quiet) SH.inner = id; else shInnerShown(id)
 }
 
-function shProjectPicked(){
-  var sel = shEl('sh-project'), note = shEl('sh-project-note')
-  SH.picked = sel.value
-  try{ if(sel.value) localStorage.setItem('prism_sh_project', sel.value) }catch(e){}
-  var p = (SH.projects || []).filter(function(x){ return x.project_id === sel.value })[0]
-  note.innerHTML = p
-    ? 'The shorts you generate are filed under <b>' + escapeHtmlLite(p.name) + '</b>' +
-      (p.shorts ? ', which has ' + p.shorts + ' already.' : '.')
-    : 'Shorts are filed by project. Choose the one these are for, or create it with <b>New project&hellip;</b>'
+function shInnerShown(id){
+  SH.inner = id
+  if(id === 'p-shorts-list') shProjectBatches(SH.openProject)
+  else shCreateSync()
 }
 
-function shSubTab(id){
-  var tabs = document.querySelectorAll('#p-shorts > .sub-tabs .sub-tab')
-  switchSubTab(id, tabs[id === 'p-shorts-projects' ? 0 : 1])
+function shProjectName(pid){
+  var p = (SH.projects || []).filter(function(x){ return x.project_id === pid })[0]
+  return p ? p.name : 'another project'
 }
 
-function shGoNewProject(){
-  shSubTab('p-shorts-projects')
-  shProjectClose()
-  shProjectForm()
+// The create form is one form, and what is on it -- a job that is running,
+// or a cut found and not yet rendered -- belongs to the project it was
+// started in (SH.formProject). Inside any other project the form is replaced
+// by a note saying so, with a way back and, once nothing is running, a way
+// to drop that cut and start one here.
+function shCreateSync(){
+  var form = shEl('sh-create-form'), note = shEl('sh-create-elsewhere')
+  if(!form || !note) return
+  var here = SH.openProject
+  var live = SH.busy || SH.settling
+  // A cut left behind in a project that has since been deleted is nobody's.
+  if(SH.formProject && !live && !(SH.projects || []).some(function(p){ return p.project_id === SH.formProject })) SH.formProject = null
+  var held = SH.formProject && SH.formProject !== here && (live || SH.analysis || SH.formNote)
+  if(!held && SH.formProject !== here){ shCreateReset(); SH.formProject = here }
+  form.style.display = held ? 'none' : 'block'
+  note.style.display = held ? 'block' : 'none'
+  if(!held){ note.innerHTML = ''; return }
+  var name = '<b>' + escapeHtmlLite(shProjectName(SH.formProject)) + '</b>'
+  note.innerHTML = (live
+      ? 'Shorts are being made for ' + name + ' right now. One job runs at a time: wait for it to finish, or go back to it to watch or cancel it.'
+      : SH.analysis
+        ? 'A cut for ' + name + ' is still open for review. Go back to it, or drop it to start one for this project.'
+        : 'The job for ' + name + ' stopped: <span style="color:var(--amber)">' + SH.formNote + '</span>') +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">' +
+      '<button type=button class=btn data-back>Go to ' + escapeHtmlLite(shProjectName(SH.formProject)) + '</button>' +
+      (live ? '' : '<button type=button class="btn-sm" data-drop>' + (SH.analysis ? 'Drop that cut and start here' : 'Start here') + '</button>') + '</div>'
+  note.querySelector('[data-back]').addEventListener('click', function(){
+    var pid = SH.formProject
+    shProjectOpen(pid, true); shInnerTab('p-shorts-create')
+  })
+  var drop = note.querySelector('[data-drop]')
+  if(drop) drop.addEventListener('click', function(){ SH.formProject = null; shCreateSync() })
+}
+
+// Empties what belongs to one project -- the picked video, the cut under
+// review, the last results -- and keeps the settings (lengths, models, output).
+function shCreateReset(){
+  SH.analysis = null; SH.cands = []; SH.formNote = null
+  var f = shEl('sh-file')
+  if(f) f.value = ''
+  if(typeof clearNetworkField === 'function' && shEl('shorts_file_network').value) clearNetworkField('shorts_file')
+  shEl('sh-review').style.display = 'none'
+  shEl('sh-results').style.display = 'none'
+  shEl('sh-results').innerHTML = ''
+  shEl('sh-cands').innerHTML = ''
+  shNote('Pick a full episode and choose <b>Preview the cut</b> or <b>Generate without preview</b>. Analysing a 45-minute episode takes several minutes: cut detection and transcription each read the whole file.')
 }
 
 // The form, for a new project (no argument) or to change one. `hide` closes it.
 function shProjectForm(p, hide){
   var form = shEl('sh-proj-form')
-  if(hide){ form.style.display = 'none'; SH.editing = null; return }
+  if(hide){
+    var back = SH.editing
+    form.style.display = 'none'; SH.editing = null
+    if(back && SH.openProject === back) shProjectOpen(back, true)
+    return
+  }
   SH.editing = p ? p.project_id : null
   shEl('sh-pf-heading').textContent = p ? 'Edit project' : 'New project'
   shEl('sh-pf-save').textContent = p ? 'Save changes' : 'Create project'
@@ -7965,20 +8025,25 @@ async function shProjectSave(){
   try{
     var r = await (await fetch('/api/shorts/projects' + (SH.editing ? '/' + SH.editing : ''), {method: 'POST', body: fd})).json()
     if(!r.ok){ note.style.color = 'var(--tally)'; note.textContent = r.error || 'Could not save the project.'; btn.disabled = false; return }
+    var edited = !!SH.editing
     shProjectForm(null, true)
     SH.openProject = r.project.project_id
-    SH.picked = r.project.project_id
-    try{ localStorage.setItem('prism_sh_project', r.project.project_id) }catch(e){}
     await shortsLoadProjects()
+    // A new project opens ready to make its first shorts.
+    if(!edited) shInnerTab('p-shorts-create')
   }catch(e){ note.style.color = 'var(--tally)'; note.textContent = 'Could not save the project: ' + e }
   btn.disabled = false
 }
 
-// One project: its details, and every batch filed under it.
-async function shProjectOpen(pid){
+// One project: its details, the shorts filed under it, and the form that
+// makes more. `refresh` redraws it where it stands; without it (the project
+// was just chosen) it lands on its shorts, or on the form if it has none.
+async function shProjectOpen(pid, refresh){
   var p = (SH.projects || []).filter(function(x){ return x.project_id === pid })[0]
   if(!p) return
   SH.openProject = pid
+  try{ localStorage.setItem('prism_sh_project', pid) }catch(e){}
+  shEl('sh-intro').style.display = 'none'
   shEl('sh-proj-form').style.display = 'none'
   shEl('sh-proj-list-view').style.display = 'none'
   shEl('sh-proj-open').style.display = 'block'
@@ -7993,40 +8058,45 @@ async function shProjectOpen(pid){
         (p.username ? ' by ' + escapeHtmlLite(p.username) : '') + ' &middot; ' +
         (p.shorts ? p.shorts + ' short' + (p.shorts === 1 ? '' : 's') + ' in ' + p.batches + ' batch' + (p.batches === 1 ? '' : 'es') : 'no shorts yet') + '</div>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">' +
-        '<button type=button class=btn data-proj-create>Create shorts for this project</button>' +
         '<button type=button class="btn-sm" data-proj-edit>Edit details</button>' +
         (p.can_delete ? '<button type=button class="btn-sm" style="color:var(--tally);border-color:var(--tally)" data-proj-del>Delete project</button>' : '') +
       '</div></div></div>'
   var head = shEl('sh-proj-head')
-  head.querySelector('[data-proj-create]').addEventListener('click', function(){
-    SH.picked = pid
-    shSubTab('p-shorts-create')
-    shEl('sh-project').value = pid
-    shProjectPicked()
-  })
   head.querySelector('[data-proj-edit]').addEventListener('click', function(){ shProjectForm(p) })
   var del = head.querySelector('[data-proj-del]')
   if(del) del.addEventListener('click', function(){ shProjectDelete(p) })
+  if(!refresh) shInnerTab(p.shorts ? 'p-shorts-list' : 'p-shorts-create', true)
+  else SH.inner = shEl('p-shorts-create').classList.contains('active') ? 'p-shorts-create' : 'p-shorts-list'
+  shCreateSync()
+  return shProjectBatches(pid)
+}
+
+// The batches filed under the open project.
+async function shProjectBatches(pid){
   var host = shEl('sh-saved')
-  host.innerHTML = '<div class=no-data>Loading&hellip;</div>'
+  if(!pid || !host) return
+  if(!host.firstChild) host.innerHTML = '<div class=no-data>Loading&hellip;</div>'
   try{
     var d = await (await fetch('/api/shorts/batches?project_id=' + encodeURIComponent(pid))).json()
     if(SH.openProject !== pid) return                    // another project was opened meanwhile
     host.innerHTML = ''
     if(!d.ok || !d.items.length){
-      host.innerHTML = '<div class=no-data>No shorts in this project yet. Choose <b>Create shorts for this project</b> to generate some.</div>'
+      host.innerHTML = '<div class=no-data>No shorts in this project yet. Make some under <b>Create shorts</b>.</div>'
       return
     }
     d.items.forEach(function(b){ host.appendChild(shBatchCard(b, false)) })
   }catch(e){
+    if(SH.openProject !== pid) return
     host.innerHTML = '<div class=no-data><span style="color:var(--amber)">Could not load this project\'s shorts: ' + escapeHtmlLite(String(e)) + '</span></div>'
   }
 }
 
 function shProjectClose(){
   SH.openProject = null
+  try{ localStorage.removeItem('prism_sh_project') }catch(e){}
   shEl('sh-proj-open').style.display = 'none'
   shEl('sh-proj-list-view').style.display = 'block'
+  shEl('sh-intro').style.display = ''
 }
 
 async function shProjectDelete(p){
@@ -9018,7 +9088,7 @@ job. Configured via env vars:
       <h3 style="margin-top:0">Vertical Shorts</h3>
       <p>Cuts a long-form programme into stand-alone 9:16 shorts (1080&times;1920 H.264, AAC, &minus;14 LUFS). It is separate from the promo generator and does not change how a plug is built; it shares the same services, job queue and network folders.</p>
       <h3>1. Find moments</h3>
-      <p>Pick a full episode and choose <strong>Preview the cut</strong>. Nothing is rendered in this step. <strong>Generate without preview</strong> runs the same analysis and then renders every moment it found, with the Output settings, as one job; the moments are still listed afterwards so any can be re-timed and rendered again.</p>
+      <p>Open the episode&rsquo;s project (see <em>Projects</em> below), go to <strong>Create shorts</strong>, pick the full episode and choose <strong>Preview the cut</strong>. Nothing is rendered in this step. <strong>Generate without preview</strong> runs the same analysis and then renders every moment it found, with the Output settings, as one job; the moments are still listed afterwards so any can be re-timed and rendered again.</p>
       <p><strong>What should these shorts feature</strong> is a preference: matching moments are favoured, but a weak one is not picked just for matching. <strong>What should these shorts avoid</strong> is a rule: a moment mainly about it, or showing it, is left out however strong. Both are judged by the story model from the dialogue and the visual notes, so neither applies when a fallback had to be used (a warning says so).</p>
       <ul style="line-height:1.8;padding-left:20px">
         <li><strong>How it looks.</strong> A bounded number of frames, spread across the whole video, are rated 1&ndash;5 by the AI Vision model for visible drama.</li>
@@ -9035,11 +9105,11 @@ job. Configured via env vars:
         <li><strong>Always crop</strong> fills the screen on every shot and commits to one side of a wide two-shot. <strong>Fit</strong> always shows the whole picture.</li>
         <li><strong>Follow the speaker</strong> (off unless ticked) changes only those wide two-shots: it cuts between close framings of whoever is talking, holding each for at least a second or so and changing just before the next line. It decides from how much each mouth moves while the transcript says words are being spoken. Where it cannot tell &mdash; nobody speaking, a face turned away, two mouths moving alike &mdash; the shot is reframed exactly as it would be with the option off. With <strong>Split screen</strong> it works the other way round: the screen is split while both people talk, and a shot where only one of them talks is framed on that one.</li>
         <li><strong>Captions</strong> are burned in from the transcript a few words at a time, and an <code>.srt</code> is saved next to each MP4.</li>
-        <li><strong>Ending</strong> is how every short in the render finishes. <em>Cut on the last frame</em> stops where the moment stops. <em>Freeze, drain the colour, fade out in silence</em> holds the moment&rsquo;s last frame: over 0.8 s its colour drains to near black-and-white while the sound falls away to nothing, it sits like that in complete silence for 0.8 s, then fades to black over 1.6 s. That adds 3.2 s to each short. No caption is drawn over the held frame, and the silence is true digital silence, added after the loudness levelling.</li>
+        <li><strong>Ending</strong> is how every short in the render finishes. <em>Cut on the last frame</em> stops where the moment stops. <em>Cliffhanger</em> stops the action dead on the moment&rsquo;s last beat and holds it for 2 seconds while the picture pushes in by 3%, takes on a cooler, higher-contrast grade and darkens slightly at the corners; then it cuts straight to black. The sound is cut off with the action, so the hold and the black are silent. That adds about 2.3 s to each short, and no caption is drawn over the hold. The held picture is not a single still when it can help it: if the last moments of the shot are already nearly motionless (someone standing in a close-up), the last few frames &mdash; up to 0.16 s &mdash; are played forwards and back in extreme slow motion, which keeps the breathing, hair and cloth barely alive while the pose and expression stay locked. If anything is really moving in those frames (a gesture, a camera move), or the shot is cut just before the end, it holds one frame instead, because looping real movement would show as a wobble. Nothing is generated: every held frame comes from the footage.</li>
       </ul>
       <p>Batches are kept in their <strong>project</strong> until deleted: play, download one or all (.zip), or send to a video network destination.</p>
       <h3>Projects</h3>
-      <p>Shorts are filed by project: the episode they are cut from. A project records the <strong>programme title</strong>, <strong>episode</strong>, <strong>air date</strong>, a <strong>description</strong> and a <strong>thumbnail</strong> (JPEG, PNG or WebP up to 8 MB; until one is given the project shows a frame of its newest short). Create it under <strong>Projects</strong> first; <strong>Create shorts</strong> will not start without one chosen, so nothing is saved loose. Opening a project shows its details and every batch rendered for it, with <strong>Create shorts for this project</strong> to add more.</p>
+      <p>Shorts are filed by project: the episode they are cut from. A project records the <strong>programme title</strong>, <strong>episode</strong>, <strong>air date</strong>, a <strong>description</strong> and a <strong>thumbnail</strong> (JPEG, PNG or WebP up to 8 MB; until one is given the project shows a frame of its newest short). A project is the only way in: choose <strong>New project</strong>, or open one, and its page has two views &mdash; <strong>Shorts in this project</strong>, every batch rendered for it, and <strong>Create shorts</strong>, the form that makes more. There is no way to start a job outside a project, so nothing is saved loose. A new project opens on <strong>Create shorts</strong>. The form holds one job or one cut under review at a time and it belongs to the project it was started in: open another project meanwhile and its <strong>Create shorts</strong> view says so, with a way back, and &mdash; once nothing is running &mdash; a way to drop that cut and start one there.</p>
       <p>Everyone with access to Vertical Shorts sees every project and can play, download and send what is in it. Deleting a batch, or moving it to another project, is for whoever rendered it and admins. A project can be deleted by whoever created it or an admin, and only once it is empty: deleting a project never deletes shorts. Shorts rendered before projects existed are listed under <strong>Not in a project</strong> for their maker, with <strong>Move to</strong> to file them.</p>
       <h3>Limits worth knowing</h3>
       <ul style="line-height:1.8;padding-left:20px">

@@ -596,39 +596,133 @@ def test_the_frame_rate_is_stated_so_newer_ffmpeg_does_not_assume_25():
     assert cmd[cmd.index('-r') + 1] == '30000/1001' and cmd.index('-r') > cmd.index('-i'), 'an output option'
 
 
-def test_the_freeze_ending_is_built_in_frames_and_in_the_right_order():
-    assert sc.ending_frames(25.0) == (20, 20, 40) and sc.ending_frames(30000 / 1001.0) == (24, 24, 48)
-    before, after = sc.ending_filters(250, 25.0)
-    assert before == 'trim=end_frame=250,tpad=stop_mode=clone:stop=80,'
-    assert after == ("hue=s='max(0.12,1-0.8800*(n-249)/20)':enable='gte(n,250)',"
-                     "fade=t=out:start_frame=290:nb_frames=40,")
+def test_the_cliffhanger_ending_is_counted_in_frames():
+    """(loop, hold, black): a 2-second hold made from at most the last 0.16 s
+    of the clip, then 0.4 s of black. The frames the hold is made from are
+    taken OFF the end of the clip, so the short grows by hold + black - loop."""
+    assert sc.cliffhanger_plan(250, 25.0) == (4, 50, 10)
+    assert sc.cliffhanger_plan(250, 30000 / 1001.0) == (5, 60, 12)
+    assert sc.cliffhanger_plan(250, 60000 / 1001.0) == (10, 120, 24)
+    assert sc.cliffhanger_extra(250, 25.0) == 56 and sc.cliffhanger_extra(250, 30000 / 1001.0) == 67
+    # No further back than the last cut, or than the picture is still: one frame is a true freeze.
+    assert sc.cliffhanger_plan(250, 25.0, room=2) == (2, 50, 10) and sc.cliffhanger_plan(250, 25.0, room=1) == (1, 50, 10)
+    assert sc.cliffhanger_plan(250, 25.0, room=400) == (4, 50, 10), 'room to spare changes nothing'
+    assert sc.cliffhanger_extra(250, 25.0, room=1) == 59
+    assert sc.cliffhanger_plan(3, 25.0) == (2, 50, 10), 'a clip always keeps a frame of its own'
+    assert 0.02 <= sc.CLIFFHANGER['zoom'] <= 0.04 and abs(sc.CLIFFHANGER['hold'] - 2.0) < 0.26, 'as asked for'
+
+
+def test_the_cliffhanger_ending_is_built_in_the_right_order():
+    g = sc.cliffhanger_graph(250, 25.0, None, ass_name='c.ass')
+    assert g == (
+        "split=2[em][et];"
+        "[em]trim=end_frame=246,setpts=PTS-STARTPTS,ass=c.ass,format=yuv420p,setsar=1[ea];"
+        "[et]trim=start_frame=246:end_frame=250,setpts=PTS-STARTPTS,split=2[ef][eq];"
+        "[eq]reverse[er];[ef][er]concat=n=2:v=1:a=0,"
+        "setpts=N*6.250000/(25)/TB,"
+        "framerate=fps=25:interp_start=0:interp_end=255:scene=100,"
+        "tpad=stop_mode=clone:stop=60,trim=end_frame=60,setpts=PTS-STARTPTS,"
+        "scale=2160:3840:flags=bicubic,"
+        "zoompan=z='1+0.03*on/49':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps=25,"
+        f"{sc.CLIFFHANGER_GRADE},"
+        "drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill:enable='gte(n,50)',format=yuv420p,setsar=1[eb];"
+        "[ea][eb]concat=n=2:v=1:a=0,")
+    # The look: more contrast, less colour, a split tone, darker corners -- and nothing else.
+    assert [f.split('=')[0] for f in sc.CLIFFHANGER_GRADE.split(',')] == ['eq', 'colorbalance', 'vignette']
+    # Captions go on the action only: before the join, never on the hold's branch.
+    assert g.count('ass=') == 1 and g.index('ass=c.ass') < g.index('[ea];')
+    assert 'ass=' not in sc.cliffhanger_graph(250, 25.0, None)
+    # The push-in and the grade are on the hold's branch only; black is painted on last.
+    hold = g[g.index('[et]'):g.index('[eb];')]
+    assert hold.index('framerate=') < hold.index('tpad=') < hold.index('zoompan=') < hold.index('eq=') \
+        < hold.index('vignette=') < hold.index('drawbox=')
+    assert 'minterpolate' not in g, 'frames are blended, not invented: motion estimation bends faces'
+    # A true freeze: one frame, held.
+    one = sc.cliffhanger_graph(250, 30000 / 1001.0, 1)
+    assert 'trim=end_frame=249,' in one and 'trim=start_frame=249:end_frame=250,' in one
+    assert 'setpts=N*30.000000/(30000/1001)/TB' in one and "enable='gte(n,60)'" in one and 'stop=72,' in one
+
     info = {'width': 1920, 'height': 1080, 'disp_w': 1920, 'disp_h': 1080, 'sar': 1.0, 'sd_matrix': False,
             'fps': 25.0, 'audio_index': 1, 'tag_709': True, 'v_offset': 0.0}
     segs = [{'a': 0, 'b': 249, 'layout': 'crop', 'x': 656.0, 'keys': None}]
     plain = sc.build_filtergraph(info, segs, ass_name='c.ass')
-    g = sc.build_filtergraph(info, segs, ass_name='c.ass', ending=250)
+    full = sc.build_filtergraph(info, segs, ass_name='c.ass', ending=(250, None))
     assert plain.endswith('[v1]setpts=PTS-STARTPTS,ass=c.ass,format=yuv420p,setsar=1[vout]'), 'unchanged without it'
-    assert g.endswith(f'[v1]{before}setpts=PTS-STARTPTS,{after}ass=c.ass,format=yuv420p,setsar=1[vout]')
-    # The frame is held BEFORE the timestamps are reset (tpad needs the frame
-    # rate, which the reset takes away), and captions come after the ending
-    # so none is frozen onto the held frame.
-    assert g.index('tpad=') < g.index('setpts=') < g.index('hue=') < g.index('fade=t=out') < g.index('ass=')
+    assert full.endswith(f'[v1]{g}setpts=PTS-STARTPTS,format=yuv420p,setsar=1[vout]')
+    assert full[:full.index('[v1]split=2')] == plain[:plain.index('[v1]setpts')], 'the reframing itself is the same'
+    assert sc.build_filtergraph(info, segs, ending=(250, 1)).count('trim=end_frame=249,') == 1
 
+
+def test_the_cliffhanger_ending_stops_the_sound_with_the_picture():
+    info = {'width': 1920, 'height': 1080, 'disp_w': 1920, 'disp_h': 1080, 'sar': 1.0, 'sd_matrix': False,
+            'fps': 25.0, 'audio_index': 1, 'tag_709': True, 'v_offset': 0.0}
+    segs = [{'a': 0, 'b': 249, 'layout': 'crop', 'x': 656.0, 'keys': None}]
     cmd = sc.build_render_cmd('ffmpeg', '/in.mp4', '/out.mp4', 0, 250, info, segs, ending=True)
-    assert cmd[cmd.index('-frames:v') + 1] == '330' and abs(float(cmd[cmd.index('-t') + 1]) - 13.2) < 1e-6
+    assert cmd[cmd.index('-frames:v') + 1] == '306' and abs(float(cmd[cmd.index('-t') + 1]) - 12.24) < 1e-6
     af = cmd[cmd.index('-af') + 1]
-    assert af == ('afade=t=in:st=0:d=0.04,atrim=end=10.800,afade=t=out:st=10.000:d=0.800:curve=cub,'
-                  'loudnorm=I=-14.0:TP=-1.5:LRA=11,apad=whole_dur=13.200')
+    assert af == ('afade=t=in:st=0:d=0.04,atrim=end=10.040,afade=t=out:st=9.840:d=0.200:curve=cub,'
+                  'loudnorm=I=-14.0:TP=-1.5:LRA=11,apad=whole_dur=12.240')
     assert af.index('loudnorm') < af.index('apad'), 'silence added after levelling stays silence'
+    # With one frame to hold, the action runs a few frames longer, and so does the sound.
+    cmd = sc.build_render_cmd('ffmpeg', '/in.mp4', '/out.mp4', 0, 250, info, segs, ending=True, ending_room=1)
+    assert cmd[cmd.index('-frames:v') + 1] == '309' and 'afade=t=out:st=9.960:d=0.200' in cmd[cmd.index('-af') + 1]
+    assert 'trim=end_frame=249,' in cmd[cmd.index('-filter_complex') + 1]
     # Audio taken from chosen channels gets the same ending, inside the graph.
     cmd = sc.build_render_cmd('ffmpeg', '/in.mp4', '/out.mp4', 0, 250, dict(info, audio_take=[[2, 0], [3, 0]]), segs,
                               ending=True)
     graph = cmd[cmd.index('-filter_complex') + 1]
-    assert 'curve=cub' in graph and 'apad=whole_dur=13.200[aout]' in graph and '-af' not in cmd
-    # Without it, nothing about the command changes but the stated frame rate.
+    assert 'curve=cub' in graph and 'apad=whole_dur=12.240[aout]' in graph and '-af' not in cmd
+    # Without it, nothing about the command changes.
     cmd = sc.build_render_cmd('ffmpeg', '/in.mp4', '/out.mp4', 0, 250, info, segs)
     assert cmd[cmd.index('-frames:v') + 1] == '250' and 'apad' not in cmd[cmd.index('-af') + 1]
     assert 'afade=t=out:st=9.880:d=0.12' in cmd[cmd.index('-af') + 1]
+    assert 'zoompan' not in cmd[cmd.index('-filter_complex') + 1]
+
+
+def _clip(path, frames, fps=25.0):
+    h, w = frames[0].shape[:2]
+    out = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*'MJPG'), fps, (w, h))
+    assert out.isOpened()
+    for f in frames:
+        out.write(f)
+    out.release()
+    return str(path)
+
+
+def test_the_hold_is_made_only_from_frames_in_which_nothing_is_really_moving(tmp_path):
+    """Looping the last few frames slowly back and forth is a held breath
+    when they are nearly the same picture, and a slow sway when they are
+    not. So how far back the loop reaches is measured, per short."""
+    x = np.arange(640)
+    scene = np.repeat((110 + 70 * np.sin(x / 23.0) + 30 * np.sin(x / 5.0))[None, :, None], 360, axis=0)
+    scene = np.repeat(scene, 3, axis=2).astype(np.uint8)                          # a room with things in it
+
+    def frame(shift=0, breath=0.0, hand=None):
+        f = np.roll(scene, shift, axis=1).copy()
+        cv2.circle(f, (320, 180), 70, (150, 170, 210), -1)                       # a face that stays put
+        cv2.ellipse(f, (320, 300), (110, int(round(40 + breath))), 0, 0, 360, (90, 60, 50), -1)    # shoulders that breathe
+        if hand is not None:
+            cv2.rectangle(f, (560, 300 - hand), (610, 350 - hand), (200, 215, 235), -1)
+        return f
+
+    calm = _clip(tmp_path / 'calm.avi', [frame(breath=1.5 * np.sin(i / 6.0)) for i in range(40)])
+    assert sc.still_frames(calm, 39, 25.0) == 4, 'a breath is not movement: the whole 0.16 s'
+    assert sc.still_frames(calm, 39, 25.0, room=2) == 2, 'never further back than the last cut'
+    assert sc.still_frames(calm, 39, 25.0, room=1) == 1 and sc.still_frames(calm, 0, 25.0) == 1
+    assert sc.still_frames(calm, 39, 60000 / 1001.0) == 10, 'the same 0.16 s at 59.94'
+
+    busy = _clip(tmp_path / 'busy.avi', [frame(shift=12 * i) for i in range(40)])
+    assert sc.still_frames(busy, 39, 25.0) == 1, 'a moving camera: one frame, a true freeze'
+
+    # One hand coming up at the edge of an otherwise motionless frame: under
+    # 1% of the picture, and the very thing that would be seen swaying.
+    hand = _clip(tmp_path / 'hand.avi', [frame(hand=6 * i) for i in range(40)])
+    assert sc.still_frames(hand, 39, 25.0) == 1
+
+    # Movement that stops just before the end: only the frames since it stopped.
+    settle = _clip(tmp_path / 'settle.avi', [frame(hand=6 * min(i, 37)) for i in range(40)])
+    assert sc.still_frames(settle, 39, 25.0) == 3
+    assert sc.still_frames(str(tmp_path / 'missing.avi'), 39, 25.0) == 1, 'unreadable is not an error here'
 
 
 # ---- found in review ----

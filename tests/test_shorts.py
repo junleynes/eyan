@@ -15,6 +15,7 @@ vertical drama shorts, rather than changing the promo generator.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -927,64 +928,217 @@ def test_render_validates_every_item(env, monkeypatch):
         'on when asked; never with Fit (nothing is cropped); junk is not a yes; default from the server; off wins'
 
 
-def test_the_freeze_ending_holds_the_last_frame_drains_it_and_fades_out_in_silence(env, monkeypatch):
+def _planes(path, k, w=1080, h=1920):
+    """Frame `k` as the planes the file holds -- brightness, and how far the
+    two colour planes are from grey -- not through an RGB conversion, which
+    turns a change of colour into an apparent change of brightness."""
+    raw = subprocess.run(['ffmpeg', '-v', 'error', '-i', str(path), '-vf', f"select='eq(n,{k})'", '-frames:v', '1',
+                          '-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-'], capture_output=True, timeout=120).stdout
+    size = w * h
+    y = np.frombuffer(raw[:size], np.uint8).astype(int).reshape(h, w)
+    colour = float(np.abs(np.frombuffer(raw[size:size + size // 2], np.uint8).astype(int) - 128).mean())
+    return y, colour
+
+
+def _sound(path):
+    import wave
+    wav = str(path) + '.wav'
+    subprocess.run(FF + ['-i', str(path), '-vn', '-ac', '1', '-ar', '8000', '-c:a', 'pcm_s16le', wav],
+                   check=True, timeout=60)
+    w = wave.open(wav)
+    x = np.frombuffer(w.readframes(w.getnframes()), dtype='<i2').astype(float) / 32768.0
+    w.close()
+    os.remove(wav)
+    return x
+
+
+def test_the_cliffhanger_ending_stops_dead_holds_and_cuts_to_black(env, monkeypatch):
     Services(monkeypatch)
     client, headers = _client()
     a = _analysis(client, _analyze(client, headers, env))
+    # 2.0-6.0 s: a second of the first shot, then all three of the second. A
+    # line of dialogue (5.0-6.6 s) is still being spoken when it ends.
     item = [{'start': 2.0, 'end': 6.0, 'title': 'Moment'}]
-    plain = _render(client, headers, a['analysis_id'], item, reframe='fit', subtitles=False)['result']['batch']
+    plain = _render(client, headers, a['analysis_id'], item, reframe='fit', subtitles=True)['result']['batch']
     ended = _render(client, headers, a['analysis_id'], item, reframe='fit', subtitles=True,
-                    ending='freeze')['result']['batch']
-    assert plain['options']['ending'] == 'none' and ended['options']['ending'] == 'freeze'
-    assert client.get('/api/shorts/options').get_json()['ending_seconds'] == 3.2
+                    ending='cliffhanger')['result']['batch']
+    old = _render(client, headers, a['analysis_id'], item, reframe='fit', subtitles=False,
+                  ending='freeze')['result']['batch']
+    assert plain['options']['ending'] == 'none' and ended['options']['ending'] == 'cliffhanger'
+    assert old['options']['ending'] == 'none', 'an ending this version does not have is no ending'
+    assert client.get('/api/shorts/options').get_json()['ending_seconds'] == 2.2
     p, e = plain['shorts'][0], ended['shorts'][0]
-    assert abs(p['duration'] - 4.0) < 0.05 and abs(e['duration'] - 7.2) < 0.05
-
-    fr_p = _frames(os.path.join(shorts.SHORTS_DIR, plain['batch_id'], p['file']))
-    fr = _frames(os.path.join(shorts.SHORTS_DIR, ended['batch_id'], e['file']))
-    assert len(fr_p) == 100 and len(fr) == 180, '100 frames of the moment, then 20 + 20 + 40 of ending'
-
-    # Read as the planes the file holds -- brightness, and the two colour
-    # planes -- rather than through an RGB conversion, which would turn the
-    # removal of colour into an apparent change of brightness.
-    def planes(path, k):
-        raw = subprocess.run(['ffmpeg', '-v', 'error', '-i', path, '-vf', f"select='eq(n,{k})'", '-frames:v', '1',
-                              '-f', 'rawvideo', '-pix_fmt', 'yuv420p', '-'], capture_output=True, timeout=120).stdout
-        size = 1080 * 1920
-        y = np.frombuffer(raw[:size], np.uint8).astype(int)
-        colour = float(np.abs(np.frombuffer(raw[size:size + size // 2], np.uint8).astype(int) - 128).mean())
-        return y, colour
+    assert abs(p['duration'] - 4.0) < 0.05 and abs(e['duration'] - 6.24) < 0.05
+    plain_path = os.path.join(shorts.SHORTS_DIR, plain['batch_id'], p['file'])
     end_path = os.path.join(shorts.SHORTS_DIR, ended['batch_id'], e['file'])
-    last_y, last_c = planes(end_path, 99)
-    held_y, held_c = planes(end_path, 125)                # after the 20-frame drain, before the fade
-    assert last_c > 8, 'the moment itself keeps its colour'
-    assert float(np.abs(held_y - last_y).mean()) < 1.5, 'the same picture, held, no darker and no brighter'
-    assert held_c < 0.2 * last_c, 'with most of its colour gone'
-    assert last_c > planes(end_path, 106)[1] > planes(end_path, 114)[1] > held_c, 'draining, not switching'
-    assert float(planes(end_path, 160)[0].mean()) < float(held_y.mean()) - 2 and float(fr[179].mean()) < 6, \
-        'then down to black'
-    # No caption over the held frame: its brightness plane is the uncaptioned render's last frame.
-    plain_last = planes(os.path.join(shorts.SHORTS_DIR, plain['batch_id'], p['file']), 99)[0]
-    assert float(np.abs(planes(end_path, 104)[0] - plain_last).mean()) < 1.5
+    fr_p, fr = _frames(plain_path), _frames(end_path)
+    # The shot is motionless, so the hold is made from its last 4 frames:
+    # 96 of the moment, 50 of hold, 10 of black.
+    assert len(fr_p) == 100 and len(fr) == 156
 
-    def sound(path):
-        wav = path + '.wav'
-        subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', path, '-vn', '-ac', '1', '-ar', '8000',
-                        '-c:a', 'pcm_s16le', wav], check=True, timeout=60)
-        import wave
-        w = wave.open(wav)
-        x = np.frombuffer(w.readframes(w.getnframes()), dtype='<i2').astype(float) / 32768.0
-        os.remove(wav)
-        return x
-    x = sound(os.path.join(shorts.SHORTS_DIR, ended['batch_id'], e['file']))
-    assert abs(len(x) / 8000.0 - 7.2) < 0.15, 'the sound runs the whole length'
+    def caption(frame):                                   # white lettering on a blue picture
+        return int((frame.min(axis=2) > 200).sum())
 
-    def level(a, b):
-        seg = x[int(a * 8000):int(b * 8000)]
+    # Up to the frame it stops on, the short is the short: same picture, same caption.
+    assert float(np.abs(fr[95].astype(int) - fr_p[95].astype(int)).mean()) < 2.0
+    assert caption(fr_p[95]) > 500 and caption(fr[95]) > 500, 'a line is on screen as it stops'
+    # Then, on the very next frame, the look -- and the caption gone with the action.
+    live_y, live_c = _planes(end_path, 95)
+    hold_y, hold_c = _planes(end_path, 96)
+    assert caption(fr[96]) == 0 and all(caption(fr[k]) == 0 for k in range(96, 156, 7))
+    assert hold_c < 0.92 * live_c, 'colour pulled back at once, not eased in'
+    late_y, late_c = _planes(end_path, 145)
+    assert abs(late_c - hold_c) < 1.0, 'and the same look to the end of the hold'
+    # A cut to black, not a fade: the last frame of the hold is as bright as
+    # the one a second before it, and the next is black.
+    assert abs(float(late_y.mean()) - float(_planes(end_path, 120)[0].mean())) < 1.5
+    assert float(late_y[860:1060].mean()) > 25 and all(float(fr[k].mean()) < 4 for k in range(146, 156))
+
+    x = _sound(end_path)
+    assert abs(len(x) / 8000.0 - 6.24) < 0.15, 'the sound track runs the whole length'
+
+    def level(t0, t1):
+        seg = x[int(t0 * 8000):int(t1 * 8000)]
         return 20 * np.log10(max(1e-9, float(np.sqrt(np.mean(seg ** 2)))))
-    assert level(1.0, 3.5) > -40, 'the moment is heard'
-    assert level(4.0, 4.3) > level(4.5, 4.8) and level(4.5, 4.8) < level(1.0, 3.5) - 15, 'it falls away under the held frame'
-    assert float(np.abs(x[int(5.0 * 8000):]).max()) == 0.0, 'and after that there is nothing at all'
+    assert level(1.0, 3.7) > -40, 'the moment is heard right up to the stop (3.84 s)'
+    assert level(3.95, 4.05) < level(1.0, 3.7) - 20, 'and is all but gone a tenth of a second after it'
+    assert float(np.abs(x[int(4.2 * 8000):]).max()) == 0.0, 'then nothing at all, through the hold and the black'
+
+
+def _source(path, frames, fps='25'):
+    """Frames given as arrays, encoded nearly losslessly, with a tone."""
+    h, w = frames[0].shape[:2]
+    proc = subprocess.Popen(FF + ['-f', 'rawvideo', '-pix_fmt', 'bgr24', '-s', f'{w}x{h}', '-r', fps, '-i', '-',
+                                  '-f', 'lavfi', '-i', 'sine=frequency=300:sample_rate=48000', '-shortest',
+                                  '-c:v', 'libx264', '-crf', '6', '-pix_fmt', 'yuv420p', '-c:a', 'aac', str(path)],
+                            stdin=subprocess.PIPE)
+    proc.communicate(b''.join(f.tobytes() for f in frames))
+    assert proc.returncode == 0
+    return str(path)
+
+
+def test_the_cliffhanger_hold_pushes_in_and_keeps_what_was_barely_moving_alive(tmp_path):
+    """The pose is locked; what was only just moving at the end -- here, a
+    patch brightening by one grey level a frame, standing in for a breath --
+    goes on moving, out and back, very slowly. Something really moving in
+    those frames gets a single held frame instead."""
+    def frame(i, pan=0):
+        f = np.full((360, 640, 3), 40, np.uint8)
+        for cx in (160 + pan, 480 + pan):                 # two marks 320 apart: a ruler
+            cv2.rectangle(f, (cx - 12, 60), (cx + 12, 84), (235, 235, 235), -1)
+        cv2.rectangle(f, (290, 150), (350, 210), (100 + max(0, i - 96),) * 3, -1)     # still, then 101, 102, 103
+        return f
+
+    def spread(frame_bgr):                                # distance between the two marks, in output pixels
+        cols = np.where((frame_bgr[..., 1] > 0.7 * frame_bgr[..., 1].max()).any(axis=0))[0]
+        left, right = cols[cols < 540], cols[cols >= 540]
+        return float(right.mean() - left.mean())
+
+    def patch(path, k):
+        return float(_planes(path, k)[0][930:990, 510:570].mean())
+
+    calm = _source(tmp_path / 'calm.mp4', [frame(i) for i in range(100)])
+    info = sc.probe_source('ffprobe', calm)
+    segs = [{'a': 0, 'b': 99, 'layout': 'fit', 'x': None, 'keys': None}]
+    room = sc.still_frames(calm, 99, info['fps'], 100)
+    assert room == 4
+    out = str(tmp_path / 'calm_out.mp4')
+    ok, err = sc.render_short('ffmpeg', calm, out, 0, 100, info, segs, work_dir=str(tmp_path), crf=14,
+                              preset='veryfast', ending=True, ending_room=room)
+    assert ok, err
+    fr = _frames(out)
+    assert len(fr) == 156
+    # A slow push in: 3% over the hold, a little at a time, and none before it.
+    assert abs(spread(fr[90]) - 540.0) < 1.0 and abs(spread(fr[95]) - 540.0) < 1.0
+    assert abs(spread(fr[96]) - 540.0) < 1.5, 'starting from where the action stopped'
+    ratio = [spread(fr[k]) / 540.0 for k in (96, 108, 120, 132, 145)]
+    assert ratio == sorted(ratio) and abs(ratio[-1] - 1.03) < 0.004, ratio
+    assert 0.02 <= ratio[-1] - 1 <= 0.04 and max(b - a for a, b in zip(ratio, ratio[1:])) < 0.012, 'no jump'
+    # The breath: forwards to the last frame of the action by the middle of the hold, and back again.
+    start, middle, end = patch(out, 96), patch(out, 119), patch(out, 145)
+    assert middle > start + 1.5 and middle > end + 1.5 and abs(start - end) < 0.8, (start, middle, end)
+    steps = [patch(out, k) for k in range(96, 121, 4)]
+    assert all(b >= a - 0.3 for a, b in zip(steps, steps[1:])), ('blended across, not stepped back and forth', steps)
+
+    # The same clip with the camera panning through its last frames: one frame, held.
+    busy = _source(tmp_path / 'busy.mp4', [frame(i, pan=3 * max(0, i - 90)) for i in range(100)])
+    room = sc.still_frames(busy, 99, info['fps'], 100)
+    assert room == 1
+    out = str(tmp_path / 'busy_out.mp4')
+    ok, err = sc.render_short('ffmpeg', busy, out, 0, 100, info, segs, work_dir=str(tmp_path), crf=14,
+                              preset='veryfast', ending=True, ending_room=room)
+    assert ok, err
+    fr = _frames(out)
+    assert len(fr) == 159, '99 of the action, 50 of hold, 10 of black'
+    assert abs(patch(out, 99) - patch(out, 123)) < 0.5 and abs(patch(out, 99) - patch(out, 148)) < 0.5, 'locked'
+    left = [float(np.where((fr[k][..., 1] > 0.7 * fr[k][..., 1].max()).any(axis=0))[0].min()) for k in (97, 98)]
+    assert left[1] - left[0] > 3.0, 'still panning on the last frame of the action'
+    assert abs(spread(fr[148]) / spread(fr[99]) - 1.03) < 0.004 and all(float(fr[k].mean()) < 4 for k in range(149, 159))
+
+
+def test_the_cliffhanger_look_is_a_grade_and_a_light_vignette_not_a_blackout(tmp_path):
+    """On a plain mid-grey picture with a patch of colour, where each part
+    of the look can be read off on its own."""
+    def frame():
+        f = np.full((360, 640, 3), 150, np.uint8)
+        cv2.rectangle(f, (290, 150), (350, 210), (60, 90, 200), -1)       # warm, saturated, in the centre crop
+        cv2.rectangle(f, (270, 110), (370, 140), (225, 225, 225), -1)     # a neutral highlight above it
+        cv2.rectangle(f, (270, 220), (370, 250), (45, 45, 45), -1)        # and a neutral shadow below
+        return f
+    src = _source(tmp_path / 'flat.mp4', [frame() for _ in range(30)])
+    info = sc.probe_source('ffprobe', src)
+    crop_w, _ = sc.crop_geometry(info['disp_w'], info['disp_h'])
+    segs = [{'a': 0, 'b': 29, 'layout': 'crop', 'x': (640 - crop_w) / 2.0, 'keys': None}]
+    out = str(tmp_path / 'flat_out.mp4')
+    ok, err = sc.render_short('ffmpeg', src, out, 0, 30, info, segs, work_dir=str(tmp_path), crf=14,
+                              preset='veryfast', ending=True, ending_room=sc.still_frames(src, 29, info['fps'], 30))
+    assert ok, err
+    assert len(_frames(out)) == 26 + 50 + 10
+    (live_y, _), (hold_y, _) = _planes(out, 25), _planes(out, 30)
+
+    def mean(y, rows, cols):
+        return float(y[rows[0]:rows[1], cols[0]:cols[1]].mean())
+    # Grey right beside the patch: the middle of the picture.
+    grey_live, grey_hold = mean(live_y, (900, 1020), (180, 330)), mean(hold_y, (900, 1020), (180, 330))
+    assert abs(grey_live - 150 * 219 / 255.0 - 16) < 4, 'the action is untouched'
+    assert abs(grey_hold - grey_live) < 14, 'the middle of the picture keeps its brightness, near enough'
+    corners_live = np.mean([mean(live_y, r, c) for r in ((0, 120), (1800, 1920)) for c in ((0, 120), (960, 1080))])
+    corners_hold = np.mean([mean(hold_y, r, c) for r in ((0, 120), (1800, 1920)) for c in ((0, 120), (960, 1080))])
+    assert abs(corners_live - grey_live) < 2, 'no vignette on the action'
+    assert 0.72 < corners_hold / grey_hold < 0.95, ('darker at the corners, and only a little', corners_hold, grey_hold)
+    halfway = mean(hold_y, (300, 500), (440, 640))
+    assert corners_hold + 3 < halfway < grey_hold + 1, ('falling away gradually from the middle', halfway)
+
+    # The grade's split tone, read as blue against red on the two neutral
+    # bands, before and after (the difference of the two, so the decoder's
+    # own cast cancels). That colour is pulled back is measured on the
+    # rendered short above, where the picture is one colour.
+    fr = _frames(out)
+
+    def rgb(k, rows, cols):
+        b, g, r = fr[k][rows[0]:rows[1], cols[0]:cols[1]].reshape(-1, 3).mean(axis=0)
+        return float(r), float(g), float(b)
+    cool = lambda px: px[2] - px[0]
+    dark = cool(rgb(30, (1180, 1300), (300, 780))) - cool(rgb(20, (1180, 1300), (300, 780)))
+    light = cool(rgb(30, (620, 740), (300, 780))) - cool(rgb(20, (620, 740), (300, 780)))
+    assert dark > 4 and light < -4, ('shadows toward blue, highlights toward amber', dark, light)
+
+
+def test_the_place_badge_on_a_short_does_not_share_a_class_with_the_number_boxes(users_db):
+    """It did: the badge that numbers each short was styled as `.sh-num`,
+    the class the length and frame-count boxes already had. They became
+    26 px pills pinned to the corner of the panel that ignored the mouse:
+    the lengths could not be seen or changed."""
+    client, _ = _client()
+    html = client.get('/').get_data(as_text=True)
+    boxes = re.findall(r'<input type=number id=(sh-min|sh-max|sh-frames) class=([\w-]+)', html)
+    assert [b[0] for b in boxes] == ['sh-min', 'sh-max', 'sh-frames']
+    css = html[html.index('<style'):html.index('</style>')]
+    for _, cls in boxes:
+        for selector, body in re.findall(r'([^{}]+)\{([^{}]*)\}', css):
+            if any(sel.strip() in ('.' + cls, 'input.' + cls) for sel in selector.split(',')):
+                assert 'position:absolute' not in body and 'pointer-events:none' not in body, selector
+    assert '<span class="sh-place"' in html and '.sh-place{position:absolute' in css
 
 
 # --------------------------------------------------------------------------

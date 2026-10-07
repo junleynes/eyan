@@ -1554,43 +1554,144 @@ def fitted_crop_x_expr(segs):
     return expr
 
 
-# The optional ending: the last frame of the moment is held, its colour
-# drains away, and the picture then fades slowly to black -- while the sound
-# falls away to nothing during the drain and stays at nothing after it.
-#   dissolve    seconds over which the held frame goes from full colour to
-#               desaturated, and over which the sound fades to silence
-#   hold        seconds the desaturated frame then sits, in silence
-#   fade        seconds of the fade to black that ends the short
-#   saturation  how much colour is left (0 = black and white, 1 = untouched)
-ENDING = {'dissolve': 0.8, 'hold': 0.8, 'fade': 1.6, 'saturation': 0.12}
+# The optional "cliffhanger" ending. On the last beat of the moment the
+# action stops dead: the pose and the expression stay where they are, the
+# picture takes on a graded, vignetted look and creeps in by a few percent,
+# it holds for about two seconds, and it cuts to black.
+#
+# A frozen frame is dead still, and reads as a fault rather than a held
+# breath. So the hold is not one frame: it is the last few frames of the
+# moment -- a sixth of a second of real time -- played forward and back
+# again, stretched across the whole hold with each frame blended into the
+# next. Nothing is invented: what moves is what was moving in the footage
+# (a breath, hair, cloth), slowed about twelve times and returned to where
+# it started, so the pose never goes anywhere.
+#   loop    seconds of real footage the hold is made from
+#   hold    seconds the hold lasts
+#   zoom    how far the picture has crept in by the end of the hold
+#   black   seconds of black after the cut, so the cut is seen and the short
+#           does not simply end on the held picture
+#   sound   seconds over which the sound is taken out when the action stops
+#   still   how different (mean grey level, on a small copy of the picture) a
+#           frame may be from the last one and still be part of the loop
+CLIFFHANGER = {'loop': 0.16, 'hold': 2.0, 'zoom': 0.03, 'black': 0.4, 'sound': 0.2, 'still': 4.0}
+# The look of the hold: contrast up, colour pulled back, shadows toward teal
+# and highlights toward amber, the corners a little darker.
+CLIFFHANGER_GRADE = ('eq=contrast=1.12:saturation=0.82:brightness=0.02,'
+                     'colorbalance=rs=-0.07:bs=0.09:rm=0.02:bm=-0.02:rh=0.08:bh=-0.09,'
+                     'vignette=angle=PI/10')
 
 
-def ending_frames(fps):
-    """(dissolve, hold, fade) of the ending in whole frames at `fps`."""
-    return tuple(max(1, int(round(ENDING[k] * float(fps)))) for k in ('dissolve', 'hold', 'fade'))
+def still_frames(src, last_frame, fps, room=None):
+    """How many of the frames ending at `last_frame` are near enough the
+    same picture to make the cliffhanger hold from: at least 1.
+
+    The hold loops its frames back and forth, slowed about twelve times.
+    That is a held breath when little is moving. When a lot is -- someone
+    turning, a hand coming up, a camera that will not keep still -- the same
+    loop is the pose swaying slowly out and back, which is the opposite of
+    locked. So each earlier frame is compared with the last, on a small
+    grey copy where a breath or a strand of hair barely registers and a
+    change of pose does, and the loop reaches back only as far as they
+    still agree. Where even the frame before is too different, it is one
+    frame: a true freeze, alive only in the creep in.
+
+    The comparison is by region, and it is the regions that changed most
+    that count. Averaged over the whole picture, a hand coming up in one
+    corner of a still frame is a small number -- smaller than the grain of
+    a noisy but motionless one -- and it is exactly what must not be looped
+    (measured: a clip with one moving thing in it averaged 1.6 grey levels
+    a frame, a motionless close-up 0.4, while their most-changed regions
+    differed by 25 and 0.6)."""
+    want = max(1, int(round(CLIFFHANGER['loop'] * float(fps))))
+    want = max(1, min(want, int(room) if room else want, int(last_frame) + 1))
+    if want < 2:
+        return 1
+    cap = cv2.VideoCapture(src)
+    try:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(last_frame) - want + 1)
+        small = []
+        for _ in range(want):
+            ok, frame = cap.read()
+            if not ok:
+                break
+            small.append(cv2.cvtColor(cv2.resize(frame, (160, 90), interpolation=cv2.INTER_AREA),
+                                      cv2.COLOR_BGR2GRAY).astype(np.float32))
+    finally:
+        cap.release()
+    if len(small) < 2:
+        return 1
+    keep = 1
+    for earlier in reversed(small[:-1]):                # walking back from the last frame
+        # 144 regions of 10 x 10; the three that changed most.
+        regions = np.abs(earlier - small[-1]).reshape(9, 10, 16, 10).mean(axis=(1, 3))
+        if float(np.sort(regions, axis=None)[-3:].mean()) > CLIFFHANGER['still']:
+            break
+        keep += 1
+    return keep
 
 
-def ending_filters(n_frames, fps):
-    """The video filters that put the ending on a clip of `n_frames`, as
-    (before, after): what goes before the clip's timestamps are reset to
-    start at zero, and what goes after.
+def cliffhanger_plan(n_frames, fps, room=None):
+    """(loop, hold, black) in whole frames for a clip of `n_frames`.
 
-    Everything is counted in frames, like the rest of the graph. `trim`
-    stops the picture at exactly the last frame of the moment whatever
-    else the file holds after it, and `tpad` repeats that frame for the
-    length of the ending. Those two come BEFORE the reset, because the reset
-    (setpts) marks the stream as having no fixed frame rate, and tpad needs
-    the frame rate to space the frames it adds: after it, newer ffmpeg gives
-    them all one timestamp and the encoder keeps two of the eighty.
-    Afterwards, `hue` takes the colour out of the repeated frames only (it
-    is switched off for the moment itself, which passes untouched) and
-    `fade` takes the last of them to black."""
+    `room` is how many frames ending at the clip's last frame may be used
+    for the loop: no more than the clip's last shot has run for (frames from
+    before a cut are another picture, and blending across one would flash it
+    through the hold), and no more than are still enough (see still_frames).
+    With a single frame of room the hold is a true freeze."""
+    loop = max(1, int(round(CLIFFHANGER['loop'] * float(fps))))
+    loop = max(1, min(loop, int(n_frames) - 1, int(room) if room else loop))
+    return loop, max(2, int(round(CLIFFHANGER['hold'] * float(fps)))), max(1, int(round(CLIFFHANGER['black'] * float(fps))))
+
+
+def cliffhanger_extra(n_frames, fps, room=None):
+    """How many frames longer the short is for its ending."""
+    loop, hold, black = cliffhanger_plan(n_frames, fps, room)
+    return hold + black - loop
+
+
+def cliffhanger_graph(n_frames, fps, room=None, out_w=OUT_W, out_h=OUT_H, ass_name=None):
+    """The filters that put the ending on the finished picture of a clip of
+    `n_frames`: fed the clip, they give the clip up to where the action
+    stops, then the hold, then black.
+
+    Counted in frames throughout. The clip is split in two at the frame the
+    action stops on. The last `loop` frames become the hold: reversed and
+    joined to themselves (forward, then back), re-timed so they span it,
+    and brought back to the clip's frame rate by `framerate`, which blends
+    neighbouring frames in proportion (not motion estimation, which bends
+    faces). `tpad` and `trim` then make it exactly `hold` + `black` frames,
+    and the last `black` of them are painted out at the very end: appending
+    black frames after `zoompan` instead gives them timestamps far in the
+    future, and they are then never written. The creep in is `zoompan` on a
+    picture enlarged first: it positions its window in whole pixels, and at
+    this speed that shows as a shimmer unless a pixel is made smaller than
+    the eye can follow.
+
+    Captions (`ass_name`) are burnt into the first part only. They belong to
+    the action: one still up when it stops goes with it, on the same frame
+    as the sound. Burnt in before the split, it would be held, pushed in on
+    and graded with the picture; after the join, it would sit ungraded over
+    the first frames of the hold and then drop off a moment into it."""
     n = int(n_frames)
-    dissolve, hold, fade = ending_frames(fps)
-    left = ENDING['saturation']
-    return (f"trim=end_frame={n},tpad=stop_mode=clone:stop={dissolve + hold + fade},",
-            f"hue=s='max({left},1-{1 - left:.4f}*(n-{n - 1})/{dissolve})':enable='gte(n,{n})',"
-            f"fade=t=out:start_frame={n + dissolve + hold}:nb_frames={fade},")
+    loop, hold, black = cliffhanger_plan(n, fps, room)
+    rate = frame_rate_arg(fps)
+    spread = hold / float(2 * loop)                    # output frames per frame of the loop
+    zoom = CLIFFHANGER['zoom']
+    caption = f'ass={ass_name},' if ass_name else ''
+    return (f"split=2[em][et];"
+            f"[em]trim=end_frame={n - loop},setpts=PTS-STARTPTS,{caption}format=yuv420p,setsar=1[ea];"
+            f"[et]trim=start_frame={n - loop}:end_frame={n},setpts=PTS-STARTPTS,split=2[ef][eq];"
+            f"[eq]reverse[er];[ef][er]concat=n=2:v=1:a=0,"
+            f"setpts=N*{spread:.6f}/({rate})/TB,"
+            f"framerate=fps={rate}:interp_start=0:interp_end=255:scene=100,"
+            f"tpad=stop_mode=clone:stop={hold + black},trim=end_frame={hold + black},setpts=PTS-STARTPTS,"
+            f"scale={2 * out_w}:{2 * out_h}:flags=bicubic,"
+            f"zoompan=z='1+{zoom}*on/{max(1, hold - 1)}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+            f":d=1:s={out_w}x{out_h}:fps={rate},"
+            f"{CLIFFHANGER_GRADE},"
+            f"drawbox=x=0:y=0:w=iw:h=ih:color=black:t=fill:enable='gte(n,{hold})',format=yuv420p,setsar=1[eb];"
+            f"[ea][eb]concat=n=2:v=1:a=0,")
 
 
 def build_filtergraph(info, segs, out_w=OUT_W, out_h=OUT_H, ass_name=None, ending=None):
@@ -1607,8 +1708,9 @@ def build_filtergraph(info, segs, out_w=OUT_W, out_h=OUT_H, ass_name=None, endin
     don't use it, in exchange for a graph whose size doesn't grow with the
     number of shots and whose switches are frame-exact.
 
-    `ending` is the clip's length in frames when it is to finish on the
-    held, desaturated, fading frame (see ending_filters), or None."""
+    `ending` is (the clip's length in frames, how many frames its last shot
+    has run for by then) when it is to finish on the cliffhanger hold (see
+    cliffhanger_graph), or None."""
     disp_w, disp_h = info['disp_w'], info['disp_h']
     crop_w, crop_h = crop_geometry(disp_w, disp_h, out_w, out_h)
     pre = ['yadif=mode=send_frame:parity=auto:deint=interlaced']
@@ -1674,11 +1776,12 @@ def build_filtergraph(info, segs, out_w=OUT_W, out_h=OUT_H, ass_name=None, endin
             base = out
     # setpts first: frame 0 at time 0 exactly, so captions (timed from the
     # clip start) and the encoder's frame slots both line up with `n`.
-    # The ending goes before the captions: they are timed, so none is drawn
-    # over the held frame, where one burnt in already would have frozen with it.
-    before, after = ending_filters(ending, info['fps']) if ending else ('', '')
-    tail = (before + 'setpts=PTS-STARTPTS,' + after
-            + (f'ass={ass_name},' if ass_name else '') + 'format=yuv420p,setsar=1')
+    # With the ending, the captions go on inside it: see cliffhanger_graph.
+    if ending:
+        tail = (cliffhanger_graph(ending[0], info['fps'], ending[1], out_w, out_h, ass_name)
+                + 'setpts=PTS-STARTPTS,format=yuv420p,setsar=1')
+    else:
+        tail = 'setpts=PTS-STARTPTS,' + (f'ass={ass_name},' if ass_name else '') + 'format=yuv420p,setsar=1'
     return f'{g};[v1]{tail}[vout]'
 
 
@@ -1928,7 +2031,10 @@ def frame_rate_arg(fps):
 
 
 def build_render_cmd(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=None,
-                     crf=18, preset='medium', loudness=-14.0, true_peak=-1.5, ending=False):
+                     crf=18, preset='medium', loudness=-14.0, true_peak=-1.5, ending=False, ending_room=None):
+    """`ending` adds the cliffhanger ending (see cliffhanger_graph);
+    `ending_room` is how many frames the clip's last shot has run for by
+    its last frame, when the caller knows where the cuts are."""
     fps = info['fps']
     dur = n_frames / fps
     # A quarter of a frame early, so accurate seek lands on exactly start_f
@@ -1938,18 +2044,18 @@ def build_render_cmd(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_n
     # encoder then sometimes rounds it up and pads slot 0 with a duplicate
     # (measured -- which also pushes the last frame off the end).
     ss = max(0.0, info.get('v_offset', 0.0) + (start_f - 0.25) / fps)
-    graph = build_filtergraph(info, segs, ass_name=ass_name, ending=n_frames if ending else None)
-    extra = sum(ending_frames(fps)) if ending else 0
+    graph = build_filtergraph(info, segs, ass_name=ass_name, ending=(n_frames, ending_room) if ending else None)
+    extra = cliffhanger_extra(n_frames, fps, ending_room) if ending else 0
     if ending:
-        # The sound does what the picture does. Under the held frame it runs
-        # on for the length of the dissolve, falling away fast (cubic: down
-        # 18 dB by half-way, so a line starting just after the out point is
-        # gone before it is a word) and ending at nothing. Everything after
-        # is padding added AFTER the loudness stage, so it is true digital
-        # silence and not a levelled-up noise floor.
-        drain = ending_frames(fps)[0] / fps
-        polish = (f'afade=t=in:st=0:d=0.04,atrim=end={dur + drain:.3f},'
-                  f'afade=t=out:st={dur:.3f}:d={drain:.3f}:curve=cub,'
+        # The sound stops with the action: taken out over a fifth of a second
+        # from the frame the picture stops on (cubic, so it is all but gone
+        # in half that and there is no click), and nothing after. The nothing
+        # is padding added AFTER the loudness stage, so it is digital silence
+        # and not a levelled-up noise floor.
+        stops = (n_frames - cliffhanger_plan(n_frames, fps, ending_room)[0]) / fps
+        out = CLIFFHANGER['sound']
+        polish = (f'afade=t=in:st=0:d=0.04,atrim=end={stops + out:.3f},'
+                  f'afade=t=out:st={stops:.3f}:d={out:.3f}:curve=cub,'
                   f'loudnorm=I={loudness}:TP={true_peak}:LRA=11,apad=whole_dur={dur + extra / fps:.3f}')
     else:
         fade_out = max(0.0, dur - 0.12)
@@ -2009,7 +2115,8 @@ def ffmpeg_error(stderr, limit=600):
 
 
 def render_short(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=None, work_dir=None,
-                 crf=18, preset='medium', loudness=-14.0, true_peak=-1.5, timeout=900, ending=False):
+                 crf=18, preset='medium', loudness=-14.0, true_peak=-1.5, timeout=900, ending=False,
+                 ending_room=None):
     """Renders one short. Returns (ok, error_text).
 
     Runs ffmpeg with `work_dir` as its working directory and refers to the
@@ -2020,7 +2127,8 @@ def render_short(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=
     # Absolute, because ffmpeg is about to run from a different directory.
     src, out_path = os.path.abspath(src), os.path.abspath(out_path)
     cmd = build_render_cmd(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=ass_name,
-                           crf=crf, preset=preset, loudness=loudness, true_peak=true_peak, ending=ending)
+                           crf=crf, preset=preset, loudness=loudness, true_peak=true_peak, ending=ending,
+                           ending_room=ending_room)
     try:
         r = run_tool(cmd, timeout, cwd=work_dir, label='shorts render')
     except ToolTimeout:
