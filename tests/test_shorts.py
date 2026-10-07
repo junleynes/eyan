@@ -380,6 +380,13 @@ def env(tmp_path, monkeypatch, episode):
     Browse library stages a network file."""
     monkeypatch.setattr(shorts, 'SHORTS_DIR', str(tmp_path / 'shorts'))
     os.makedirs(shorts.SHORTS_DIR)
+    # ...and an isolated projects folder with one project in it, since shorts
+    # cannot be generated without one to file them under.
+    monkeypatch.setattr(shorts, 'SHORTS_PROJECTS_DIR', str(tmp_path / 'projects'))
+    os.makedirs(shorts.SHORTS_PROJECTS_DIR)
+    project = shorts.sp.create(shorts.SHORTS_PROJECTS_DIR, {'title': 'Tadhana', 'episode': 'Ep. 101',
+                                                            'air_date': None, 'description': ''},
+                               user_id=7, username='ana')
     monkeypatch.setattr(shorts, 'ANALYSES', {})
     monkeypatch.setattr(shorts, '_spawn', lambda fn, *a, **k: fn(*a, **k))
     monkeypatch.setattr(shorts, '_job_submit_limiter', core._RateLimiter(1000, 300))
@@ -387,7 +394,8 @@ def env(tmp_path, monkeypatch, episode):
     monkeypatch.setattr(pipeline, 'ALLOW_LOCAL_MEDIA_UPLOAD', False)
     staged = f'net_{int(time.time())}_episode.mp4'
     shutil.copy(str(episode), os.path.join(main.app.config['UPLOAD_FOLDER'], staged))
-    yield {'staged': staged, 'path': os.path.join(main.app.config['UPLOAD_FOLDER'], staged)}
+    yield {'staged': staged, 'path': os.path.join(main.app.config['UPLOAD_FOLDER'], staged),
+           'project': project['project_id']}
     try:
         os.remove(os.path.join(main.app.config['UPLOAD_FOLDER'], staged))
     except OSError:
@@ -436,7 +444,8 @@ class Services:
 
 
 def _analyze(client, headers, env, **form):
-    data = {'shorts_file_network': env['staged'], 'min_dur': 5, 'max_dur': 12, 'count': 5}
+    data = {'shorts_file_network': env['staged'], 'min_dur': 5, 'max_dur': 12, 'count': 5,
+            'project_id': env['project']}
     data.update(form)
     r = client.post('/api/shorts/analyze', data=data, headers=headers)
     assert r.status_code == 200, r.get_json()
@@ -501,26 +510,32 @@ def test_analyze_rejects_bad_requests_before_starting_a_job(env, monkeypatch):
     started = []
     monkeypatch.setattr(shorts, '_spawn', lambda fn, *a, **k: started.append(1))
 
-    r = client.post('/api/shorts/analyze', data={}, headers=headers)
+    pj = {'project_id': env['project']}
+    # No project, or one that does not exist: nowhere to file the shorts, so nothing starts.
+    for missing in ({}, {'project_id': ''}, {'project_id': 'p0000000000'}, {'project_id': '../../etc'}):
+        r = client.post('/api/shorts/analyze', data=dict(missing, shorts_file_network=env['staged']), headers=headers)
+        assert r.status_code == 400 and 'Choose the project' in r.get_json()['error'], missing
+    r = client.post('/api/shorts/analyze', data=pj, headers=headers)
     assert r.status_code == 400 and 'No video' in r.get_json()['error']
-    r = client.post('/api/shorts/analyze', data={'shorts_file_network': 'net_1_gone.mp4'}, headers=headers)
+    r = client.post('/api/shorts/analyze', data=dict(pj, shorts_file_network='net_1_gone.mp4'), headers=headers)
     assert r.status_code == 400 and 're-select' in r.get_json()['error']
     # Only files this app staged itself are trusted -- never an arbitrary name or path.
     for bad in ('../../etc/passwd', os.path.basename(env['path']).replace('net_', 'src_')):
-        r = client.post('/api/shorts/analyze', data={'shorts_file_network': bad}, headers=headers)
+        r = client.post('/api/shorts/analyze', data=dict(pj, shorts_file_network=bad), headers=headers)
         assert r.status_code == 400
     r = client.post('/api/shorts/analyze', headers=headers,
-                    data={'shorts_file_network': env['staged'], 'min_dur': 60, 'max_dur': 62})
+                    data=dict(pj, shorts_file_network=env['staged'], min_dur=60, max_dur=62))
     assert r.status_code == 400 and 'at least 5 seconds' in r.get_json()['error']
     # Direct upload is refused server-side when the deployment has it off.
     r = client.post('/api/shorts/analyze', headers=headers, content_type='multipart/form-data',
-                    data={'shorts_file': (io.BytesIO(b'not really a video'), 'ep.mp4')})
+                    data=dict(pj, shorts_file=(io.BytesIO(b'not really a video'), 'ep.mp4')))
     assert r.status_code == 400 and 'Direct file upload is disabled' in r.get_json()['error']
     assert started == []
 
     monkeypatch.setattr(shorts, '_job_submit_limiter', core._RateLimiter(1, 300))
-    assert client.post('/api/shorts/analyze', data={'shorts_file_network': env['staged']}, headers=headers).status_code == 200
-    assert client.post('/api/shorts/analyze', data={'shorts_file_network': env['staged']}, headers=headers).status_code == 429
+    ok = dict(pj, shorts_file_network=env['staged'])
+    assert client.post('/api/shorts/analyze', data=ok, headers=headers).status_code == 200
+    assert client.post('/api/shorts/analyze', data=ok, headers=headers).status_code == 429
     assert len(started) == 1
 
 
@@ -912,6 +927,145 @@ def test_render_validates_every_item(env, monkeypatch):
         'on when asked; never with Fit (nothing is cropped); junk is not a yes; default from the server; off wins'
 
 
+# --------------------------------------------------------------------------
+# Projects
+# --------------------------------------------------------------------------
+
+def _png(w=1280, h=720, colour=(40, 90, 200)):
+    ok, buf = cv2.imencode('.png', np.full((h, w, 3), colour, np.uint8))
+    assert ok
+    return buf.tobytes()
+
+
+def test_a_project_holds_the_episode_details_and_a_picture(env):
+    ana, ah = _client(user_id=7, role='user', username='ana')
+    ben, bh = _client(user_id=8, role='user', username='ben')
+    admin, adh = _client(user_id=1, role='admin')
+    url = '/api/shorts/projects'
+
+    r = ana.post(url, headers=ah, content_type='multipart/form-data', data={
+        'title': '  Maria   Clara at Ibarra ', 'episode': 'Ep. 12', 'air_date': '2026-10-12',
+        'description': 'Finale week.\n  Two   teasers for social. ', 'thumbnail': (io.BytesIO(_png()), 'key art.PNG')})
+    assert r.status_code == 200, r.get_json()
+    p = r.get_json()['project']
+    assert (p['title'], p['episode'], p['air_date']) == ('Maria Clara at Ibarra', 'Ep. 12', '2026-10-12')
+    assert p['description'] == 'Finale week.\nTwo teasers for social.' and p['name'] == 'Maria Clara at Ibarra \u2014 Ep. 12'
+    assert p['username'] == 'ana' and p['has_thumb'] and (p['batches'], p['shorts']) == (0, 0)
+    # The picture is stored as PRISM's own, smaller, JPEG of it -- never the file as sent.
+    t = ben.get(p['thumb_url'])
+    assert t.status_code == 200 and t.content_type == 'image/jpeg'
+    img = cv2.imdecode(np.frombuffer(t.data, np.uint8), cv2.IMREAD_COLOR)
+    assert img.shape[:2] == (360, 640) and abs(int(img[100, 100, 2]) - 200) < 6
+    t.close()
+    assert sorted(os.listdir(os.path.join(shorts.SHORTS_PROJECTS_DIR, p['project_id']))) == ['project.json', 'thumb.jpg']
+
+    # The whole team sees it, newest change first; only the title is required.
+    r = ben.post(url, headers=bh, data={'title': 'Black Rider'})
+    q = r.get_json()['project']
+    assert (q['episode'], q['air_date'], q['description'], q['thumb_url'], q['has_thumb']) == ('', None, '', None, False)
+    for c in (ana, ben, admin):
+        assert [x['title'] for x in c.get(url).get_json()['items']] == ['Black Rider', 'Maria Clara at Ibarra', 'Tadhana']
+    mine = {x['project_id']: x['can_delete'] for x in ana.get(url).get_json()['items']}
+    assert mine[p['project_id']] is True and mine[q['project_id']] is False
+
+    # What cannot be accepted says why, and creates nothing.
+    for bad, says in (({'title': '   '}, 'programme title'), ({'title': 'X', 'air_date': '12/10/2026'}, 'air date'),
+                      ({'title': 'X', 'thumbnail': (io.BytesIO(b'not an image'), 'a.jpg')}, 'could not be read'),
+                      ({'title': 'X', 'thumbnail': (io.BytesIO(_png()), 'a.gif')}, 'JPEG, PNG or WebP'),
+                      ({'title': 'X', 'thumbnail': (io.BytesIO(b'x' * (shorts.sp.THUMB_MAX_BYTES + 5)), 'a.png')}, 'larger than')):
+        r = ana.post(url, headers=ah, content_type='multipart/form-data', data=bad)
+        assert r.status_code == 400 and says in r.get_json()['error'], bad.get('title')
+    assert len(ana.get(url).get_json()['items']) == 3
+
+    # Anyone on the team can correct the details; the picture can be replaced or removed.
+    one = f"{url}/{p['project_id']}"
+    r = ben.post(one, headers=bh, data={'title': 'Maria Clara at Ibarra', 'episode': 'Ep. 13', 'air_date': ''})
+    e = r.get_json()['project']
+    assert (e['episode'], e['air_date'], e['has_thumb'], e['username']) == ('Ep. 13', None, True, 'ana')
+    assert ana.get(url).get_json()['items'][0]['project_id'] == p['project_id'], 'the one just changed comes first'
+    r = ana.post(one, headers=ah, data={'title': 'Maria Clara at Ibarra', 'remove_thumbnail': '1'})
+    assert r.get_json()['project']['has_thumb'] is False and ana.get(f'{one}/thumb').status_code == 404
+
+    # Deleting: its creator or an admin, not a teammate. Ids are never paths.
+    assert ben.delete(one, headers=bh).status_code == 403
+    assert admin.delete(f"{url}/{q['project_id']}", headers=adh).get_json() == {'ok': True}
+    assert ana.delete(one, headers=ah).get_json() == {'ok': True}
+    assert not os.path.exists(os.path.join(shorts.SHORTS_PROJECTS_DIR, p['project_id']))
+    for odd in ('p0000000000', '..', 'project.json', env['project'] + 'x'):
+        assert ana.get(f'{url}/{odd}').status_code == 404
+    anon = main.app.test_client()
+    assert anon.get(url).status_code in (302, 401, 403)
+
+
+def test_shorts_are_filed_under_their_project_and_a_project_with_shorts_cannot_be_deleted(env, monkeypatch):
+    Services(monkeypatch)
+    ana, ah = _client(user_id=7, role='user', username='ana')
+    ben, bh = _client(user_id=8, role='user', username='ben')
+    a = _analysis(ana, _analyze(ana, ah, env))
+    assert a['project_id'] == env['project']
+    batch = _render(ana, ah, a['analysis_id'], [{'start': 2.0, 'end': 6.0, 'title': 'One'}], reframe='fit',
+                    subtitles=False)['result']['batch']
+    assert batch['project_id'] == env['project'] and batch['project_name'] == 'Tadhana \u2014 Ep. 101'
+    # "Generate without preview" files its shorts the same way.
+    auto = _analyze(ana, ah, env, auto_render='1', reframe='fit')['result']['batch']
+    assert auto['project_id'] == env['project']
+
+    p = ben.get('/api/shorts/projects').get_json()['items'][0]
+    assert (p['batches'], p['shorts']) == (2, 1 + len(auto['shorts'])) and p['has_thumb'] is False
+    assert p['thumb_url'].startswith(f"/api/shorts/file/{auto['batch_id']}/"), 'no picture of its own: its newest short'
+    assert ben.get(p['thumb_url']).status_code == 200
+    assert {b['batch_id'] for b in ben.get(f"/api/shorts/batches?project_id={env['project']}").get_json()['items']} == {
+        batch['batch_id'], auto['batch_id']}
+
+    r = ana.delete(f"/api/shorts/projects/{env['project']}", headers=ah)
+    assert r.status_code == 409 and 'still holds' in r.get_json()['error']
+    assert shorts.sp.load(shorts.SHORTS_PROJECTS_DIR, env['project']) is not None
+
+    # Moved to another project by its maker; a teammate cannot move it.
+    other = ana.post('/api/shorts/projects', headers=ah, data={'title': 'Specials'}).get_json()['project']
+    move = f"/api/shorts/batches/{batch['batch_id']}/project"
+    assert ben.post(move, json={'project_id': other['project_id']}, headers=bh).status_code == 404
+    assert ana.post(move, json={'project_id': 'p0000000000'}, headers=ah).status_code == 400
+    moved = ana.post(move, json={'project_id': other['project_id']}, headers=ah).get_json()['batch']
+    assert moved['project_id'] == other['project_id'] and moved['project_name'] == 'Specials'
+    counts = {x['title']: x['batches'] for x in ana.get('/api/shorts/projects').get_json()['items']}
+    assert counts == {'Specials': 1, 'Tadhana': 1}
+
+
+def test_shorts_made_before_projects_stay_their_makers_until_filed(env, monkeypatch):
+    Services(monkeypatch)
+    ana, ah = _client(user_id=7, role='user', username='ana')
+    ben, bh = _client(user_id=8, role='user', username='ben')
+    admin, _ = _client(user_id=1, role='admin')
+    a = _analysis(ana, _analyze(ana, ah, env))
+    batch = _render(ana, ah, a['analysis_id'], [{'start': 2.0, 'end': 6.0, 'title': 'One'}], reframe='fit',
+                    subtitles=False)['result']['batch']
+    # As it would have been written before: no project in the manifest.
+    path = os.path.join(shorts.SHORTS_DIR, batch['batch_id'], 'batch.json')
+    with open(path) as f:
+        m = json.load(f)
+    m.pop('project_id')
+    with open(path, 'w') as f:
+        json.dump(m, f)
+    url = batch['shorts'][0]['url']
+    assert [b['project_id'] for b in ana.get('/api/shorts/batches?unfiled=1').get_json()['items']] == [None]
+    assert len(admin.get('/api/shorts/batches?unfiled=1').get_json()['items']) == 1
+    assert ben.get('/api/shorts/batches').get_json()['items'] == [] and ben.get(url).status_code == 404
+    assert ana.get(f"/api/shorts/batches?project_id={env['project']}").get_json()['items'] == []
+    # Filed, it becomes the team's.
+    r = ana.post(f"/api/shorts/batches/{batch['batch_id']}/project", json={'project_id': env['project']}, headers=ah)
+    assert r.get_json()['batch']['project_id'] == env['project']
+    assert ana.get('/api/shorts/batches?unfiled=1').get_json()['items'] == []
+    r = ben.get(url)
+    assert r.status_code == 200
+    r.close()
+    # A batch whose project has since gone falls back to being its maker's.
+    m['project_id'] = 'p0123456789'
+    with open(path, 'w') as f:
+        json.dump(m, f)
+    assert ben.get(url).status_code == 404 and ana.get('/api/shorts/batches?unfiled=1').get_json()['items'][0]['project_id'] is None
+
+
 def test_shorts_are_numbered_and_listed_in_the_order_they_happen_in_the_episode(env, monkeypatch):
     """Ticked in any order, ranked in any order: short 01 is the earliest
     moment and the last number is the latest, in the filenames and on screen."""
@@ -992,13 +1146,18 @@ def test_full_flow_render_save_download_send_delete(env, monkeypatch):
     assert not [n for n in os.listdir(main.app.config['UPLOAD_FOLDER']) if n.startswith('shsub_')], \
         'caption work files are cleaned up'
 
-    # Saved shorts: the owner and an admin see it, another account does not.
+    # Filed under the project it was made for, which the whole team sees:
+    # another account can play, download and send it, but only its maker
+    # (or an admin) can delete it.
+    assert batch['project_id'] == env['project'] and batch['project_name'] == 'Tadhana \u2014 Ep. 101'
     listed = client.get('/api/shorts/batches').get_json()['items']
-    assert [b['batch_id'] for b in listed] == [batch['batch_id']]
+    assert [b['batch_id'] for b in listed] == [batch['batch_id']] and listed[0]['can_delete'] is True
     other, oh = _client(user_id=8, role='user', username='ben')
     admin, ah = _client(user_id=1, role='admin')
-    assert other.get('/api/shorts/batches').get_json()['items'] == []
-    assert len(admin.get('/api/shorts/batches').get_json()['items']) == 1
+    theirs = other.get(f"/api/shorts/batches?project_id={env['project']}").get_json()['items']
+    assert [b['batch_id'] for b in theirs] == [batch['batch_id']] and theirs[0]['can_delete'] is False
+    assert other.get('/api/shorts/batches?unfiled=1').get_json()['items'] == []
+    assert admin.get('/api/shorts/batches').get_json()['items'][0]['can_delete'] is True
 
     # Download: one file (with Range, for seeking), as an attachment, and the whole batch.
     r = client.get(s1['url'])
@@ -1016,13 +1175,16 @@ def test_full_flow_render_save_download_send_delete(env, monkeypatch):
     assert not [n for n in os.listdir(main.app.config['UPLOAD_FOLDER']) if n.endswith('.zip')], \
         'the zip built for the download is removed once it has been sent'
 
-    # Nothing in the folder is reachable except what the manifest lists, and nothing at all by another account.
+    # Nothing in the folder is reachable except what the manifest lists. A
+    # teammate can open what is in the project but cannot delete or move it.
     assert client.get(f"/api/shorts/file/{batch['batch_id']}/batch.json").status_code == 404
     assert client.get(f"/api/shorts/file/{batch['batch_id']}/..%2F..%2Fbatch.json").status_code == 404
     for url in (s1['url'], f"/api/shorts/batches/{batch['batch_id']}/zip"):
-        assert other.get(url).status_code == 404
+        r = other.get(url)
+        assert r.status_code == 200
+        r.close()
     assert other.delete(f"/api/shorts/batches/{batch['batch_id']}", headers=oh).status_code == 404
-    assert other.post(f"/api/shorts/batches/{batch['batch_id']}/send", json={'destination_id': 1},
+    assert other.post(f"/api/shorts/batches/{batch['batch_id']}/project", json={'project_id': env['project']},
                       headers=oh).status_code == 404
 
     # Send to a network destination: video destinations only; MP4s, plus captions when asked.
@@ -1033,6 +1195,9 @@ def test_full_flow_render_save_download_send_delete(env, monkeypatch):
     monkeypatch.setattr(pipeline, 'send_file_to_network_destination',
                         lambda local, remote, dest: sent.append((os.path.basename(local), remote, dest['name'])))
     send_url = f"/api/shorts/batches/{batch['batch_id']}/send"
+    assert other.post(send_url, json={'destination_id': 1, 'files': [s1['file']]}, headers=oh).get_json()['ok'], \
+        'a teammate can send what is in the project'
+    del sent[:]
     assert client.post(send_url, json={'destination_id': 99}, headers=headers).status_code == 400
     r = client.post(send_url, json={'destination_id': 2}, headers=headers)
     assert r.status_code == 400 and 'not finished video' in r.get_json()['error'] and sent == []
@@ -1291,7 +1456,8 @@ def test_shorts_jobs_wait_for_a_slot_at_the_shared_gate(env, monkeypatch):
     client, headers = _client()
     try:
         r = client.post('/api/shorts/analyze', headers=headers,
-                        data={'shorts_file_network': env['staged'], 'min_dur': 5, 'max_dur': 12})
+                        data={'shorts_file_network': env['staged'], 'min_dur': 5, 'max_dur': 12,
+                              'project_id': env['project']})
         jid = r.get_json()['job_id']
         time.sleep(1.5)
         j = client.get(f'/api/shorts/progress/{jid}').get_json()

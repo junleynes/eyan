@@ -51,6 +51,7 @@ from library_db import LIBRARY_DIR, audit_log, network_destination_get
 from auth import require_permission
 import pipeline
 import shorts_core as sc
+import shorts_projects as sp
 
 
 def _env_num(name, default, cast=float):
@@ -64,6 +65,10 @@ def _env_num(name, default, cast=float):
 # subfolder), not in UPLOAD_FOLDER: that one is a fresh temp dir every start
 # and is swept by age, so anything left there is gone after a restart.
 SHORTS_DIR = os.path.abspath(os.environ.get('SHORTS_DIR') or os.path.join(LIBRARY_DIR, 'shorts'))
+# Projects (see shorts_projects.py): the episode a set of shorts was cut from.
+# Every batch is filed under one. Kept beside the batches, not among them.
+SHORTS_PROJECTS_DIR = os.path.abspath(os.environ.get('SHORTS_PROJECTS_DIR')
+                                      or os.path.join(LIBRARY_DIR, 'shorts_projects'))
 
 SHORTS_VISION_FRAMES = _env_num('SHORTS_VISION_FRAMES', 90, int)       # vision calls per analysis, whatever the source length
 SHORTS_STORY_CHUNK_SEC = _env_num('SHORTS_STORY_CHUNK_SEC', 300)       # transcript handed to the story model per call
@@ -236,9 +241,31 @@ def _batch_public(m):
         d['thumb_url'] = f"/api/shorts/file/{bid}/{s['thumb']}" if s.get('thumb') else None
         d['srt_url'] = f"/api/shorts/file/{bid}/{s['srt']}" if s.get('srt') else None
         shorts.append(d)
+    proj = sp.load(SHORTS_PROJECTS_DIR, m.get('project_id')) if m.get('project_id') else None
     return {'batch_id': bid, 'orig_name': m.get('orig_name'), 'created': m.get('created'),
             'username': m.get('username'), 'status': m.get('status'), 'options': m.get('options') or {},
-            'shorts': shorts, 'errors': m.get('errors') or [], 'warnings': m.get('warnings') or []}
+            'shorts': shorts, 'errors': m.get('errors') or [], 'warnings': m.get('warnings') or [],
+            'project_id': proj['project_id'] if proj else None,
+            'project_name': sp.display_name(proj) if proj else None,
+            'can_delete': _may_change(m)}
+
+
+def _may_change(m):
+    """Delete a batch, or move it to another project: whoever made it, or an admin."""
+    try:
+        return bool(pipeline._owns_or_admin(m.get('user_id')))
+    except RuntimeError:        # no request (a job thread building its result): the maker is the one asking
+        return True
+
+
+def _may_see(m):
+    """A batch filed under a project is the team's: anyone with access to
+    Vertical Shorts can play, download and send it. One that is not (made
+    before projects, or its project has gone) is its maker's and an admin's,
+    as every batch used to be."""
+    if m.get('project_id') and sp.load(SHORTS_PROJECTS_DIR, m['project_id']):
+        return True
+    return _may_change(m)
 
 
 def _batch_file_names(m):
@@ -466,6 +493,7 @@ def _run_analysis(jid, params):
     _candidate_thumbs(path, cands, aid, fps)
     analysis_store(aid, {
         'user_id': params.get('user_id'), 'username': params.get('username'),
+        'project_id': params.get('project_id'),
         'path': path, 'orig_name': params['orig_name'], 'info': info, 'cut_frames': cut_frames,
         'words': words, 'segments': segments, 'candidates': cands, 'warnings': warnings,
         'options': {'min_dur': min_dur, 'max_dur': max_dur, 'count': count,
@@ -544,6 +572,7 @@ def _run_render(jid, params):
     stem = sc.slugify(os.path.splitext(a['orig_name'] or '')[0], 40) or 'video'
     manifest = {'batch_id': bid, 'created': time.time(), 'user_id': params.get('user_id'),
                 'username': params.get('username'), 'orig_name': a['orig_name'], 'status': 'rendering',
+                'project_id': a.get('project_id'),
                 'options': {'reframe': reframe, 'subtitles': want_captions,
                             'subtitle_size': params['subtitle_size'],
                             'face_detector': detector.kind if detector else None,
@@ -854,13 +883,18 @@ def api_shorts_analyze():
     max_dur = _form_num('max_dur', 90, 10, SHORTS_MAX_CLIP)
     if max_dur < min_dur + 5:
         return jsonify(error='The maximum length must be at least 5 seconds more than the minimum.'), 400
+    # Before the source too, for the same reason: shorts are filed under a
+    # project, and without one there is nowhere for them to go.
+    project = sp.load(SHORTS_PROJECTS_DIR, (request.form.get('project_id') or '').strip())
+    if not project:
+        return jsonify(error='Choose the project these shorts are for first, or create one under Projects.'), 400
     path, orig_name, err = _resolve_source()
     if not path:
         return jsonify(error=err), 400
     prod = pipeline.load_production_defaults()
     vision_model = (request.form.get('vision_model') or '').strip() or prod.get('vision_model') or 'qwen3-vl:8b'
     params = {
-        'path': path, 'orig_name': orig_name,
+        'path': path, 'orig_name': orig_name, 'project_id': project['project_id'],
         'user_id': session.get('user_id'), 'username': session.get('username'),
         'min_dur': min_dur, 'max_dur': max_dur,
         'count': _form_num('count', 8, 1, SHORTS_MAX_ITEMS, int),
@@ -932,6 +966,7 @@ def api_shorts_analysis(aid):
     return jsonify(ok=True, analysis_id=aid, orig_name=a['orig_name'], duration=round(info['duration'], 2),
                    width=info['width'], height=info['height'], fps=round(info['fps'], 3),
                    candidates=a['candidates'], warnings=a['warnings'], stats=a['stats'], options=a['options'],
+                   project_id=a.get('project_id'),
                    source_available=os.path.exists(a['path']))
 
 
@@ -1047,34 +1082,180 @@ def api_shorts_render():
 @app.route('/api/shorts/batches')
 @require_permission('vertical_shorts')
 def api_shorts_batches():
-    """Saved batches, newest first. A regular account sees its own; an
-    admin sees everyone's -- the same rule as the trailer library."""
+    """Saved batches, newest first: ?project_id= for one project's (the whole
+    team sees those), ?unfiled=1 for the ones not filed under any project
+    (their maker and admins only), or neither for everything the caller may
+    see."""
+    want, unfiled = (request.args.get('project_id') or '').strip(), request.args.get('unfiled') in ('1', 'true')
     out = []
+    for m in _all_manifests():
+        filed = m.get('project_id') if m.get('project_id') and sp.load(SHORTS_PROJECTS_DIR, m['project_id']) else None
+        if not m.get('shorts') or not _may_see(m):
+            continue
+        if (want and filed != want) or (unfiled and filed):
+            continue
+        out.append(_batch_public(m))
+        if len(out) >= (200 if want else 50):
+            break
+    return jsonify(ok=True, items=out)
+
+
+def _all_manifests():
+    """Every readable batch manifest, newest first."""
     try:
         names = sorted((n for n in os.listdir(SHORTS_DIR) if _BATCH_ID.match(n)), reverse=True)
     except OSError:
         names = []
     for name in names:
         m = _load_manifest(name)
-        if not m or not m.get('shorts') or not pipeline._owns_or_admin(m.get('user_id')):
-            continue
-        out.append(_batch_public(m))
-        if len(out) >= 50:
-            break
-    return jsonify(ok=True, items=out)
+        if m:
+            yield m
 
 
-def _batch_or_error(bid):
+def _batch_or_error(bid, change=False):
+    """(manifest, None), or (None, a 404) for a batch the caller may not
+    see -- or, with change=True, may not delete or move."""
     m = _load_manifest(bid)
-    if not m or not pipeline._owns_or_admin(m.get('user_id')):
+    if not m or not (_may_change(m) if change else _may_see(m)):
         return None, (jsonify(ok=False, error='Not found'), 404)
     return m, None
+
+
+# --------------------------------------------------------------------------
+# Projects
+# --------------------------------------------------------------------------
+
+def _project_public(proj, counts=None):
+    pid = proj['project_id']
+    c = (counts or {}).get(pid) or {'batches': 0, 'shorts': 0, 'last': None, 'poster': None}
+    own = f"/api/shorts/projects/{pid}/thumb?v={int(proj.get('updated') or 0)}" if proj.get('thumb') else None
+    return {'project_id': pid, 'title': proj.get('title'), 'episode': proj.get('episode') or '',
+            'air_date': proj.get('air_date'), 'description': proj.get('description') or '',
+            'name': sp.display_name(proj), 'created': proj.get('created'), 'updated': proj.get('updated'),
+            'username': proj.get('username'), 'has_thumb': bool(proj.get('thumb')),
+            # Its own picture, or until it has one, a frame of its newest short.
+            'thumb_url': own or c['poster'],
+            'batches': c['batches'], 'shorts': c['shorts'], 'last_activity': c['last'] or proj.get('created'),
+            'can_delete': _may_change(proj)}
+
+
+def _project_counts():
+    """{project id: {'batches', 'shorts', 'last', 'poster'}} from the batches on disk."""
+    counts = {}
+    for m in _all_manifests():
+        pid = m.get('project_id')
+        if not pid or not m.get('shorts'):
+            continue
+        c = counts.setdefault(pid, {'batches': 0, 'shorts': 0, 'last': None, 'poster': None})
+        c['batches'] += 1
+        c['shorts'] += len(m['shorts'])
+        if c['last'] is None:                       # newest first, so the first seen is the latest
+            c['last'] = m.get('created')
+            first = min(m['shorts'], key=lambda s: float(s.get('start') or 0))
+            if first.get('thumb'):
+                c['poster'] = f"/api/shorts/file/{m['batch_id']}/{first['thumb']}"
+    return counts
+
+
+def _project_thumb_upload():
+    """JPEG bytes for the picture sent with this request, or None if none was.
+
+    Accepted whatever ALLOW_LOCAL_MEDIA_UPLOAD says: that policy is about
+    files handed to ffmpeg, and this never is. It is a small image, capped
+    in size, decoded once by OpenCV and stored only as PRISM's own
+    re-encoding of it -- the same footing as the script images the promo
+    generator accepts."""
+    f = request.files.get('thumbnail')
+    if f is None or not f.filename:
+        return None
+    data = f.stream.read(sp.THUMB_MAX_BYTES + 1)
+    return sp.make_thumbnail(data, f.filename)
+
+
+@app.route('/api/shorts/projects', methods=['GET', 'POST'])
+@require_permission('vertical_shorts')
+def api_shorts_projects():
+    """The projects, most recently changed first (GET), or a new one (POST:
+    title, episode, air_date, description and an optional thumbnail file).
+    Everyone with access to Vertical Shorts sees and can add to all of them."""
+    if request.method == 'GET':
+        counts = _project_counts()
+        return jsonify(ok=True, items=[_project_public(p, counts) for p in sp.list_all(SHORTS_PROJECTS_DIR)])
+    try:
+        fields = sp.clean_fields(request.form)
+        thumb = _project_thumb_upload()
+    except sp.ProjectError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    proj = sp.create(SHORTS_PROJECTS_DIR, fields, user_id=session.get('user_id'), username=session.get('username'),
+                     thumb_jpeg=thumb)
+    audit_log('shorts_project_create', target=sp.display_name(proj),
+              user_id=session.get('user_id'), username=session.get('username'), ip=_client_ip())
+    return jsonify(ok=True, project=_project_public(proj))
+
+
+@app.route('/api/shorts/projects/<pid>', methods=['GET', 'POST', 'DELETE'])
+@require_permission('vertical_shorts')
+def api_shorts_project(pid):
+    proj = sp.load(SHORTS_PROJECTS_DIR, pid)
+    if not proj:
+        return jsonify(ok=False, error='That project no longer exists.'), 404
+    if request.method == 'GET':
+        return jsonify(ok=True, project=_project_public(proj, _project_counts()))
+    if request.method == 'DELETE':
+        if not _may_change(proj):
+            return jsonify(ok=False, error='Only whoever created a project, or an admin, can delete it.'), 403
+        held = _project_counts().get(pid)
+        if held:
+            return jsonify(ok=False, error=f"This project still holds {held['shorts']} short"
+                           f"{'' if held['shorts'] == 1 else 's'}. Delete them, or move them to another project, "
+                           'first: deleting a project does not delete shorts.'), 409
+        sp.delete(SHORTS_PROJECTS_DIR, pid)
+        audit_log('shorts_project_delete', target=sp.display_name(proj),
+                  user_id=session.get('user_id'), username=session.get('username'), ip=_client_ip())
+        return jsonify(ok=True)
+    try:
+        fields = sp.clean_fields(request.form)
+        thumb = _project_thumb_upload()
+    except sp.ProjectError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    proj = sp.update(SHORTS_PROJECTS_DIR, pid, fields, thumb_jpeg=thumb,
+                     remove_thumb=request.form.get('remove_thumbnail') in ('1', 'true', 'on'))
+    return jsonify(ok=True, project=_project_public(proj, _project_counts()))
+
+
+@app.route('/api/shorts/projects/<pid>/thumb')
+@require_permission('vertical_shorts')
+def api_shorts_project_thumb(pid):
+    proj = sp.load(SHORTS_PROJECTS_DIR, pid)
+    if not proj or not proj.get('thumb'):
+        return jsonify(ok=False, error='Not found'), 404
+    resp = send_from_directory(sp.project_dir(SHORTS_PROJECTS_DIR, pid), 'thumb.jpg', conditional=True)
+    resp.headers['Cache-Control'] = 'private, max-age=3600'
+    return resp
+
+
+@app.route('/api/shorts/batches/<bid>/project', methods=['POST'])
+@require_permission('vertical_shorts')
+def api_shorts_batch_move(bid):
+    """Files a batch under a project -- for shorts made before there were
+    projects, or put in the wrong one. Its maker or an admin."""
+    m, err = _batch_or_error(bid, change=True)
+    if err:
+        return err
+    proj = sp.load(SHORTS_PROJECTS_DIR, (request.get_json(silent=True) or {}).get('project_id'))
+    if not proj:
+        return jsonify(ok=False, error='That project no longer exists -- pick another.'), 400
+    if m.get('status') == 'rendering':
+        return jsonify(ok=False, error='That batch is still rendering.'), 409
+    m['project_id'] = proj['project_id']
+    _write_manifest(_batch_dir(bid), m)
+    return jsonify(ok=True, batch=_batch_public(m))
 
 
 @app.route('/api/shorts/batches/<bid>', methods=['DELETE'])
 @require_permission('vertical_shorts')
 def api_shorts_batch_delete(bid):
-    m, err = _batch_or_error(bid)
+    m, err = _batch_or_error(bid, change=True)
     if err:
         return err
     if m.get('status') == 'rendering':
@@ -1204,4 +1385,5 @@ def settle_interrupted_batches():
 
 
 os.makedirs(SHORTS_DIR, exist_ok=True)
+os.makedirs(SHORTS_PROJECTS_DIR, exist_ok=True)
 settle_interrupted_batches()

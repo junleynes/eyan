@@ -744,6 +744,16 @@ input.sh-num[type=number]{width:92px}
 .sh-times input[type=text].bad{border-color:var(--tally)}
 .sh-note{font-size:12px;line-height:1.5;color:var(--ink-dim);margin-top:6px}
 .sh-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:14px;margin-top:12px}
+.sh-proj-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px;margin-top:12px}
+.sh-proj{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--elevated);cursor:pointer;text-align:left;padding:0;color:inherit;font:inherit;display:block;width:100%}
+.sh-proj:hover,.sh-proj:focus-visible{border-color:var(--tally);outline:none}
+.sh-proj-thumb{aspect-ratio:16/9;background:#14141c center/cover no-repeat;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.55);font:600 34px/1 var(--mono,monospace);letter-spacing:.04em}
+.sh-proj-body{padding:10px 12px 12px;font-size:12px}
+.sh-proj-body b{font-size:14px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sh-proj-desc{opacity:.75;margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.sh-proj-head{display:grid;grid-template-columns:240px minmax(0,1fr);gap:16px;align-items:start;margin:12px 0}
+@media (max-width:640px){.sh-proj-head{grid-template-columns:1fr}}
+.sh-proj-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px 14px}
 .sh-tile{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--panel)}
 .sh-poster{position:relative;aspect-ratio:9/16;background:#000}
 .sh-num{position:absolute;top:8px;left:8px;z-index:1;min-width:26px;padding:3px 7px;border-radius:999px;background:rgba(0,0,0,.72);color:#fff;font:600 13px/1.2 var(--mono,monospace);text-align:center;pointer-events:none}
@@ -6928,11 +6938,64 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <div id="p-shorts" class="panel{{ ' active' if default_tab == 'p-shorts' else '' }}">
 <h2>Vertical Shorts</h2>
 <div class="sub-tabs">
-  <div class="sub-tab active" onclick="switchSubTab('p-shorts-create',this)" role="button" tabindex="0">Create</div>
-  <div class="sub-tab" onclick="switchSubTab('p-shorts-saved',this);shortsLoadSaved()" role="button" tabindex="0">Saved shorts</div>
+  <div class="sub-tab active" onclick="switchSubTab('p-shorts-projects',this);shortsLoadProjects()" role="button" tabindex="0">Projects</div>
+  <div class="sub-tab" onclick="switchSubTab('p-shorts-create',this);shProjectFillPicker()" role="button" tabindex="0">Create shorts</div>
 </div>
 
-<div id="p-shorts-create" class="sub-panel active">
+<div id="p-shorts-projects" class="sub-panel active">
+<p style="font-size:12px;opacity:.75;margin-top:-6px">Shorts are filed by project: the episode they are cut from. Create the project first &mdash; programme, episode, air date, a description and a picture &mdash; then generate its shorts, and every batch you render for it is kept together here. Everyone with access to Vertical Shorts sees every project.</p>
+
+<div id=sh-proj-list-view>
+  <div class="sh-bar">
+    <b>Projects</b>
+    <span style="flex:1"></span>
+    <button type=button class=btn id=sh-proj-new-btn onclick="shProjectForm()">New project</button>
+  </div>
+  <div id=sh-proj-form class=card style="display:none">
+    <b id=sh-pf-heading>New project</b>
+    <div class="sh-proj-form" style="margin-top:10px">
+      <div><label for=sh-pf-title>Programme title:</label>
+        <input type=text id=sh-pf-title class=input-box maxlength=120 placeholder="e.g. Tadhana"></div>
+      <div><label for=sh-pf-episode>Episode:</label>
+        <input type=text id=sh-pf-episode class=input-box maxlength=40 placeholder="e.g. Ep. 101 or S01E01"></div>
+      <div><label for=sh-pf-air>Air date:</label>
+        <input type=date id=sh-pf-air class=input-box></div>
+      <div><label for=sh-pf-thumb>Thumbnail (JPEG, PNG or WebP):</label>
+        <input type=file id=sh-pf-thumb accept="image/jpeg,image/png,image/webp">
+        <label id=sh-pf-remove-wrap style="display:none;font-size:12px;margin-top:4px"><input type=checkbox id=sh-pf-remove> Remove the current thumbnail</label></div>
+    </div>
+    <label for=sh-pf-desc style="margin-top:10px">Description:</label>
+    <textarea id=sh-pf-desc class=input-box maxlength=1000 rows=3 placeholder="What the episode is about, who it is for, anything the next person should know."></textarea>
+    <p class="sh-note" style="margin-top:6px">Only the title is required. Without a thumbnail, the project shows a frame from its newest short once it has one.</p>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
+      <button type=button class=btn id=sh-pf-save onclick="shProjectSave()">Create project</button>
+      <button type=button class="btn-sm" onclick="shProjectForm(null, true)">Cancel</button>
+      <span id=sh-pf-note style="font-size:12px"></span>
+    </div>
+  </div>
+  <div id=sh-proj-grid></div>
+  <div id=sh-unfiled-wrap style="display:none;margin-top:22px">
+    <div class="sh-bar"><b>Not in a project</b>
+      <span style="font-size:12px;opacity:.75">Shorts made before projects. Use <b>Move to</b> on each to file it.</span></div>
+    <div id=sh-unfiled></div>
+  </div>
+</div>
+
+<div id=sh-proj-open style="display:none">
+  <button type=button class="btn-sm" onclick="shProjectClose()">&larr; All projects</button>
+  <div id=sh-proj-head></div>
+  <div id=sh-saved></div>
+</div>
+</div>
+
+<div id="p-shorts-create" class="sub-panel">
+<label for=sh-project>Project:</label>
+<div class="browse-row">
+  <select id=sh-project style="max-width:420px" onchange="shProjectPicked()"><option value="">Loading&hellip;</option></select>
+  <button type=button class="btn-sm" onclick="shGoNewProject()">New project&hellip;</button>
+</div>
+<p class="sh-note" id=sh-project-note style="margin-top:6px">The shorts you generate are filed under this project.</p>
+
 <p style="font-size:12px;opacity:.75;margin-top:-6px">Cuts a long-form programme into stand-alone 9:16 shorts. Step one finds the moments: the AI Vision model rates how dramatic the picture looks, the dialogue is transcribed, and a story model reads it to propose stretches that make sense on their own &mdash; a setup, a turn, a payoff &mdash; not just the loudest peaks. <b>Preview the cut</b> renders nothing until you have reviewed them; <b>Generate without preview</b> renders them all straight away.</p>
 
 <label>Long-form video (HIRES):</label>
@@ -7058,10 +7121,6 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <div id=sh-prompt class=no-data style="margin-top:14px">Pick a full episode and choose <b>Preview the cut</b> or <b>Generate without preview</b>. Analysing a 45-minute episode takes several minutes: cut detection and transcription each read the whole file.</div>
 </div>
 
-<div id="p-shorts-saved" class="sub-panel">
-<p style="font-size:12px;opacity:.75;margin-top:-6px">Every rendered batch is kept here until you delete it{% if current_role == 'admin' %} (as an admin you see everyone's){% endif %}.</p>
-<div id=sh-saved></div>
-</div>
 </div>
 
 <script>
@@ -7070,7 +7129,8 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 // analysis the candidates came from, the candidates as the editor has
 // changed them (kept or dropped, re-timed, retitled, added by hand), and the
 // job currently being polled so Cancel knows what to cancel.
-var SH = {analysis: null, cands: [], jobId: null, options: null, destinations: null, busy: false}
+var SH = {analysis: null, cands: [], jobId: null, options: null, destinations: null, busy: false,
+          projects: null, openProject: null, editing: null}
 
 function shFmt(t){
   t = Math.max(0, Number(t) || 0)
@@ -7107,8 +7167,8 @@ function shortsOnTabOpen(){
   // After the current call stack, so this also sees a sub-tab that the
   // page's own restore-last-view code is about to re-select.
   setTimeout(function(){
-    var saved = shEl('p-shorts-saved')
-    if(saved && saved.classList.contains('active')) shortsLoadSaved()
+    // Always: the list is also what the Create tab's project picker is filled from.
+    shortsLoadProjects()
   }, 0)
 }
 
@@ -7269,6 +7329,12 @@ async function shortsAnalyze(auto){
   if(SH.busy) return
   var f = shEl('sh-file'), net = shEl('shorts_file_network').value
   var hasLocal = f && f.files && f.files[0]
+  var project = shEl('sh-project').value
+  if(!project){
+    shNote(SH.projects && SH.projects.length ? 'Choose the project these shorts are for first.'
+           : 'Create a project first, under <b>Projects</b>: shorts are filed by project.', true)
+    shEl('sh-project').focus(); return
+  }
   if(!hasLocal && !net){ shNote('Pick a video first, using Browse library.', true); return }
   var minD = parseFloat(shEl('sh-min').value), maxD = parseFloat(shEl('sh-max').value)
   if(!(minD >= 5) || !(maxD >= minD + 5)){
@@ -7276,6 +7342,7 @@ async function shortsAnalyze(auto){
   }
   var fd = new FormData()
   if(hasLocal) fd.append('shorts_file', f.files[0]); else fd.append('shorts_file_network', net)
+  fd.append('project_id', project)
   fd.append('min_dur', minD); fd.append('max_dur', maxD)
   fd.append('count', shEl('sh-count').value)
   fd.append('focus', shEl('sh-focus').value)
@@ -7579,7 +7646,12 @@ function shBatchCard(b, fresh){
     '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">' +
       '<a class="btn-sm" href="/api/shorts/batches/' + b.batch_id + '/zip">Download all (.zip)</a>' +
       '<span data-send></span>' +
-      '<button type=button class="btn-sm" style="color:var(--tally);border-color:var(--tally)" data-del>Delete</button>' +
+      // Filing and deleting are for whoever made the batch (and admins).
+      (!b.project_id && b.can_delete !== false && SH.projects && SH.projects.length
+        ? '<span style="display:inline-flex;gap:6px;align-items:center"><select data-move-to aria-label="Move to project" style="width:auto;max-width:200px;margin:0;padding:4px 28px 4px 8px;font-size:12px">' +
+            SH.projects.map(function(p){ return '<option value="' + p.project_id + '">' + escapeHtmlLite(p.name) + '</option>' }).join('') +
+          '</select><button type=button class="btn-sm" data-move>Move to</button></span>' : '') +
+      (b.can_delete !== false ? '<button type=button class="btn-sm" style="color:var(--tally);border-color:var(--tally)" data-del>Delete</button>' : '') +
     '</div></div>'
   var notes = (b.warnings || []).map(function(w){ return '<div class="sh-warn">' + escapeHtmlLite(w) + '</div>' }).join('') +
     (b.errors || []).map(function(e){
@@ -7606,11 +7678,12 @@ function shBatchCard(b, fresh){
         '</div></div>'
   }).join('')
   card.innerHTML = head + notes + '<div class="sh-grid">' + tiles + '</div>' +
-    (fresh ? '<p class="sh-note">Saved under <b>Saved shorts</b>. Render again with a different reframe or other moments at any time while this analysis is open.</p>' : '')
+    (fresh ? '<p class="sh-note">Saved in the project <b>' + escapeHtmlLite(b.project_name || 'chosen above') + '</b> (under <b>Projects</b>). Render again with a different reframe or other moments at any time while this analysis is open.</p>' : '')
   card.addEventListener('click', function(e){
     var p = e.target.closest('[data-play]')
     if(p){ var s = b.shorts[parseInt(p.getAttribute('data-play'), 10)]; shortsPlay(s.url, s.title); return }
     if(e.target.closest('[data-del]')){ shortsDeleteBatch(b.batch_id, card); return }
+    if(e.target.closest('[data-move]')){ shBatchMove(b.batch_id, card.querySelector('[data-move-to]').value); return }
     var one = e.target.closest('[data-send-one]')
     if(one){
       var k = parseInt(one.getAttribute('data-send-one'), 10)
@@ -7716,26 +7789,250 @@ async function shortsDeleteBatch(bid, card){
     var r = await (await fetch('/api/shorts/batches/' + bid, {method: 'DELETE'})).json()
     if(!r.ok){ alert(r.error || 'Could not delete.'); return }
     document.querySelectorAll('[data-batch="' + bid + '"]').forEach(function(el){ el.remove() })
-    if(shEl('sh-saved') && !shEl('sh-saved').children.length) shortsLoadSaved()
+    shortsLoadProjects()
   }catch(e){ alert('Could not delete: ' + e) }
 }
 
-async function shortsLoadSaved(){
+// ---- Projects ----
+// A project is the episode a set of shorts is cut from. The Projects tab
+// lists them; opening one shows its details and every batch filed under it.
+
+function shDate(iso){
+  if(!iso) return ''
+  var d = new Date(iso + 'T00:00:00')
+  return isNaN(d) ? iso : d.toLocaleDateString(undefined, {year: 'numeric', month: 'short', day: 'numeric'})
+}
+
+function shProjectLine(p){
+  var bits = []
+  if(p.episode) bits.push(escapeHtmlLite(p.episode))
+  if(p.air_date) bits.push('airs ' + escapeHtmlLite(shDate(p.air_date)))
+  return bits.join(' &middot; ')
+}
+
+function shProjectThumb(p, cls){
+  var initials = (p.title || '?').split(/\s+/).slice(0, 2).map(function(w){ return w.charAt(0) }).join('').toUpperCase()
+  return '<div class="' + (cls || 'sh-proj-thumb') + '"' +
+    (p.thumb_url ? ' style="background-image:url(\'' + encodeURI(p.thumb_url) + '\')"' : '') + '>' +
+    (p.thumb_url ? '' : escapeHtmlLite(initials)) + '</div>'
+}
+
+// Loads the projects, redraws whichever view of them is showing, and
+// refills the Create tab's picker. Called on opening the tab and after
+// anything that changes a project or what is filed under one.
+async function shortsLoadProjects(){
+  var grid = shEl('sh-proj-grid')
+  if(!grid) return
+  if(SH.projects === null) grid.innerHTML = '<div class=no-data>Loading&hellip;</div>'
+  try{
+    var d = await (await fetch('/api/shorts/projects')).json()
+    SH.projects = d.ok ? d.items : []
+  }catch(e){
+    SH.projects = SH.projects || []
+    grid.innerHTML = '<div class=no-data><span style="color:var(--amber)">Could not load the projects: ' + escapeHtmlLite(String(e)) + '</span></div>'
+    return
+  }
+  shProjectFillPicker()
+  grid.className = SH.projects.length ? 'sh-proj-grid' : ''
+  grid.innerHTML = SH.projects.length ? '' :
+    '<div class=no-data>No projects yet. Choose <b>New project</b> to create the first one, then generate its shorts.</div>'
+  SH.projects.forEach(function(p){
+    var card = document.createElement('button')
+    card.type = 'button'
+    card.className = 'sh-proj'
+    card.setAttribute('data-project', p.project_id)
+    var line = shProjectLine(p)
+    card.innerHTML = shProjectThumb(p) +
+      '<div class="sh-proj-body"><b title="' + escapeHtmlLite(p.title || '') + '">' + escapeHtmlLite(p.title || 'Untitled') + '</b>' +
+        (line ? '<div style="opacity:.85">' + line + '</div>' : '') +
+        (p.description ? '<div class="sh-proj-desc">' + escapeHtmlLite(p.description) + '</div>' : '') +
+        '<div style="opacity:.6;margin-top:6px">' + (p.shorts
+          ? p.shorts + ' short' + (p.shorts === 1 ? '' : 's') + ' in ' + p.batches + ' batch' + (p.batches === 1 ? '' : 'es')
+          : 'No shorts yet') + '</div></div>'
+    card.addEventListener('click', function(){ shProjectOpen(p.project_id) })
+    grid.appendChild(card)
+  })
+  if(SH.openProject){
+    if(SH.projects.some(function(p){ return p.project_id === SH.openProject })) shProjectOpen(SH.openProject)
+    else shProjectClose()
+  }
+  shLoadUnfiled()
+}
+
+// Batches that are in no project: made before projects existed. Shown to
+// whoever made them (and admins), each with a "Move to" to file it.
+async function shLoadUnfiled(){
+  var wrap = shEl('sh-unfiled-wrap'), host = shEl('sh-unfiled')
+  if(!wrap || !host) return
+  try{
+    var d = await (await fetch('/api/shorts/batches?unfiled=1')).json()
+    host.innerHTML = ''
+    wrap.style.display = d.ok && d.items.length ? 'block' : 'none'
+    if(d.ok) d.items.forEach(function(b){ host.appendChild(shBatchCard(b, false)) })
+  }catch(e){ wrap.style.display = 'none' }
+}
+
+async function shBatchMove(bid, pid){
+  if(!pid) return
+  try{
+    var r = await (await fetch('/api/shorts/batches/' + bid + '/project', {method: 'POST',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({project_id: pid})})).json()
+    if(!r.ok){ alert(r.error || 'Could not move it.'); return }
+    shortsLoadProjects()
+  }catch(e){ alert('Could not move it: ' + e) }
+}
+
+function shProjectFillPicker(){
+  var sel = shEl('sh-project')
+  if(!sel || SH.projects === null) return
+  var want = sel.value || SH.picked || ''
+  try{ want = want || localStorage.getItem('prism_sh_project') || '' }catch(e){}
+  sel.innerHTML = SH.projects.length
+    ? '<option value="">Choose a project&hellip;</option>' + SH.projects.map(function(p){
+        return '<option value="' + p.project_id + '">' + escapeHtmlLite(p.name) + '</option>' }).join('')
+    : '<option value="">No projects yet &mdash; create one first</option>'
+  sel.value = SH.projects.some(function(p){ return p.project_id === want }) ? want : ''
+  shProjectPicked()
+}
+
+function shProjectPicked(){
+  var sel = shEl('sh-project'), note = shEl('sh-project-note')
+  SH.picked = sel.value
+  try{ if(sel.value) localStorage.setItem('prism_sh_project', sel.value) }catch(e){}
+  var p = (SH.projects || []).filter(function(x){ return x.project_id === sel.value })[0]
+  note.innerHTML = p
+    ? 'The shorts you generate are filed under <b>' + escapeHtmlLite(p.name) + '</b>' +
+      (p.shorts ? ', which has ' + p.shorts + ' already.' : '.')
+    : 'Shorts are filed by project. Choose the one these are for, or create it with <b>New project&hellip;</b>'
+}
+
+function shSubTab(id){
+  var tabs = document.querySelectorAll('#p-shorts > .sub-tabs .sub-tab')
+  switchSubTab(id, tabs[id === 'p-shorts-projects' ? 0 : 1])
+}
+
+function shGoNewProject(){
+  shSubTab('p-shorts-projects')
+  shProjectClose()
+  shProjectForm()
+}
+
+// The form, for a new project (no argument) or to change one. `hide` closes it.
+function shProjectForm(p, hide){
+  var form = shEl('sh-proj-form')
+  if(hide){ form.style.display = 'none'; SH.editing = null; return }
+  SH.editing = p ? p.project_id : null
+  shEl('sh-pf-heading').textContent = p ? 'Edit project' : 'New project'
+  shEl('sh-pf-save').textContent = p ? 'Save changes' : 'Create project'
+  shEl('sh-pf-title').value = p ? (p.title || '') : ''
+  shEl('sh-pf-episode').value = p ? (p.episode || '') : ''
+  shEl('sh-pf-air').value = p ? (p.air_date || '') : ''
+  shEl('sh-pf-desc').value = p ? (p.description || '') : ''
+  shEl('sh-pf-thumb').value = ''
+  shEl('sh-pf-remove').checked = false
+  shEl('sh-pf-remove-wrap').style.display = p && p.has_thumb ? 'block' : 'none'
+  shEl('sh-pf-note').textContent = ''
+  // The form lives in the list view; an open project is closed to show it.
+  shEl('sh-proj-open').style.display = 'none'
+  shEl('sh-proj-list-view').style.display = 'block'
+  form.style.display = 'block'
+  shEl('sh-pf-title').focus()
+}
+
+async function shProjectSave(){
+  var note = shEl('sh-pf-note'), btn = shEl('sh-pf-save')
+  var title = shEl('sh-pf-title').value.trim()
+  note.style.color = 'var(--tally)'
+  if(!title){ note.textContent = 'Give the project a programme title.'; shEl('sh-pf-title').focus(); return }
+  var fd = new FormData()
+  fd.append('title', title)
+  fd.append('episode', shEl('sh-pf-episode').value)
+  fd.append('air_date', shEl('sh-pf-air').value)
+  fd.append('description', shEl('sh-pf-desc').value)
+  var f = shEl('sh-pf-thumb')
+  if(f.files && f.files[0]) fd.append('thumbnail', f.files[0])
+  if(shEl('sh-pf-remove').checked) fd.append('remove_thumbnail', '1')
+  btn.disabled = true
+  note.style.color = ''; note.textContent = 'Saving…'
+  try{
+    var r = await (await fetch('/api/shorts/projects' + (SH.editing ? '/' + SH.editing : ''), {method: 'POST', body: fd})).json()
+    if(!r.ok){ note.style.color = 'var(--tally)'; note.textContent = r.error || 'Could not save the project.'; btn.disabled = false; return }
+    shProjectForm(null, true)
+    SH.openProject = r.project.project_id
+    SH.picked = r.project.project_id
+    try{ localStorage.setItem('prism_sh_project', r.project.project_id) }catch(e){}
+    await shortsLoadProjects()
+  }catch(e){ note.style.color = 'var(--tally)'; note.textContent = 'Could not save the project: ' + e }
+  btn.disabled = false
+}
+
+// One project: its details, and every batch filed under it.
+async function shProjectOpen(pid){
+  var p = (SH.projects || []).filter(function(x){ return x.project_id === pid })[0]
+  if(!p) return
+  SH.openProject = pid
+  shEl('sh-proj-form').style.display = 'none'
+  shEl('sh-proj-list-view').style.display = 'none'
+  shEl('sh-proj-open').style.display = 'block'
+  var line = shProjectLine(p)
+  var made = p.created ? new Date(p.created * 1000).toLocaleDateString() : ''
+  shEl('sh-proj-head').innerHTML = '<div class="sh-proj-head">' +
+    '<div style="border-radius:10px;overflow:hidden;border:1px solid var(--line)">' + shProjectThumb(p) + '</div>' +
+    '<div><h3 style="margin:0 0 4px">' + escapeHtmlLite(p.title || 'Untitled') + '</h3>' +
+      (line ? '<div style="font-size:13px">' + line + '</div>' : '') +
+      (p.description ? '<p style="font-size:13px;margin:8px 0 0;white-space:pre-line">' + escapeHtmlLite(p.description) + '</p>' : '') +
+      '<div style="font-size:12px;opacity:.6;margin-top:8px">Created ' + escapeHtmlLite(made) +
+        (p.username ? ' by ' + escapeHtmlLite(p.username) : '') + ' &middot; ' +
+        (p.shorts ? p.shorts + ' short' + (p.shorts === 1 ? '' : 's') + ' in ' + p.batches + ' batch' + (p.batches === 1 ? '' : 'es') : 'no shorts yet') + '</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">' +
+        '<button type=button class=btn data-proj-create>Create shorts for this project</button>' +
+        '<button type=button class="btn-sm" data-proj-edit>Edit details</button>' +
+        (p.can_delete ? '<button type=button class="btn-sm" style="color:var(--tally);border-color:var(--tally)" data-proj-del>Delete project</button>' : '') +
+      '</div></div></div>'
+  var head = shEl('sh-proj-head')
+  head.querySelector('[data-proj-create]').addEventListener('click', function(){
+    SH.picked = pid
+    shSubTab('p-shorts-create')
+    shEl('sh-project').value = pid
+    shProjectPicked()
+  })
+  head.querySelector('[data-proj-edit]').addEventListener('click', function(){ shProjectForm(p) })
+  var del = head.querySelector('[data-proj-del]')
+  if(del) del.addEventListener('click', function(){ shProjectDelete(p) })
   var host = shEl('sh-saved')
-  if(!host) return
   host.innerHTML = '<div class=no-data>Loading&hellip;</div>'
   try{
-    var d = await (await fetch('/api/shorts/batches')).json()
+    var d = await (await fetch('/api/shorts/batches?project_id=' + encodeURIComponent(pid))).json()
+    if(SH.openProject !== pid) return                    // another project was opened meanwhile
     host.innerHTML = ''
     if(!d.ok || !d.items.length){
-      host.innerHTML = '<div class=no-data>No shorts rendered yet.</div>'
+      host.innerHTML = '<div class=no-data>No shorts in this project yet. Choose <b>Create shorts for this project</b> to generate some.</div>'
       return
     }
     d.items.forEach(function(b){ host.appendChild(shBatchCard(b, false)) })
   }catch(e){
-    host.innerHTML = '<div class=no-data><span style="color:var(--amber)">Could not load saved shorts: ' + escapeHtmlLite(String(e)) + '</span></div>'
+    host.innerHTML = '<div class=no-data><span style="color:var(--amber)">Could not load this project\'s shorts: ' + escapeHtmlLite(String(e)) + '</span></div>'
   }
 }
+
+function shProjectClose(){
+  SH.openProject = null
+  shEl('sh-proj-open').style.display = 'none'
+  shEl('sh-proj-list-view').style.display = 'block'
+}
+
+async function shProjectDelete(p){
+  if(!confirm('Delete the project "' + p.name + '"? Its details and thumbnail are removed. A project that still holds shorts cannot be deleted.')) return
+  try{
+    var r = await (await fetch('/api/shorts/projects/' + p.project_id, {method: 'DELETE'})).json()
+    if(!r.ok){ alert(r.error || 'Could not delete the project.'); return }
+    shProjectClose()
+    shortsLoadProjects()
+  }catch(e){ alert('Could not delete the project: ' + e) }
+}
+
+// Kept for anything still calling it by its old name.
+function shortsLoadSaved(){ return shortsLoadProjects() }
 
 document.addEventListener('DOMContentLoaded', function(){
   var p = shEl('p-shorts')
@@ -8731,7 +9028,10 @@ job. Configured via env vars:
         <li><strong>Follow the speaker</strong> (off unless ticked) changes only those wide two-shots: it cuts between close framings of whoever is talking, holding each for at least a second or so and changing just before the next line. It decides from how much each mouth moves while the transcript says words are being spoken. Where it cannot tell &mdash; nobody speaking, a face turned away, two mouths moving alike &mdash; the shot is reframed exactly as it would be with the option off. With <strong>Split screen</strong> it works the other way round: the screen is split while both people talk, and a shot where only one of them talks is framed on that one.</li>
         <li><strong>Captions</strong> are burned in from the transcript a few words at a time, and an <code>.srt</code> is saved next to each MP4.</li>
       </ul>
-      <p>Batches are kept under <strong>Saved shorts</strong> until deleted: play, download one or all (.zip), or send to a video network destination.</p>
+      <p>Batches are kept in their <strong>project</strong> until deleted: play, download one or all (.zip), or send to a video network destination.</p>
+      <h3>Projects</h3>
+      <p>Shorts are filed by project: the episode they are cut from. A project records the <strong>programme title</strong>, <strong>episode</strong>, <strong>air date</strong>, a <strong>description</strong> and a <strong>thumbnail</strong> (JPEG, PNG or WebP up to 8 MB; until one is given the project shows a frame of its newest short). Create it under <strong>Projects</strong> first; <strong>Create shorts</strong> will not start without one chosen, so nothing is saved loose. Opening a project shows its details and every batch rendered for it, with <strong>Create shorts for this project</strong> to add more.</p>
+      <p>Everyone with access to Vertical Shorts sees every project and can play, download and send what is in it. Deleting a batch, or moving it to another project, is for whoever rendered it and admins. A project can be deleted by whoever created it or an admin, and only once it is empty: deleting a project never deletes shorts. Shorts rendered before projects existed are listed under <strong>Not in a project</strong> for their maker, with <strong>Move to</strong> to file them.</p>
       <h3>Limits worth knowing</h3>
       <ul style="line-height:1.8;padding-left:20px">
         <li>Candidates are proposals. A local model can misjudge what stands alone &mdash; preview before rendering.</li>
@@ -8745,7 +9045,11 @@ GET  /api/shorts/progress/&lt;job_id&gt;
 GET  /api/shorts/analysis/&lt;analysis_id&gt;
 POST /api/shorts/render   {analysis_id, items:[{start,end,title}], reframe: auto|split|crop|fit, speaker?, subtitles}
 GET  /api/shorts/batches
-POST /api/shorts/batches/&lt;id&gt;/send   {destination_id, include_srt?, files?, filename?}</pre>
+POST /api/shorts/batches/&lt;id&gt;/send   {destination_id, include_srt?, files?, filename?}
+GET  /api/shorts/projects                      POST: title, episode?, air_date?, description?, thumbnail? (file)
+POST /api/shorts/projects/&lt;id&gt;   (same fields; remove_thumbnail=1)        DELETE when empty
+POST /api/shorts/batches/&lt;id&gt;/project   {project_id}
+POST /api/shorts/analyze now also needs project_id</pre>
       <h3>Order and numbering</h3>
       <p>Shorts are numbered in the order their moments happen in the episode, not by score and not by the order they were ticked: <code>&hellip;_short_01_&hellip;</code> is the earliest moment and the highest number the latest, so a folder sorted by name, the zip and a destination all read in story order. Each short in a batch shows that number on its picture and where in the episode it comes from. In the list of moments, <strong>List in</strong> switches between episode order (the default) and best first, and each ticked moment shows the number its short will get (&ldquo;Short 3 of 8&rdquo;); unticking one renumbers the rest. A short that fails to render leaves its number unused. Batches saved before this are also listed in episode order, though their filenames keep the numbers they were given.</p>
       <h3>Sending</h3>
