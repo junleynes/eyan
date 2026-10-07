@@ -37,6 +37,7 @@ import tempfile
 import threading
 import time
 import traceback
+import functools
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
@@ -92,6 +93,13 @@ ANALYZE_STAGES = [(2, 'Reading video'), (5, 'Detecting cuts'), (20, 'Rating fram
                   (46, 'Transcribing dialogue'), (60, 'Finding story beats'),
                   (88, 'Building candidates'), (100, 'Done')]
 RENDER_STAGES = [(2, 'Preparing'), (5, 'Rendering shorts'), (100, 'Done')]
+# "Generate without preview" is the two jobs above run back to back as one:
+# the analysis fills the first AUTO_SPLIT percent of the bar and the render
+# the rest. Its stage list is derived from theirs so the three can't drift.
+AUTO_SPLIT = 55
+AUTO_STAGES = ([(max(1, p * AUTO_SPLIT // 100), lbl) for p, lbl in ANALYZE_STAGES[:-1]]
+               + [(AUTO_SPLIT + p * (100 - AUTO_SPLIT) // 100, lbl) for p, lbl in RENDER_STAGES[1:]])
+STAGES_BY_KIND = {'analyze': ANALYZE_STAGES, 'render': RENDER_STAGES, 'auto': AUTO_STAGES}
 
 # ---- Analyses awaiting review ----
 # Same shape and lifetime as the promo generator's PREVIEWS: held in memory
@@ -285,6 +293,9 @@ def _candidate_thumbs(path, cands, aid, fps):
 
 
 def _run_analysis(jid, params):
+    """Finds the candidate moments. Returns the analysis id, or None when it
+    ended with an error (already reported)."""
+    report = params.get('_report') or functools.partial(pipeline.job_set, jid)
     path = params['path']
     vision_model, story_model = params['vision_model'], params['story_model']
     min_dur, max_dur, count = params['min_dur'], params['max_dur'], params['count']
@@ -301,25 +312,25 @@ def _run_analysis(jid, params):
     if chk['status'] != 'up':
         down.append(f"Speech-to-text (faster-whisper at {pipeline.WHISPER_URL}): {chk.get('error', 'unreachable')}")
     if down:
-        pipeline.job_set(jid, error='Cannot look for shorts right now -- required service(s) unreachable: '
+        report(error='Cannot look for shorts right now -- required service(s) unreachable: '
                          + '; '.join(down) + '. Picking moments needs both what is on screen and what is '
                          'said. Check Config > Services and try again once they are back.')
         return
 
-    pipeline.job_set(jid, percent=2, step='Reading video')
+    report(percent=2, step='Reading video')
     _touch(path)        # a long analysis must not be the reason its own source ages out
     info = sc.probe_source(pipeline.FFPROBE, path)
     if not info['fps'] or info['frames'] <= 0 or not info['width']:
-        pipeline.job_set(jid, error='This file could not be read as video. If it plays elsewhere, it may be in a '
+        report(error='This file could not be read as video. If it plays elsewhere, it may be in a '
                          'codec this server cannot decode -- try an H.264/ProRes copy.')
         return
     fps, duration = info['fps'], info['duration']
     if duration < min_dur + 5:
-        pipeline.job_set(jid, error=f'This video is only {duration:.0f}s long -- too short to cut '
+        report(error=f'This video is only {duration:.0f}s long -- too short to cut '
                          f'{int(min_dur)}-{int(max_dur)}s shorts from. Lower the minimum length or use a longer source.')
         return
 
-    pipeline.job_set(jid, percent=5, step='Detecting cuts')
+    report(percent=5, step='Detecting cuts')
     prod = pipeline.load_production_defaults()
     scene_list = pipeline.detect_scenes(path, threshold=float(prod['scene_threshold']),
                                         min_scene_len_sec=float(prod['min_scene_len']),
@@ -331,7 +342,7 @@ def _run_analysis(jid, params):
 
     # ---- Layer 1: how dramatic does it look ----
     times = sc.vision_sample_times(shots, duration, budget=params['vision_frames'])
-    pipeline.job_set(jid, percent=20, step=f'Rating {len(times)} frames (AI vision)')
+    report(percent=20, step=f'Rating {len(times)} frames (AI vision)')
     items = [(t, b) for t, b in _grab_frames(path, times, fps) if b]
     visual, errors = [], []
     progress = {'done': 0}
@@ -349,7 +360,7 @@ def _run_analysis(jid, params):
                 errors.append(str(e))
         with lock:
             progress['done'] += 1
-            pipeline.job_set(jid, percent=20 + int(25 * progress['done'] / max(len(items), 1)),
+            report(percent=20 + int(25 * progress['done'] / max(len(items), 1)),
                              step=f"AI-rating frame {progress['done']}/{len(items)}")
 
     if items:
@@ -358,7 +369,7 @@ def _run_analysis(jid, params):
     visual.sort(key=lambda v: v['t'])
     if not visual:
         why = (errors[0] if errors else 'its replies could not be read as a rating')
-        pipeline.job_set(jid, error=f'The AI Vision model "{vision_model}" did not rate a single frame ({why}). '
+        report(error=f'The AI Vision model "{vision_model}" did not rate a single frame ({why}). '
                          'Check that the model is pulled on the Ollama server and is a vision model, '
                          'or pick another one under Advanced.')
         return
@@ -368,7 +379,7 @@ def _run_analysis(jid, params):
         pipeline.unload_ollama_model(vision_model)
 
     # ---- Layer 2: does it tell a story ----
-    pipeline.job_set(jid, percent=46, step='Transcribing dialogue')
+    report(percent=46, step='Transcribing dialogue')
     words, segments = pipeline.transcribe_video(path)
     words, segments = sc.normalize_transcript(words, segments)
 
@@ -382,10 +393,10 @@ def _run_analysis(jid, params):
         per_chunk = max(2, min(4, int(math.ceil(count * 1.5 / len(chunks))) + 1))
         failed, first_err = 0, None
         for ci, (lo, hi) in enumerate(chunks):
-            pipeline.job_set(jid, percent=60 + int(26 * ci / len(chunks)),
+            report(percent=60 + int(26 * ci / len(chunks)),
                              step=f'Finding story beats (part {ci + 1}/{len(chunks)})')
             prompt = sc.build_story_prompt(segments, lo, hi, visual, min_dur, max_dur, per_chunk,
-                                           params.get('focus'))
+                                           params.get('focus'), params.get('avoid'))
             try:
                 reply = sc.ask_story(pipeline.OLLAMA_URL, story_model, prompt, num_ctx=SHORTS_STORY_NUM_CTX)
             except Exception as e:
@@ -395,7 +406,7 @@ def _run_analysis(jid, params):
                 continue
             beats.extend(sc.parse_story_reply(reply, lo, hi))
         if failed == len(chunks):
-            pipeline.job_set(jid, error=f'The story model "{story_model}" failed on every part of the transcript '
+            report(error=f'The story model "{story_model}" failed on every part of the transcript '
                              f'({first_err}). Check that it is pulled on the Ollama server, or pick another '
                              'one under Advanced.')
             return
@@ -415,11 +426,17 @@ def _run_analysis(jid, params):
                         'returned nothing), so these were picked on visual intensity alone -- they are not '
                         'checked for making sense as a story.')
 
-    pipeline.job_set(jid, percent=88, step='Building candidates')
+    if (params.get('focus') or params.get('avoid')) and beats and beats[0].get('source') in ('heuristic', 'visual'):
+        # The two fallbacks rank on sound and picture; neither reads meaning,
+        # so what the editor asked to feature or avoid had no say in them.
+        warnings.append('What to feature and what to avoid are judged by the story model, which found nothing '
+                        'here, so neither was applied to these moments.')
+
+    report(percent=88, step='Building candidates')
     cands = sc.build_candidates(beats, segments, words, cuts, visual, duration,
                                 min_dur=min_dur, max_dur=max_dur, limit=count, fps=fps)
     if not cands:
-        pipeline.job_set(jid, error='No usable moments were found in this video. Try a wider length range, '
+        report(error='No usable moments were found in this video. Try a wider length range, '
                          'or add your own ranges by hand after re-running with a different model.')
         return
     aid = secrets.token_hex(8)
@@ -428,13 +445,15 @@ def _run_analysis(jid, params):
         'user_id': params.get('user_id'), 'username': params.get('username'),
         'path': path, 'orig_name': params['orig_name'], 'info': info, 'cut_frames': cut_frames,
         'words': words, 'segments': segments, 'candidates': cands, 'warnings': warnings,
-        'options': {'min_dur': min_dur, 'max_dur': max_dur, 'count': count},
+        'options': {'min_dur': min_dur, 'max_dur': max_dur, 'count': count,
+                    'focus': params.get('focus'), 'avoid': params.get('avoid')},
         'stats': {'shots': len(shots), 'frames_rated': len(visual), 'transcript_lines': len(segments),
                   'story_parts': len(chunks), 'vision_model': vision_model, 'story_model': story_model},
     })
     _touch(path)
-    pipeline.job_set(jid, percent=100, step='Done', done=True,
-                     result={'analysis_id': aid, 'candidates': len(cands)})
+    report(percent=100, step='Done', done=True,
+           result={'analysis_id': aid, 'candidates': len(cands)})
+    return aid
 
 
 # --------------------------------------------------------------------------
@@ -453,18 +472,22 @@ def _poster(video_path, thumb_path, at):
 
 
 def _run_render(jid, params):
+    report = params.get('_report') or functools.partial(pipeline.job_set, jid)
     a = params['analysis']
     src, info = a['path'], a['info']
     items, reframe = params['items'], params['reframe']
     fps = info['fps']
     if not os.path.exists(src):
-        pipeline.job_set(jid, error='The source video is no longer staged on the server (staged files are '
+        report(error='The source video is no longer staged on the server (staged files are '
                          'cleared after a while). Pick it again and re-run the analysis.')
         return
     _touch(src)
-    pipeline.job_set(jid, percent=2, step='Preparing')
+    report(percent=2, step='Preparing')
 
-    warnings = []
+    # A render nobody reviewed first carries the analysis's own warnings
+    # (a fallback was used, part of the transcript was skipped): the batch
+    # card is then the only place the editor will ever see them.
+    warnings = list(params.get('warnings') or [])
     want_captions = bool(params['subtitles'])
     burn = want_captions and _captions_available()
     if want_captions and not burn:
@@ -514,7 +537,7 @@ def _run_render(jid, params):
                                        'error': 'Range is past the end of the video.'})
             continue
 
-        pipeline.job_set(jid, percent=int(base), step=f'Short {n}/{total}: finding faces')
+        report(percent=int(base), step=f'Short {n}/{total}: finding faces')
         samples = (sc.sample_faces(src, start_f, n_frames, fps, detector, sar=info['sar'], mouth=speaker)
                    if detector else [])
         shot_starts = [c - start_f for c in a['cut_frames'] if start_f < c < end_f]
@@ -533,7 +556,7 @@ def _run_render(jid, params):
             if ass_name:
                 sc.write_ass(cues, os.path.join(work, ass_name), size=params['subtitle_size'],
                              font=SHORTS_SUB_FONT)
-            pipeline.job_set(jid, percent=int(base + span * 0.25), step=f'Short {n}/{total}: encoding')
+            report(percent=int(base + span * 0.25), step=f'Short {n}/{total}: encoding')
             ok, err = sc.render_short(pipeline.FFMPEG, src, out_path, start_f, n_frames, info, segs,
                                       ass_name=ass_name, work_dir=work, crf=SHORTS_CRF, preset=SHORTS_PRESET,
                                       loudness=SHORTS_LOUDNESS, true_peak=SHORTS_TRUE_PEAK,
@@ -573,11 +596,63 @@ def _run_render(jid, params):
     if not manifest['shorts']:
         first = manifest['errors'][0]['error'] if manifest['errors'] else 'unknown error'
         shutil.rmtree(bdir, ignore_errors=True)
-        pipeline.job_set(jid, error=f'None of the {total} shorts could be rendered. First error: {first}')
+        report(error=f'None of the {total} shorts could be rendered. First error: {first}')
         return
     manifest['status'] = 'complete' if not manifest['errors'] else 'partial'
     _write_manifest(bdir, manifest)
-    pipeline.job_set(jid, percent=100, step='Done', done=True, result={'batch': _batch_public(manifest)})
+    report(percent=100, step='Done', done=True, result={'batch': _batch_public(manifest)})
+
+
+class _Phase:
+    """Progress reporting for one part of a job made of several.
+
+    Passed to a job body as params['_report'] in place of job_set. It maps
+    the body's own 0-100 onto [lo, hi] of the whole job's bar, and -- unless
+    this is the last part -- keeps the body's "done" to itself (holding on
+    to the result) so the job isn't marked finished while there is more to
+    run. Errors and cancellation go straight through: either ends the job."""
+
+    def __init__(self, jid, lo, hi, last, extra_result=None):
+        self.jid, self.lo, self.hi, self.last = jid, lo, hi, last
+        self.extra_result = extra_result or {}
+        self.result = None
+
+    def __call__(self, **kw):
+        if kw.get('percent') is not None:
+            kw['percent'] = int(round(self.lo + (self.hi - self.lo) * kw['percent'] / 100.0))
+        if kw.get('done') and kw.get('error') is None:
+            if not self.last:
+                self.result = kw.pop('result', None) or {}
+                kw.pop('done')
+                kw.pop('step', None)
+            elif kw.get('result') is not None:
+                kw['result'] = dict(kw['result'], **self.extra_result)
+        pipeline.job_set(self.jid, **kw)
+
+
+def _run_auto(jid, params):
+    """Analyse, then render every moment found, as one job with no review in
+    between ("Generate without preview"). The analysis is stored exactly as
+    a previewed one is, so the editor can still open the moments afterwards,
+    re-time them and render again without analysing twice."""
+    aid = _run_analysis(jid, dict(params, _report=_Phase(jid, 0, AUTO_SPLIT, last=False)))
+    if not aid:
+        return
+    a = analysis_get(aid)
+    if a is None:
+        pipeline.job_set(jid, error='The analysis finished but was no longer available to render from. Try again.')
+        return
+    render = dict(params['render'], analysis=a, warnings=list(a.get('warnings') or []),
+                  items=[{'start': c['start'], 'end': c['end'], 'title': c['title']}
+                         for c in a['candidates'][:SHORTS_MAX_ITEMS]],
+                  user_id=params.get('user_id'), username=params.get('username'),
+                  _report=_Phase(jid, AUTO_SPLIT, 100, last=True, extra_result={'analysis_id': aid}))
+    params['_render'] = render          # where _settle_auto finds the batch folder
+    _run_render(jid, render)
+
+
+def _settle_auto(params):
+    _settle_batch(params.get('_render') or {})
 
 
 def _settle_batch(params):
@@ -695,6 +770,20 @@ def _form_num(name, default, lo, hi, cast=float):
     return max(lo, min(hi, v))
 
 
+def _render_options(data):
+    """reframe / speaker / subtitles / subtitle_size from a request body --
+    JSON for /render, form fields for /analyze's one-button path -- with
+    anything unrecognised falling back to the default rather than failing."""
+    reframe = data.get('reframe') if data.get('reframe') in ('auto', 'crop', 'fit') else 'auto'
+    # Absent means "whatever this server defaults to", so a client that
+    # predates the option, or a script, gets the configured behaviour.
+    speaker = data.get('speaker', SHORTS_SPEAKER_CROP) in (True, 1, '1', 'true', 'on', 'yes')
+    return {'reframe': reframe,
+            'speaker': speaker and reframe != 'fit',
+            'subtitles': data.get('subtitles', True) not in (False, 0, '0', 'false', 'off', None),
+            'subtitle_size': data.get('subtitle_size') if data.get('subtitle_size') in sc.SUBTITLE_SIZES else 'm'}
+
+
 @app.route('/api/shorts/options')
 @require_permission('vertical_shorts')
 def api_shorts_options():
@@ -746,13 +835,21 @@ def api_shorts_analyze():
         'count': _form_num('count', 8, 1, SHORTS_MAX_ITEMS, int),
         'vision_frames': _form_num('vision_frames', SHORTS_VISION_FRAMES, 10, 300, int),
         'focus': ' '.join((request.form.get('focus') or '').split())[:300] or None,
+        'avoid': ' '.join((request.form.get('avoid') or '').split())[:300] or None,
         'vision_model': vision_model,
         # One model for both layers unless told otherwise: a vision model
         # reads text perfectly well, and keeping a single model loaded
         # avoids swapping two in and out of the same GPU mid-job.
         'story_model': (request.form.get('story_model') or '').strip() or vision_model,
     }
-    jid = _start_job('analyze', _run_analysis, params, f'{orig_name} (vertical shorts: analysis)')
+    if (request.form.get('auto_render') or '').strip().lower() in ('1', 'true', 'on', 'yes'):
+        # "Generate without preview": the render options travel with the
+        # request, since there is no review step to choose them at.
+        params['render'] = _render_options(request.form)
+        jid = _start_job('auto', _run_auto, params, f'{orig_name} (vertical shorts: analysis + render)',
+                         after=_settle_auto)
+    else:
+        jid = _start_job('analyze', _run_analysis, params, f'{orig_name} (vertical shorts: analysis)')
     return jsonify(job_id=jid)
 
 
@@ -767,7 +864,7 @@ def api_shorts_progress(job_id):
     created = j.pop('created', None)
     if created:
         j['elapsed'] = round(time.time() - created, 1)
-    stages = RENDER_STAGES if _JOB_KINDS.get(job_id) == 'render' else ANALYZE_STAGES
+    stages = STAGES_BY_KIND.get(_JOB_KINDS.get(job_id), ANALYZE_STAGES)
     j['stages'] = [{'percent': p, 'label': lbl} for p, lbl in stages]
     return jsonify(**j)
 
@@ -900,16 +997,8 @@ def api_shorts_render():
             return jsonify(error=f'"{title}": is {end - start:.0f}s long; the limit is '
                                  f'{int(SHORTS_MAX_CLIP)}s per short.'), 400
         items.append({'start': start, 'end': end, 'title': title})
-    reframe = data.get('reframe') if data.get('reframe') in ('auto', 'crop', 'fit') else 'auto'
-    size = data.get('subtitle_size') if data.get('subtitle_size') in sc.SUBTITLE_SIZES else 'm'
-    # Absent means "whatever this server defaults to", so a client that
-    # predates the option, or a script, gets the configured behaviour.
-    speaker = data.get('speaker', SHORTS_SPEAKER_CROP) in (True, 1, '1', 'true', 'on', 'yes')
-    params = {'analysis': a, 'items': items, 'reframe': reframe,
-              'speaker': speaker and reframe != 'fit',
-              'subtitles': data.get('subtitles', True) not in (False, 0, '0', 'false', 'off', None),
-              'subtitle_size': size,
-              'user_id': session.get('user_id'), 'username': session.get('username')}
+    params = dict(_render_options(data), analysis=a, items=items,
+                  user_id=session.get('user_id'), username=session.get('username'))
     jid = _start_job('render', _run_render, params, f"{a['orig_name']} (vertical shorts: {len(items)} to render)",
                      after=_settle_batch)
     return jsonify(job_id=jid)

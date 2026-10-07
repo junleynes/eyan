@@ -112,6 +112,22 @@ def test_story_prompt_uses_global_ids_and_inlines_visual_notes_in_time_order():
     assert '30 to 90 seconds' in p and 'the missing will' in p
 
 
+def test_story_prompt_states_what_to_avoid_as_a_rule_and_what_to_feature_as_a_preference():
+    _, segs = _dialogue(20)
+    plain = sc.build_story_prompt(segs, 0, 4, [], 30, 90)
+    assert 'does NOT want' not in plain and 'especially wants' not in plain
+    p = sc.build_story_prompt(segs, 0, 4, [], 30, 90, focus='the wedding', avoid='the  hospital\nscenes ' + 'x' * 400)
+    assert 'The editor especially wants moments about: the wedding' in p
+    assert 'never pick a weak one just because it matches' in p
+    assert 'The editor does NOT want: the hospital scenes xxx' in p, 'whitespace collapsed'
+    assert 'Leave out every moment that is mainly about this or shows it, however strong it is.' in p
+    assert 'x' * 301 not in p, 'capped: the note must not crowd the transcript out of the context window'
+    assert p.index('especially wants') < p.index('does NOT want') < p.index('EPISODE STRETCH'), \
+        'both notes sit with the instructions, ahead of the transcript'
+    only = sc.build_story_prompt(segs, 0, 4, [], 30, 90, avoid='spoilers')
+    assert 'does NOT want: spoilers' in only and 'especially wants' not in only
+
+
 def test_story_reply_parsing_accepts_what_models_actually_send():
     good = {'moments': [{'start_id': 12, 'end_id': 15, 'title': 'T', 'hook': 'h', 'why': 'w', 'score': 8}]}
     for text in (json.dumps(good),

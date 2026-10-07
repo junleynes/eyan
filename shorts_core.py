@@ -281,7 +281,7 @@ STORY_FORMAT = {
 }
 
 
-def build_story_prompt(segments, lo, hi, visual, min_dur, max_dur, max_moments=3, focus=None):
+def build_story_prompt(segments, lo, hi, visual, min_dur, max_dur, max_moments=3, focus=None, avoid=None):
     """The story-model prompt for transcript lines [lo, hi).
 
     Line IDs are the GLOBAL segment indices, not renumbered per chunk, so
@@ -289,7 +289,12 @@ def build_story_prompt(segments, lo, hi, visual, min_dur, max_dur, max_moments=3
     compared directly. Visual notes from layer 1 are interleaved in time
     order: the model picks beats knowing what is on screen, which is what
     lets a quiet-on-paper stretch (a long look, a slap with no line) still
-    register, and a busy-on-paper one over a static wide shot rank lower."""
+    register, and a busy-on-paper one over a static wide shot rank lower.
+
+    `focus` is what the editor wants more of and `avoid` what they want left
+    out. They are worded differently on purpose: focus is a preference (a
+    weak moment is not picked just for matching it), avoid is a rule (a
+    strong moment is still left out for matching it)."""
     t_lo = segments[lo]['start'] - 5.0
     t_hi = segments[hi - 1]['end'] + 5.0
     rows = [(segments[i]['start'], 0,
@@ -305,6 +310,10 @@ def build_story_prompt(segments, lo, hi, visual, min_dur, max_dur, max_moments=3
     if focus:
         extra = ('\nThe editor especially wants moments about: ' + ' '.join(str(focus).split())[:300]
                  + '\nPrefer moments that match this, but never pick a weak one just because it matches.\n')
+    if avoid:
+        extra += ('\nThe editor does NOT want: ' + ' '.join(str(avoid).split())[:300]
+                  + '\nLeave out every moment that is mainly about this or shows it, however strong it is. '
+                    'A moment that only mentions it in passing is fine.\n')
     return (
         'You are a short-form video editor cutting a TV drama episode into vertical shorts '
         '(TikTok / Reels / YouTube Shorts).\n\n'

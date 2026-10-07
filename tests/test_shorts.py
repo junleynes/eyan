@@ -598,6 +598,126 @@ def test_no_dialogue_falls_back_to_visual_peaks_and_says_so(env, monkeypatch):
         assert abs(c['end'] / 3.0 - round(c['end'] / 3.0)) < 0.02
 
 
+def test_what_to_avoid_reaches_the_story_model_and_is_kept_with_the_analysis(env, monkeypatch):
+    svc = Services(monkeypatch)
+    client, headers = _client()
+    a = _analysis(client, _analyze(client, headers, env, focus='the will', avoid='  the  hospital scenes  '))
+    assert svc.story_prompts and all('The editor does NOT want: the hospital scenes' in p['prompt']
+                                     for p in svc.story_prompts)
+    assert all('especially wants moments about: the will' in p['prompt'] for p in svc.story_prompts)
+    assert not any('neither was applied' in w for w in a['warnings'])
+    # Left empty, the prompt is exactly what it was before the field existed.
+    svc.story_prompts.clear()
+    _analyze(client, headers, env, avoid='   ')
+    assert svc.story_prompts and not any('does NOT want' in p['prompt'] for p in svc.story_prompts)
+
+
+def test_what_to_avoid_cannot_steer_a_fallback_and_the_editor_is_told(env, monkeypatch):
+    """With no dialogue the moments are picked on picture alone. Nothing
+    there reads meaning, so an "avoid" note silently did nothing -- which
+    reads as the note having been obeyed. It has to be said."""
+    svc = Services(monkeypatch, words=[], segs=[])
+    svc.vision_reply = lambda n: {'response': json.dumps({'score': 5, 'desc': 'a fight'})}
+    client, headers = _client()
+    a = _analysis(client, _analyze(client, headers, env, avoid='fights'))
+    assert all(c['source'] == 'visual' for c in a['candidates'])
+    assert any('neither was applied' in w for w in a['warnings'])
+    plain = _analysis(client, _analyze(client, headers, env))
+    assert not any('neither was applied' in w for w in plain['warnings']), 'only when a note was actually given'
+
+
+def test_generate_without_preview_analyses_then_renders_everything_as_one_job(env, monkeypatch):
+    Services(monkeypatch)
+    client, headers = _client(user_id=7, role='user', username='ana')
+    seen = []
+    real = pipeline.job_set
+
+    def spy(jid, **kw):
+        seen.append(dict(kw))
+        return real(jid, **kw)
+    monkeypatch.setattr(pipeline, 'job_set', spy)
+    job = _analyze(client, headers, env, auto_render='1', reframe='fit', subtitles='false', speaker='true',
+                   subtitle_size='l')
+    assert job['error'] is None and job['done'] and job['percent'] == 100
+    assert [s['label'] for s in job['stages']] == [
+        'Reading video', 'Detecting cuts', 'Rating frames', 'Transcribing dialogue', 'Finding story beats',
+        'Building candidates', 'Rendering shorts', 'Done']
+    assert [s['percent'] for s in job['stages']] == sorted(s['percent'] for s in job['stages'])
+
+    # One bar for both halves: it never runs backwards, and the job is only
+    # ever marked finished once -- at the very end, with the batch.
+    pcts = [k['percent'] for k in seen if k.get('percent') is not None]
+    assert pcts == sorted(pcts) and pcts[-1] == 100 and shorts.AUTO_SPLIT in pcts
+    assert [bool(k.get('result')) for k in seen if k.get('done')] == [True], 'no "done" from the analysis half'
+
+    res = job['result']
+    batch = res['batch']
+    a = client.get(f"/api/shorts/analysis/{res['analysis_id']}").get_json()
+    assert a['ok'], 'the moments are still there to review, re-time and render again'
+    assert len(batch['shorts']) == len(a['candidates']) >= 2 and batch['status'] == 'complete'
+    assert [s['title'] for s in batch['shorts']] == [c['title'] for c in a['candidates']]
+    assert [(s['start'], s['end']) for s in batch['shorts']] == \
+        [(round(c['start'] * 25) / 25, round(c['end'] * 25) / 25) for c in a['candidates']]
+    assert batch['options'] == {'reframe': 'fit', 'subtitles': False, 'subtitle_size': 'l',
+                                'face_detector': None, 'speaker': False}, 'the Output settings sent with the request'
+    assert all(s['layouts']['fit'] >= 1 and s['layouts']['crop'] == 0 for s in batch['shorts'])
+    assert batch['username'] == 'ana'
+    for s in batch['shorts']:
+        assert os.path.getsize(os.path.join(shorts.SHORTS_DIR, batch['batch_id'], s['file'])) > 0
+    # And it is saved like any other batch.
+    assert [b['batch_id'] for b in client.get('/api/shorts/batches').get_json()['items']] == [batch['batch_id']]
+    # A second render from the same analysis, the way the review list does it.
+    again = _render(client, headers, res['analysis_id'], [{'start': 1.0, 'end': 6.0, 'title': 'Again'}],
+                    reframe='fit', subtitles=False)
+    assert again['error'] is None and len(again['result']['batch']['shorts']) == 1
+
+
+def test_generate_without_preview_stops_at_a_failed_analysis(env, monkeypatch):
+    Services(monkeypatch)
+    monkeypatch.setattr(pipeline, '_check_service',
+                        lambda name, url, path='/', timeout=3: {'status': 'down', 'error': 'connection refused'}
+                        if name == 'whisper' else {'status': 'up'})
+    render = mock.Mock(side_effect=AssertionError('must not render after a failed analysis'))
+    monkeypatch.setattr(sc, 'render_short', render)
+    client, headers = _client()
+    job = _analyze(client, headers, env, auto_render='1')
+    assert job['done'] and 'faster-whisper' in job['error'] and os.listdir(shorts.SHORTS_DIR) == []
+
+
+def test_generate_without_preview_carries_the_analysis_warnings_onto_the_batch(env, monkeypatch):
+    """Nobody reviews this render, so what the analysis had to say about its
+    own shortcomings has to arrive with the shorts."""
+    svc = Services(monkeypatch, words=[], segs=[])
+    svc.vision_reply = lambda n: {'response': json.dumps({'score': 5, 'desc': 'a fight'})}
+    client, headers = _client()
+    job = _analyze(client, headers, env, auto_render='1', reframe='fit')
+    assert job['error'] is None
+    assert any('No dialogue was transcribed' in w for w in job['result']['batch']['warnings'])
+
+
+def test_a_phase_maps_its_progress_and_keeps_done_to_itself(monkeypatch):
+    calls = []
+    monkeypatch.setattr(pipeline, 'job_set', lambda jid, **kw: calls.append((jid, kw)))
+    first = shorts._Phase('j1', 0, 55, last=False)
+    first(percent=0, step='Reading video')
+    first(percent=46, step='Transcribing dialogue')
+    first(percent=100, step='Done', done=True, result={'analysis_id': 'abc'})
+    assert calls == [('j1', {'percent': 0, 'step': 'Reading video'}),
+                     ('j1', {'percent': 25, 'step': 'Transcribing dialogue'}),
+                     ('j1', {'percent': 55})]
+    assert first.result == {'analysis_id': 'abc'}
+    first(error='Whisper is down')
+    assert calls[-1] == ('j1', {'error': 'Whisper is down'}), 'an error ends the job whichever half it is in'
+
+    calls.clear()
+    last = shorts._Phase('j1', 55, 100, last=True, extra_result={'analysis_id': 'abc'})
+    last(percent=2, step='Preparing')
+    last(percent=100, step='Done', done=True, result={'batch': {'batch_id': 'b'}})
+    assert calls == [('j1', {'percent': 56, 'step': 'Preparing'}),
+                     ('j1', {'percent': 100, 'step': 'Done', 'done': True,
+                             'result': {'batch': {'batch_id': 'b'}, 'analysis_id': 'abc'}})]
+
+
 def test_a_source_too_short_for_the_requested_length_is_refused(env, monkeypatch):
     Services(monkeypatch)
     client, headers = _client()
