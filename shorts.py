@@ -779,7 +779,7 @@ def _spawn(fn, *args, **kwargs):
 
 
 def _start_job(kind, body, params, label, after=None):
-    jid = pipeline.job_new(user_id=session.get('user_id'), username=session.get('username'))
+    jid = pipeline.job_new(user_id=session.get('user_id'), username=session.get('username'), kind='shorts')
     pipeline.job_set_orig_name(jid, label)
     if len(_JOB_KINDS) > 500:
         for k in list(_JOB_KINDS)[:250]:

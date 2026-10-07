@@ -1365,6 +1365,10 @@ def fish_audio_delete_reference(voice_id, timeout=15):
 JOBS_DB_PATH = os.path.join(LIBRARY_DIR, 'jobs.db')
 JOBS_LOCK = threading.Lock()
 JOB_TTL = 60 * 60  # drop finished jobs after an hour so the table doesn't grow forever
+# Which feature a job belongs to. Every feature's jobs share this one table
+# and one queue, so each row says whose it is: a feature's own list of jobs
+# asks for its kind, and only the admin view shows them all.
+JOB_KINDS = ('promo', 'shorts', 'schedule')
 
 def _jobs_db():
     return _sqlite_connect(JOBS_DB_PATH)
@@ -1383,8 +1387,18 @@ def jobs_db_init():
         created REAL NOT NULL,
         user_id INTEGER,
         username TEXT,
-        orig_name TEXT
+        orig_name TEXT,
+        kind TEXT
     )''')
+    # A table from before jobs had a kind: add the column, and file what is
+    # already in it. Until then every job was listed as an episodic plug;
+    # the other two features have always labelled theirs, so those are told
+    # apart by the label and anything else is what it was listed as.
+    if 'kind' not in [r[1] for r in conn.execute('PRAGMA table_info(jobs)')]:
+        conn.execute('ALTER TABLE jobs ADD COLUMN kind TEXT')
+        conn.execute("UPDATE jobs SET kind='shorts' WHERE orig_name LIKE '%(vertical shorts: %'")
+        conn.execute("UPDATE jobs SET kind='schedule' WHERE orig_name LIKE '%(schedule plug, %'")
+        conn.execute("UPDATE jobs SET kind='promo' WHERE kind IS NULL")
     # Anything still marked "not done" at startup was, by definition, being
     # rendered by a process that no longer exists -- the whole point of
     # persisting this at all is to tell the truth about that instead of
@@ -1405,7 +1419,11 @@ jobs_db_init()
 class JobCancelled(Exception):
     pass
 
-def job_new(user_id=None, username=None):
+def job_new(user_id=None, username=None, kind='promo'):
+    """`kind` is the feature the job belongs to (JOB_KINDS): the episodic
+    plug's unless said otherwise."""
+    if kind not in JOB_KINDS:
+        raise ValueError(f'unknown job kind {kind!r}')
     # random_suffix exists specifically to avoid a real (if rare) collision:
     # timestamp_ms + thread_id alone can repeat if the same thread creates
     # two jobs within the same millisecond -- rare in production, but a
@@ -1418,9 +1436,9 @@ def job_new(user_id=None, username=None):
         conn = _jobs_db()
         conn.execute(
             'INSERT INTO jobs (id, percent, step, done, error, status, result_json, '
-            'cancel_requested, created, user_id, username, orig_name) '
-            'VALUES (?,0,?,0,NULL,?,NULL,0,?,?,?,NULL)',
-            (jid, 'Queued', 'queued', time.time(), user_id, username))
+            'cancel_requested, created, user_id, username, orig_name, kind) '
+            'VALUES (?,0,?,0,NULL,?,NULL,0,?,?,?,NULL,?)',
+            (jid, 'Queued', 'queued', time.time(), user_id, username, kind))
         # Same TTL cleanup the in-memory version did, just as a DELETE instead
         # of a dict-pop loop.
         conn.execute('DELETE FROM jobs WHERE done=1 AND created < ?', (time.time() - JOB_TTL,))
@@ -1503,6 +1521,7 @@ def job_get(jid):
     d['result'] = json.loads(d.pop('result_json')) if d.get('result_json') else None
     d['done'] = bool(d['done'])
     d['cancel_requested'] = bool(d['cancel_requested'])
+    d['kind'] = d.get('kind') or 'promo'
     return d
 
 def job_set_orig_name(jid, orig_name):
@@ -1533,6 +1552,7 @@ def job_list_all():
         d['result'] = json.loads(d.pop('result_json')) if d.get('result_json') else None
         d['done'] = bool(d['done'])
         d['cancel_requested'] = bool(d['cancel_requested'])
+        d['kind'] = d.get('kind') or 'promo'
         out[d['id']] = d
     return out
 
@@ -8230,11 +8250,14 @@ def api_network_destinations_delete(dest_id):
     return jsonify(ok=removed)
 
 
-def _monitor_snapshot(filter_user_id=None, include_username=False):
+def _monitor_snapshot(filter_user_id=None, include_username=False, kind=None):
     """Build active/queued/finished lists from the jobs table.
 
     When ``filter_user_id`` is set, only that user's jobs are included.
-    When None, every job is included (admin all-jobs view)."""
+    When None, every job is included (admin all-jobs view). ``kind`` keeps
+    one feature's jobs (see JOB_KINDS); None keeps them all. A queued job's
+    ``position`` is its place in the one queue every feature shares, so it
+    still says how many jobs of any kind are ahead of it."""
     with JOB_QUEUE_LOCK:
         queued_ids = list(JOB_QUEUE)
     all_jobs = job_list_all()
@@ -8243,6 +8266,8 @@ def _monitor_snapshot(filter_user_id=None, include_username=False):
                     if j.get('user_id') is not None and j.get('user_id') == filter_user_id}
     else:
         snapshot = all_jobs
+    if kind is not None:
+        snapshot = {jid: j for jid, j in snapshot.items() if j.get('kind') == kind}
 
     queued = []
     for i, jid in enumerate(queued_ids):
@@ -8250,7 +8275,7 @@ def _monitor_snapshot(filter_user_id=None, include_username=False):
             continue
         entry = {'job_id': jid, 'position': i,
                  'orig_name': snapshot[jid].get('orig_name'),
-                 'user_id': snapshot[jid].get('user_id')}
+                 'user_id': snapshot[jid].get('user_id'), 'kind': snapshot[jid].get('kind')}
         if include_username:
             entry['username'] = snapshot[jid].get('username')
         queued.append(entry)
@@ -8261,7 +8286,8 @@ def _monitor_snapshot(filter_user_id=None, include_username=False):
             continue
         entry = {'job_id': jid, 'orig_name': j.get('orig_name'), 'percent': j.get('percent'),
                  'step': j.get('step'), 'status': j.get('status'), 'created': j.get('created'),
-                 'user_id': j.get('user_id'), 'cancel_requested': bool(j.get('cancel_requested'))}
+                 'user_id': j.get('user_id'), 'cancel_requested': bool(j.get('cancel_requested')),
+                 'kind': j.get('kind')}
         if include_username:
             entry['username'] = j.get('username')
         if j.get('done'):
@@ -8277,14 +8303,25 @@ def _monitor_snapshot(filter_user_id=None, include_username=False):
 @app.route('/api/monitor')
 @require_permission('promo_generation')
 def api_monitor():
-    """Live snapshot of *this account's* trailer jobs: running, queued, or
-    finished within JOB_TTL. Always scoped to the current user — even for
-    admins — so the Promo tab Job monitor only reflects your own process.
-    Admins use /api/admin/jobs for the whole-server view."""
+    """Live snapshot of *this account's* episodic plug jobs: running,
+    queued, or finished within JOB_TTL. Always scoped to the current user —
+    even for admins — so the Promo tab Job monitor only reflects your own
+    process. Admins use /api/admin/jobs for the whole-server view.
+
+    Only episodic plug jobs, because this is that tab's list, and because
+    the tab picks an unfinished job out of it after a reload to carry on
+    showing: handed a Vertical Shorts or Schedule Plug job, it would show
+    that as a plug being generated. ``?kind=all`` is every feature's jobs
+    for this account (the Dashboard's count); ``?kind=shorts`` or
+    ``?kind=schedule`` is one other feature's."""
     uid = session.get('user_id')
     if uid is None:
         return jsonify(active=[], queued=[], finished=[], limit=GATE.status()['limit'])
-    active, queued, finished = _monitor_snapshot(filter_user_id=uid, include_username=False)
+    kind = request.args.get('kind') or 'promo'
+    if kind != 'all' and kind not in JOB_KINDS:
+        return jsonify(error='Unknown kind of job.'), 400
+    active, queued, finished = _monitor_snapshot(filter_user_id=uid, include_username=False,
+                                                 kind=None if kind == 'all' else kind)
     return jsonify(active=active, queued=queued, finished=finished[:20],
                    limit=GATE.status()['limit'])
 

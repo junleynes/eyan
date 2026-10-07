@@ -322,7 +322,7 @@ def api_schedule_render():
               'duration': duration, 'format': fmt, 'style': style, 'content': content,
               'prompt': ' '.join((request.form.get('prompt') or '').split())[:600],
               'user_id': session.get('user_id'), 'username': session.get('username')}
-    jid = pipeline.job_new(user_id=session.get('user_id'), username=session.get('username'))
+    jid = pipeline.job_new(user_id=session.get('user_id'), username=session.get('username'), kind='schedule')
     pipeline.job_set_orig_name(jid, f'{orig} (schedule plug, {duration}s)')
     if len(_JOBS) > 500:
         for k in list(_JOBS)[:250]:

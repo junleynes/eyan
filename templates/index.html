@@ -588,6 +588,7 @@ p{color:var(--ink-dim);font-size:13px;line-height:1.65;margin:8px 0}
 .monitor-row .m-bar-fill{height:100%;background:var(--phosphor);border-radius:3px}
 .monitor-row .m-pct{font-size:12px;opacity:.75;width:34px;text-align:right;flex-shrink:0}
 .monitor-row .m-pos{font-size:12px;opacity:.75;flex-shrink:0}
+.monitor-kind{flex-shrink:0;width:108px;font-family:'JetBrains Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-dim)}
 .monitor-badge{font-size:11px;padding:3px 8px;border-radius:10px;flex-shrink:0;font-weight:600;letter-spacing:.02em}
 .monitor-badge.ok{background:rgba(52,230,197,.15);color:var(--phosphor)}
 .monitor-badge.err{background:rgba(255,90,90,.15);color:var(--tally)}
@@ -6702,7 +6703,7 @@ window.closeTrailerResult = closeTrailerResult;
         ? '<span class="monitor-badge cancel">Cancelling…</span>'
         : '<button type="button" class="btn-sm" data-job-cancel="' + j.job_id + '" style="color:var(--tally);border-color:var(--tally);padding:3px 8px;font-size:10px">Cancel</button>'
       return '<div class="monitor-row">' +
-        '<span class="m-name" title="' + (j.step||'') + '">' + (j.orig_name || 'Untitled') + ' &mdash; ' + (j.step||'') + '</span>' +
+        '<span class="m-name" title="' + escapeHtmlLite(j.step||'') + '">' + escapeHtmlLite(j.orig_name || 'Untitled') + ' &mdash; ' + escapeHtmlLite(j.step||'') + '</span>' +
         '<span class="m-bar"><span class="m-bar-fill" style="width:' + pct + '%"></span></span>' +
         '<span class="m-pct">' + pct + '%</span>' + cancel +
       '</div>'
@@ -6713,7 +6714,7 @@ window.closeTrailerResult = closeTrailerResult;
     if(!items.length){ queuedEl.innerHTML = emptyRow('Nothing waiting.'); return }
     queuedEl.innerHTML = items.map(function(j){
       return '<div class="monitor-row">' +
-        '<span class="m-name">' + (j.orig_name || 'Untitled') + '</span>' +
+        '<span class="m-name">' + escapeHtmlLite(j.orig_name || 'Untitled') + '</span>' +
         '<span class="m-pos">' + (j.position === 0 ? 'starting shortly' : j.position + ' ahead') + '</span>' +
         '<button type="button" class="btn-sm" data-job-cancel="' + j.job_id + '" style="color:var(--tally);border-color:var(--tally);padding:3px 8px;font-size:10px">Cancel</button>' +
       '</div>'
@@ -6727,7 +6728,7 @@ window.closeTrailerResult = closeTrailerResult;
                 : j.error ? '<span class="monitor-badge err">Error</span>'
                 : '<span class="monitor-badge ok">Done</span>'
       return '<div class="monitor-row">' +
-        '<span class="m-name" title="' + (j.error||'') + '">' + (j.orig_name || 'Untitled') + '</span>' +
+        '<span class="m-name" title="' + escapeHtmlLite(j.error||'') + '">' + escapeHtmlLite(j.orig_name || 'Untitled') + '</span>' +
         '<span class="m-pos">' + fmtWhen(j.created) + '</span>' +
         badge +
       '</div>'
@@ -7370,7 +7371,6 @@ async function shortsAnalyze(auto){
   catch(err){ shJobFailed('Could not start: ' + escapeHtmlLite(String(err))); return }
   if(start.error){ shJobFailed(escapeHtmlLite(start.error)); return }
   SH.jobId = start.job_id
-  if(window.refreshMonitor) refreshMonitor()
   var res = await shPoll(start.job_id)
   SH.jobId = null
   if(res.error){ shJobFailed(escapeHtmlLite(res.error)); return }
@@ -7623,7 +7623,6 @@ async function shortsRenderSelected(){
   }catch(err){ shBusy(false); shUpdateRenderBtn(); alert('Could not start the render: ' + err); return }
   if(start.error){ shBusy(false); shUpdateRenderBtn(); shShowResultError(start.error); return }
   SH.jobId = start.job_id
-  if(window.refreshMonitor) refreshMonitor()
   var res = await shPoll(start.job_id)
   SH.jobId = null
   shBusy(false); shUpdateRenderBtn()
@@ -8335,7 +8334,6 @@ async function scheduleRender(){
   catch(err){ spBusy(false); spNote('Could not start: ' + escapeHtmlLite(String(err)), true); return }
   if(start.error){ spBusy(false); spNote(escapeHtmlLite(start.error), true); return }
   SP.jobId = start.job_id
-  if(window.refreshMonitor) refreshMonitor()
   var res = await spPoll(start.job_id)
   SP.jobId = null
   spBusy(false)
@@ -9192,7 +9190,7 @@ POST /api/schedule/items/&lt;id&gt;/send   {destination_id, filename?}</pre>
       <p>Each category is configured in Config &gt; Network (admin) with its own path and credentials. Network picks are copied into the work folder like uploads.</p>
       <h3>Job monitor &amp; saved plugs</h3>
       <ul style="line-height:1.8;padding-left:20px">
-        <li><strong>Job monitor</strong> — active, queued, and recent jobs with live progress.</li>
+        <li><strong>Job monitor</strong> (<em>Your jobs</em>) — your active, queued, and recent episodic plug jobs with live progress. Vertical Shorts and Schedule Plug jobs are not listed here: each shows its progress in its own tab. The Dashboard counts all of yours together, and admins see every job of every kind under <strong>Jobs</strong>.</li>
         <li><strong>Saved plugs</strong> — finished renders kept until deleted; reopen video, download, and scene breakdown.</li>
       </ul>
       <h3>Player format compatibility</h3>
@@ -9288,7 +9286,7 @@ function switchDocs(btn){
 
 <div id="p-jobs" class="panel{{ ' active' if default_tab == 'p-jobs' else '' }}">
 <h2>Jobs</h2>
-<p style="margin-top:6px;color:var(--ink-dim)">All jobs across every account. Cancel active or queued work from here.</p>
+<p style="margin-top:6px;color:var(--ink-dim)">All jobs across every account and every feature &mdash; episodic plugs, Vertical Shorts and Schedule Plugs share one queue. Cancel active or queued work from here.</p>
 <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
   <button type="button" class="btn" onclick="loadAdminJobs()">Refresh</button>
   <span id="config-jobs-summary" style="font-size:12px;opacity:.7"></span>
@@ -10132,6 +10130,10 @@ async function loadAdminJobs(){
       summaryEl.textContent = (d.active.length) + ' active · ' + (d.queued.length) + ' queued · limit ' + (d.limit || '?')
     }
     function empty(t){ return '<div class="monitor-row" style="opacity:.5;font-size:12px">' + t + '</div>' }
+    function kindTag(j){
+      var label = {promo: 'Episodic plug', shorts: 'Vertical Shorts', schedule: 'Schedule Plug'}[j.kind] || 'Job'
+      return '<span class="monitor-kind" data-kind="' + escapeHtmlLite(j.kind || '') + '">' + label + '</span>'
+    }
     function cancelBtn(jid){
       return '<button type="button" class="btn-sm" data-admin-cancel="' + jid + '" style="color:var(--tally);border-color:var(--tally);padding:3px 8px;font-size:10px">Cancel</button>'
     }
@@ -10141,7 +10143,7 @@ async function loadAdminJobs(){
       var who = j.username ? ' · ' + escapeHtmlLite(j.username) : ''
       var cancelling = j.cancel_requested ? ' <span class="monitor-badge cancel">Cancelling…</span>' : cancelBtn(j.job_id)
       return '<div class="monitor-row">' +
-        '<span class="m-name" title="' + escapeHtmlLite(j.step||'') + '">' + escapeHtmlLite(j.orig_name || 'Untitled') + who + ' — ' + escapeHtmlLite(j.step||'') + '</span>' +
+        kindTag(j) + '<span class="m-name" title="' + escapeHtmlLite(j.step||'') + '">' + escapeHtmlLite(j.orig_name || 'Untitled') + who + ' — ' + escapeHtmlLite(j.step||'') + '</span>' +
         '<span class="m-bar"><span class="m-bar-fill" style="width:' + pct + '%"></span></span>' +
         '<span class="m-pct">' + pct + '%</span>' + cancelling +
       '</div>'
@@ -10150,7 +10152,7 @@ async function loadAdminJobs(){
     else queuedEl.innerHTML = d.queued.map(function(j){
       var who = j.username ? ' · ' + escapeHtmlLite(j.username) : ''
       return '<div class="monitor-row">' +
-        '<span class="m-name">' + escapeHtmlLite(j.orig_name || 'Untitled') + who + '</span>' +
+        kindTag(j) + '<span class="m-name">' + escapeHtmlLite(j.orig_name || 'Untitled') + who + '</span>' +
         '<span class="m-pos">' + (j.position === 0 ? 'starting shortly' : j.position + ' ahead') + '</span>' +
         cancelBtn(j.job_id) +
       '</div>'
@@ -10163,7 +10165,7 @@ async function loadAdminJobs(){
       var who = j.username ? ' · ' + escapeHtmlLite(j.username) : ''
       var when = j.created ? new Date(j.created * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : ''
       return '<div class="monitor-row">' +
-        '<span class="m-name" title="' + escapeHtmlLite(j.error||'') + '">' + escapeHtmlLite(j.orig_name || 'Untitled') + who + '</span>' +
+        kindTag(j) + '<span class="m-name" title="' + escapeHtmlLite(j.error||'') + '">' + escapeHtmlLite(j.orig_name || 'Untitled') + who + '</span>' +
         '<span class="m-pos">' + when + '</span>' + badge +
       '</div>'
     }).join('')
@@ -11375,7 +11377,8 @@ function _dashLoadHealth(){
 function _dashLoadJobs(){
   var el = document.getElementById('dash-jobs')
   if(!el) return
-  fetch('/api/monitor').then(function(r){
+  // Every feature's jobs: on its own, /api/monitor is the episodic plug's only.
+  fetch('/api/monitor?kind=all').then(function(r){
     // 403 here means this account has no promo_generation permission --
     // a real, expected case now that Dashboard is everyone's landing page,
     // not just an error to surface as one.

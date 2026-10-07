@@ -196,6 +196,14 @@ def test_render_refuses_bad_requests_before_starting_a_job(env, monkeypatch):
     p = started[0][1]
     assert (p['duration'], p['format'], p['orig_name'], p['music']) == (20, 'mp4_high', 'Primetime_Week_42.psd', None)
     assert p['prompt'].startswith('wipe in x') and len(p['prompt']) == 600
+    # Filed as a schedule plug job: not one of the episodic plug tab's.
+    jid = r.get_json()['job_id']
+    assert pipeline.job_get(jid)['kind'] == 'schedule'
+
+    def listed(url):
+        d = client.get(url).get_json()
+        return {j['job_id'] for k in ('active', 'queued', 'finished') for j in d[k]}
+    assert jid not in listed('/api/monitor') and jid in listed('/api/monitor?kind=schedule')
 
 
 # ---- the whole thing ----

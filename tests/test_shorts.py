@@ -1141,6 +1141,29 @@ def test_the_place_badge_on_a_short_does_not_share_a_class_with_the_number_boxes
     assert '<span class="sh-place"' in html and '.sh-place{position:absolute' in css
 
 
+def test_a_shorts_job_is_filed_as_a_shorts_job_and_kept_out_of_the_episodic_list(env, monkeypatch, tmp_path):
+    monkeypatch.setattr(pipeline, 'JOBS_DB_PATH', str(tmp_path / 'jobs.db'))
+    pipeline.jobs_db_init()
+    Services(monkeypatch)
+    client, headers = _client()
+    r = client.post('/api/shorts/analyze', headers=headers, data={
+        'shorts_file_network': env['staged'], 'min_dur': 5, 'max_dur': 12, 'count': 5, 'project_id': env['project']})
+    assert r.status_code == 200, r.get_json()
+    jid = r.get_json()['job_id']
+    job = client.get(f'/api/shorts/progress/{jid}').get_json()
+    assert job.get('error') is None and pipeline.job_get(jid)['kind'] == 'shorts'
+    rid = client.post('/api/shorts/render', headers=headers, json={
+        'analysis_id': job['result']['analysis_id'], 'items': [{'start': 2.0, 'end': 6.0, 'title': 'Moment'}],
+        'reframe': 'fit', 'subtitles': False}).get_json()['job_id']
+    assert pipeline.job_get(rid)['kind'] == 'shorts'
+
+    def listed(url):
+        d = client.get(url).get_json()
+        return {j['job_id'] for k in ('active', 'queued', 'finished') for j in d[k]}
+    assert listed('/api/monitor') == set(), 'not among the episodic plug tab\'s jobs'
+    assert listed('/api/monitor?kind=shorts') == {jid, rid} == listed('/api/monitor?kind=all')
+
+
 # --------------------------------------------------------------------------
 # Projects
 # --------------------------------------------------------------------------
