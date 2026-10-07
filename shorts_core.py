@@ -702,9 +702,15 @@ def dedupe_windows(cands, max_overlap=0.5):
 
 
 def build_candidates(beats, segments, words, cuts, visual, duration,
-                     min_dur=30.0, max_dur=90.0, limit=8, fps=25.0):
+                     min_dur=30.0, max_dur=90.0, limit=8, fps=25.0, min_story=None):
     """Beats (line ranges, or raw time windows from visual_windows) ->
-    ranked, de-duplicated candidates with exact frame-aligned in/out points."""
+    ranked, de-duplicated candidates with exact frame-aligned in/out points.
+
+    `min_story` is for "as many as are worth making" rather than "up to N":
+    of the moments the story model scored, those below it are left out.
+    Moments it did not score (a fallback was used) are not judged by it, and
+    if nothing reaches it everything found is kept -- a list of weak moments
+    to review is more use than an empty one."""
     units = speech_units(words, segments)
     cuts = sorted(set([0.0, float(duration)] + [float(c) for c in cuts or []]))
     fps = float(fps) if fps and fps > 0 else 25.0
@@ -757,7 +763,11 @@ def build_candidates(beats, segments, words, cuts, visual, duration,
             'story_score': sc['story'], 'visual_score': sc['visual'], 'pace': sc['pace'],
             'score': sc['score'], 'text': text[:2400], 'lines': len(lines),
         })
-    out = dedupe_windows(out)[:max(1, int(limit))]
+    out = dedupe_windows(out)
+    if min_story is not None:
+        strong = [c for c in out if c['story_score'] is None or c['story_score'] >= min_story]
+        out = strong or out
+    out = out[:max(1, int(limit))]
     for n, c in enumerate(out, 1):
         c['id'] = f'c{n}'
     return out
@@ -1854,6 +1864,82 @@ def subtitle_cues(words, segments, start, end, max_chars=26, max_words=6, max_du
         if e - s >= 0.08 and c['text'].strip():
             out.append({'start': round(s, 3), 'end': round(e, 3), 'text': c['text'].strip()})
     return out
+
+
+MAX_CUES = 800              # per short: far more than five minutes of speech makes
+MAX_CUE_CHARS = 200
+
+
+def clean_cues(raw, dur):
+    """Captions as an editor sent them -> cues fit to burn in, or ValueError
+    saying what is wrong.
+
+    [{'start', 'end', 'text'}], seconds from the start of the short. A line
+    with no text is a line taken out. They are put in time order, kept
+    inside the short, and where two overlap the earlier one gives way: one
+    caption on screen at a time is the whole point of them."""
+    if not isinstance(raw, list):
+        raise ValueError('Captions must be a list of lines.')
+    if len(raw) > MAX_CUES:
+        raise ValueError(f'At most {MAX_CUES} caption lines per short.')
+    dur = float(dur)
+    cues = []
+    for n, c in enumerate(raw, 1):
+        if not isinstance(c, dict):
+            raise ValueError(f'Caption {n} is not valid.')
+        text = ' '.join(str(c.get('text') or '').split())
+        if not text:
+            continue
+        if len(text) > MAX_CUE_CHARS:
+            raise ValueError(f'Caption {n} is {len(text)} characters long; the limit is {MAX_CUE_CHARS}. '
+                             'Split it into two lines.')
+        try:
+            start, end = float(c.get('start')), float(c.get('end'))
+        except (TypeError, ValueError):
+            raise ValueError(f'Caption {n} ("{text[:30]}"): start and end must be numbers (seconds).')
+        if not (math.isfinite(start) and math.isfinite(end)):
+            raise ValueError(f'Caption {n} ("{text[:30]}"): start and end must be numbers (seconds).')
+        if end <= start:
+            raise ValueError(f'Caption {n} ("{text[:30]}"): it must end after it starts.')
+        start, end = max(0.0, start), min(dur, end)
+        if end - start < 0.08:
+            continue                    # outside the short, or all but
+        cues.append({'start': round(start, 3), 'end': round(end, 3), 'text': text})
+    cues.sort(key=lambda c: (c['start'], c['end']))
+    out = []
+    for c in cues:
+        if out and c['start'] < out[-1]['end']:
+            out[-1]['end'] = c['start']
+            if out[-1]['end'] - out[-1]['start'] < 0.08:
+                out.pop()
+        out.append(c)
+    return out
+
+
+def fit_cues(edited, old_start, old_end, start, end, auto):
+    """Captions edited for the range [old_start, old_end] of the source,
+    carried over to [start, end] -- the editor nudged the in or out point
+    after correcting them, and the corrections should survive that.
+
+    Every edited line still inside the new range is kept, moved to where it
+    now falls. What the new range adds at either end was never edited, so it
+    gets the automatic captions: `auto(a, b)` returns those for a stretch of
+    the source, timed from `a`."""
+    shift = float(old_start) - float(start)
+    dur = float(end) - float(start)
+    lo, hi = max(0.0, shift), min(dur, float(old_end) - float(start))
+    if hi <= lo:
+        # Moved clear of everything that was edited: there is nothing to carry.
+        return [dict(c) for c in auto(float(start), float(end))]
+    kept = []
+    for c in edited:
+        s, e = max(lo, c['start'] + shift), min(hi, c['end'] + shift)
+        if e - s >= 0.08:
+            kept.append({'start': round(s, 3), 'end': round(e, 3), 'text': c['text']})
+    head = [dict(c) for c in auto(float(start), float(start) + lo)] if lo > 0.3 else []
+    tail = ([{'start': round(c['start'] + hi, 3), 'end': round(c['end'] + hi, 3), 'text': c['text']}
+             for c in auto(float(start) + hi, float(end))] if dur - hi > 0.3 else [])
+    return head + kept + tail
 
 
 def place_cues(cues, segs, fps):

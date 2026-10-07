@@ -21,6 +21,7 @@ import json
 import re
 
 import cv2
+import pytest
 import numpy as np
 
 import shorts_core as sc
@@ -723,6 +724,98 @@ def test_the_hold_is_made_only_from_frames_in_which_nothing_is_really_moving(tmp
     settle = _clip(tmp_path / 'settle.avi', [frame(hand=6 * min(i, 37)) for i in range(40)])
     assert sc.still_frames(settle, 39, 25.0) == 3
     assert sc.still_frames(str(tmp_path / 'missing.avi'), 39, 25.0) == 1, 'unreadable is not an error here'
+
+
+# ---- captions an editor has corrected ----
+
+def test_corrected_captions_are_tidied_into_something_that_can_be_burned_in():
+    raw = [{'start': 2, 'end': 4, 'text': '  second   line '}, {'start': 0, 'end': 2.5, 'text': 'first'},
+           {'start': 5, 'end': 6, 'text': '   '}, {'start': 9, 'end': 12, 'text': 'runs past the end'},
+           {'start': 20, 'end': 21, 'text': 'after it'}, {'start': '7.5', 'end': '8', 'text': 'typed as text'}]
+    assert sc.clean_cues(raw, 10) == [
+        {'start': 0.0, 'end': 2.0, 'text': 'first'},            # gives way to the one that follows it
+        {'start': 2.0, 'end': 4.0, 'text': 'second line'},      # in time order, spaces tidied
+        {'start': 7.5, 'end': 8.0, 'text': 'typed as text'},
+        {'start': 9.0, 'end': 10.0, 'text': 'runs past the end'}]   # kept inside; the emptied and the outside ones gone
+    assert sc.clean_cues([], 10) == []
+    # One swallowed whole by the next is dropped, not left as a single-frame flash.
+    assert [c['text'] for c in sc.clean_cues([{'start': 1.0, 'end': 3.0, 'text': 'a'},
+                                              {'start': 1.02, 'end': 3.0, 'text': 'b'}], 10)] == ['b']
+    for bad, says in ((None, 'must be a list'), ([3], 'not valid'),
+                      ([{'start': 'x', 'end': 2, 'text': 'Hi there'}], '"Hi there"'),
+                      ([{'start': 3, 'end': 3, 'text': 'Zero'}], 'must end after it starts'),
+                      ([{'start': float('nan'), 'end': 3, 'text': 'NaN'}], 'must be numbers'),
+                      ([{'start': 0, 'end': 1, 'text': 'x' * 201}], 'Split it into two'),
+                      ([{'start': 0, 'end': 1, 'text': 'x'}] * 801, 'At most 800')):
+        with pytest.raises(ValueError) as e:
+            sc.clean_cues(bad, 10)
+        assert says in str(e.value), (bad if not isinstance(bad, list) else len(bad), str(e.value))
+
+
+def test_corrected_captions_follow_the_moment_when_its_in_and_out_are_moved():
+    edited = [{'start': 0.0, 'end': 2.0, 'text': 'one'}, {'start': 4.0, 'end': 5.0, 'text': 'two'},
+              {'start': 8.0, 'end': 10.0, 'text': 'three'}]
+    asked = []
+
+    def auto(a, b):
+        asked.append((a, b))
+        return [{'start': 0.1, 'end': round(min(1.0, b - a), 3), 'text': f'auto {a:g}-{b:g}'}]
+    # Unmoved: exactly what was edited, and nothing automatic.
+    assert sc.fit_cues(edited, 100, 110, 100, 110, auto) == edited and asked == []
+    # Both ends moved out: the edits where they now fall, automatic captions for what was added.
+    out = sc.fit_cues(edited, 100, 110, 98, 113, auto)
+    assert [(c['start'], c['end'], c['text']) for c in out] == [
+        (0.1, 1.0, 'auto 98-100'), (2.0, 4.0, 'one'), (6.0, 7.0, 'two'), (10.0, 12.0, 'three'), (12.1, 13.0, 'auto 110-113')]
+    assert asked == [(98.0, 100.0), (110.0, 113.0)]
+    # Both ends moved in: what is cut off goes, what straddles the new edge is clipped to it.
+    out = sc.fit_cues(edited, 100, 110, 101, 109, auto)
+    assert [(c['start'], c['end'], c['text']) for c in out] == [(0.0, 1.0, 'one'), (3.0, 4.0, 'two'), (7.0, 8.0, 'three')]
+    # Moved clear of every edit: all automatic.
+    asked.clear()
+    assert [c['text'] for c in sc.fit_cues(edited, 100, 110, 200, 210, auto)] == ['auto 200-210']
+    # A nudge of a few frames is not a stretch worth captioning on its own.
+    asked.clear()
+    assert sc.fit_cues(edited, 100, 110, 99.8, 110.2, auto)[0]['text'] == 'one' and asked == []
+
+
+def test_a_story_floor_keeps_the_moments_worth_making():
+    segs = [{'start': 10.0 * i, 'end': 10.0 * i + 8.0, 'text': f'line {i}'} for i in range(30)]
+    beats = [{'start_id': 0, 'end_id': 3, 'score': 9, 'title': 'A'}, {'start_id': 8, 'end_id': 11, 'score': 6, 'title': 'B'},
+             {'start_id': 16, 'end_id': 19, 'score': 5, 'title': 'C'}, {'start_id': 24, 'end_id': 27, 'score': 2, 'title': 'D'}]
+
+    def titles(**kw):
+        return sorted(c['title'] for c in sc.build_candidates(beats, segs, [], [], [], 300.0, min_dur=20, max_dur=60,
+                                                              limit=100, **kw))
+    assert titles() == ['A', 'B', 'C', 'D'] and titles(min_story=6) == ['A', 'B'] and titles(min_story=9) == ['A']
+    assert titles(min_story=10) == ['A', 'B', 'C', 'D'], 'none reach it: all of them, not none'
+    # Moments nobody scored (a fallback was used) are not judged by it.
+    unscored = [dict(b, score=None, source='heuristic') for b in beats]
+    assert len(sc.build_candidates(unscored, segs, [], [], [], 300.0, min_dur=20, max_dur=60, limit=100, min_story=6)) == 4
+    ids = [c['id'] for c in sc.build_candidates(beats, segs, [], [], [], 300.0, min_dur=20, max_dur=60, limit=100, min_story=6)]
+    assert ids == ['c1', 'c2'], 'numbered after the weak ones are taken out'
+
+
+def test_a_saved_reframing_plan_renders_the_same_after_a_trip_through_json():
+    """A short's plan is kept in its batch's manifest so it can be rendered
+    again with new captions. JSON turns its tuples into lists."""
+    info = {'width': 1920, 'height': 1080, 'disp_w': 1920, 'disp_h': 1080, 'sar': 1.0, 'sd_matrix': False,
+            'fps': 25.0, 'audio_index': 1, 'tag_709': True, 'v_offset': 0.0, 'audio_take': [[2, 0], [3, 0]]}
+    segs = [{'a': 0, 'b': 99, 'layout': 'crop', 'x': None, 'keys': [(0, 100.0), (40, 400.5), (99, 655.25)]},
+            {'a': 100, 'b': 149, 'layout': 'fit', 'x': None, 'keys': None},
+            {'a': 150, 'b': 199, 'layout': 'split', 'x': None, 'keys': None,
+             'people': ((400.0, 500.0, 200.0, 220.0), (1500.0, 480.0, 190.0, 210.0))},
+            {'a': 200, 'b': 249, 'layout': 'crop', 'x': 656.0, 'keys': None, 'speaker': True, 'person': 1}]
+    for s in segs:
+        if s['layout'] == 'split':
+            s['size'] = sc.split_window(s['people'], 1920, 1080)
+    sc._finish_split(segs, 1920, 1080)
+    back = json.loads(json.dumps({'segs': segs, 'info': info}))
+    for kw in ({}, {'ass_name': 'c.ass'}, {'ending': (250, 4)}):
+        assert sc.build_filtergraph(back['info'], back['segs'], **kw) == sc.build_filtergraph(info, segs, **kw)
+    assert sc.build_render_cmd('ffmpeg', '/in.mp4', '/out.mp4', 10, 250, back['info'], back['segs'], ending=True) == \
+        sc.build_render_cmd('ffmpeg', '/in.mp4', '/out.mp4', 10, 250, info, segs, ending=True)
+    cues = [{'start': 6.5, 'end': 7.5, 'text': 'over the split'}, {'start': 1.0, 'end': 2.0, 'text': 'not'}]
+    assert [c['seam'] for c in sc.place_cues(cues, back['segs'], 25.0)] == [True, False]
 
 
 # ---- found in review ----

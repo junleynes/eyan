@@ -759,6 +759,15 @@ input.sh-num[type=number]{width:92px}
 .sh-poster{position:relative;aspect-ratio:9/16;background:#000}
 .sh-place{position:absolute;top:8px;left:8px;z-index:1;min-width:26px;padding:3px 7px;border-radius:999px;background:rgba(0,0,0,.72);color:#fff;font:600 13px/1.2 var(--mono,monospace);text-align:center;pointer-events:none}
 .sh-tile-body{padding:8px 10px;font-size:12px;line-height:1.45}
+.sh-cap{margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+.sh-cap-rows{max-height:340px;overflow-y:auto;margin:8px 0;padding-right:4px}
+.sh-cap-row{display:grid;grid-template-columns:74px 74px minmax(0,1fr) 28px;gap:6px;align-items:center;margin:4px 0}
+.sh-cap-row input[type=text]{margin:0;padding:5px 8px;font-size:13px}
+.sh-cap-row input[data-cap-s],.sh-cap-row input[data-cap-e]{font-family:'JetBrains Mono',monospace;font-size:12px}
+.sh-cap-row input.bad{border-color:var(--tally)}
+.sh-cap-row button{padding:3px 0;line-height:1.2}
+.sh-cap-head{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-dim)}
+@media (max-width:640px){.sh-cap-row{grid-template-columns:62px 62px minmax(0,1fr) 26px}}
 .sh-warn{font-size:12px;line-height:1.5;padding:8px 10px;border-radius:6px;border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);color:var(--amber);margin:8px 0}
 @media (max-width:640px){.sh-cand{grid-template-columns:1fr}}
 /* ---- Output peak/channel meter (Generate Promo Plug result) ---- */
@@ -7005,19 +7014,23 @@ document.getElementById('vf').addEventListener('submit', async function(e){
   <div>
     <label>Length of each short (seconds):</label>
     <div style="display:flex;gap:8px;align-items:center">
-      <input type=number id=sh-min class=sh-num value=30 min=5 max=240 step=5>
+      <input type=number id=sh-min class=sh-num value=60 min=5 max=240 step=5>
       <span style="font-size:12px;opacity:.7">to</span>
-      <input type=number id=sh-max class=sh-num value=90 min=10 max=300 step=5>
+      <input type=number id=sh-max class=sh-num value=120 min=10 max=300 step=5>
     </div>
   </div>
   <div>
     <label>Moments to find:</label>
-    <select id=sh-count style="width:110px">
+    <select id=sh-count style="width:230px" onchange="shCountNote()">
       <option value=5>Up to 5</option><option value=8 selected>Up to 8</option>
       <option value=12>Up to 12</option><option value=20>Up to 20</option>
+      <option value=50>Up to 50</option><option value=100>Up to 100</option>
+      <option value=auto>Auto &mdash; every strong moment</option>
     </select>
   </div>
 </div>
+
+<p class="sh-note" id=sh-count-note style="margin-top:6px;display:none"></p>
 
 <label>What should these shorts feature? (optional)</label>
 <input type=text id=sh-focus class=input-box maxlength=300 placeholder="e.g. the confrontation between the sisters, anything about the missing will">
@@ -7066,6 +7079,11 @@ document.getElementById('vf').addEventListener('submit', async function(e){
     <span style="display:inline-flex;gap:6px;align-items:center;font-size:12px">Size
       <select id=sh-caption-size><option value=s>Small</option><option value=m selected>Medium</option><option value=l>Large</option></select>
     </span>
+    <span style="display:inline-flex;gap:6px;align-items:center;font-size:12px">Format
+      <select id=sh-format title="The file each short is delivered as" onchange="shFormatNote()">
+        <option value=mp4_high selected>MP4 (H.264 High Profile)</option>
+      </select>
+    </span>
     <span style="display:inline-flex;gap:6px;align-items:center;font-size:12px">Ending
       <select id=sh-ending title="How every short in this render finishes">
         <option value=none selected>Cut on the last frame</option>
@@ -7073,6 +7091,8 @@ document.getElementById('vf').addEventListener('submit', async function(e){
       </select>
     </span>
   </div>
+
+<p class="sh-note" id=sh-format-note style="margin-top:-4px;display:none"></p>
 
 <div class="promo-actions" style="margin-top:14px">
   <button class="btn btn-primary-promo" type=button id=sh-analyze-btn onclick="shortsAnalyze(false)" title="Find the moments, then review, re-time and pick before anything is rendered">Preview the cut</button>
@@ -7180,6 +7200,26 @@ function shortsOnTabOpen(){
   }, 0)
 }
 
+// What the less obvious choices cost or mean, said under the control.
+function shFormatNote(){
+  var note = shEl('sh-format-note'), sel = shEl('sh-format')
+  if(!note || !sel) return
+  var prores = sel.value.indexOf('prores') === 0
+  note.style.display = prores ? 'block' : 'none'
+  note.innerHTML = prores ? '<b>ProRes 422 HQ</b> is a large file: roughly 1.3&ndash;1.7 GB per minute at this size. ' +
+    'Each short is still rendered as an MP4 too, which is what plays here; the .mov is what Download, Download all and Send hand over.' : ''
+}
+
+function shCountNote(){
+  var note = shEl('sh-count-note'), sel = shEl('sh-count')
+  if(!note || !sel) return
+  var v = sel.value, floor = (SH.options && SH.options.auto_min_story) || 6
+  note.style.display = (v === 'auto' || parseInt(v, 10) >= 50) ? 'block' : 'none'
+  note.innerHTML = v === 'auto'
+    ? '<b>Auto</b> keeps every distinct moment the story model rates ' + floor + '/10 or better, however many that is (100 at most), instead of a number chosen in advance.'
+    : 'An episode only holds so many: moments may overlap by up to half, so a 45-minute episode at 60&ndash;120 s yields a few dozen at most. This is a ceiling, not a target.'
+}
+
 // "Follow the speaker" has nothing to act on when every shot is shown whole
 // (Fit), or when this server has no face detector at all.
 function shSyncSpeaker(){
@@ -7213,6 +7253,14 @@ async function shortsLoadOptions(){
       story.appendChild(o)
     })
     shEl('sh-frames').value = d.vision_frames || 90
+    var fsel = shEl('sh-format'), had = fsel.value
+    if((d.formats || []).length){
+      fsel.innerHTML = d.formats.map(function(f){
+        return '<option value="' + escapeHtmlLite(f.key) + '">' + escapeHtmlLite(f.label) + '</option>' }).join('')
+      fsel.value = had
+      if(!fsel.value) fsel.selectedIndex = 0
+    }
+    shFormatNote(); shCountNote()
     shEl('sh-speaker').checked = !!d.speaker_default
     shSyncSpeaker()
     var bits = []
@@ -7327,7 +7375,8 @@ function shRenderOptions(){
           speaker: shEl('sh-speaker').checked && !shEl('sh-speaker').disabled,
           subtitles: shEl('sh-captions').checked,
           subtitle_size: shEl('sh-caption-size').value,
-          ending: shEl('sh-ending').value}
+          ending: shEl('sh-ending').value,
+          format: shEl('sh-format').value}
 }
 
 // auto=false: "Preview the cut" -- analyse, then stop at the review list.
@@ -7491,12 +7540,15 @@ function shRenderCands(){
         '<div class="sh-times">In <input type=text data-act="start" data-i="' + i + '" value="' + shFmt(c.start) + '" aria-label="In point">' +
           ' Out <input type=text data-act="end" data-i="' + i + '" value="' + shFmt(c.end) + '" aria-label="Out point">' +
           ' <span data-dur="' + i + '">' + (c.end - c.start).toFixed(1) + ' s</span>' +
-          ' <button type=button class="btn-sm" data-act="preview" data-i="' + i + '">Preview</button></div>' +
+          ' <button type=button class="btn-sm" data-act="preview" data-i="' + i + '">Preview</button>' +
+          ' <button type=button class="btn-sm" data-act="captions" data-i="' + i + '" title="Read and correct the captions this short will get">Captions&hellip;</button>' +
+          (c.captions ? ' <span class="score-chip" data-cap-chip title="Rendered with the captions you corrected">captions edited</span>' : '') + '</div>' +
         '<div class="score-chips"><span class="score-chip face" data-num="' + i + '"></span>' + shCandMeta(c) + '</div>' +
         (c.hook ? '<div class="sh-note"><b>Hook:</b> ' + escapeHtmlLite(c.hook) + '</div>' : '') +
         (c.why ? '<div class="sh-note"><b>Why:</b> ' + escapeHtmlLite(c.why) + '</div>' : '') +
         (c.text ? '<details class="sh-note"><summary style="cursor:pointer">Dialogue</summary>' +
                   '<div style="margin-top:4px;color:var(--ink)">' + escapeHtmlLite(c.text) + '</div></details>' : '') +
+        '<div data-cap-host="' + i + '" style="display:none"></div>' +
       '</div>'
     host.appendChild(row)
   })
@@ -7524,7 +7576,9 @@ function shortsSelectAll(on){
   if(!host) return
   host.addEventListener('click', function(e){
     var t = e.target.closest('[data-act=preview]')
-    if(t) shortsPreview(parseInt(t.getAttribute('data-i'), 10))
+    if(t){ shortsPreview(parseInt(t.getAttribute('data-i'), 10)); return }
+    t = e.target.closest('[data-act=captions]')
+    if(t) shCandCaptions(parseInt(t.getAttribute('data-i'), 10))
   })
   host.addEventListener('change', function(e){
     var t = e.target, act = t.getAttribute && t.getAttribute('data-act')
@@ -7611,7 +7665,9 @@ async function shortsRenderSelected(){
     alert('Fix the in/out points marked in red first.'); return
   }
   var items = SH.cands.filter(function(c){ return c.keep }).map(function(c){
-    return {start: c.start, end: c.end, title: c.title}
+    // Captions the editor corrected go with the moment; the rest are made as usual.
+    return c.captions ? {start: c.start, end: c.end, title: c.title, captions: c.captions}
+                      : {start: c.start, end: c.end, title: c.title}
   })
   if(!items.length) return
   shBusy(true, 'Starting render...')
@@ -7653,6 +7709,215 @@ function shLayoutNote(l){
   return bits.length ? 'Shots: ' + bits.join(', ') : ''
 }
 
+// ---- Captions: read them, correct them ----
+// Times are shown to a hundredth of a second, from the start of the short.
+function shCapFmt(t){
+  t = Math.max(0, Number(t) || 0)
+  var m = Math.floor(t / 60), sec = t - m * 60
+  return m + ':' + (sec < 10 ? '0' : '') + sec.toFixed(2)
+}
+
+// The editor itself, shared by the review list (before rendering) and a
+// saved short (after). `cues` are [{start, end, text}] in seconds from the
+// start of the short. opts: dur, note (html), saveLabel, readOnly,
+// onSave(cues) -> a promise of an error message or nothing, onReset, onClose.
+function shCapEditor(host, cues, opts){
+  opts = opts || {}
+  var rows = cues.map(function(c){ return {start: c.start, end: c.end, text: c.text} })
+  host.style.display = 'block'
+  host.innerHTML = '<div class="sh-cap">' +
+    (opts.note ? '<div class="sh-note" style="margin-top:0">' + opts.note + '</div>' : '') +
+    '<div class="sh-cap-row sh-cap-head" style="margin-top:8px"><span>In</span><span>Out</span><span>Caption</span><span></span></div>' +
+    '<div class="sh-cap-rows" data-cap-rows></div>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
+      (opts.readOnly ? '' : '<button type=button class="btn-sm" data-cap-add>+ Add a line</button>' +
+        '<button type=button class=btn data-cap-save>' + (opts.saveLabel || 'Save captions') + '</button>') +
+      (opts.onReset && !opts.readOnly ? '<button type=button class="btn-sm" data-cap-reset title="Drop your corrections and go back to the automatic captions">Back to automatic</button>' : '') +
+      '<button type=button class="btn-sm" data-cap-close style="opacity:.75">Close</button>' +
+      '<span data-cap-out style="font-size:12px;overflow-wrap:anywhere"></span></div></div>'
+  var list = host.querySelector('[data-cap-rows]'), out = host.querySelector('[data-cap-out]')
+  var ro = opts.readOnly ? ' readonly' : ''
+
+  function draw(){
+    list.innerHTML = rows.length ? '' :
+      '<div class="sh-note">No captions: nothing is said in this short' + (opts.readOnly ? '.' : '. Add a line to give it one.') + '</div>'
+    rows.forEach(function(r, k){
+      var row = document.createElement('div')
+      row.className = 'sh-cap-row'
+      row.innerHTML = '<input type=text data-cap-s aria-label="Caption ' + (k + 1) + ' in" value="' + shCapFmt(r.start) + '"' + ro + '>' +
+        '<input type=text data-cap-e aria-label="Caption ' + (k + 1) + ' out" value="' + shCapFmt(r.end) + '"' + ro + '>' +
+        '<input type=text data-cap-t maxlength=200 spellcheck=true aria-label="Caption ' + (k + 1) + ' text" value="' + escapeHtmlLite(r.text) + '"' + ro + '>' +
+        (opts.readOnly ? '<span></span>' : '<button type=button class="btn-sm" data-cap-x aria-label="Remove caption ' + (k + 1) + '" title="Remove this line">&times;</button>')
+      // A time is only re-read when it is retyped, so one left alone keeps
+      // its exact value and not the two decimals it is shown to.
+      row.querySelector('[data-cap-s]').addEventListener('change', function(){ time(this, r, 'start') })
+      row.querySelector('[data-cap-e]').addEventListener('change', function(){ time(this, r, 'end') })
+      row.querySelector('[data-cap-t]').addEventListener('input', function(){ r.text = this.value })
+      var x = row.querySelector('[data-cap-x]')
+      if(x) x.addEventListener('click', function(){ rows.splice(rows.indexOf(r), 1); draw() })
+      list.appendChild(row)
+    })
+  }
+  function time(input, r, key){
+    var v = shParse(input.value)
+    var ok = v != null && (opts.dur == null || v <= opts.dur + 0.05)
+    input.classList.toggle('bad', !ok)
+    if(ok){ r[key] = v; input.value = shCapFmt(v) }
+  }
+  function say(text, colour){ out.style.color = colour || ''; out.textContent = text }
+  draw()
+
+  var add = host.querySelector('[data-cap-add]')
+  if(add) add.addEventListener('click', function(){
+    var last = rows[rows.length - 1], at = last ? last.end : 0
+    var end = opts.dur != null ? Math.min(opts.dur, at + 1.5) : at + 1.5
+    if(end - at < 0.3){ say('There is no room after the last line. Shorten it, or change its times.', 'var(--amber)'); return }
+    rows.push({start: at, end: end, text: ''})
+    draw()
+    var inputs = list.querySelectorAll('[data-cap-t]')
+    inputs[inputs.length - 1].focus()
+  })
+  var save = host.querySelector('[data-cap-save]')
+  if(save) save.addEventListener('click', async function(){
+    if(list.querySelector('input.bad')){ say('Fix the times marked in red first.', 'var(--tally)'); return }
+    var wrong = rows.filter(function(r){ return r.text.trim() && !(r.end > r.start) })[0]
+    if(wrong){ say('"' + wrong.text.trim().slice(0, 30) + '" must end after it starts.', 'var(--tally)'); return }
+    save.disabled = true
+    say('Saving…')
+    var err = null
+    try{ err = await opts.onSave(rows.map(function(r){ return {start: r.start, end: r.end, text: r.text} }), say) }
+    catch(e){ err = String(e) }
+    save.disabled = false
+    if(err) say(err, 'var(--tally)')
+  })
+  var reset = host.querySelector('[data-cap-reset]')
+  if(reset) reset.addEventListener('click', function(){ opts.onReset() })
+  host.querySelector('[data-cap-close]').addEventListener('click', function(){
+    host.style.display = 'none'; host.innerHTML = ''
+    if(opts.onClose) opts.onClose()
+  })
+}
+
+// Before rendering: the captions a moment in the review list will get.
+// Corrections are kept with the moment (c.captions, with the in and out
+// they were made for) and sent with it when it is rendered. Moving the in
+// or out afterwards keeps them: the server carries them over.
+async function shCandCaptions(i){
+  var c = SH.cands[i], host = document.querySelector('[data-cap-host="' + i + '"]')
+  if(!c || !host || !SH.analysis) return
+  if(host.style.display === 'block'){ host.style.display = 'none'; host.innerHTML = ''; return }
+  host.style.display = 'block'
+  host.innerHTML = '<div class="sh-cap sh-note">Loading the captions&hellip;</div>'
+  var size = shEl('sh-caption-size').value
+  async function ask(edited){
+    return (await fetch('/api/shorts/captions', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({analysis_id: SH.analysis.analysis_id, start: c.start, end: c.end,
+                            subtitle_size: size, edited: edited || null})})).json()
+  }
+  function chip(){
+    var row = host.closest('.sh-cand'), at = row && row.querySelector('.sh-times'), old = row && row.querySelector('[data-cap-chip]')
+    if(old) old.remove()
+    if(at && c.captions) at.insertAdjacentHTML('beforeend', ' <span class="score-chip" data-cap-chip title="Rendered with the captions you corrected">captions edited</span>')
+  }
+  var r
+  try{ r = await ask(c.captions) }
+  catch(e){ host.innerHTML = '<div class="sh-warn">Could not load the captions: ' + escapeHtmlLite(String(e)) + '</div>'; return }
+  if(!r.ok){ host.innerHTML = '<div class="sh-warn">' + escapeHtmlLite(r.error || 'Could not load the captions.') + '</div>'; return }
+  var burning = shEl('sh-captions').checked && !shEl('sh-captions').disabled
+  shCapEditor(host, r.cues, {
+    dur: r.end - r.start, saveLabel: 'Use these captions',
+    note: (r.edited ? 'Your corrected captions for this moment.' : 'The automatic captions for this moment, as they will appear.') +
+      ' Change the wording, or when a line is on screen; empty a line to drop it. Times are from the start of the short.' +
+      (burning ? '' : ' <b>Burn in captions</b> is off, so these go to the .srt only.') +
+      (r.spoken ? '' : ' Nothing was transcribed for this video, so there are none to start from.'),
+    onSave: async function(cues, say){
+      // Checked by the server (which also tidies overlaps), then kept with the moment.
+      var v = await ask({start: r.start, end: r.end, cues: cues})
+      if(!v.ok) return v.error || 'Those captions could not be used.'
+      c.captions = {start: v.start, end: v.end, cues: v.cues}
+      chip()
+      say('Kept: this short will be rendered with these ' + v.cues.length + ' line' + (v.cues.length === 1 ? '' : 's') + '.', 'var(--phosphor)')
+    },
+    onReset: function(){ delete c.captions; chip(); host.style.display = 'none'; shCandCaptions(i) }
+  })
+}
+
+// Polls a job that is not the create form's (so it leaves that form's
+// progress bar alone). Resolves with the job's result, or {error}.
+function shJobWait(jid, tick){
+  return new Promise(function(resolve){
+    var misses = 0
+    var poll = async function(){
+      var j
+      try{ j = await (await fetch('/api/shorts/progress/' + jid)).json() }
+      catch(e){
+        if(++misses > 40){ resolve({error: 'Lost contact with the server while waiting. The job may still be running: check again shortly.'}); return }
+        setTimeout(poll, 1500); return
+      }
+      misses = 0
+      if(j.error){ resolve({error: j.error}); return }
+      if(tick) tick(j)
+      if(j.done){ resolve(j.result || {error: 'Job finished with no result.'}); return }
+      setTimeout(poll, 900)
+    }
+    poll()
+  })
+}
+
+// After rendering: one saved short's captions. Captions that are only in
+// the .srt are saved at once; burned-in ones mean rendering that short
+// again, which the server does as a job while its episode is still there.
+async function shBatchCaptions(card, b, s){
+  var host = card.querySelector('[data-cap-panel]')
+  if(!host || !s) return
+  if(host.style.display === 'block' && host.getAttribute('data-for') === String(s.index)){
+    host.style.display = 'none'; host.innerHTML = ''; return
+  }
+  host.setAttribute('data-for', String(s.index))
+  host.style.display = 'block'
+  host.innerHTML = '<div class="sh-cap sh-note">Loading the captions&hellip;</div>'
+  var url = '/api/shorts/batches/' + b.batch_id + '/captions/' + s.index, r
+  try{ r = await (await fetch(url)).json() }
+  catch(e){ host.innerHTML = '<div class="sh-warn">Could not load the captions: ' + escapeHtmlLite(String(e)) + '</div>'; return }
+  if(!r.ok){ host.innerHTML = '<div class="sh-warn">' + escapeHtmlLite(r.error || 'Could not load the captions.') + '</div>'; return }
+  var head = '<b>' + escapeHtmlLite(s.title || ('Short ' + s.index)) + '</b> &mdash; '
+  var note = !r.can_change ? 'Only whoever rendered this batch, or an admin, can change its captions.'
+    : r.how === 'render' ? 'These captions are burned into the picture. Saving renders this short again with the corrected lines, which takes about as long as it did the first time; the file keeps its name.'
+    : r.how === 'srt' ? 'These captions are not in the picture, only in the .srt, so saving is immediate.'
+    : escapeHtmlLite(r.why || '') + ' <b>Saving here updates the .srt only.</b>'
+  shCapEditor(host, r.cues, {
+    dur: r.duration, readOnly: !r.can_change, note: head + note,
+    saveLabel: r.how === 'render' ? 'Save and render again' : 'Save to the .srt',
+    onSave: async function(cues, say){
+      var p = await (await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                       body: JSON.stringify({cues: cues})})).json()
+      if(!p.ok) return p.error || 'Could not save the captions.'
+      var done = p
+      if(p.job_id){
+        done = await shJobWait(p.job_id, function(j){ say('Rendering again… ' + (j.percent || 0) + '% ' + (j.step ? '(' + j.step + ')' : '')) })
+        if(done.error) return done.error
+      }
+      if(done.batch){
+        // The card is redrawn from what the server now holds: new sizes, a
+        // fresh address for the picture so the old one is not played from cache.
+        var fresh = shBatchCard(done.batch, false)
+        card.replaceWith(fresh)
+        var told = document.createElement('div')
+        told.className = 'sh-note'
+        told.style.color = 'var(--phosphor)'
+        told.textContent = p.job_id ? 'Rendered again with the corrected captions: ' + (s.title || 'short ' + s.index) + '.'
+          : p.srt_only ? 'The .srt was updated. The captions in the picture are unchanged.' : 'Captions saved to the .srt.'
+        fresh.appendChild(told)
+      }
+    }
+  })
+  host.scrollIntoView({behavior: 'smooth', block: 'nearest'})
+}
+
+// A file address with ?download=1 added, whether or not it already has a query.
+function shDl(url){ return url + (String(url).indexOf('?') < 0 ? '?' : '&') + 'download=1' }
+function shExt(name){ var d = String(name || '').lastIndexOf('.'); return d < 0 ? 'File' : String(name).slice(d + 1).toUpperCase() }
+
 function shBatchCard(b, fresh){
   var card = document.createElement('div')
   card.className = 'card'
@@ -7665,6 +7930,7 @@ function shBatchCard(b, fresh){
       b.shorts.length + ' short' + (b.shorts.length === 1 ? '' : 's') + (reframe ? ' &middot; ' + reframe : '') +
       (o.speaker ? ' &middot; follows speaker' : '') +
       (o.subtitles ? ' &middot; captions' : '') + (o.ending === 'cliffhanger' ? ' &middot; cliffhanger ending' : '') +
+      (o.format && o.format !== 'mp4_high' ? ' &middot; ' + escapeHtmlLite(o.format_label || o.format) : '') +
       (when ? ' &middot; ' + when : '') +
       (IS_ADMIN && b.username && b.username !== CURRENT_USERNAME ? ' &middot; by ' + escapeHtmlLite(b.username) : '') +
       (b.status === 'partial' ? ' &middot; <span style="color:var(--amber)">incomplete</span>' : '') + '</span></div>' +
@@ -7690,12 +7956,16 @@ function shBatchCard(b, fresh){
         '<button type=button class="sh-play" aria-label="Play" data-play="' + i + '">&#9654;</button></div>' +
       '<div class="sh-tile-body"><div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' +
           escapeHtmlLite(s.title || '') + '">' + escapeHtmlLite(s.title || ('Short ' + s.index)) + '</div>' +
-        '<div style="opacity:.7">' + (s.duration || 0).toFixed(1) + ' s &middot; ' + shBytes(s.size || 0) + '</div>' +
+        '<div style="opacity:.7">' + (s.duration || 0).toFixed(1) + ' s &middot; ' + shBytes(s.delivery_size || s.size || 0) +
+          (s.captions_edited ? ' &middot; <span title="Its captions were corrected by hand">captions edited</span>' : '') + '</div>' +
         '<div style="opacity:.6;font-size:11px" title="Where this is in the episode">' + shFmt(s.start) + ' → ' + shFmt(s.end) + '</div>' +
         '<div style="opacity:.6;font-size:11px">' + shLayoutNote(s.layouts) + '</div>' +
         '<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">' +
-          '<a class="btn-sm" href="' + s.url + '?download=1">MP4</a>' +
-          (s.srt_url ? '<a class="btn-sm" href="' + s.srt_url + '?download=1">SRT</a>' : '') +
+          '<a class="btn-sm" href="' + shDl(s.delivery_url || s.url) + '">' + escapeHtmlLite(shExt(s.delivery || s.file)) + '</a>' +
+          (s.delivery && s.delivery !== s.file
+            ? '<a class="btn-sm" href="' + shDl(s.url) + '" title="The H.264 copy that plays here">MP4</a>' : '') +
+          (s.srt_url ? '<a class="btn-sm" href="' + shDl(s.srt_url) + '">SRT</a>' : '') +
+          '<button type=button class="btn-sm" data-cap-one="' + i + '" title="Read and correct this short\'s captions">Captions</button>' +
           // Shown once the destinations are known to exist (shFillSend).
           '<button type=button class="btn-sm" data-send-one="' + i + '" style="display:none">Send&hellip;</button>' +
         '</div>' +
@@ -7703,12 +7973,15 @@ function shBatchCard(b, fresh){
         '</div></div>'
   }).join('')
   card.innerHTML = head + notes + '<div class="sh-grid">' + tiles + '</div>' +
+    '<div data-cap-panel style="display:none"></div>' +
     (fresh ? '<p class="sh-note">Saved in this project' + (b.project_name ? ', <b>' + escapeHtmlLite(b.project_name) + '</b>' : '') + ': see <b>Shorts in this project</b>. Render again with a different reframe or other moments at any time while this cut is open.</p>' : '')
   card.addEventListener('click', function(e){
     var p = e.target.closest('[data-play]')
     if(p){ var s = b.shorts[parseInt(p.getAttribute('data-play'), 10)]; shortsPlay(s.url, s.title); return }
     if(e.target.closest('[data-del]')){ shortsDeleteBatch(b.batch_id, card); return }
     if(e.target.closest('[data-move]')){ shBatchMove(b.batch_id, card.querySelector('[data-move-to]').value); return }
+    var cap = e.target.closest('[data-cap-one]')
+    if(cap){ shBatchCaptions(card, b, b.shorts[parseInt(cap.getAttribute('data-cap-one'), 10)]); return }
     var one = e.target.closest('[data-send-one]')
     if(one){
       var k = parseInt(one.getAttribute('data-send-one'), 10)
@@ -7731,8 +8004,9 @@ function shSendOnePanel(panel, bid, s){
     if(panel.style.display === 'block') panel.querySelector('[data-send-name]').focus()
     return
   }
-  var file = s.file || '', dot = file.lastIndexOf('.')
-  var stem = dot > 0 ? file.slice(0, dot) : file, ext = dot > 0 ? file.slice(dot) : ''
+  // `file` says which short; the name offered is the delivery file's (a .mov for ProRes).
+  var file = s.file || '', sent = s.delivery || file, dot = sent.lastIndexOf('.')
+  var stem = dot > 0 ? sent.slice(0, dot) : sent, ext = dot > 0 ? sent.slice(dot) : ''
   panel.setAttribute('data-built', '1')
   panel.style.display = 'block'
   panel.innerHTML =
@@ -9087,6 +9361,7 @@ job. Configured via env vars:
       <p>Cuts a long-form programme into stand-alone 9:16 shorts (1080&times;1920 H.264, AAC, &minus;14 LUFS). It is separate from the promo generator and does not change how a plug is built; it shares the same services, job queue and network folders.</p>
       <h3>1. Find moments</h3>
       <p>Open the episode&rsquo;s project (see <em>Projects</em> below), go to <strong>Create shorts</strong>, pick the full episode and choose <strong>Preview the cut</strong>. Nothing is rendered in this step. <strong>Generate without preview</strong> runs the same analysis and then renders every moment it found, with the Output settings, as one job; the moments are still listed afterwards so any can be re-timed and rendered again.</p>
+      <p><strong>Length of each short</strong> starts at 60 to 120 seconds. <strong>Moments to find</strong> is a ceiling &mdash; up to 5, 8, 12, 20, 50 or 100 &mdash; or <strong>Auto</strong>. A number keeps the best that many, weak ones included if there is room. Auto has no number: it keeps every distinct moment the story model rates {{ shorts_auto_min_story }}/10 or better (100 at most), and if none reaches that it lists everything it found and says so. An episode only holds so many: two moments may share up to half their length, so 45 minutes at 60&ndash;120 s yields a few dozen at most whatever is asked for. Each five-minute stretch of dialogue is asked for as many moments as it can hold end to end, eight at the very most. One render takes up to 100 shorts.</p>
       <p><strong>What should these shorts feature</strong> is a preference: matching moments are favoured, but a weak one is not picked just for matching. <strong>What should these shorts avoid</strong> is a rule: a moment mainly about it, or showing it, is left out however strong. Both are judged by the story model from the dialogue and the visual notes, so neither applies when a fallback had to be used (a warning says so).</p>
       <ul style="line-height:1.8;padding-left:20px">
         <li><strong>How it looks.</strong> A bounded number of frames, spread across the whole video, are rated 1&ndash;5 by the AI Vision model for visible drama.</li>
@@ -9096,6 +9371,7 @@ job. Configured via env vars:
       <p>Each candidate's score (0&ndash;100) weighs story most, then visual drama, then dialogue pace. Both Ollama and faster-whisper must be reachable; the job refuses to start otherwise rather than choose on half the evidence. The same goes for a transcription that fails part-way (the service errors or times out): the job stops and says why. Only a source with genuinely nothing to hear &mdash; no audio track, or no speech in it &mdash; falls back to picture alone. A warning above the list tells you when a fallback was used (no story found, or no dialogue at all). The speech-to-text service has to return timings as well as text: it is asked for <code>verbose_json</code> with timestamps and, if it answers that with the text alone, for <code>srt</code> and then <code>vtt</code>, which every Whisper server can write. Subtitle timings are per line, not per word, so captions made that way change a line at a time. A server that gives no timings in any of the three stops the job with a message saying so. On a master that keeps its sound on separate tracks or channels (eight mono tracks, say, with the full mix on 3 and 4), the dialogue is looked for where there is sound rather than on the first track: silent channels are never sent, a stereo pair recorded out of phase is sent as one side, and if the first candidate has no speech in it the next is tried, up to four. A note above the list says which track the dialogue was read from, and the shorts and their previews take their sound from the same place. When nothing is found, the warning lists what was tried and at what level.</p>
       <h3>2. Review</h3>
       <p>Play any candidate, edit its title and its in/out (type <code>m:ss.s</code> or seconds), untick the ones you do not want, or add a range of your own. The preview shows the source framing; reframing happens at render.</p>
+      <p><strong>Captions&hellip;</strong> on a candidate opens the lines it will be captioned with, exactly as they will appear: change the wording, change when a line is on screen (times are from the start of the short, to a hundredth of a second), empty a line to drop it, or add one. <strong>Use these captions</strong> keeps them with that moment &mdash; it is marked <em>captions edited</em> &mdash; and they are what is burned in and written to its .srt. Moving the in or out point afterwards does not lose them: the lines still inside the new range stay, moved to where they now fall, and whatever the range gained at either end gets the automatic captions. <strong>Back to automatic</strong> drops the corrections. One caption is on screen at a time, so where two lines overlap the earlier one ends as the next begins.</p>
       <h3>3. Render</h3>
       <ul style="line-height:1.8;padding-left:20px">
         <li><strong>Auto</strong> reframes shot by shot: it crops to the face or faces, follows a subject that really moves, and for a shot where two similar-sized faces are too far apart to fit a vertical frame it shows the whole picture over a blurred copy of itself rather than cut someone out.</li>
@@ -9103,9 +9379,18 @@ job. Configured via env vars:
         <li><strong>Always crop</strong> fills the screen on every shot and commits to one side of a wide two-shot. <strong>Fit</strong> always shows the whole picture.</li>
         <li><strong>Follow the speaker</strong> (off unless ticked) changes only those wide two-shots: it cuts between close framings of whoever is talking, holding each for at least a second or so and changing just before the next line. It decides from how much each mouth moves while the transcript says words are being spoken. Where it cannot tell &mdash; nobody speaking, a face turned away, two mouths moving alike &mdash; the shot is reframed exactly as it would be with the option off. With <strong>Split screen</strong> it works the other way round: the screen is split while both people talk, and a shot where only one of them talks is framed on that one.</li>
         <li><strong>Captions</strong> are burned in from the transcript a few words at a time, and an <code>.srt</code> is saved next to each MP4.</li>
+        <li><strong>Format</strong> is the file each short is delivered as: <em>MP4 (H.264 High Profile)</em>, or <em>Apple ProRes 422 HQ</em> at 29.97 or 23.976 fps. A ProRes short is rendered to H.264 first, at higher quality than an ordinary MP4 short, and the <code>.mov</code> is made from that by the same export step the other tabs use; the MP4 is kept as the copy that plays here. <strong>Download</strong>, <strong>Download all</strong> and <strong>Send</strong> hand over the <code>.mov</code>. ProRes 422 HQ is roughly 1.3&ndash;1.7 GB per minute at 1080&times;1920, so a large batch needs the disk for it. AVC-Intra 100 is not offered here: it is a 1920&times;1080 format.</li>
         <li><strong>Ending</strong> is how every short in the render finishes. <em>Cut on the last frame</em> stops where the moment stops. <em>Cliffhanger</em> stops the action dead on the moment&rsquo;s last beat and holds it for 2 seconds while the picture pushes in by 3%, takes on a cooler, higher-contrast grade and darkens slightly at the corners; then it cuts straight to black. The sound is cut off with the action, so the hold and the black are silent. That adds about 2.3 s to each short, and no caption is drawn over the hold. The held picture is not a single still when it can help it: if the last moments of the shot are already nearly motionless (someone standing in a close-up), the last few frames &mdash; up to 0.16 s &mdash; are played forwards and back in extreme slow motion, which keeps the breathing, hair and cloth barely alive while the pose and expression stay locked. If anything is really moving in those frames (a gesture, a camera move), or the shot is cut just before the end, it holds one frame instead, because looping real movement would show as a wobble. Nothing is generated: every held frame comes from the footage.</li>
       </ul>
       <p>Batches are kept in their <strong>project</strong> until deleted: play, download one or all (.zip), or send to a video network destination.</p>
+      <h3>Changing captions on a saved short</h3>
+      <p><strong>Captions</strong> on a saved short opens the same editor on that short&rsquo;s lines. What saving does depends on where the captions are:</p>
+      <ul style="line-height:1.8;padding-left:20px">
+        <li><strong>Burned into the picture:</strong> saving renders that one short again with the corrected lines &mdash; same framing, same ending, same file names &mdash; and replaces it once the new files are complete. It takes about as long as the short took the first time. If the render fails, or the file is open in a player or still downloading (Windows will not replace it), the short is left exactly as it was.</li>
+        <li><strong>Not burned in</strong> (rendered with <em>Burn in captions</em> off): saving rewrites the .srt and is immediate.</li>
+        <li><strong>Burned in, but the episode has gone from the server:</strong> staged files are cleared after a while ({{ '%g'|format(upload_ttl_hours) }} hours unused, by default), and the picture cannot be rendered again without the episode. The editor says so, and saving updates the .srt only. The same applies to shorts rendered before this was added. To change what is in the picture, analyse the episode again.</li>
+      </ul>
+      <p>Anyone who can see a batch can read its captions; changing them is for whoever rendered it and admins, like deleting it.</p>
       <h3>Projects</h3>
       <p>Shorts are filed by project: the episode they are cut from. A project records the <strong>programme title</strong>, <strong>episode</strong>, <strong>air date</strong>, a <strong>description</strong> and a <strong>thumbnail</strong> (JPEG, PNG or WebP up to 8 MB; until one is given the project shows a frame of its newest short). A project is the only way in: choose <strong>New project</strong>, or open one, and its page has two views &mdash; <strong>Shorts in this project</strong>, every batch rendered for it, and <strong>Create shorts</strong>, the form that makes more. There is no way to start a job outside a project, so nothing is saved loose. A new project opens on <strong>Create shorts</strong>. The form holds one job or one cut under review at a time and it belongs to the project it was started in: open another project meanwhile and its <strong>Create shorts</strong> view says so, with a way back, and &mdash; once nothing is running &mdash; a way to drop that cut and start one there.</p>
       <p>Everyone with access to Vertical Shorts sees every project and can play, download and send what is in it. Deleting a batch, or moving it to another project, is for whoever rendered it and admins. A project can be deleted by whoever created it or an admin, and only once it is empty: deleting a project never deletes shorts. Shorts rendered before projects existed are listed under <strong>Not in a project</strong> for their maker, with <strong>Move to</strong> to file them.</p>

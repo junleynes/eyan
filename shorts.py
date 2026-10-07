@@ -46,7 +46,7 @@ import requests
 from flask import request, jsonify, session, send_from_directory
 from werkzeug.utils import secure_filename
 
-from core import app, _job_submit_limiter, _client_ip
+from core import app, _job_submit_limiter, _client_ip, _RateLimiter
 from library_db import LIBRARY_DIR, audit_log, network_destination_get
 from auth import require_permission
 import pipeline
@@ -90,7 +90,21 @@ SHORTS_FACE_MODEL = os.environ.get('SHORTS_FACE_MODEL', '')
 # crops out the person talking, which showing the whole frame never does.
 SHORTS_SPEAKER_CROP = os.environ.get('SHORTS_SPEAKER_CROP', '').strip().lower() in ('1', 'true', 'yes', 'on')
 
-SHORTS_MAX_ITEMS = 20      # shorts per render job
+SHORTS_MAX_ITEMS = 100     # moments per analysis, and shorts per render job
+# "Auto" in Moments to find: every distinct moment the story model scored at
+# least this, out of 10 -- as many as are worth making, not a number picked
+# in advance.
+SHORTS_AUTO_MIN_STORY = _env_num('SHORTS_AUTO_MIN_STORY', 6, int)
+# Delivery formats: the ones the rest of PRISM exports, minus AVC-Intra 100,
+# which is defined for a 1920x1080 picture -- a 1080x1920 file labelled as it
+# is not something the equipment that asks for AVC-Intra will take.
+SHORTS_FORMATS = [k for k in pipeline.EXPORT_FORMATS if k != 'avci100i']
+# A short delivered as anything but MP4 is rendered to H.264 first (that copy
+# is what plays in the browser) and the delivery file is made from it, by
+# the same export step every other tab uses. That first render is therefore
+# done at this quality or better, so the delivery file is not a copy of an
+# ordinary web-quality encode.
+SHORTS_MASTER_CRF = _env_num('SHORTS_MASTER_CRF', 12, int)
 SHORTS_MIN_CLIP = 3.0      # seconds
 SHORTS_MAX_CLIP = 300.0
 
@@ -98,13 +112,15 @@ ANALYZE_STAGES = [(2, 'Reading video'), (5, 'Detecting cuts'), (20, 'Rating fram
                   (46, 'Transcribing dialogue'), (60, 'Finding story beats'),
                   (88, 'Building candidates'), (100, 'Done')]
 RENDER_STAGES = [(2, 'Preparing'), (5, 'Rendering shorts'), (100, 'Done')]
+RECAPTION_STAGES = [(5, 'Preparing'), (10, 'Rendering with the new captions'), (100, 'Done')]
 # "Generate without preview" is the two jobs above run back to back as one:
 # the analysis fills the first AUTO_SPLIT percent of the bar and the render
 # the rest. Its stage list is derived from theirs so the three can't drift.
 AUTO_SPLIT = 55
 AUTO_STAGES = ([(max(1, p * AUTO_SPLIT // 100), lbl) for p, lbl in ANALYZE_STAGES[:-1]]
                + [(AUTO_SPLIT + p * (100 - AUTO_SPLIT) // 100, lbl) for p, lbl in RENDER_STAGES[1:]])
-STAGES_BY_KIND = {'analyze': ANALYZE_STAGES, 'render': RENDER_STAGES, 'auto': AUTO_STAGES}
+STAGES_BY_KIND = {'analyze': ANALYZE_STAGES, 'render': RENDER_STAGES, 'auto': AUTO_STAGES,
+                  'recaption': RECAPTION_STAGES}
 
 # ---- Analyses awaiting review ----
 # Same shape and lifetime as the promo generator's PREVIEWS: held in memory
@@ -237,9 +253,19 @@ def _batch_public(m):
         d = {k: s.get(k) for k in ('index', 'title', 'file', 'srt', 'start', 'end', 'duration', 'size',
                                    'layouts', 'captions')}
         d['number'] = s.get('index') if by_episode and s.get('index') else at
-        d['url'] = f"/api/shorts/file/{bid}/{s['file']}"
-        d['thumb_url'] = f"/api/shorts/file/{bid}/{s['thumb']}" if s.get('thumb') else None
-        d['srt_url'] = f"/api/shorts/file/{bid}/{s['srt']}" if s.get('srt') else None
+        # A short whose captions were changed keeps its names; `rev` in the
+        # address is what stops a browser playing the copy it cached before.
+        v = f"?v={int(s['rev'])}" if s.get('rev') else ''
+        d['url'] = f"/api/shorts/file/{bid}/{s['file']}{v}"
+        d['thumb_url'] = f"/api/shorts/file/{bid}/{s['thumb']}{v}" if s.get('thumb') else None
+        d['srt_url'] = f"/api/shorts/file/{bid}/{s['srt']}{v}" if s.get('srt') else None
+        # The file that is handed over. For MP4 it is the one that plays; for
+        # any other format it is a second file beside it.
+        d['delivery'] = s.get('delivery') or s['file']
+        d['delivery_url'] = f"/api/shorts/file/{bid}/{d['delivery']}{v}"
+        d['delivery_size'] = s.get('delivery_size') or s.get('size')
+        d['caption_lines'] = len(s['cues']) if isinstance(s.get('cues'), list) else None
+        d['captions_edited'] = bool(s.get('captions_edited'))
         shorts.append(d)
     proj = sp.load(SHORTS_PROJECTS_DIR, m.get('project_id')) if m.get('project_id') else None
     return {'batch_id': bid, 'orig_name': m.get('orig_name'), 'created': m.get('created'),
@@ -248,6 +274,10 @@ def _batch_public(m):
             'project_id': proj['project_id'] if proj else None,
             'project_name': sp.display_name(proj) if proj else None,
             'can_delete': _may_change(m)}
+
+
+def _delivery_name(s):
+    return s.get('delivery') or s['file']
 
 
 def _may_change(m):
@@ -271,7 +301,7 @@ def _may_see(m):
 def _batch_file_names(m):
     names = set()
     for s in m.get('shorts') or []:
-        for k in ('file', 'srt', 'thumb'):
+        for k in ('file', 'srt', 'thumb', 'delivery'):
             if s.get(k):
                 names.add(s[k])
     return names
@@ -333,6 +363,11 @@ def _run_analysis(jid, params):
     path = params['path']
     vision_model, story_model = params['vision_model'], params['story_model']
     min_dur, max_dur, count = params['min_dur'], params['max_dur'], params['count']
+    # "Auto": no number chosen in advance. Every moment the story model rates
+    # SHORTS_AUTO_MIN_STORY or better is kept, up to the most a job handles.
+    auto = count == 'auto'
+    if auto:
+        count = SHORTS_MAX_ITEMS
 
     # Both layers are load-bearing, so a service that's down fails the job
     # up front with the reason -- the same rule the promo generator follows
@@ -440,7 +475,13 @@ def _run_analysis(jid, params):
     beats, chunks = [], []
     if segments:
         chunks = sc.chunk_segments(segments, SHORTS_STORY_CHUNK_SEC, SHORTS_STORY_OVERLAP_SEC)
-        per_chunk = max(2, min(4, int(math.ceil(count * 1.5 / len(chunks))) + 1))
+        # How many to ask each stretch for: enough, over them all, to fill
+        # the count half as much again -- but never more than a stretch can
+        # hold end to end at the shortest length (eight at the very most),
+        # which is what "Auto" asks for. Asking for more than fit only
+        # invites padding.
+        room = max(2, min(8, int(SHORTS_STORY_CHUNK_SEC // max(min_dur, 1.0)) + 1))
+        per_chunk = room if auto else max(2, min(room, int(math.ceil(count * 1.5 / len(chunks))) + 1))
         failed, first_err = 0, None
         for ci, (lo, hi) in enumerate(chunks):
             report(percent=60 + int(26 * ci / len(chunks)),
@@ -448,7 +489,9 @@ def _run_analysis(jid, params):
             prompt = sc.build_story_prompt(segments, lo, hi, visual, min_dur, max_dur, per_chunk,
                                            params.get('focus'), params.get('avoid'))
             try:
-                reply = sc.ask_story(pipeline.OLLAMA_URL, story_model, prompt, num_ctx=SHORTS_STORY_NUM_CTX)
+                # Room for the reply to list them all: a cut-off reply loses the last ones.
+                reply = sc.ask_story(pipeline.OLLAMA_URL, story_model, prompt, num_ctx=SHORTS_STORY_NUM_CTX,
+                                     num_predict=max(900, 250 + 170 * per_chunk))
             except Exception as e:
                 failed += 1
                 first_err = first_err or str(e)
@@ -483,8 +526,18 @@ def _run_analysis(jid, params):
                         'here, so neither was applied to these moments.')
 
     report(percent=88, step='Building candidates')
+    limit = count
+    if auto and beats and beats[0].get('source') in ('heuristic', 'visual'):
+        # Neither fallback rates anything, so there is no "worth making" to
+        # go by: as many as would fit the programme end to end, at most.
+        limit = max(3, min(SHORTS_MAX_ITEMS, int(duration // ((min_dur + max_dur) / 2.0))))
     cands = sc.build_candidates(beats, segments, words, cuts, visual, duration,
-                                min_dur=min_dur, max_dur=max_dur, limit=count, fps=fps)
+                                min_dur=min_dur, max_dur=max_dur, limit=limit, fps=fps,
+                                min_story=SHORTS_AUTO_MIN_STORY if auto else None)
+    if auto and cands and all(c['story_score'] is not None and c['story_score'] < SHORTS_AUTO_MIN_STORY
+                              for c in cands):
+        warnings.append(f'Auto keeps the moments the story model rates {SHORTS_AUTO_MIN_STORY}/10 or better. '
+                        f'None reached that here, so all {len(cands)} it found are listed instead.')
     if not cands:
         report(error='No usable moments were found in this video. Try a wider length range, '
                          'or add your own ranges by hand after re-running with a different model.')
@@ -496,7 +549,7 @@ def _run_analysis(jid, params):
         'project_id': params.get('project_id'),
         'path': path, 'orig_name': params['orig_name'], 'info': info, 'cut_frames': cut_frames,
         'words': words, 'segments': segments, 'candidates': cands, 'warnings': warnings,
-        'options': {'min_dur': min_dur, 'max_dur': max_dur, 'count': count,
+        'options': {'min_dur': min_dur, 'max_dur': max_dur, 'count': 'auto' if auto else count,
                     'focus': params.get('focus'), 'avoid': params.get('avoid')},
         'stats': {'shots': len(shots), 'frames_rated': len(visual), 'transcript_lines': len(segments),
                   'story_parts': len(chunks), 'vision_model': vision_model, 'story_model': story_model},
@@ -522,6 +575,93 @@ def _poster(video_path, thumb_path, at):
     return os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0
 
 
+def _auto_cues(a, max_chars):
+    """`auto(t0, t1)` -> the automatic captions for that stretch of the
+    analysed source, timed from t0."""
+    return lambda t0, t1: sc.subtitle_cues(a['words'], a['segments'], t0, t1, max_chars=max_chars)
+
+
+def _item_cues(a, it, t0, t1, max_chars):
+    """(cues, edited?) for a moment running t0..t1 of the source: the
+    automatic captions, or the editor's own where they sent some.
+
+    Edited captions arrive with the range they were edited for. If the in
+    or out point was moved afterwards they are carried over (sc.fit_cues),
+    not thrown away."""
+    auto = _auto_cues(a, max_chars)
+    edit = it.get('captions')
+    if not edit:
+        return auto(t0, t1), False
+    return sc.clean_cues(sc.fit_cues(edit['cues'], edit['start'], edit['end'], t0, t1, auto), t1 - t0), True
+
+
+def _parse_captions(raw, label, duration):
+    """An item's edited captions from a request -> ({'start', 'end', 'cues'}
+    or None, error or None). `start`/`end` are the source range they were
+    edited for; the cues are timed from that start."""
+    if raw in (None, '', False):
+        return None, None
+    if not isinstance(raw, dict):
+        return None, f'"{label}": its captions are not valid.'
+    try:
+        start, end = float(raw.get('start')), float(raw.get('end'))
+    except (TypeError, ValueError):
+        return None, f'"{label}": its captions are not valid.'
+    if not (0.0 <= start < end <= duration + 1.0):
+        return None, f'"{label}": its captions are not valid.'
+    try:
+        cues = sc.clean_cues(raw.get('cues'), end - start)
+    except ValueError as e:
+        return None, f'"{label}": {e}'
+    return {'start': start, 'end': end, 'cues': cues}, None
+
+
+def _encode_short(tag, src, info, plan, cues, opts, mp4_path, delivery_path, report=None):
+    """Renders one short to `mp4_path` and, for a delivery format other than
+    MP4, makes `delivery_path` from it. (ok, error).
+
+    `plan` is where it is in the source and how it is reframed ({'start_f',
+    'n_frames', 'segs', 'room'}); `opts` how it is finished ({'burn',
+    'subtitle_size', 'ending', 'format'}). Everything a render needs and
+    nothing an analysis holds, so a saved short can be rendered again with
+    different captions long after its analysis has gone."""
+    work = app.config['UPLOAD_FOLDER']
+    fmt = opts.get('format') or 'mp4_high'
+    # Bare [A-Za-z0-9_] name in ffmpeg's working directory: see render_short.
+    ass_name = re.sub(r'[^A-Za-z0-9_.]', '_', f'shsub_{tag}.ass') if opts.get('burn') and cues else None
+    try:
+        if ass_name:
+            sc.write_ass(cues, os.path.join(work, ass_name), size=opts['subtitle_size'], font=SHORTS_SUB_FONT)
+        ok, err = sc.render_short(pipeline.FFMPEG, src, mp4_path, plan['start_f'], plan['n_frames'], info,
+                                  plan['segs'], ass_name=ass_name, work_dir=work,
+                                  crf=SHORTS_CRF if fmt == 'mp4_high' else min(SHORTS_CRF, SHORTS_MASTER_CRF),
+                                  preset=SHORTS_PRESET, loudness=SHORTS_LOUDNESS, true_peak=SHORTS_TRUE_PEAK,
+                                  timeout=pipeline.FFMPEG_LONG_TIMEOUT, ending=bool(opts.get('ending')),
+                                  ending_room=plan.get('room'))
+    except sc.ToolTimeout as e:
+        ok, err = False, f'Encoding took too long and was stopped ({e}).'
+    finally:
+        if ass_name:
+            try:
+                os.remove(os.path.join(work, ass_name))
+            except OSError:
+                pass
+    if not ok or fmt == 'mp4_high':
+        return ok, err
+    if report:
+        report()
+    label = pipeline.EXPORT_FORMATS[fmt]['label']
+    try:
+        r = pipeline.run_ffmpeg(pipeline.build_export_cmd(mp4_path, delivery_path, fmt),
+                                timeout=pipeline.FFMPEG_LONG_TIMEOUT, label='shorts delivery file')
+    except pipeline.MediaToolTimeout as e:
+        return False, f'Making the {label} file took too long and was stopped ({e}).'
+    if not (os.path.exists(delivery_path) and os.path.getsize(delivery_path) > 0):
+        return False, (f'The {label} file could not be made: '
+                       + (sc.ffmpeg_error(getattr(r, 'stderr', '')) or 'ffmpeg produced no output'))
+    return True, None
+
+
 def _run_render(jid, params):
     report = params.get('_report') or functools.partial(pipeline.job_set, jid)
     a = params['analysis']
@@ -532,6 +672,7 @@ def _run_render(jid, params):
     items = sorted(params['items'], key=lambda it: (float(it['start']), float(it['end'])))
     items = [dict(it, title=it.get('title') or f'Short {n}') for n, it in enumerate(items, 1)]
     reframe = params['reframe']
+    fmt = params.get('format') if params.get('format') in SHORTS_FORMATS else 'mp4_high'
     fps = info['fps']
     if not os.path.exists(src):
         report(error='The source video is no longer staged on the server (staged files are '
@@ -576,14 +717,20 @@ def _run_render(jid, params):
                 'options': {'reframe': reframe, 'subtitles': want_captions,
                             'subtitle_size': params['subtitle_size'],
                             'face_detector': detector.kind if detector else None,
-                            'speaker': speaker, 'ending': params.get('ending') or 'none'},
+                            'speaker': speaker, 'ending': params.get('ending') or 'none',
+                            'format': fmt, 'format_label': pipeline.EXPORT_FORMATS[fmt]['label']},
                 'numbering': 'episode',       # short N is the Nth of these moments in the episode
+                # What rendering one of these again takes (new captions on a
+                # saved short): the file it was cut from and how it reads.
+                # Server-side only; never sent to the browser.
+                'source': {'path': src, 'info': info, 'burn': burn},
                 'shorts': [], 'errors': [], 'warnings': warnings}
     _write_manifest(bdir, manifest)
 
-    work = app.config['UPLOAD_FOLDER']
     ending = params.get('ending') == 'cliffhanger'
     max_chars = sc.SUBTITLE_SIZES[params['subtitle_size']][1]
+    opts = {'burn': burn, 'subtitle_size': params['subtitle_size'], 'ending': ending, 'format': fmt}
+    ext = pipeline.EXPORT_FORMATS[fmt]['ext']
     total = len(items)
     for n, it in enumerate(items, 1):
         base = 5 + 93.0 * (n - 1) / total
@@ -611,32 +758,26 @@ def _run_render(jid, params):
                   if speaker else None)
         segs = sc.plan_reframe(samples, shot_starts, n_frames, info['disp_w'], info['disp_h'], crop_w,
                                mode=reframe, fps=fps, speaker=speaker, speech=speech)
-        cues = sc.place_cues(
-            sc.subtitle_cues(a['words'], a['segments'], start_f / fps, end_f / fps, max_chars=max_chars), segs, fps)
+        cues, edited = _item_cues(a, it, start_f / fps, end_f / fps, max_chars)
+        cues = sc.place_cues(cues, segs, fps)
+        plan = {'start_f': start_f, 'n_frames': n_frames, 'segs': segs, 'room': room}
 
         name = f"{stem}_short_{n:02d}_{sc.slugify(it['title'], 40) or 'clip'}"
         out_path = os.path.join(bdir, name + '.mp4')
-        # Bare [A-Za-z0-9_] name in ffmpeg's working directory: see render_short.
-        ass_name = re.sub(r'[^A-Za-z0-9_.]', '_', f'shsub_{jid}_{n}.ass') if burn and cues else None
-        try:
-            if ass_name:
-                sc.write_ass(cues, os.path.join(work, ass_name), size=params['subtitle_size'],
-                             font=SHORTS_SUB_FONT)
-            report(percent=int(base + span * 0.25), step=f'Short {n}/{total}: encoding')
-            ok, err = sc.render_short(pipeline.FFMPEG, src, out_path, start_f, n_frames, info, segs,
-                                      ass_name=ass_name, work_dir=work, crf=SHORTS_CRF, preset=SHORTS_PRESET,
-                                      loudness=SHORTS_LOUDNESS, true_peak=SHORTS_TRUE_PEAK,
-                                      timeout=pipeline.FFMPEG_LONG_TIMEOUT, ending=ending, ending_room=room)
-        except sc.ToolTimeout as e:
-            ok, err = False, f'Encoding took too long and was stopped ({e}).'
-        finally:
-            if ass_name:
-                try:
-                    os.remove(os.path.join(work, ass_name))
-                except OSError:
-                    pass
+        delivery = None if fmt == 'mp4_high' else f'{name}.{ext}'
+        report(percent=int(base + span * 0.25), step=f'Short {n}/{total}: encoding')
+        ok, err = _encode_short(f'{jid}_{n}', src, info, plan, cues, opts, out_path,
+                                os.path.join(bdir, delivery) if delivery else None,
+                                report=lambda: report(percent=int(base + span * 0.8),
+                                                      step=f'Short {n}/{total}: making the delivery file'))
         if not ok:
             print(f'Vertical Shorts: short {n}/{total} failed: {err}')
+            for leftover in (out_path, os.path.join(bdir, delivery) if delivery else None):
+                if leftover and os.path.exists(leftover):
+                    try:
+                        os.remove(leftover)
+                    except OSError:
+                        pass
             manifest['errors'].append({'index': n, 'title': it['title'], 'error': err})
             _write_manifest(bdir, manifest)
             continue
@@ -650,7 +791,13 @@ def _run_render(jid, params):
                              'tracked': sum(1 for s in segs if s.get('keys')),
                              'speaker': sum(1 for s in segs if s.get('speaker')),
                              'split': sum(1 for s in segs if s['layout'] == 'split')},
-                 'captions': bool(ass_name)}
+                 'captions': bool(burn and cues),
+                 # Kept so the captions can be changed afterwards: the lines
+                 # themselves, and the plan a re-render needs.
+                 'cues': cues, 'captions_edited': edited, 'plan': plan}
+        if delivery:
+            entry['delivery'] = delivery
+            entry['delivery_size'] = os.path.getsize(os.path.join(bdir, delivery))
         if cues:
             sc.write_srt(cues, os.path.join(bdir, name + '.srt'))
             entry['srt'] = name + '.srt'
@@ -839,7 +986,7 @@ def _form_num(name, default, lo, hi, cast=float):
 
 
 def _render_options(data):
-    """reframe / speaker / subtitles / subtitle_size / ending from a request body --
+    """reframe / speaker / subtitles / subtitle_size / ending / format from a request body --
     JSON for /render, form fields for /analyze's one-button path -- with
     anything unrecognised falling back to the default rather than failing."""
     reframe = data.get('reframe') if data.get('reframe') in ('auto', 'split', 'crop', 'fit') else 'auto'
@@ -852,7 +999,9 @@ def _render_options(data):
             'subtitle_size': data.get('subtitle_size') if data.get('subtitle_size') in sc.SUBTITLE_SIZES else 'm',
             # How each short finishes: on its last frame ('none'), or stopped
             # dead on its last beat, held, and cut to black ('cliffhanger').
-            'ending': data.get('ending') if data.get('ending') in ('none', 'cliffhanger') else 'none'}
+            'ending': data.get('ending') if data.get('ending') in ('none', 'cliffhanger') else 'none',
+            # What is handed over: MP4 unless one of the other formats is named.
+            'format': data.get('format') if data.get('format') in SHORTS_FORMATS else 'mp4_high'}
 
 
 @app.route('/api/shorts/options')
@@ -879,6 +1028,9 @@ def api_shorts_options():
                    face_detector=det.kind, captions_available=_captions_available(),
                    speaker_default=SHORTS_SPEAKER_CROP,
                    vision_frames=SHORTS_VISION_FRAMES, max_items=SHORTS_MAX_ITEMS,
+                   auto_min_story=SHORTS_AUTO_MIN_STORY,
+                   formats=[{'key': k, 'label': pipeline.EXPORT_FORMATS[k]['label'],
+                             'ext': pipeline.EXPORT_FORMATS[k]['ext']} for k in SHORTS_FORMATS],
                    min_clip=SHORTS_MIN_CLIP, max_clip=SHORTS_MAX_CLIP,
                    ending_seconds=round(sc.CLIFFHANGER['hold'] + sc.CLIFFHANGER['black'] - sc.CLIFFHANGER['loop'], 1))
 
@@ -891,8 +1043,8 @@ def api_shorts_analyze():
     # Checked before the source is resolved: resolving a direct upload
     # writes the whole file to disk, which is not worth doing for a request
     # that is about to be refused anyway.
-    min_dur = _form_num('min_dur', 30, 5, 240)
-    max_dur = _form_num('max_dur', 90, 10, SHORTS_MAX_CLIP)
+    min_dur = _form_num('min_dur', 60, 5, 240)
+    max_dur = _form_num('max_dur', 120, 10, SHORTS_MAX_CLIP)
     if max_dur < min_dur + 5:
         return jsonify(error='The maximum length must be at least 5 seconds more than the minimum.'), 400
     # Before the source too, for the same reason: shorts are filed under a
@@ -909,7 +1061,8 @@ def api_shorts_analyze():
         'path': path, 'orig_name': orig_name, 'project_id': project['project_id'],
         'user_id': session.get('user_id'), 'username': session.get('username'),
         'min_dur': min_dur, 'max_dur': max_dur,
-        'count': _form_num('count', 8, 1, SHORTS_MAX_ITEMS, int),
+        'count': ('auto' if (request.form.get('count') or '').strip().lower() == 'auto'
+                  else _form_num('count', 8, 1, SHORTS_MAX_ITEMS, int)),
         'vision_frames': _form_num('vision_frames', SHORTS_VISION_FRAMES, 10, 300, int),
         'focus': ' '.join((request.form.get('focus') or '').split())[:300] or None,
         'avoid': ' '.join((request.form.get('avoid') or '').split())[:300] or None,
@@ -1048,6 +1201,39 @@ def api_shorts_clip():
     return jsonify(ok=True, url=f'/uploads/{out_name}')
 
 
+@app.route('/api/shorts/captions', methods=['POST'])
+@require_permission('vertical_shorts')
+def api_shorts_captions():
+    """The captions a moment would be rendered with: the automatic ones for
+    its in and out points at the chosen size, or -- given `edited`, captions
+    already changed for an earlier in/out -- those carried over to this one.
+    What the review list's caption editor opens on."""
+    data = request.get_json(silent=True) or {}
+    a, err = _analysis_or_error(str(data.get('analysis_id') or '').strip())
+    if err:
+        return err
+    duration = float(a['info']['duration'])
+    try:
+        start, end = max(0.0, float(data.get('start'))), min(duration, float(data.get('end')))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error='Invalid start/end time.'), 400
+    if end - start < SHORTS_MIN_CLIP:
+        return jsonify(ok=False, error=f'Must be at least {int(SHORTS_MIN_CLIP)} seconds long and inside the video.'), 400
+    captions, bad = _parse_captions(data.get('edited'), 'This moment', duration)
+    if bad:
+        return jsonify(ok=False, error=bad), 400
+    size = data.get('subtitle_size') if data.get('subtitle_size') in sc.SUBTITLE_SIZES else 'm'
+    # On whole frames, as the render will cut it.
+    fps = a['info']['fps']
+    t0, t1 = round(start * fps) / fps, min(duration, round(end * fps) / fps)
+    try:
+        cues, edited = _item_cues(a, {'captions': captions}, t0, t1, sc.SUBTITLE_SIZES[size][1])
+    except ValueError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    return jsonify(ok=True, start=round(t0, 3), end=round(t1, 3), cues=cues, edited=edited,
+                   spoken=bool(a['words'] or a['segments']))
+
+
 @app.route('/api/shorts/render', methods=['POST'])
 @require_permission('vertical_shorts')
 def api_shorts_render():
@@ -1080,7 +1266,10 @@ def api_shorts_render():
         if end - start > SHORTS_MAX_CLIP + 0.05:
             return jsonify(error=f'"{label}": is {end - start:.0f}s long; the limit is '
                                  f'{int(SHORTS_MAX_CLIP)}s per short.'), 400
-        items.append({'start': start, 'end': end, 'title': title})
+        captions, bad = _parse_captions(it.get('captions'), label, duration)
+        if bad:
+            return jsonify(error=bad), 400
+        items.append({'start': start, 'end': end, 'title': title, 'captions': captions})
     # Episode order (see _run_render), and an untitled one named for its place in it.
     items.sort(key=lambda it: (it['start'], it['end']))
     items = [dict(it, title=it['title'] or f'Short {k}') for k, it in enumerate(items, 1)]
@@ -1314,14 +1503,14 @@ def api_shorts_batch_zip(bid):
     bdir = _batch_dir(bid)
     fd, tmp = tempfile.mkstemp(suffix='.zip', dir=app.config['UPLOAD_FOLDER'])
     os.close(fd)
-    # Stored, not deflated: H.264 doesn't compress, so deflating would only
-    # spend CPU time making the download start later.
+    # Stored, not deflated: finished video doesn't compress, so deflating
+    # would only spend CPU time making the download start later.
     with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_STORED) as z:
         for s in m.get('shorts') or []:
-            for k in ('file', 'srt'):
-                p = os.path.join(bdir, s[k]) if s.get(k) else None
+            for name in (_delivery_name(s), s.get('srt')):
+                p = os.path.join(bdir, name) if name else None
                 if p and os.path.isfile(p):
-                    z.write(p, s[k])
+                    z.write(p, name)
     stem = sc.slugify(os.path.splitext(m.get('orig_name') or '')[0], 40) or 'shorts'
     return pipeline.send_temp_download(tmp, f'{stem}_shorts.zip', 'application/zip',
                                        cleanup=lambda: os.path.exists(tmp) and os.remove(tmp))
@@ -1330,7 +1519,7 @@ def api_shorts_batch_zip(bid):
 @app.route('/api/shorts/batches/<bid>/send', methods=['POST'])
 @require_permission('vertical_shorts')
 def api_shorts_batch_send(bid):
-    """Copies a batch's MP4s (and optionally their .srt files) to one of the
+    """Copies a batch's delivery files (and optionally their .srt files) to one of the
     network destinations configured under Config > Network -- the same ones
     the promo generator delivers to. `files` narrows it to some of the
     shorts; with exactly one, `filename` names the copy at the destination
@@ -1355,25 +1544,243 @@ def api_shorts_batch_send(bid):
         if len(shorts) != 1:
             return jsonify(ok=False, error='A new name can be given to one short at a time. Send the shorts '
                            'one by one to rename them, or send them all under their own names.'), 400
-        rename, bad = pipeline.destination_filename(data.get('filename'), shorts[0]['file'])
+        rename, bad = pipeline.destination_filename(data.get('filename'), _delivery_name(shorts[0]))
         if bad:
             return jsonify(ok=False, error=bad), 400
     bdir, sent = _batch_dir(bid), []
     for s in shorts:
-        for k in ('file', 'srt') if data.get('include_srt') else ('file',):
-            if not s.get(k):
+        # The delivery file: the MP4, or the ProRes made from it.
+        for local in (_delivery_name(s), s.get('srt')) if data.get('include_srt') else (_delivery_name(s),):
+            if not local:
                 continue
             # A renamed short's captions go with it under the same name.
-            name = (os.path.splitext(rename)[0] + os.path.splitext(s[k])[1]) if rename else s[k]
+            name = (os.path.splitext(rename)[0] + os.path.splitext(local)[1]) if rename else local
             try:
-                pipeline.send_file_to_network_destination(os.path.join(bdir, s[k]), name, dest)
+                pipeline.send_file_to_network_destination(os.path.join(bdir, local), name, dest)
             except ValueError as e:
                 return jsonify(ok=False, error=str(e), sent=sent), 502
             sent.append(name)
     audit_log('shorts_send_to_destination', target=f'{dest["name"]}: {len(sent)} file(s) from {m.get("orig_name")}'
-              + (f' ({shorts[0]["file"]} as {rename})' if rename and rename != shorts[0]['file'] else ''),
+              + (f' ({_delivery_name(shorts[0])} as {rename})'
+                 if rename and rename != _delivery_name(shorts[0]) else ''),
               user_id=session.get('user_id'), username=session.get('username'), ip=_client_ip())
     return jsonify(ok=True, sent=sent, destination=dest['name'])
+
+
+# --------------------------------------------------------------------------
+# Captions of a saved short
+# --------------------------------------------------------------------------
+
+_RECAPTIONING = set()
+_RECAPTION_LOCK = threading.Lock()
+# Its own allowance, not the one analyses and renders share (12 in five
+# minutes): correcting a batch means one small job per short, and an editor
+# working through twenty of them is not a flood. What protects the server is
+# the job gate these wait at like any other job.
+_recaption_limiter = _RateLimiter(limit=_env_num('SHORTS_RECAPTION_RATE_LIMIT', 60, int), window=300)
+
+
+def _short_entry(m, index):
+    return next((s for s in m.get('shorts') or [] if s.get('index') == index), None)
+
+
+def _recaption_state(m, s):
+    """How this short's captions can be changed: (what, why).
+
+    'srt'    they are not in the picture, so only the .srt changes: instant.
+    'render' they are burned in and the short can be rendered again.
+    'frozen' they are burned in and it cannot -- `why` says which of the two
+             things a re-render needs is missing."""
+    src = m.get('source') or {}
+    # In the picture: this short has captions burned in, or its batch was
+    # rendered with burn-in on and this one simply had nothing said in it
+    # (so lines added now belong in the picture too).
+    if not (s.get('captions') or src.get('burn')):
+        return 'srt', None
+    if not (s.get('plan') and src.get('path') and src.get('info')):
+        return 'frozen', ('This short was rendered before captions could be changed afterwards. Its .srt can '
+                          'still be corrected; to change the captions in the picture, render it again from '
+                          'Create shorts.')
+    if not os.path.exists(src['path']):
+        return 'frozen', ('The episode this short was cut from is no longer on the server (staged files are '
+                          'cleared after a while), so the picture cannot be rendered again. Its .srt can still '
+                          'be corrected; to change the captions in the picture, analyse the episode again.')
+    return 'render', None
+
+
+def _srt_cues(path):
+    """Cues read back from an .srt this module wrote, for a short saved
+    before its cues were kept in the manifest."""
+    try:
+        with open(path, encoding='utf-8') as f:
+            blocks = re.split(r'\n\s*\n', f.read().strip())
+    except OSError:
+        return []
+    cues = []
+    for b in blocks:
+        lines = [ln for ln in b.splitlines() if ln.strip()]
+        at = next((k for k, ln in enumerate(lines) if '-->' in ln), None)
+        if at is None:
+            continue
+        m = re.findall(r'(\d+):(\d+):(\d+)[,.](\d+)', lines[at])
+        if len(m) != 2:
+            continue
+        t = [int(h) * 3600 + int(mi) * 60 + int(sec) + int(ms.ljust(3, '0')[:3]) / 1000.0 for h, mi, sec, ms in m]
+        text = ' '.join(' '.join(lines[at + 1:]).split())
+        if text and t[1] > t[0]:
+            cues.append({'start': round(t[0], 3), 'end': round(t[1], 3), 'text': text})
+    return cues
+
+
+def _saved_cues(bid, s):
+    if isinstance(s.get('cues'), list):
+        return [{'start': c['start'], 'end': c['end'], 'text': c['text']} for c in s['cues']]
+    return _srt_cues(os.path.join(_batch_dir(bid), s['srt'])) if s.get('srt') else []
+
+
+def _clip_seconds(s):
+    """Length of the part of a short that has dialogue under it: the moment
+    itself, not the hold and black a cliffhanger ending adds after it."""
+    return max(0.0, float(s.get('end') or 0) - float(s.get('start') or 0)) or float(s.get('duration') or 0)
+
+
+@app.route('/api/shorts/batches/<bid>/captions/<int:index>', methods=['GET', 'POST'])
+@require_permission('vertical_shorts')
+def api_shorts_batch_captions(bid, index):
+    """One saved short's captions (GET), or new ones for it (POST: `cues`).
+
+    Reading them is for anyone who can see the batch; changing them is for
+    whoever rendered it and admins, like deleting it. Captions that are not
+    burned in are saved at once, to the .srt. Burned-in ones mean rendering
+    that short again -- a job, whose id comes back -- which is possible
+    while the episode it was cut from is still on the server."""
+    m, err = _batch_or_error(bid, change=request.method == 'POST')
+    if err:
+        return err
+    s = _short_entry(m, index)
+    if not s:
+        return jsonify(ok=False, error='Not found'), 404
+    how, why = _recaption_state(m, s)
+    if request.method == 'GET':
+        return jsonify(ok=True, cues=_saved_cues(bid, s), duration=round(_clip_seconds(s), 3),
+                       burned=how != 'srt', how=how, why=why, can_change=_may_change(m),
+                       title=s.get('title'))
+    if m.get('status') == 'rendering':
+        return jsonify(ok=False, error='That batch is still rendering.'), 409
+    try:
+        cues = sc.clean_cues((request.get_json(silent=True) or {}).get('cues'), _clip_seconds(s))
+    except ValueError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    bdir = _batch_dir(bid)
+    if how == 'render':
+        if not _recaption_limiter.allow(_client_ip()):
+            return jsonify(ok=False, error='Too many caption changes at once. Wait a few minutes and try again.'), 429
+        key = (bid, index)
+        with _RECAPTION_LOCK:
+            if key in _RECAPTIONING:
+                return jsonify(ok=False, error='This short is already being rendered with new captions.'), 409
+            _RECAPTIONING.add(key)
+        params = {'batch_id': bid, 'index': index, 'cues': cues,
+                  'user_id': session.get('user_id'), 'username': session.get('username')}
+        jid = _start_job('recaption', _run_recaption, params,
+                         f"{s.get('title') or m.get('orig_name')} (vertical shorts: new captions)",
+                         after=lambda p: _RECAPTIONING.discard((p['batch_id'], p['index'])))
+        return jsonify(ok=True, job_id=jid)
+    # Not in the picture (or the picture cannot be redone): the .srt is the captions.
+    _write_short_srt(bdir, s, cues)
+    s['cues'], s['captions_edited'], s['rev'] = cues, True, int(time.time())
+    _write_manifest(bdir, m)
+    audit_log('shorts_captions_edit', target=f"{m.get('orig_name')}: {s.get('title')} (.srt)",
+              user_id=session.get('user_id'), username=session.get('username'), ip=_client_ip())
+    return jsonify(ok=True, batch=_batch_public(m), srt_only=how == 'frozen')
+
+
+def _write_short_srt(bdir, s, cues):
+    """The .srt beside a short, replaced with `cues` -- or removed when
+    there are none left."""
+    name = s.get('srt') or (os.path.splitext(s['file'])[0] + '.srt')
+    path = os.path.join(bdir, name)
+    if cues:
+        sc.write_srt(cues, path)
+        s['srt'] = name
+    else:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        s['srt'] = None
+
+
+def _run_recaption(jid, params):
+    """Renders one saved short again with different captions, in place.
+
+    The new files are made under other names and only swapped in once all of
+    them exist, so a failure -- or a cancel -- leaves the short exactly as it
+    was. The swap is the one step that can fail on its own: on Windows a
+    file that is being played or downloaded cannot be replaced."""
+    bid, index = params['batch_id'], params['index']
+    bdir = _batch_dir(bid)
+    m = _read_manifest(bdir) if bdir else None
+    s = _short_entry(m, index) if m else None
+    if not s:
+        pipeline.job_set(jid, error='That short no longer exists.')
+        return
+    how, why = _recaption_state(m, s)
+    if how != 'render':
+        pipeline.job_set(jid, error=why or 'These captions are not burned in; nothing to render.')
+        return
+    src, o = m['source'], m.get('options') or {}
+    info, plan = src['info'], s['plan']
+    _touch(src['path'])
+    pipeline.job_set(jid, percent=5, step='Preparing')
+    cues = sc.place_cues([dict(c) for c in params['cues']], plan['segs'], info['fps'])
+    fmt = o.get('format') if o.get('format') in SHORTS_FORMATS else 'mp4_high'
+    opts = {'burn': True, 'subtitle_size': o.get('subtitle_size') if o.get('subtitle_size') in sc.SUBTITLE_SIZES else 'm',
+            'ending': o.get('ending') == 'cliffhanger', 'format': fmt}
+    stem = os.path.splitext(s['file'])[0]
+    new_mp4 = os.path.join(bdir, f'.new_{jid}_{stem}.mp4')
+    delivery = s.get('delivery') if fmt != 'mp4_high' else None
+    new_delivery = os.path.join(bdir, f'.new_{jid}_{delivery}') if delivery else None
+    made = [p for p in (new_mp4, new_delivery) if p]
+    try:
+        pipeline.job_set(jid, percent=10, step='Rendering with the new captions')
+        ok, err = _encode_short(f'{jid}_re', src['path'], info, plan, cues, opts, new_mp4, new_delivery,
+                                report=lambda: pipeline.job_set(jid, percent=75, step='Making the delivery file'))
+        if not ok:
+            pipeline.job_set(jid, error=f'The short could not be rendered with the new captions: {err}')
+            return
+        pipeline.job_set(jid, percent=94, step='Saving')
+        try:
+            os.replace(new_mp4, os.path.join(bdir, s['file']))
+            if new_delivery:
+                os.replace(new_delivery, os.path.join(bdir, delivery))
+        except OSError:
+            pipeline.job_set(jid, error='This short is in use (playing or downloading), so it could not be '
+                                        'replaced. Close it and save the captions again.')
+            return
+        # Read again: another short of this batch may have been changed meanwhile.
+        m = _read_manifest(bdir)
+        s = _short_entry(m, index) if m else None
+        if not s:
+            pipeline.job_set(jid, error='That short no longer exists.')
+            return
+        _write_short_srt(bdir, s, cues)
+        s['cues'], s['captions_edited'], s['rev'] = cues, True, int(time.time())
+        s['captions'] = bool(cues)
+        s['size'] = os.path.getsize(os.path.join(bdir, s['file']))
+        if delivery:
+            s['delivery_size'] = os.path.getsize(os.path.join(bdir, delivery))
+        if s.get('thumb'):
+            _poster(os.path.join(bdir, s['file']), os.path.join(bdir, s['thumb']), float(s.get('duration') or 0) * 0.3)
+        _write_manifest(bdir, m)
+        pipeline.job_set(jid, percent=100, step='Done', done=True, result={'batch': _batch_public(m)})
+    finally:
+        for p in made:
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
 
 
 def settle_interrupted_batches():
@@ -1394,6 +1801,13 @@ def settle_interrupted_batches():
             shutil.rmtree(p, ignore_errors=True)
         elif _BATCH_ID.match(name):
             _settle_dir(p)
+            # Half-made replacements from a re-caption the last process never finished.
+            for left in (os.listdir(p) if os.path.isdir(p) else []):
+                if left.startswith('.new_'):
+                    try:
+                        os.remove(os.path.join(p, left))
+                    except OSError:
+                        pass
 
 
 os.makedirs(SHORTS_DIR, exist_ok=True)

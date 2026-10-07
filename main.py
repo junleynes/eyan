@@ -67,6 +67,9 @@ def index():
                            brand_theme=brand['theme_colors'],
                            brand_footer=brand['footer'],
                            allow_local_upload=ALLOW_LOCAL_MEDIA_UPLOAD,
+                           # Figures the Docs quote, taken from where they are set.
+                           shorts_auto_min_story=shorts.SHORTS_AUTO_MIN_STORY,
+                           upload_ttl_hours=round(pipeline.UPLOAD_TTL / 3600.0, 1),
                            csrf_token=ensure_csrf_token())
 
 @app.route('/uploads/<filename>')

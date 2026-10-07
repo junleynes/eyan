@@ -81,7 +81,8 @@ def _colour(frame, x, y):
 
 def _probe(path):
     r = subprocess.run(['ffprobe', '-v', 'error', '-show_entries',
-                        'stream=codec_type,codec_name,width,height,nb_frames,channels,sample_rate,color_space,pix_fmt',
+                        'stream=codec_type,codec_name,width,height,nb_frames,channels,sample_rate,color_space,pix_fmt,'
+                        'r_frame_rate,duration',
                         '-of', 'json', str(path)], capture_output=True, text=True, timeout=30)
     streams = json.loads(r.stdout)['streams']
     return ({s['codec_type']: s for s in streams})
@@ -715,7 +716,8 @@ def test_generate_without_preview_analyses_then_renders_everything_as_one_job(en
     assert [(s['start'], s['end']) for s in batch['shorts']] == \
         [(round(c['start'] * 25) / 25, round(c['end'] * 25) / 25) for c in a['candidates']]
     assert batch['options'] == {'reframe': 'fit', 'subtitles': False, 'subtitle_size': 'l', 'face_detector': None,
-                                'speaker': False, 'ending': 'none'}, 'the Output settings sent with the request'
+                                'speaker': False, 'ending': 'none', 'format': 'mp4_high',
+                                'format_label': 'MP4 (H.264 High Profile)'}, 'the Output settings sent with the request'
     assert all(s['layouts']['fit'] >= 1 and s['layouts']['crop'] == 0 for s in batch['shorts'])
     assert batch['username'] == 'ana'
     for s in batch['shorts']:
@@ -893,7 +895,7 @@ def test_render_validates_every_item(env, monkeypatch):
 
     assert post([]).status_code == 400
     assert post('nope').status_code == 400
-    assert post([{'start': 1, 'end': 9}] * 21).status_code == 400
+    assert post([{'start': 1, 'end': 9}] * 101).status_code == 400, 'a hundred is the most one render takes'
     assert 'numbers' in post([{'start': 'a', 'end': 9, 'title': 'T'}]).get_json()['error']
     r = post([{'start': 5, 'end': 6, 'title': 'Blip'}])
     assert r.status_code == 400 and '"Blip"' in r.get_json()['error'] and 'at least 3 seconds' in r.get_json()['error']
@@ -1162,6 +1164,392 @@ def test_a_shorts_job_is_filed_as_a_shorts_job_and_kept_out_of_the_episodic_list
         return {j['job_id'] for k in ('active', 'queued', 'finished') for j in d[k]}
     assert listed('/api/monitor') == set(), 'not among the episodic plug tab\'s jobs'
     assert listed('/api/monitor?kind=shorts') == {jid, rid} == listed('/api/monitor?kind=all')
+
+
+# --------------------------------------------------------------------------
+# How many moments, and how long
+# --------------------------------------------------------------------------
+
+def test_lengths_default_to_60_to_120_seconds_and_a_hundred_moments_can_be_asked_for(env, monkeypatch):
+    Services(monkeypatch)
+    client, headers = _client()
+    started = []
+    monkeypatch.setattr(shorts, '_spawn', lambda fn, *a, **k: started.append(a[1]))
+
+    def post(**form):
+        data = {'shorts_file_network': env['staged'], 'project_id': env['project']}
+        data.update(form)
+        assert client.post('/api/shorts/analyze', data=data, headers=headers).status_code == 200
+        return started[-1]
+    p = post()
+    assert (p['min_dur'], p['max_dur'], p['count']) == (60, 120, 8)
+    assert [post(count=c)['count'] for c in ('50', '100', '250', 'auto', 'AUTO', 'lots')] == \
+        [50, 100, 100, 'auto', 'auto', 8]
+
+    html = client.get('/').get_data(as_text=True)
+    assert 'id=sh-min class=sh-num value=60 ' in html and 'id=sh-max class=sh-num value=120 ' in html
+    menu = html[html.index('<select id=sh-count'):]
+    menu = menu[:menu.index('</select>')]
+    assert re.findall(r'<option value=(\w+)( selected)?>', menu) == [
+        ('5', ''), ('8', ' selected'), ('12', ''), ('20', ''), ('50', ''), ('100', ''), ('auto', '')]
+
+
+def test_auto_keeps_every_moment_the_story_model_rates_well_and_no_others(env, monkeypatch):
+    svc = Services(monkeypatch)
+    svc.story_reply = lambda ids, payload: {'response': json.dumps({'moments': [
+        {'start_id': ids[0], 'end_id': ids[2], 'title': 'Strong', 'score': 9},
+        {'start_id': ids[4], 'end_id': ids[6], 'title': 'Good enough', 'score': 6},
+        {'start_id': ids[8], 'end_id': ids[10], 'title': 'Weak', 'score': 4}]})}
+    client, headers = _client()
+    a = _analysis(client, _analyze(client, headers, env, count='auto'))
+    assert sorted(c['title'] for c in a['candidates']) == ['Good enough', 'Strong']
+    assert a['options']['count'] == 'auto' and not any('Auto keeps' in w for w in a['warnings'])
+    assert 'Find up to 8 moments' in svc.story_prompts[0]['prompt'], 'as many as a stretch can hold, eight at most'
+    assert svc.story_prompts[0]['options']['num_predict'] == 250 + 170 * 8, 'and room in the reply to list them'
+    # A number is a ceiling and nothing else: the weak one is listed too.
+    b = _analysis(client, _analyze(client, headers, env, count='12'))
+    assert sorted(c['title'] for c in b['candidates']) == ['Good enough', 'Strong', 'Weak']
+
+    # Nothing reaches the mark: all of them, with the reason, rather than an empty list.
+    svc.story_reply = lambda ids, payload: {'response': json.dumps({'moments': [
+        {'start_id': ids[0], 'end_id': ids[2], 'title': 'Meh', 'score': 5},
+        {'start_id': ids[6], 'end_id': ids[8], 'title': 'Weak', 'score': 3}]})}
+    c = _analysis(client, _analyze(client, headers, env, count='auto'))
+    assert sorted(x['title'] for x in c['candidates']) == ['Meh', 'Weak']
+    assert any('None reached that here, so all 2' in w for w in c['warnings'])
+
+
+# --------------------------------------------------------------------------
+# Delivery format
+# --------------------------------------------------------------------------
+
+def test_a_short_can_be_delivered_as_prores_and_that_is_the_file_handed_over(env, monkeypatch):
+    Services(monkeypatch)
+    client, headers = _client()
+    a = _analysis(client, _analyze(client, headers, env))
+    item = [{'start': 2.0, 'end': 6.0, 'title': 'Moment'}]
+    crfs = []
+    real = sc.render_short
+    monkeypatch.setattr(sc, 'render_short', lambda *x, **k: (crfs.append(k['crf']), real(*x, **k))[1])
+    batch = _render(client, headers, a['analysis_id'], item, reframe='fit', format='prores_hq_2997')['result']['batch']
+    assert batch['options']['format'] == 'prores_hq_2997'
+    assert batch['options']['format_label'] == 'Apple ProRes 422 HQ — 29.97fps'
+    s = batch['shorts'][0]
+    assert s['file'].endswith('.mp4') and s['delivery'] == s['file'][:-4] + '.mov' and s['delivery_size'] > s['size'] > 0
+    bdir = os.path.join(shorts.SHORTS_DIR, batch['batch_id'])
+    mov, mp4 = _probe(os.path.join(bdir, s['delivery'])), _probe(os.path.join(bdir, s['file']))
+    assert (mov['video']['codec_name'], mov['video']['width'], mov['video']['height']) == ('prores', 1080, 1920)
+    assert mov['video']['r_frame_rate'] == '30000/1001' and mov['video']['pix_fmt'] == 'yuv422p10le'
+    assert mov['audio']['codec_name'] == 'pcm_s16le' and abs(float(mov['video']['duration']) - 4.0) < 0.1
+    assert mp4['video']['codec_name'] == 'h264', 'the copy that plays in the browser'
+    assert crfs == [min(shorts.SHORTS_CRF, shorts.SHORTS_MASTER_CRF)] and crfs[0] < shorts.SHORTS_CRF, \
+        'made from a better render than an ordinary MP4 short gets'
+
+    # Both are served; the download-all and Send hand over the .mov.
+    assert client.get(s['delivery_url']).status_code == 200 and client.get(s['url']).status_code == 200
+    r = client.get(f"/api/shorts/batches/{batch['batch_id']}/zip")
+    assert sorted(zipfile.ZipFile(io.BytesIO(r.data)).namelist()) == sorted([s['delivery'], s['srt']])
+    r.close()
+    sent = []
+    monkeypatch.setattr(shorts, 'network_destination_get',
+                        lambda i: {'id': 1, 'name': 'Playout', 'delivery_kind': 'video', 'path': r'\\x\y'})
+    monkeypatch.setattr(pipeline, 'send_file_to_network_destination',
+                        lambda local, name, dest: sent.append((os.path.basename(local), name)))
+    r = client.post(f"/api/shorts/batches/{batch['batch_id']}/send", headers=headers,
+                    json={'destination_id': 1, 'files': [s['file']], 'filename': 'TADHANA EP101 teaser.mp4',
+                          'include_srt': True})
+    assert r.status_code == 200, r.get_json()
+    assert sent == [(s['delivery'], 'TADHANA_EP101_teaser.mov'), (s['srt'], 'TADHANA_EP101_teaser.srt')], \
+        'renamed, but still a .mov: the name cannot change what the file is'
+
+    # MP4 is one file, and anything unknown -- or AVC-Intra, which is a landscape format -- is MP4.
+    crfs.clear()
+    for asked in ('mp4_high', 'avci100i', 'betamax', None):
+        opts = {} if asked is None else {'format': asked}
+        b = _render(client, headers, a['analysis_id'], item, reframe='fit', subtitles=False, **opts)['result']['batch']
+        assert b['options']['format'] == 'mp4_high', asked
+        assert b['shorts'][0]['delivery'] == b['shorts'][0]['file'] and b['shorts'][0]['delivery_url'] == b['shorts'][0]['url']
+    assert crfs == [shorts.SHORTS_CRF] * 4
+
+
+def test_a_delivery_file_that_cannot_be_made_fails_that_short_and_leaves_nothing_behind(env, monkeypatch):
+    Services(monkeypatch)
+    client, headers = _client()
+    a = _analysis(client, _analyze(client, headers, env))
+    monkeypatch.setattr(pipeline, 'build_export_cmd',
+                        lambda src, dst, fmt: ['ffmpeg', '-v', 'error', '-i', src, '-c:v', 'no_such_codec', dst])
+    job = _render(client, headers, a['analysis_id'], [{'start': 2.0, 'end': 6.0, 'title': 'Moment'}],
+                  reframe='fit', format='prores_hq_2398')
+    assert 'could not be made' in job['error'] and '23.976' in job['error'], job
+    assert os.listdir(shorts.SHORTS_DIR) == [], 'no batch with an MP4 passed off as the delivery'
+
+
+# --------------------------------------------------------------------------
+# Captions: corrected before rendering
+# --------------------------------------------------------------------------
+
+def _caption_px(frame):
+    return int((frame.min(axis=2) > 200).sum())
+
+
+def test_captions_can_be_read_and_corrected_before_rendering(env, monkeypatch):
+    Services(monkeypatch)
+    client, headers = _client()
+    a = _analysis(client, _analyze(client, headers, env))
+    aid = a['analysis_id']
+
+    def captions(**body):
+        return client.post('/api/shorts/captions', headers=headers, json=dict({'analysis_id': aid}, **body))
+    # Clip 2.0-6.0 s of the episode. Lines are spoken at 1.0-2.5, 3.0-4.5 and 5.0-6.5.
+    r = captions(start=2.0, end=6.0).get_json()
+    assert r['ok'] and not r['edited'] and r['spoken'] and (r['start'], r['end']) == (2.0, 6.0)
+    auto = r['cues']
+    assert [c['text'] for c in auto] == ['ng usapan.', 'Linya 1 ng usapan.', 'Linya 2 ng']
+    assert all(0 <= c['start'] < c['end'] <= 4.0 for c in auto)
+    # A smaller caption size holds more words to a line; the answer is what that size would burn in.
+    assert captions(start=2.0, end=6.0, subtitle_size='huge').get_json()['cues'] == auto
+    assert captions(start=2.0, end=3.0).status_code == 400 and captions(start='x', end=6).status_code == 400
+    assert captions(analysis_id='gone', start=2, end=6).status_code == 404
+
+    # Corrected: a spelling fixed, a line dropped (emptied), one added where nothing is said.
+    mine = [dict(auto[1], text='Linya UNO ng usapan!'), dict(auto[0], text='   '),
+            {'start': 0.62, 'end': 0.98, 'text': '(katahimikan)'}, auto[2]]
+    r = captions(start=2.0, end=6.0, edited={'start': 2.0, 'end': 6.0, 'cues': mine}).get_json()
+    assert r['ok'] and r['edited']
+    assert [c['text'] for c in r['cues']] == ['(katahimikan)', 'Linya UNO ng usapan!', 'Linya 2 ng'], 'in time order'
+    edited = {'start': 2.0, 'end': 6.0, 'cues': r['cues']}
+    # What cannot be used is said, in the editor's terms.
+    bad = captions(start=2.0, end=6.0, edited={'start': 2.0, 'end': 6.0, 'cues': [{'start': 3, 'end': 1, 'text': 'Backwards'}]})
+    assert bad.status_code == 400 and 'must end after it starts' in bad.get_json()['error']
+    assert captions(start=2.0, end=6.0, edited={'start': 2.0, 'end': 6.0, 'cues': 'nope'}).status_code == 400
+    assert captions(start=2.0, end=6.0, edited={'start': 2.0, 'end': 6.0,
+                                               'cues': [{'start': 0, 'end': 1, 'text': 'x' * 201}]}).status_code == 400
+
+    # The out point is then pulled in and the in point moved earlier: the
+    # corrections that are still inside stay, moved; the new second at the
+    # front gets the automatic captions.
+    r = captions(start=1.0, end=5.0, edited=edited).get_json()
+    assert [c['text'] for c in r['cues']] == ['Linya 0 ng', '(katahimikan)', 'Linya UNO ng usapan!']
+    assert abs(r['cues'][1]['start'] - 1.62) < 1e-6 and r['cues'][2]['end'] <= 4.0
+
+    # Rendered with them: burned in, in the .srt, and marked as edited.
+    plain = _render(client, headers, aid, [{'start': 2.0, 'end': 6.0, 'title': 'Plain'}], reframe='fit')['result']['batch']
+    batch = _render(client, headers, aid, [{'start': 2.0, 'end': 6.0, 'title': 'Fixed', 'captions': edited}],
+                    reframe='fit')['result']['batch']
+    s, p = batch['shorts'][0], plain['shorts'][0]
+    assert s['captions'] and s['captions_edited'] and s['caption_lines'] == 3
+    assert p['captions'] and not p['captions_edited'] and p['caption_lines'] == 3
+    srt = client.get(s['srt_url']).get_data(as_text=True)
+    assert 'Linya UNO ng usapan!' in srt and '(katahimikan)' in srt and 'Linya 1 ng' not in srt
+    assert '00:00:00,620 --> 00:00:00,980' in srt
+    fr = _frames(os.path.join(shorts.SHORTS_DIR, batch['batch_id'], s['file']))
+    fr_p = _frames(os.path.join(shorts.SHORTS_DIR, plain['batch_id'], p['file']))
+    assert _caption_px(fr[20]) > 300 and _caption_px(fr_p[20]) == 0, 'the added line is on screen at 0.8 s'
+    assert _caption_px(fr[5]) == 0 and _caption_px(fr_p[5]) > 100, 'and the dropped one is not, at 0.2 s'
+
+    # A render request with captions that cannot be used is refused before anything starts.
+    r = client.post('/api/shorts/render', headers=headers, json={'analysis_id': aid, 'items': [
+        {'start': 2.0, 'end': 6.0, 'title': 'Bad', 'captions': {'start': 2.0, 'end': 6.0, 'cues': [{'start': 'a', 'end': 1, 'text': 'x'}]}}]})
+    assert r.status_code == 400 and '"Bad"' in r.get_json()['error']
+
+
+# --------------------------------------------------------------------------
+# Captions: corrected on a saved short
+# --------------------------------------------------------------------------
+
+def _batch(client, headers, env, monkeypatch, **opts):
+    Services(monkeypatch)
+    a = _analysis(client, _analyze(client, headers, env))
+    return _render(client, headers, a['analysis_id'], [{'start': 2.0, 'end': 6.0, 'title': 'Moment'}],
+                   reframe='fit', **opts)['result']['batch']
+
+
+def test_burned_in_captions_of_a_saved_short_are_changed_by_rendering_it_again(env, monkeypatch):
+    client, headers = _client(user_id=7, role='user', username='ana')
+    batch = _batch(client, headers, env, monkeypatch, ending='cliffhanger')
+    bid, s = batch['batch_id'], batch['shorts'][0]
+    path = os.path.join(shorts.SHORTS_DIR, bid, s['file'])
+    url = f'/api/shorts/batches/{bid}/captions/{s["index"]}'
+    shorts.ANALYSES.clear()                     # long after the analysis has gone
+
+    r = client.get(url).get_json()
+    assert r['ok'] and r['how'] == 'render' and r['burned'] and r['can_change'] and r['why'] is None
+    assert [c['text'] for c in r['cues']] == ['ng usapan.', 'Linya 1 ng usapan.', 'Linya 2 ng']
+    assert abs(r['duration'] - 4.0) < 1e-6, 'the moment itself: no captions over the cliffhanger hold'
+    before = _frames(path)
+    assert _caption_px(before[20]) == 0 and _caption_px(before[40]) > 100 and len(before) == 156
+
+    cues = [{'start': 0.62, 'end': 0.98, 'text': 'Sandali lang!'}] + [dict(c, text=c['text'].upper()) for c in r['cues'][1:]]
+    p = client.post(url, headers=headers, json={'cues': cues})
+    assert p.status_code == 200 and p.get_json()['job_id'], p.get_json()
+    jid = p.get_json()['job_id']
+    job = client.get(f'/api/shorts/progress/{jid}').get_json()
+    assert job.get('error') is None and job['done'], job
+    assert [st['label'] for st in job['stages']][1] == 'Rendering with the new captions'
+    assert pipeline.job_get(jid)['kind'] == 'shorts'
+    now = job['result']['batch']['shorts'][0]
+    assert now['file'] == s['file'] and now['srt'] == s['srt'], 'the same names'
+    assert now['captions_edited'] and now['caption_lines'] == 3 and '?v=' in now['url'] and '?v=' in now['srt_url']
+    assert now['url'] != s['url'], 'a new address, so the browser does not play the copy it has'
+    assert client.get(now['url']).status_code == 200 and client.get(shorts_dl(now['url'])).status_code == 200
+    after = _frames(path)
+    assert len(after) == 156, 'same length, cliffhanger and all'
+    assert _caption_px(after[20]) > 300 and _caption_px(after[5]) == 0
+    assert float(np.abs(after[90].astype(int) - before[90].astype(int)).mean()) < 30, 'the same picture underneath'
+    srt = client.get(now['srt_url']).get_data(as_text=True)
+    assert 'Sandali lang!' in srt and 'LINYA 1 NG USAPAN.' in srt and 'usapan.\n\n2' not in srt
+    assert [c['text'] for c in client.get(url).get_json()['cues']] == ['Sandali lang!', 'LINYA 1 NG USAPAN.', 'LINYA 2 NG']
+    assert sorted(n for n in os.listdir(os.path.join(shorts.SHORTS_DIR, bid)) if n.startswith('.new_')) == []
+
+    # Every line taken out: rendered clean, the .srt removed -- and lines can still be put back.
+    job = client.get(f"/api/shorts/progress/{client.post(url, headers=headers, json={'cues': []}).get_json()['job_id']}").get_json()
+    bare = job['result']['batch']['shorts'][0]
+    assert bare['srt'] is None and bare['captions'] is False and bare['caption_lines'] == 0
+    assert max(_caption_px(f) for f in _frames(path)[:96:8]) == 0
+    assert client.get(url).get_json()['how'] == 'render'
+
+    # Someone else on the team can read them, not change them; an admin can.
+    ben, bh = _client(user_id=8, role='user', username='ben')
+    assert ben.get(url).get_json()['can_change'] is False
+    assert ben.post(url, headers=bh, json={'cues': cues}).status_code == 404
+    admin, ah = _client()
+    assert admin.post(url, headers=ah, json={'cues': cues}).status_code == 200
+    # What cannot be used is refused before any job starts.
+    assert client.post(url, headers=headers, json={'cues': [{'start': 2, 'end': 1, 'text': 'x'}]}).status_code == 400
+    assert client.get(f'/api/shorts/batches/{bid}/captions/99').status_code == 404
+
+
+def shorts_dl(url):
+    return url + ('&' if '?' in url else '?') + 'download=1'
+
+
+def test_a_failed_or_blocked_re_render_leaves_the_short_as_it_was(env, monkeypatch):
+    client, headers = _client()
+    batch = _batch(client, headers, env, monkeypatch, format='prores_hq_2997')
+    bid, s = batch['batch_id'], batch['shorts'][0]
+    bdir = os.path.join(shorts.SHORTS_DIR, bid)
+    url = f'/api/shorts/batches/{bid}/captions/{s["index"]}'
+    cues = [{'start': 0.5, 'end': 1.5, 'text': 'Bago'}]
+
+    def sizes():
+        return {n: os.path.getsize(os.path.join(bdir, n)) for n in sorted(os.listdir(bdir))}
+    was = sizes()
+
+    def run():
+        return client.get(f"/api/shorts/progress/{client.post(url, headers=headers, json={'cues': cues}).get_json()['job_id']}").get_json()
+    # The encode fails.
+    monkeypatch.setattr(sc, 'render_short', lambda *a, **k: (False, 'boom'))
+    job = run()
+    assert 'could not be rendered with the new captions: boom' in job['error'] and sizes() == was
+    # The file is open in a player (Windows refuses to replace it).
+    monkeypatch.setattr(sc, 'render_short', lambda ff, src, out, *a, **k: (open(out, 'wb').write(b'x' * 10), (True, None))[1])
+    monkeypatch.setattr(pipeline, 'build_export_cmd', lambda src, dst, fmt: ['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i',
+                                                                             'color=d=0.2:s=64x64', '-y', dst])
+    real_replace = os.replace
+    monkeypatch.setattr(shorts.os, 'replace', lambda a, b: (_ for _ in ()).throw(PermissionError('in use'))
+                        if '.new_' in os.path.basename(a) else real_replace(a, b))
+    job = run()
+    assert 'in use' in job['error'] and sizes() == was, 'nothing swapped, nothing left over'
+    assert client.get(url).get_json()['cues'][0]['text'] == 'ng usapan.', 'and its captions are still the old ones'
+    # Two saves at once for the same short: the second is told, not queued.
+    shorts._RECAPTIONING.add((bid, s['index']))
+    assert client.post(url, headers=headers, json={'cues': cues}).status_code == 409
+    shorts._RECAPTIONING.clear()
+    # Caption changes have their own allowance: working through a batch is
+    # one small job per short, and must not use up -- or be stopped by -- the
+    # few analyses and renders a user may start in five minutes.
+    monkeypatch.setattr(shorts, '_job_submit_limiter', core._RateLimiter(0, 300))
+    monkeypatch.setattr(shorts, '_start_job', lambda *a, **k: (shorts._RECAPTIONING.clear(), 'j')[1])
+    assert shorts._recaption_limiter.limit >= 60
+    assert client.post(url, headers=headers, json={'cues': cues}).status_code == 200
+    monkeypatch.setattr(shorts, '_recaption_limiter', core._RateLimiter(0, 300))
+    assert client.post(url, headers=headers, json={'cues': cues}).status_code == 429
+
+
+def test_a_prores_short_re_rendered_for_captions_replaces_both_of_its_files(env, monkeypatch):
+    client, headers = _client()
+    batch = _batch(client, headers, env, monkeypatch, format='prores_hq_2997')
+    bid, s = batch['batch_id'], batch['shorts'][0]
+    bdir = os.path.join(shorts.SHORTS_DIR, bid)
+    url = f'/api/shorts/batches/{bid}/captions/{s["index"]}'
+    stamp = {n: os.path.getmtime(os.path.join(bdir, n)) for n in (s['file'], s['delivery'])}
+    time.sleep(1.1)
+    job = client.get(f"/api/shorts/progress/{client.post(url, headers=headers, json={'cues': [{'start': 0.62, 'end': 0.98, 'text': 'Bago'}]}).get_json()['job_id']}").get_json()
+    assert job.get('error') is None, job
+    now = job['result']['batch']['shorts'][0]
+    assert now['delivery'] == s['delivery'] and now['delivery_size'] > 0
+    assert all(os.path.getmtime(os.path.join(bdir, n)) > stamp[n] for n in stamp), 'the .mov as well as the .mp4'
+    assert _probe(os.path.join(bdir, s['delivery']))['video']['codec_name'] == 'prores'
+    cap = cv2.VideoCapture(os.path.join(bdir, s['delivery']))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 24)                 # 0.8 s at 29.97
+    ok, frame = cap.read()
+    cap.release()
+    assert ok and _caption_px(frame) > 300, 'the new caption is in the delivery file'
+
+
+def test_captions_that_are_not_burned_in_are_saved_straight_to_the_srt(env, monkeypatch):
+    client, headers = _client()
+    batch = _batch(client, headers, env, monkeypatch, subtitles=False)
+    bid, s = batch['batch_id'], batch['shorts'][0]
+    url = f'/api/shorts/batches/{bid}/captions/{s["index"]}'
+    path = os.path.join(shorts.SHORTS_DIR, bid, s['file'])
+    stamp = os.path.getmtime(path)
+    r = client.get(url).get_json()
+    assert r['how'] == 'srt' and not r['burned'] and len(r['cues']) == 3
+    started = []
+    monkeypatch.setattr(shorts, '_start_job', lambda *a, **k: started.append(a) or 'j')
+    p = client.post(url, headers=headers, json={'cues': [dict(r['cues'][1], text='Itinama na.')]}).get_json()
+    assert p['ok'] and 'job_id' not in p and p['srt_only'] is False and started == []
+    now = p['batch']['shorts'][0]
+    assert now['captions_edited'] and now['caption_lines'] == 1 and os.path.getmtime(path) == stamp
+    srt = client.get(now['srt_url']).get_data(as_text=True)
+    assert srt.count('-->') == 1 and 'Itinama na.' in srt
+    # All of them removed: no .srt at all, and it is not offered.
+    p = client.post(url, headers=headers, json={'cues': []}).get_json()
+    assert p['batch']['shorts'][0]['srt'] is None and p['batch']['shorts'][0]['srt_url'] is None
+    assert not [n for n in os.listdir(os.path.join(shorts.SHORTS_DIR, bid)) if n.endswith('.srt')]
+    # And put back.
+    p = client.post(url, headers=headers, json={'cues': [{'start': 1, 'end': 2, 'text': 'Balik'}]}).get_json()
+    assert 'Balik' in client.get(p['batch']['shorts'][0]['srt_url']).get_data(as_text=True)
+
+
+def test_burned_in_captions_cannot_be_redone_once_the_episode_is_gone_and_it_says_so(env, monkeypatch):
+    client, headers = _client()
+    batch = _batch(client, headers, env, monkeypatch)
+    bid, s = batch['batch_id'], batch['shorts'][0]
+    bdir = os.path.join(shorts.SHORTS_DIR, bid)
+    url = f'/api/shorts/batches/{bid}/captions/{s["index"]}'
+    path = os.path.join(bdir, s['file'])
+    stamp = os.path.getmtime(path)
+    os.remove(env['path'])                                # the staged episode has been swept
+    r = client.get(url).get_json()
+    assert r['how'] == 'frozen' and r['burned'] and 'no longer on the server' in r['why'] and len(r['cues']) == 3
+    p = client.post(url, headers=headers, json={'cues': [dict(r['cues'][0], text='Sa srt lang')]}).get_json()
+    assert p['ok'] and p['srt_only'] is True and 'job_id' not in p and os.path.getmtime(path) == stamp
+    assert 'Sa srt lang' in client.get(p['batch']['shorts'][0]['srt_url']).get_data(as_text=True)
+
+    # A batch saved before any of this was kept: its captions are read from
+    # the .srt, and what is burned in cannot be redone.
+    m = shorts._read_manifest(bdir)
+    m.pop('source')
+    for short in m['shorts']:
+        for k in ('cues', 'plan', 'captions_edited', 'rev'):
+            short.pop(k, None)
+    shorts._write_manifest(bdir, m)
+    r = client.get(url).get_json()
+    assert r['how'] == 'frozen' and 'before captions could be changed' in r['why']
+    assert [c['text'] for c in r['cues']] == ['Sa srt lang'] and r['cues'][0]['end'] > r['cues'][0]['start']
+    old = client.get(f'/api/shorts/batches?project_id={env["project"]}').get_json()['items'][0]['shorts'][0]
+    assert old['caption_lines'] is None and old['delivery'] == old['file'] and '?v=' not in old['url']
+
+
+def test_what_a_saved_batch_keeps_for_later_stays_on_the_server(env, monkeypatch):
+    client, headers = _client()
+    batch = _batch(client, headers, env, monkeypatch)
+    m = shorts._read_manifest(os.path.join(shorts.SHORTS_DIR, batch['batch_id']))
+    assert m['source']['path'] == env['path'] and m['source']['burn'] is True and m['shorts'][0]['plan']['segs']
+    text = json.dumps(batch) + client.get(f'/api/shorts/batches?project_id={env["project"]}').get_data(as_text=True)
+    assert env['staged'] not in text and '"plan"' not in text and '"source"' not in text and '"cues"' not in text
 
 
 # --------------------------------------------------------------------------
@@ -1664,7 +2052,10 @@ def test_options_reports_models_and_what_this_server_can_do(env, monkeypatch):
     d = client.get('/api/shorts/options').get_json()
     assert d['ok'] and d['vision_models'] == ['qwen3-vl:8b'] and d['text_models'] == ['qwen3-vl:8b', 'llama3.1:8b']
     assert d['face_detector'] in ('haar', 'yunet') and isinstance(d['captions_available'], bool)
-    assert d['max_items'] == 20 and d['default_vision_model']
+    assert d['max_items'] == 100 and d['default_vision_model'] and d['auto_min_story'] == 6
+    # The delivery formats: what the rest of PRISM exports, without AVC-Intra (a 1920x1080 format).
+    assert [f['key'] for f in d['formats']] == ['mp4_high', 'prores_hq_2997', 'prores_hq_2398']
+    assert d['formats'][0] == {'key': 'mp4_high', 'label': 'MP4 (H.264 High Profile)', 'ext': 'mp4'}
     assert d['speaker_default'] is False, '"Follow the speaker" starts unticked unless SHORTS_SPEAKER_CROP says otherwise'
     monkeypatch.setattr(shorts, 'SHORTS_SPEAKER_CROP', True)
     assert client.get('/api/shorts/options').get_json()['speaker_default'] is True
