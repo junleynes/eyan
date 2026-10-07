@@ -612,3 +612,260 @@ def test_a_flat_picture_takes_a_light_sweep_and_nothing_that_would_move_its_back
     seen = [_diff(an.frame(float(t)), layered['want']) for t in np.arange(an.settled_at + 0.1, 9.0, 0.1)]
     assert max(seen) > 0.2 and _diff(an.frame(10.0), layered['want']) < 0.5
     assert an.frame(0.0).max() == 0, 'and it still arrives from black'
+
+
+# ---- several schedule pages in one file ----
+
+PAGE_COLOURS = {1: (255, 40, 40, 255), 2: (40, 255, 40, 255), 3: (40, 40, 255, 255)}      # RGBA: red, green, blue
+ROW_Y = (320, 420, 520, 620)
+
+
+def _paged_psd(path, show=(1,), stack=(3, 2, 1), rows=None, background=True, extra=None):
+    """A background, a logo, and three Page groups whose rows sit in the
+    same places in a different colour each: each row a 'time' block and a
+    'show' block side by side, as two layers. `show` is which pages are
+    switched on when the file is saved; `stack` their order, bottom first.
+    Returns {page number: that page drawn alone on transparency}."""
+    rows = rows or {1: 4, 2: 3, 3: 4}
+    psd = psd_tools.PSDImage.new('RGB', (W, H), color=0)
+
+    def add(parent, name, im, visible=True):
+        box = im.getbbox()
+        ly = parent.create_pixel_layer(im.crop(box), name=name, top=box[1], left=box[0])
+        ly.visible = visible
+        return ly
+    if background:
+        add(psd, 'Background', Image.new('RGBA', (W, H), (20, 20, 20, 255)))
+    alone = {}
+    for p in stack:
+        g = psd.create_group(name=f'Page {p}')
+        g.visible = p in show
+        full = Image.new('RGBA', (W, H), (0, 0, 0, 0))
+        for r in range(rows[p]):
+            y = ROW_Y[r]
+            for name, box in ((f'time {r + 1}', [500, y, 700, y + 60]), (f'show {r + 1}', [760, y + 4, 1400 - 40 * p, y + 56])):
+                im = _block(box, PAGE_COLOURS[p])
+                add(g, name, im)
+                full.alpha_composite(im)
+        if p == 1:
+            add(g, 'draft stamp', _block([1500, 320, 1700, 380], (255, 255, 0, 255)), visible=False)
+        alone[p] = full
+    add(psd, 'GTV Logo', _block([500, 120, 640, 260], (255, 255, 255, 255)))
+    for name, make in (extra or []):
+        add(psd, name, make())
+    psd.save(str(path))
+    return alone
+
+
+def _with_page(art, k):
+    return sk._flatten([ly for ly in art['layers'] if ly['page'] in (None, k)], sk.CANVAS)
+
+
+@pytest.fixture(scope='module')
+def paged(tmp_path_factory):
+    d = tmp_path_factory.mktemp('paged')
+    _paged_psd(d / 'pages.psd')
+    return {'psd': str(d / 'pages.psd'), 'dir': d}
+
+
+def test_what_makes_a_group_a_page_is_its_name():
+    for name, number in (('Page 1', 1), ('page 2', 2), ('PAGE-3', 3), ('Page_04', 4), ('Pg 5', 5), ('pg6', 6), ('P7', 7),
+                         ('Page 2 afternoon', 2), ('  Page #8 (late)', 8), ('Page 12', 12)):
+        assert sk.page_number(name) == number, name
+    for name in ('Header', 'Schedule', 'Pages', 'Paper 1', 'Group 1', 'Row 2', 'Pink 2', 'Title page 1', '1', '', None):
+        assert sk.page_number(name) is None, name
+
+
+def test_pages_are_read_whichever_is_showing_and_play_in_the_order_of_their_numbers(paged, tmp_path):
+    art = sk.load_artwork(paged['psd'])
+    assert art['pages'] == [{'name': 'Page 1', 'rows': 4}, {'name': 'Page 2', 'rows': 3}, {'name': 'Page 3', 'rows': 4}]
+    assert art['notes'] == [] and art['layered']
+    got = [(ly['name'], ly['role'], ly['page']) for ly in art['layers']]
+    assert got[0] == ('Background', 'background', None) and got[-1] == ('GTV Logo', 'content', None)
+    assert [g for g in got if g[2] == 0] == [(f'Page 1 row {r}', 'content', 0) for r in (1, 2, 3, 4)]
+    assert [g[0] for g in got if g[2] == 1] == ['Page 2 row 1', 'Page 2 row 2', 'Page 2 row 3']
+    assert [g[0] for g in got if g[2] == 2] == [f'Page 3 row {r}' for r in (1, 2, 3, 4)]
+    # A row is the time and its title together, top to bottom, whatever layers they were.
+    first = next(ly for ly in art['layers'] if ly['name'] == 'Page 1 row 1')
+    assert (first['x'], first['y']) == (500, 320) and first['px'].shape[:2] == (61, 861)
+    assert [ly['y'] for ly in art['layers'] if ly['page'] == 0] == list(ROW_Y)
+    # The layer switched off INSIDE a page stays off.
+    assert not any(ly['px'].shape[1] > 0 and ly['x'] + ly['px'].shape[1] > 1450 for ly in art['layers'] if ly['page'] == 0)
+
+    # The same pages whichever is showing, and whatever order they are stacked in.
+    def shape(a):
+        return [(ly['name'], ly['page'], ly['x'], ly['y'], ly['px'].shape) for ly in a['layers'] if ly['page'] is not None]
+    want = sorted(shape(art))
+    for show, stack in (((2,), (3, 2, 1)), ((), (3, 2, 1)), ((1, 2, 3), (1, 2, 3)), ((3,), (2, 3, 1))):
+        _paged_psd(tmp_path / 'v.psd', show=show, stack=stack)
+        other = sk.load_artwork(str(tmp_path / 'v.psd'))
+        assert sorted(shape(other)) == want and other['notes'] == [], (show, stack)
+        assert [pg['name'] for pg in other['pages']] == ['Page 1', 'Page 2', 'Page 3']
+
+
+def test_a_group_that_is_not_named_as_a_page_stays_on_screen_and_a_hidden_one_stays_out(tmp_path):
+    psd = psd_tools.PSDImage.new('RGB', (W, H), color=0)
+
+    def add(parent, name, box, colour, visible=True):
+        im = _block(box, colour)
+        b = im.getbbox()
+        ly = parent.create_pixel_layer(im.crop(b), name=name, top=b[1], left=b[0])
+        ly.visible = visible
+    add(psd, 'Background', [0, 0, W - 1, H - 1], (20, 20, 20, 255))
+    header = psd.create_group(name='Header')
+    add(header, 'logo', [500, 120, 640, 260], (255, 255, 255, 255))
+    add(header, 'day', [700, 140, 1300, 240], (200, 100, 255, 255))
+    spare = psd.create_group(name='Alternate schedule')
+    spare.visible = False
+    add(spare, 'rows', [500, 320, 1400, 700], (255, 255, 0, 255))
+    for p in (2, 1):
+        g = psd.create_group(name=f'Page {p}')
+        g.visible = p == 1
+        add(g, 'rows', [500, 320, 1400, 380], PAGE_COLOURS[p])
+    psd.save(str(tmp_path / 'h.psd'))
+    art = sk.load_artwork(str(tmp_path / 'h.psd'))
+    assert [(ly['name'], ly['page']) for ly in art['layers']] == [('Background', None), ('Header', None),
+                                                                 ('Page 2', 1), ('Page 1', 0)]
+    assert art['pages'] == [{'name': 'Page 1', 'rows': 1}, {'name': 'Page 2', 'rows': 1}]
+
+
+def test_pages_need_a_background_under_them_and_a_page_too_fine_grained_arrives_whole(tmp_path):
+    _paged_psd(tmp_path / 'bare.psd', background=False, stack=(1, 2, 3))
+    with pytest.raises(sk.ArtworkError, match='nothing under them'):
+        sk.load_artwork(str(tmp_path / 'bare.psd'))
+    # One tall layer beside the rows ties them into a single piece; so do too many rows.
+    psd = psd_tools.PSDImage.new('RGB', (W, H), color=0)
+
+    def add(parent, name, box, colour):
+        im = _block(box, colour)
+        b = im.getbbox()
+        parent.create_pixel_layer(im.crop(b), name=name, top=b[1], left=b[0])
+    add(psd, 'Background', [0, 0, W - 1, H - 1], (20, 20, 20, 255))
+    g = psd.create_group(name='Page 1')
+    for r in range(4):
+        add(g, f'row {r}', [500, 300 + 100 * r, 1200, 350 + 100 * r], (255, 40, 40, 255))
+    add(g, 'divider', [460, 300, 470, 650], (255, 255, 255, 255))
+    g = psd.create_group(name='Page 2')
+    for r in range(sk.MAX_PAGE_ROWS + 2):
+        add(g, f'row {r}', [500, 300 + 40 * r, 1200, 325 + 40 * r], (40, 255, 40, 255))
+    psd.save(str(tmp_path / 'tied.psd'))
+    art = sk.load_artwork(str(tmp_path / 'tied.psd'))
+    assert [(ly['name'], ly['page']) for ly in art['layers'][1:]] == [('Page 1', 0), ('Page 2', 1)]
+    assert art['pages'] == [{'name': 'Page 1', 'rows': 1}, {'name': 'Page 2', 'rows': 1}]
+
+
+def _paged_plan(art, duration, style='wipe_mix'):
+    names, roles = [ly['name'] for ly in art['layers']], [ly['role'] for ly in art['layers']]
+    pages = [ly['page'] for ly in art['layers']]
+    r = sk.style_recipe(style)
+    tl = sk.build_timeline(r, names, duration, roles, pages)
+    return r, tl, pages
+
+
+@pytest.mark.parametrize('duration', sk.DURATIONS)
+def test_each_page_gets_an_equal_turn_and_only_the_last_one_stays(paged, duration):
+    art = sk.load_artwork(paged['psd'])
+    r, tl, pages = _paged_plan(art, duration)
+    plan = sk.page_plan(tl, pages, duration)
+    assert plan['count'] == 3 and abs(plan['slot'] * 3 + min(t['start'] for t, p in zip(tl, pages) if p == 0) - duration) < 1e-6
+    logo = tl[-1]
+    assert 'out' not in logo and logo['start'] <= 0.5, 'what is not in a page arrives once, at the start, and stays'
+    turn_starts = []
+    for k in range(3):
+        rows = [t for t, p in zip(tl, pages) if p == k]
+        starts = [t['start'] for t in rows]
+        assert starts == sorted(starts) and len(set(starts)) == len(starts), 'rows arrive one after another, top first'
+        assert all(t['effect'] == 'wipe' for t in rows), 'the way the style says'
+        done = max(t['start'] + t['dur'] for t in rows)
+        if k < 2:
+            outs = {t['out'] for t in rows}
+            assert len(outs) == 1, 'a page leaves all at once'
+            leaves, fade = outs.pop()
+            assert leaves >= done and fade == sk.PAGE_OUT
+            nxt = min(t['start'] for t, p in zip(tl, pages) if p == k + 1)
+            assert nxt >= leaves + fade, 'the next page starts only once this one has gone'
+        else:
+            assert all('out' not in t for t in rows) and done < duration
+        turn_starts.append(starts[0])
+    gaps = [b - a for a, b in zip(turn_starts, turn_starts[1:])]
+    assert max(gaps) - min(gaps) < 0.2, 'equal turns'
+    assert logo['start'] < turn_starts[0]
+    # Short plugs say so; long ones have nothing to say.
+    notes = sk.page_notes(plan, duration)
+    assert (len(notes) == 1 and '3 pages in' in notes[0]) if plan['read'] < sk.PAGE_MIN_READ else notes == []
+    assert (duration <= 15) == bool(notes)
+
+
+def test_a_file_without_pages_is_timed_exactly_as_before():
+    r = sk.style_recipe('wipe_mix')
+    for roles in (None, DRESSED_ROLES):
+        assert sk.build_timeline(r, DRESSED_NAMES, 15, roles) == sk.build_timeline(r, DRESSED_NAMES, 15, roles, [None] * 6)
+    assert sk.page_plan(sk.build_timeline(r, DRESSED_NAMES, 15), [None] * 6, 15) is None
+    assert sk.page_notes(None, 15) == []
+    # One page is a page that never has to leave.
+    names, pages = ['Background', 'Logo', 'Page 1 row 1', 'Page 1 row 2'], [None, None, 0, 0]
+    tl = sk.build_timeline(r, names, 15, ['background', 'content', 'content', 'content'], pages)
+    assert all('out' not in t for t in tl) and sk.page_notes(sk.page_plan(tl, pages, 15), 15) == []
+
+
+@pytest.mark.parametrize('style, content', [('wipe_mix', 'hold'), ('slide_float', 'breathe'), ('stop_motion', 'hold')])
+def test_one_page_at_a_time_each_exactly_as_designed_over_a_background_that_stays(paged, style, content):
+    art = sk.load_artwork(paged['psd'])
+    names, roles = [ly['name'] for ly in art['layers']], [ly['role'] for ly in art['layers']]
+    pages = [ly['page'] for ly in art['layers']]
+    r = sk.style_recipe(style, content)
+    tl = sk.build_timeline(r, names, 20, roles, pages)
+    an = sk.Animator(art, tl, r, 20)
+    rows_area = (slice(300, 700), slice(480, 1420))
+    seen = set()
+    for t in np.arange(0.0, 20.0, 0.1):
+        f = an.frame(float(t))
+        assert np.array_equal(f[900:], np.full_like(f[900:], 20)) and np.array_equal(f[:100], np.full_like(f[:100], 20))
+        if t < tl[-1]['start'] + tl[-1]['dur']:
+            continue                    # the (white) logo may still be travelling through on its way in
+        area = f[rows_area].reshape(-1, 3).astype(int)
+        lit = [bool((area[:, c] > 60).any()) for c in (2, 1, 0)]         # red, green, blue: pages 1, 2, 3
+        assert sum(lit) <= 1, f'two pages on screen at once at {t:.1f} s'
+        if any(lit):
+            seen.add(lit.index(True))
+    assert seen == {0, 1, 2}
+    # Half-way through each page's time complete on screen, it is that page and nothing else.
+    for k in range(3):
+        rows = [t for t, p in zip(tl, pages) if p == k]
+        done = max(t['start'] + t['dur'] for t in rows)
+        leaves = rows[0]['out'][0] if 'out' in rows[0] else 20.0
+        f = an.frame((done + leaves) / 2.0)
+        want = _with_page(art, k)
+        if content == 'hold':
+            assert np.array_equal(f, want), f'page {k + 1}'
+        else:
+            assert 0 < _diff(f, want) < 4, 'breathing: a little off its rest position, readably'
+        if k < 2:
+            gone = an.frame(leaves + sk.PAGE_OUT + 0.09)       # (stop motion steps time: allow it a step)
+            assert np.array_equal(gone[rows_area], np.full_like(gone[rows_area], 20)), 'and then gone completely'
+    assert np.array_equal(an.frame(20.0), _with_page(art, 2)), 'the plug ends on the last page, at rest'
+    # Rewinding gives the same picture as getting there in order.
+    late = an.frame(9.3)
+    an.frame(1.0)
+    assert np.array_equal(an.frame(9.3), late)
+
+
+def test_ornaments_keep_looping_under_the_pages_and_the_layer_limit_spares_them(tmp_path):
+    extra = [('Star', lambda: _block([1750, 100, 1850, 200], (255, 220, 60, 255)))]
+    _paged_psd(tmp_path / 'orn.psd', extra=extra)
+    art = sk.load_artwork(str(tmp_path / 'orn.psd'))
+    assert [(ly['name'], ly['role'], ly['page']) for ly in art['layers']][-1] == ('Star', 'decor', None)
+    r, tl, pages = _paged_plan(art, 20)
+    an = sk.Animator(art, tl, r, 20)
+    assert an._amb[-1] == 'grow' and tl[-1]['start'] == 0.0 and 'out' not in tl[-1]
+    star = (slice(60, 240), slice(1700, 1900))
+    rest = sk._flatten(art['layers'], sk.CANVAS)[star]
+    assert all(max(_diff(an.frame(float(t))[star], rest) for t in np.arange(a, b, 0.2)) > 0.5
+               for a, b in ((0.0, 4.0), (8.0, 12.0), (16.0, 20.0))), 'moving through every page'
+    # More shared layers than can animate: the lowest are merged, the pages are not touched.
+    many = [(f'Shape {k}', lambda k=k: _block([100 + 20 * k, 900, 110 + 20 * k, 1000], (255, 255, 255, 255)))
+            for k in range(sk.MAX_LAYERS + 2)]
+    _paged_psd(tmp_path / 'many.psd', extra=many)
+    art = sk.load_artwork(str(tmp_path / 'many.psd'))
+    assert art['pages'] == [{'name': 'Page 1', 'rows': 4}, {'name': 'Page 2', 'rows': 3}, {'name': 'Page 3', 'rows': 4}]
+    assert sum(1 for ly in art['layers'] if ly['page'] is not None) == 11

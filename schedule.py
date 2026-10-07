@@ -83,6 +83,7 @@ def _public(m):
             'prompt': m.get('prompt'), 'animation': m.get('animation'), 'read_by': m.get('read_by'),
             'style': m.get('style'), 'style_label': m.get('style_label'),
             'roles': m.get('roles'), 'text_motion': m.get('text_motion'),
+            'page_of': m.get('page_of'), 'pages': m.get('pages') or [],
             'music': m.get('music'), 'notes': m.get('notes') or [],
             'url': f"/api/schedule/file/{pid}/{m['file']}",
             'preview_url': f"/api/schedule/file/{pid}/{m['preview']}" if m.get('preview') else None,
@@ -142,8 +143,13 @@ def _run(jid, params):
     if cannot:
         notes.append(cannot)
     notes.extend(sk.role_notes(roles, recipe))
-    timeline = sk.build_timeline(recipe, names, duration, roles)
+    pages = [ly['page'] for ly in art['layers']]
+    timeline = sk.build_timeline(recipe, names, duration, roles, pages)
     animation = sk.describe_recipe(recipe, names, roles)
+    plan = sk.page_plan(timeline, pages, duration)
+    if plan and plan['count'] > 1:
+        animation += f"; {plan['count']} pages, about {plan['slot']:.0f} s each"
+        notes.extend(sk.page_notes(plan, duration))
 
     pid = f'{int(time.time())}_{secrets.token_hex(3)}'
     pdir = os.path.join(SCHEDULE_DIR, pid)
@@ -193,8 +199,10 @@ def _run(jid, params):
             if not os.path.exists(os.path.join(pdir, preview)):
                 preview = None
         poster = 'poster.jpg'
-        # The artwork as designed, not a frame: the moving layers are never all at rest at once.
-        if not cv2.imwrite(os.path.join(pdir, poster), cv2.resize(sk._flatten(art['layers'], sk.CANVAS), (640, 360),
+        # The artwork as designed, not a frame: the moving layers are never all
+        # at rest at once. With pages, the first: all of them at once is no page.
+        cover = [ly for ly in art['layers'] if ly['page'] in (None, 0)]
+        if not cv2.imwrite(os.path.join(pdir, poster), cv2.resize(sk._flatten(cover, sk.CANVAS), (640, 360),
                                                                   interpolation=cv2.INTER_AREA)):
             poster = None
         manifest = {'plug_id': pid, 'created': time.time(), 'user_id': params.get('user_id'),
@@ -204,6 +212,7 @@ def _run(jid, params):
                     'layers': names, 'layered': art['layered'], 'prompt': params.get('prompt') or '',
                     'style': params.get('style'), 'style_label': sk.style_label(params.get('style')),
                     'roles': roles, 'text_motion': recipe.get('content'),
+                    'page_of': pages, 'pages': art['pages'],
                     'animation': animation, 'read_by': read_by, 'music': params.get('music_name'),
                     'fps': f'{fps[0]}/{fps[1]}', 'notes': notes}
         _write_manifest(pdir, manifest)

@@ -367,6 +367,66 @@ def test_the_animation_style_is_chosen_from_a_list_and_carried_through_to_the_re
     assert plug['animation'] == 'picture: slide up' and any('one flat picture' in n for n in plug['notes'])
 
 
+def test_one_psd_with_several_pages_plays_them_in_turn_over_one_background(env, tmp_path):
+    """Page groups in the file -- two of the three hidden, as a designer
+    leaves them -- become pages of the plug."""
+    def block(box, colour):
+        im = Image.new('RGBA', (W, H), (0, 0, 0, 0))
+        ImageDraw.Draw(im).rectangle(box, fill=colour)
+        return im
+    psd = psd_tools.PSDImage.new('RGB', (W, H), color=0)
+
+    def add(parent, name, im):
+        b = im.getbbox()
+        parent.create_pixel_layer(im.crop(b), name=name, top=b[1], left=b[0])
+    add(psd, 'Background', Image.new('RGBA', (W, H), (20, 20, 20, 255)))
+    colours = {1: (255, 40, 40, 255), 2: (40, 255, 40, 255), 3: (40, 40, 255, 255)}
+    for p in (3, 2, 1):
+        g = psd.create_group(name=f'Page {p}')
+        g.visible = p == 1
+        for r in range(3):
+            add(g, f'time {r}', block([500, 320 + 100 * r, 700, 380 + 100 * r], colours[p]))
+            add(g, f'show {r}', block([760, 320 + 100 * r, 1400, 380 + 100 * r], colours[p]))
+    add(psd, 'GTV Logo', block([500, 120, 640, 260], (255, 255, 255, 255)))
+    psd.save(str(tmp_path / 'pages.psd'))
+    staged = f'net_{int(time.time())}_GTV_Monday.psd'
+    shutil.copy(str(tmp_path / 'pages.psd'), os.path.join(main.app.config['UPLOAD_FOLDER'], staged))
+    try:
+        client, headers = _client()
+        plug = _render(client, headers, schedule_image_network=staged, duration='20', style='fade_still')['result']['plug']
+        assert plug['animation'] == ('background: static; logo and text: fade, then hold still; '
+                                     '3 pages, about 6 s each')
+        assert plug['pages'] == [{'name': 'Page 1', 'rows': 3}, {'name': 'Page 2', 'rows': 3}, {'name': 'Page 3', 'rows': 3}]
+        assert plug['page_of'] == [None, 2, 2, 2, 1, 1, 1, 0, 0, 0, None] and len(plug['layers']) == 11
+        assert not any('pages in' in n for n in plug['notes'])
+        pdir = os.path.join(schedule.SCHEDULE_DIR, plug['plug_id'])
+        fr = _frames(os.path.join(pdir, plug['file']))
+        assert len(fr) == 599 or len(fr) == 600
+
+        def page_showing(f):
+            px = f[350, 1000].astype(int)                  # inside the first row's title, on every page
+            lit = [c for c in (2, 1, 0) if px[c] > 150]    # red, green, blue
+            return {2: 1, 1: 2, 0: 3}[lit[0]] if len(lit) == 1 else None
+        order = []
+        for f in fr[::6]:
+            got = page_showing(f)
+            if got and (not order or order[-1] != got):
+                order.append(got)
+        assert order == [1, 2, 3], 'each page once, in order'
+        assert page_showing(fr[150]) == 1 and page_showing(fr[330]) == 2 and page_showing(fr[-1]) == 3
+        assert all(_diff(f[800:], np.full_like(f[800:], 20)) < 3.0 for f in fr[::15]), 'one background throughout'
+        assert all(f[190, 570].min() > 200 for f in fr[90::30]), 'and the logo stays for all of them'
+        poster = cv2.imread(os.path.join(pdir, 'poster.jpg'))
+        assert poster[350 // 3, 1000 // 3, 2] > 150 and poster[350 // 3, 1000 // 3, 1] < 100, 'the cover is page 1'
+
+        # Too many pages for the length: it is made, and it says so.
+        plug = _render(client, headers, schedule_image_network=staged, duration='10')['result']['plug']
+        assert plug['animation'].endswith('3 pages, about 3 s each')
+        assert any('3 pages in 10 seconds' in n for n in plug['notes'])
+    finally:
+        os.remove(os.path.join(main.app.config['UPLOAD_FOLDER'], staged))
+
+
 def test_artwork_that_cannot_be_used_ends_the_job_with_the_reason_and_leaves_nothing_behind(env):
     up = main.app.config['UPLOAD_FOLDER']
     bad = f'net_{int(time.time())}_broken.png'

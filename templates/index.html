@@ -7659,7 +7659,7 @@ document.addEventListener('DOMContentLoaded', function(){
 </div>
 <input type=hidden id=schedule_image_network name=schedule_image_network value="">
 <span class="net-file-chip" id=schedule_image_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('schedule_image')">&#10005;</span></span>
-<p class="sh-note" style="margin-top:6px">PNG, JPEG, TIFF or a Photoshop file, ideally 1920&times;1080. In a PSD, the bottom layer is the background and stays still; each top-level layer or group above it animates on its own &mdash; group the things that should move together, and name the layers so the direction can refer to them.</p>
+<p class="sh-note" style="margin-top:6px">PNG, JPEG, TIFF or a Photoshop file, ideally 1920&times;1080. In a PSD, the bottom layer is the background and stays still; each top-level layer or group above it animates on its own &mdash; group the things that should move together, and name the layers so the direction can refer to them. <b>Several schedule pages in one file:</b> put each page&rsquo;s rows in a top-level group named <b>Page 1</b>, <b>Page 2</b>, <b>Page 3</b>&hellip; They play in that order over the same background, and it does not matter which of them is showing or hidden when the file is saved.</p>
 
 <div class="sh-row" style="margin-top:10px">
   <div>
@@ -7880,10 +7880,18 @@ function spCard(p, fresh){
   // Which layers were taken for logo/text and which keep moving, so a wrongly sorted one can be renamed.
   var groups = ''
   if(p.layered && p.roles && p.layers && p.roles.length === p.layers.length){
-    var pick = function(role){ return p.layers.filter(function(_, i){ return p.roles[i] === role }).map(escapeHtmlLite).join(', ') }
+    // A page's rows are listed as the page, not one by one.
+    var paged = p.page_of && p.page_of.length === p.layers.length
+    var pick = function(role){
+      return p.layers.filter(function(_, i){ return p.roles[i] === role && !(paged && p.page_of[i] != null) }).map(escapeHtmlLite).join(', ')
+    }
     var still = pick('content'), moving = pick('decor')
+    var pageList = (p.pages || []).map(function(g){
+      return escapeHtmlLite(g.name) + ' (' + g.rows + (g.rows === 1 ? ' piece' : ' rows') + ')'
+    }).join(', ')
     groups = '<p class="sh-note"><b>Static background:</b> ' + pick('background') +
       (still ? ' &middot; <b>Logo and text (' + (p.text_motion === 'breathe' ? 'breathe' : 'hold still') + '):</b> ' + still : '') +
+      (pageList ? ' &middot; <b>Pages, in turn:</b> ' + pageList : '') +
       (moving ? ' &middot; <b>Keep moving:</b> ' + moving : '') + '</p>'
   }
   card.innerHTML =
@@ -8648,6 +8656,15 @@ GET  /api/shorts/batches</pre>
         <li><strong>Layered Photoshop file</strong>: the bottom layer is the static background; each visible top-level layer or group above it animates on its own, lowest first. Group the things that should arrive together and give layers plain names (&ldquo;Title&rdquo;, &ldquo;Schedule Mon&rdquo;) so the prompt can refer to them. More than twelve top-level layers: the lowest are merged into the background.</li>
         <li>Layers must be plain pixels in Normal mode. If the file uses blend modes, layer effects, clipping or adjustment layers at the top level, it is animated as one flat picture instead and the result says so &mdash; merge or rasterise those layers to get layer-by-layer animation.</li>
         <li>Design at 1920&times;1080. Other shapes are shown whole with black around them, never cropped.</li>
+      </ul>
+      <h3>Several pages in one file</h3>
+      <p>For a schedule too long for one screen, keep one PSD: the background, the ornaments, the logo and the day stay as ordinary layers, and each page&rsquo;s rows go into a top-level group whose name begins with <strong>Page</strong> and a number &mdash; <em>Page 1</em>, <em>Page 2 afternoon</em>, <em>PAGE-3</em> (<em>Pg 1</em> and <em>P1</em> work too).</p>
+      <ul style="line-height:1.8;padding-left:20px">
+        <li>The name is what makes a group a page. Any other group (a header holding the logo and the day, say) stays on screen for the whole plug.</li>
+        <li>Pages play in the order of their numbers, wherever they sit in the layer stack, and whether they are showing or hidden when the file is saved &mdash; so you can work with one page visible at a time. A layer hidden <em>inside</em> a page stays hidden.</li>
+        <li>Everything on screen throughout behaves as usual. Each page&rsquo;s rows then appear top to bottom the way the style says, hold, and fade away for the next page; the last page stays to the end. Whatever sits on one line (a time and its title) arrives together, however the page is layered.</li>
+        <li>The time left once the logo and day are in is shared equally between the pages. Three pages want 20 or 30 seconds: the result warns when a page is complete on screen for less than three seconds.</li>
+        <li>The pages need a background layer of their own beneath them. Everything inside a page group counts as schedule text: it appears and leaves with its page and does not take the moving layers&rsquo; motion.</li>
       </ul>
       <h3>Animation style and direction</h3>
       <p>A layered file is animated in three groups:</p>

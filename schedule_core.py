@@ -206,8 +206,8 @@ def _merge_backdrop(layers, doc, canvas, notes):
     k = _fit(doc, canvas)[0]
     area = 0.9 * (doc[0] * k) * (doc[1] * k)
 
-    def covers(ly):
-        return int((ly['px'][:, :, 3] > 0).sum()) >= area
+    def covers(ly):                     # a page's place in the stack covers nothing, and ends the backdrop
+        return 'px' in ly and int((ly['px'][:, :, 3] > 0).sum()) >= area
     if len(layers) < 2 or not covers(layers[0]):
         return layers
     k = 1
@@ -241,6 +241,106 @@ def _load_flat(path, canvas):
     return [dict(_place(bgra, 0, 0, (w, h), canvas), name='Image')], (w, h)
 
 
+_PAGE_NAME = re.compile(r'^\s*(?:page|pg|p)\s*[-_#.]?\s*(\d+)(?!\d)', re.I)
+MAX_PAGE_ROWS = 10
+
+
+def page_number(name):
+    """The page a top-level layer or group stands for -- 'Page 1', 'PAGE-2',
+    'Pg 3 afternoon', 'P4' -- or None for anything else.
+
+    The name has to say so, for two reasons. A file keeps other groups too
+    (a header holding the logo and the day), and those must stay on screen
+    throughout rather than become a page. And a designer works with one
+    page showing and the others hidden: a group named as a page is read
+    whether or not it is showing, where any other hidden layer is left out
+    as something the designer switched off."""
+    m = _PAGE_NAME.match(str(name or ''))
+    return int(m.group(1)) if m else None
+
+
+def _read_layer(layer, doc, canvas, in_page=False):
+    """(layer dict or None, plain): one Photoshop layer or group as pixels
+    placed on the canvas. `plain` is False when it uses something that will
+    not survive being drawn on its own (a blend mode, an effect, clipping).
+
+    `in_page` is for the contents of a page group, which may be hidden in
+    the file: a layer counts as visible there by its own eye icon, not its
+    parents', and a group is composited over the whole document, because a
+    hidden group does not know its own bounds."""
+    mode = str(getattr(layer.blend_mode, 'name', layer.blend_mode)).upper()
+    plain = not (mode not in ('NORMAL', 'PASS_THROUGH') or layer.kind == 'adjustment'
+                 or layer.has_effects() or layer.has_clip_layers())
+    img, left, top = None, None, None
+    try:
+        # A group is one thing that animates: flattened here. composite()
+        # also applies the layer's own mask, which topil() does not.
+        if layer.is_group() or layer.has_mask():
+            if in_page:
+                img = layer.composite(viewport=(0, 0, doc[0], doc[1]), layer_filter=lambda ly: ly.visible)
+                left, top = 0, 0
+            else:
+                img = layer.composite()
+        else:
+            img = layer.topil()
+    except Exception:
+        img = None
+    if img is None:
+        try:
+            img, left, top = layer.topil(), None, None
+        except Exception:
+            img = None
+    if img is None:
+        return None, plain and layer.kind == 'adjustment'    # a shape or fill with no pixels to read is not plain
+    bgra = _pil_to_bgra(img)
+    if layer.opacity < 255:
+        bgra[:, :, 3] = (bgra[:, :, 3].astype(np.uint16) * int(layer.opacity) // 255).astype(np.uint8)
+    cut = _crop_to_content(bgra)
+    if cut is None:
+        return None, plain
+    px, cx, cy = cut
+    if left is None:
+        left, top = layer.bbox[0], layer.bbox[1]
+    name = str(layer.name or 'Layer').strip()
+    return dict(_place(px, left + cx, top + cy, doc, canvas), name=name,
+                role=layer_role(name, _is_text(layer))), plain
+
+
+def _page_rows(parts, name, canvas):
+    """A page's layers -> the rows they form, top to bottom, each one layer.
+
+    However the designer layered the page -- a text layer per line, one for
+    all the times and one for all the titles, a group per row -- what should
+    arrive together is whatever sits on the same line. Layers whose heights
+    overlap (or all but touch: a small label over a title) are one row. A
+    page with too many rows to bring in one at a time, or where one tall
+    layer ties them all together, arrives as a single piece."""
+    def merged(group, label):
+        base = np.zeros((canvas[1], canvas[0], 4), np.uint8)
+        for ly in group:
+            paste(base, ly['px'], ly['x'], ly['y'])
+        px, x, y = _crop_to_content(base)
+        return {'px': px, 'x': x, 'y': y, 'name': label, 'role': 'content'}
+    if not parts:
+        return []
+    rows = []
+    for ly in sorted(parts, key=lambda q: q['y']):
+        top, bottom = ly['y'], ly['y'] + ly['px'].shape[0]
+        if rows:
+            r_top, r_bottom, group = rows[-1]
+            near = max(3.0, 0.12 * min(bottom - top, r_bottom - r_top))
+            if top <= r_bottom + near:
+                rows[-1] = (r_top, max(r_bottom, bottom), group + [ly])
+                continue
+        rows.append((top, bottom, [ly]))
+    if len(rows) == 1 or len(rows) > MAX_PAGE_ROWS:
+        return [merged(parts, name)]
+    # Each row is put back together in the layers' own stacking order.
+    order = {id(ly): k for k, ly in enumerate(parts)}
+    return [merged(sorted(group, key=lambda q: order[id(q)]), f'{name} row {k}')
+            for k, (_, _, group) in enumerate(rows, 1)]
+
+
 def _load_psd(path, canvas):
     try:
         from psd_tools import PSDImage
@@ -255,41 +355,57 @@ def _load_psd(path, canvas):
     if doc[0] < 16 or doc[1] < 16:
         raise ArtworkError('This Photoshop file has no usable canvas.')
 
-    notes, layers, plain = [], [], True
+    # `layers` holds the shared layers and, where a page group sat in the
+    # stack, a marker for it ({'page_slot': k}) to be replaced by its rows.
+    notes, layers, plain, found = [], [], True, []
     for layer in psd:                                   # bottom first
+        number = page_number(layer.name)
+        if number is not None:
+            parts, page_plain = [], True
+            for child in (layer if layer.is_group() else [layer]):
+                if child is not layer and not child.visible:
+                    continue
+                got, ok = _read_layer(child, doc, canvas, in_page=True)
+                page_plain = page_plain and ok
+                if got:
+                    parts.append(got)
+            mode = str(getattr(layer.blend_mode, 'name', layer.blend_mode)).upper()
+            if layer.is_group() and (mode not in ('NORMAL', 'PASS_THROUGH') or layer.has_effects()):
+                page_plain = False
+            plain = plain and page_plain
+            if layer.is_group() and layer.opacity < 255:
+                for got in parts:
+                    got['px'] = (got['px'].astype(np.uint16) * int(layer.opacity) // 255).astype(np.uint8)
+            name = str(layer.name or f'Page {number}').strip()
+            rows = _page_rows(parts, name, canvas)
+            if rows:
+                layers.append({'page_slot': len(found)})
+                found.append({'number': number, 'name': name, 'rows': rows, 'shown': bool(layer.visible),
+                              'plain': page_plain})
+            continue
         if not layer.visible:
             continue
-        mode = str(getattr(layer.blend_mode, 'name', layer.blend_mode)).upper()
-        if (mode not in ('NORMAL', 'PASS_THROUGH') or layer.kind == 'adjustment'
-                or layer.has_effects() or layer.has_clip_layers()):
-            plain = False
-        img = None
-        try:
-            # A group is one thing that animates: flattened here. composite()
-            # also applies the layer's own mask, which topil() does not.
-            img = layer.composite() if (layer.is_group() or layer.has_mask()) else layer.topil()
-        except Exception:
-            img = None
-        if img is None:
-            try:
-                img = layer.topil()
-            except Exception:
-                img = None
-        if img is None:
-            if layer.kind != 'adjustment':
-                plain = False                           # a shape or fill with no pixels to read
-            continue
-        bgra = _pil_to_bgra(img)
-        if layer.opacity < 255:
-            bgra[:, :, 3] = (bgra[:, :, 3].astype(np.uint16) * int(layer.opacity) // 255).astype(np.uint8)
-        cut = _crop_to_content(bgra)
-        if cut is None:
-            continue
-        px, cx, cy = cut
-        left, top = layer.bbox[0], layer.bbox[1]
-        name = str(layer.name or 'Layer').strip()
-        layers.append(dict(_place(px, left + cx, top + cy, doc, canvas), name=name,
-                           role=layer_role(name, _is_text(layer))))
+        got, ok = _read_layer(layer, doc, canvas)
+        plain = plain and ok
+        if got:
+            layers.append(got)
+
+    # Pages play in the order of their numbers, wherever they sit in the stack.
+    order = sorted(range(len(found)), key=lambda k: (found[k]['number'], -k))
+    index_of = {slot: at for at, slot in enumerate(order)}
+
+    def with_pages(stack, only_shown=False):
+        out = []
+        for ly in stack:
+            if 'page_slot' not in ly:
+                out.append(ly)
+                continue
+            pg = found[ly['page_slot']]
+            if only_shown and not pg['shown']:
+                continue
+            out += [dict(r, page=index_of[ly['page_slot']]) for r in pg['rows']]
+        return out
+    pages = [{'name': found[k]['name'], 'rows': len(found[k]['rows']), 'shown': found[k]['shown']} for k in order]
 
     reference = None
     try:
@@ -303,10 +419,13 @@ def _load_psd(path, canvas):
     if not layers:
         flat_reason = 'no visible layer in it has pixels PRISM can read'
     elif reference is not None:
+        # The file's own flattened picture shows what was visible when it was
+        # saved: the shared layers and whichever pages were switched on.
         ref_layer = _place(reference, 0, 0, doc, canvas)
         want = np.zeros((canvas[1], canvas[0], 3), np.uint8)
         paste(want, ref_layer['px'], ref_layer['x'], ref_layer['y'])
-        diff = float(np.abs(_flatten(layers, canvas).astype(np.int16) - want.astype(np.int16)).mean())
+        diff = float(np.abs(_flatten(with_pages(layers, only_shown=True), canvas).astype(np.int16)
+                            - want.astype(np.int16)).mean())
         if diff > 2.5:
             flat_reason = ('its layers use blend modes, effects, masks or adjustment layers that cannot be '
                            'animated one at a time without changing how the artwork looks')
@@ -319,23 +438,40 @@ def _load_psd(path, canvas):
                                '"Maximize Compatibility" on, or export a PNG.')
         notes.append(f'This Photoshop file was animated as one flat picture, because {flat_reason}. '
                      'For layer-by-layer animation, rasterise or merge those layers so each top-level layer '
-                     'is plain pixels in Normal mode.')
-        return [dict(_place(reference, 0, 0, doc, canvas), name='Image')], doc, notes
+                     'is plain pixels in Normal mode.'
+                     + (' Its pages are not played: the flat picture is only what was showing when the file '
+                        'was saved.' if pages else ''))
+        return [dict(_place(reference, 0, 0, doc, canvas), name='Image')], doc, notes, []
+    unchecked = [pg['name'] for pg in found if not pg['shown'] and not pg['plain']]
+    if unchecked:
+        notes.append(', '.join(f'"{n}"' for n in unchecked) + ' use blend modes, layer effects or clipping and '
+                     'were hidden when the file was saved, so they could not be checked against the file\'s own '
+                     'picture and may look different here. Rasterise or merge those layers to be sure.')
 
     layers = _merge_backdrop(layers, doc, canvas, notes)
-    if len(layers) > MAX_LAYERS:
+    shared = [k for k, ly in enumerate(layers) if 'page_slot' not in ly]
+    if len(shared) > MAX_LAYERS:
         # The lowest layers are the backdrop; merging them costs the least.
-        keep = MAX_LAYERS - 1
-        base = np.zeros((canvas[1], canvas[0], 4), np.uint8)
-        for ly in layers[:len(layers) - keep]:
-            paste(base, ly['px'], ly['x'], ly['y'])
-        merged = _crop_to_content(base)
-        notes.append(f'This file has {len(layers)} top-level layers; the lowest {len(layers) - keep} were merged '
-                     f'into the background and the top {keep} animate. Group layers in Photoshop to choose '
-                     'what moves together.')
-        layers = ([{'px': merged[0], 'x': merged[1], 'y': merged[2], 'name': 'Background'}] if merged else []) \
-            + layers[len(layers) - keep:]
-    return layers, doc, notes
+        # Only what lies under the first page can go: a page is not backdrop.
+        first_page = next((k for k, ly in enumerate(layers) if 'page_slot' in ly), len(layers))
+        take = min(len(shared) - (MAX_LAYERS - 1), first_page)
+        if take > 1:
+            base = np.zeros((canvas[1], canvas[0], 4), np.uint8)
+            for ly in layers[:take]:
+                paste(base, ly['px'], ly['x'], ly['y'])
+            merged = _crop_to_content(base)
+            notes.append(f'This file has {len(shared)} top-level layers besides its pages; the lowest {take} were '
+                         f'merged into the background and the rest animate. Group layers in Photoshop to choose '
+                         'what moves together.' if pages else
+                         f'This file has {len(shared)} top-level layers; the lowest {take} were merged '
+                         f'into the background and the top {len(shared) - take} animate. Group layers in '
+                         'Photoshop to choose what moves together.')
+            layers = ([{'px': merged[0], 'x': merged[1], 'y': merged[2], 'name': 'Background'}] if merged else []) \
+                + layers[take:]
+    if pages and (not layers or 'page_slot' in layers[0]):
+        raise ArtworkError('The pages in this file have nothing under them. Put the background on a layer of its '
+                           'own below the Page groups: it is what stays on screen while the pages change.')
+    return with_pages(layers), doc, notes, pages
 
 
 def load_artwork(path, canvas=CANVAS):
@@ -346,13 +482,16 @@ def load_artwork(path, canvas=CANVAS):
     already scaled and positioned for `canvas`, bottom layer first. 'role'
     is 'background' (the bottom layer: static), 'content' (logo or text:
     appears, then holds or breathes), 'decor' (keeps moving) or, for a flat
-    file, 'picture'. The artwork is
+    file, 'picture'. 'page' is None for a layer that is on screen
+    throughout and 0, 1, 2... for a row of the first, second, third page
+    (see page_number): pages take turns, in that order, and 'pages' lists
+    them as [{'name', 'rows'}]. The artwork is
     fitted inside the canvas whole (never cropped: the edge of a schedule is
     usually where the times are), on black."""
     ext = os.path.splitext(path)[1].lower().lstrip('.')
-    notes = []
+    notes, pages = [], []
     if ext in ('psd', 'psb'):
-        layers, size, notes = _load_psd(path, canvas)
+        layers, size, notes, pages = _load_psd(path, canvas)
     else:
         layers, size = _load_flat(path, canvas)
     if abs(size[0] / float(size[1]) - canvas[0] / float(canvas[1])) > 0.02:
@@ -363,7 +502,9 @@ def load_artwork(path, canvas=CANVAS):
                      'look soft. Use artwork at 1920x1080 or larger.')
     for i, ly in enumerate(layers):
         ly['role'] = 'picture' if len(layers) == 1 else ('background' if i == 0 else ly.get('role') or 'decor')
-    return {'layers': layers, 'size': size, 'layered': len(layers) > 1, 'notes': notes}
+        ly.setdefault('page', None)
+    return {'layers': layers, 'size': size, 'layered': len(layers) > 1, 'notes': notes,
+            'pages': [{'name': pg['name'], 'rows': pg['rows']} for pg in pages]}
 
 
 # --------------------------------------------------------------------------
@@ -720,8 +861,17 @@ def describe_recipe(recipe, layer_names, roles=None):
 # Timing
 # --------------------------------------------------------------------------
 
-def build_timeline(recipe, layer_names, duration, roles=None):
+PAGE_OUT, PAGE_GAP = 0.35, 0.1     # a page fades away over this long; the next starts this long after
+
+
+def build_timeline(recipe, layer_names, duration, roles=None, pages=None):
     """[{'effect', 'direction', 'start', 'dur'}] per layer, bottom first.
+
+    With `pages` (per layer: None, or which page it is a row of), the rows
+    of each page arrive in their page's turn and all but the last page's
+    then leave again: their entries carry 'out': (when the fade-out starts,
+    how long it takes). The time left once the shared logo and text are in
+    is shared out equally between the pages.
 
     With `roles` (one per layer, from load_artwork), only the logo and text
     layers arrive: a 'decor' layer is on screen from the first frame, already
@@ -744,25 +894,84 @@ def build_timeline(recipe, layer_names, duration, roles=None):
     else:
         bg = dict(recipe['background'], start=lead, dur=min(1.0, max(0.4, 0.7 * k)))
     there = {'effect': 'cut', 'direction': 'right', 'start': 0.0, 'dur': 0.0}
-    arrives = [roles is None or roles[i] != 'decor' or layer_names[i].lower() in recipe['layers'] for i in range(1, n)]
+    page_of = list(pages) if pages is not None else [None] * n
+    count = max((p for p in page_of if p is not None), default=-1) + 1
+    arrives = [page_of[i] is None and (roles is None or roles[i] != 'decor' or layer_names[i].lower() in recipe['layers'])
+               for i in range(1, n)]
     rest = sum(arrives)
-    if not rest:
-        return [bg] + [dict(there) for _ in range(n - 1)]
-    window = min(duration * 0.45, 6.0, max(1.2, rest * 0.9)) * k
-    window = min(window, duration * 0.6)
-    each = float(np.clip(window / rest * 1.6, 0.35, 1.2 * max(k, 1.0)))
-    gap = (window - each) / (rest - 1) if rest > 1 else 0.0
     # A beat on the bare background before anything lands on it.
     first = max(0.4, bg['start'] + bg['dur'] * 0.6)
-    out, turn = [bg], 0
-    for name, arriving in zip(layer_names[1:], arrives):
-        if not arriving:
-            out.append(dict(there))
+    out, turn, begin = [bg] + [dict(there) for _ in range(n - 1)], 0, first
+    if rest:
+        window = min(duration * 0.45, 6.0, max(1.2, rest * 0.9)) * k
+        if count:
+            window = min(window, duration * 0.2)         # the pages need the time more than the masthead does
+        window = min(window, duration * 0.6)
+        each = float(np.clip(window / rest * 1.6, 0.35, 1.2 * max(k, 1.0)))
+        gap = (window - each) / (rest - 1) if rest > 1 else 0.0
+        for i, arriving in enumerate(arrives, 1):
+            if not arriving:
+                continue
+            c = recipe['layers'].get(layer_names[i].lower(), recipe['default'])
+            out[i] = dict(c, start=first + turn * max(gap, 0.0), dur=each)
+            # The first page starts as the last shared piece is landing.
+            begin = out[i]['start'] + each * 0.6
+            turn += 1
+    if not count:
+        return out
+    slot = (duration - begin) / count
+    for p in range(count):
+        rows = [i for i in range(1, n) if page_of[i] == p]
+        if not rows:
             continue
-        c = recipe['layers'].get(name.lower(), recipe['default'])
-        out.append(dict(c, start=first + turn * max(gap, 0.0), dur=each))
-        turn += 1
+        start = begin + p * slot + (PAGE_GAP if p else 0.0)
+        leaves = begin + (p + 1) * slot - PAGE_OUT if p < count - 1 else None
+        # A page is built quickly: its time on screen is for reading it.
+        room = (leaves if leaves is not None else duration) - start
+        window = max(0.3, min(room * 0.35, (0.3 + 0.35 * len(rows)) * k, 2.4))
+        each = float(np.clip(window / len(rows) * 1.6, 0.25, max(0.25, min(1.0, window))))
+        gap = (window - each) / (len(rows) - 1) if len(rows) > 1 else 0.0
+        for j, i in enumerate(rows):
+            c = recipe['layers'].get(layer_names[i].lower(), recipe['default'])
+            out[i] = dict(c, start=start + j * max(gap, 0.0), dur=each)
+        if leaves is not None:
+            # Together, and never before the last of them has finished arriving.
+            leaves = max(leaves, max(out[i]['start'] + out[i]['dur'] for i in rows))
+            for i in rows:
+                out[i]['out'] = (leaves, PAGE_OUT)
     return out
+
+
+def page_plan(timeline, pages, duration):
+    """How the pages share the plug: {'count', 'slot': seconds each page has
+    from its first row starting to the next page's, 'read': the shortest
+    time any page is on screen complete} -- or None if there are no pages."""
+    count = max((p for p in pages or [] if p is not None), default=-1) + 1
+    if not count:
+        return None
+    starts, reads = [], []
+    for p in range(count):
+        rows = [t for t, q in zip(timeline, pages) if q == p]
+        if not rows:
+            continue
+        starts.append(min(t['start'] for t in rows))
+        complete = max(t['start'] + t['dur'] for t in rows)
+        leaves = min(t['out'][0] for t in rows) if 'out' in rows[0] else float(duration)
+        reads.append(max(0.0, leaves - complete))
+    slot = (float(duration) - starts[0]) / count if starts else 0.0
+    return {'count': count, 'slot': slot, 'read': min(reads) if reads else 0.0}
+
+
+PAGE_MIN_READ = 3.0
+
+
+def page_notes(plan, duration):
+    """A warning when the pages go by too fast to read, or nothing."""
+    if not plan or plan['count'] < 2 or plan['read'] >= PAGE_MIN_READ:
+        return []
+    return [f"{plan['count']} pages in {int(duration)} seconds leaves each one on screen, complete, for about "
+            f"{plan['read']:.1f} seconds, which is not long to read a schedule. Choose a longer plug, or put "
+            'fewer pages in the file.']
 
 
 def settle_time(timeline):
@@ -888,7 +1097,9 @@ class Animator:
 
     Logo and text layers, and a flat picture, are at rest on the last frame,
     exactly as designed. Decor layers are in motion from the first frame to
-    the last, without easing in or out: they loop."""
+    the last, without easing in or out: they loop. A layer whose timeline
+    entry has an 'out' (a row of a page that is not the last) fades away
+    then and is not drawn again."""
 
     def __init__(self, artwork, timeline, recipe, duration, canvas=CANVAS):
         self.layers, self.timeline, self.recipe = artwork['layers'], timeline, recipe
@@ -914,8 +1125,9 @@ class Animator:
             if a == 'mix':
                 a, turn = MIX[turn % len(MIX)], turn + 1
             self._amb.append(a)
-        # Layers from here up may keep moving after they arrive; below it, never.
-        self._movers = n if all(a == 'none' for a in self._amb) else (1 if n > 1 else 0)
+        # Layers from here up may change after they arrive -- keep moving, or
+        # leave with their page; below it, never, so those can be baked.
+        self._movers = next((i for i, (a, tl) in enumerate(zip(self._amb, timeline)) if a != 'none' or 'out' in tl), n)
         self._pulsers = [i for i, a in enumerate(self._amb) if a == 'pulse']
         self._base = np.zeros((canvas[1], canvas[0], 3), np.uint8)
         self._baked = 0
@@ -935,7 +1147,8 @@ class Animator:
             since = tm - tl['start'] - tl['dur']
             env = _smooth(since / EASE_OFF) if tl['dur'] > 0 else 1.0     # there from the start: moving from the start
             if not self._loops[i]:
-                env *= _smooth((self.duration - tm) / EASE_OFF)
+                # At rest by the end -- of the plug, or of its page's turn.
+                env *= _smooth(((tl['out'][0] if 'out' in tl else self.duration) - tm) / EASE_OFF)
             if amb == 'breathe':
                 # Together, like one thing breathing: text that swelled out of step would look loose.
                 _paste_turned(dst, px, x, y, scale=1.0 + BREATHE_BY * env * math.sin(2.0 * math.pi * tm / BREATHE_PERIOD))
@@ -1014,6 +1227,12 @@ class Animator:
             return
         raw = (t - tl['start']) / tl['dur'] if tl['dur'] > 0 else 1.0
         px, x, y = ly['px'], ly['x'], ly['y']
+        if 'out' in tl and t >= tl['out'][0]:
+            # Its page's turn is over: it fades where it stands, and is gone.
+            gone = (t - tl['out'][0]) / tl['out'][1] if tl['out'][1] > 0 else 1.0
+            if gone < 1.0:
+                paste(dst, px, x, y, opacity=1.0 - _smooth(gone))
+            return
         if raw >= 1.0 or tl['effect'] == 'cut':
             if i >= self._movers:
                 self._draw_arrived(dst, i, tm)
