@@ -746,6 +746,7 @@ input.sh-num[type=number]{width:92px}
 .sh-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:14px;margin-top:12px}
 .sh-tile{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--panel)}
 .sh-poster{position:relative;aspect-ratio:9/16;background:#000}
+.sh-num{position:absolute;top:8px;left:8px;z-index:1;min-width:26px;padding:3px 7px;border-radius:999px;background:rgba(0,0,0,.72);color:#fff;font:600 13px/1.2 var(--mono,monospace);text-align:center;pointer-events:none}
 .sh-tile-body{padding:8px 10px;font-size:12px;line-height:1.45}
 .sh-warn{font-size:12px;line-height:1.5;padding:8px 10px;border-radius:6px;border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);color:var(--amber);margin:8px 0}
 @media (max-width:640px){.sh-cand{grid-template-columns:1fr}}
@@ -7033,6 +7034,10 @@ document.getElementById('vf').addEventListener('submit', async function(e){
   <div class="sh-bar">
     <span style="font-size:12px;opacity:.75">Rendered with the <b>Output</b> settings above.</span>
     <span style="flex:1"></span>
+    <label for=sh-sort style="font-size:12px;margin:0">List in</label>
+    <select id=sh-sort style="width:auto;margin:0;padding:4px 28px 4px 8px;font-size:12px" onchange="shSortCands();shRenderCands()">
+      <option value=episode selected>episode order</option><option value=score>best first</option>
+    </select>
     <button type=button class="btn-sm" onclick="shortsSelectAll(true)">Select all</button>
     <button type=button class="btn-sm" onclick="shortsSelectAll(false)">None</button>
     <button type=button class=btn id=sh-render-btn onclick="shortsRenderSelected()">Render selected</button>
@@ -7309,6 +7314,7 @@ async function shortsAnalyze(auto){
     if(!a.ok){ if(!auto) shNote(escapeHtmlLite(a.error || 'Could not load the analysis.'), true); return }
     SH.analysis = a
     SH.cands = a.candidates.map(function(c){ return Object.assign({}, c, {keep: true}) })
+    shSortCands()
     shRenderReview(auto)
   }catch(e){ if(!auto) shNote('Could not load the analysis: ' + escapeHtmlLite(String(e)), true) }
   // After the list is drawn, or it would push the finished shorts off screen.
@@ -7349,6 +7355,31 @@ function shCandMeta(c){
   return chips.join('')
 }
 
+// The list in the order the moments happen (the order the shorts are numbered
+// in), or best first for choosing between them. Done on loading and when the
+// choice changes -- not while an in or out point is being typed, which would
+// move the row out from under the cursor.
+function shSortCands(){
+  var how = (shEl('sh-sort') || {}).value || 'episode'
+  SH.cands.sort(how === 'score'
+    ? function(a, b){ return (b.score || 0) - (a.score || 0) || a.start - b.start }
+    : function(a, b){ return a.start - b.start || a.end - b.end })
+}
+
+// "Short 3" on each ticked moment: the number its file will carry, which is
+// its place in the episode among the ones being rendered.
+function shRenumber(){
+  var kept = SH.cands.filter(function(c){ return c.keep }).slice().sort(function(a, b){ return a.start - b.start || a.end - b.end })
+  SH.cands.forEach(function(c, i){
+    var chip = document.querySelector('#sh-cands [data-num="' + i + '"]')
+    if(!chip) return
+    var at = kept.indexOf(c)
+    chip.textContent = at >= 0 ? 'Short ' + (at + 1) + ' of ' + kept.length : 'Not rendered'
+    chip.title = at >= 0 ? 'Shorts are numbered in the order their moments happen in the episode' : 'Tick it to render it'
+    chip.style.opacity = at >= 0 ? '' : '.6'
+  })
+}
+
 function shRenderCands(){
   var host = shEl('sh-cands')
   host.innerHTML = ''
@@ -7370,7 +7401,7 @@ function shRenderCands(){
           ' Out <input type=text data-act="end" data-i="' + i + '" value="' + shFmt(c.end) + '" aria-label="Out point">' +
           ' <span data-dur="' + i + '">' + (c.end - c.start).toFixed(1) + ' s</span>' +
           ' <button type=button class="btn-sm" data-act="preview" data-i="' + i + '">Preview</button></div>' +
-        '<div class="score-chips">' + shCandMeta(c) + '</div>' +
+        '<div class="score-chips"><span class="score-chip face" data-num="' + i + '"></span>' + shCandMeta(c) + '</div>' +
         (c.hook ? '<div class="sh-note"><b>Hook:</b> ' + escapeHtmlLite(c.hook) + '</div>' : '') +
         (c.why ? '<div class="sh-note"><b>Why:</b> ' + escapeHtmlLite(c.why) + '</div>' : '') +
         (c.text ? '<details class="sh-note"><summary style="cursor:pointer">Dialogue</summary>' +
@@ -7378,6 +7409,7 @@ function shRenderCands(){
       '</div>'
     host.appendChild(row)
   })
+  shRenumber()
   shUpdateRenderBtn()
 }
 
@@ -7411,6 +7443,7 @@ function shortsSelectAll(on){
     if(act === 'keep'){
       c.keep = t.checked
       t.closest('.sh-cand').classList.toggle('off', !c.keep)
+      shRenumber()
       shUpdateRenderBtn()
     }else if(act === 'title'){
       c.title = t.value.trim()
@@ -7425,6 +7458,7 @@ function shortsSelectAll(on){
       t.value = shFmt(c[act])
       var d = host.querySelector('[data-dur="' + t.getAttribute('data-i') + '"]')
       if(d) d.textContent = (c.end - c.start).toFixed(1) + ' s'
+      shRenumber()
     }
   })
 })()
@@ -7554,12 +7588,13 @@ function shBatchCard(b, fresh){
     }).join('')
   var tiles = b.shorts.map(function(s, i){
     return '<div class="sh-tile">' +
-      '<div class="sh-poster">' + (s.thumb_url ? '<img src="' + s.thumb_url + '" alt="" loading="lazy" decoding="async">' : '') +
+      '<div class="sh-poster"><span class="sh-num" title="Its place in the episode">' + (s.number || (i + 1)) + '</span>' +
+        (s.thumb_url ? '<img src="' + s.thumb_url + '" alt="" loading="lazy" decoding="async">' : '') +
         '<button type=button class="sh-play" aria-label="Play" data-play="' + i + '">&#9654;</button></div>' +
       '<div class="sh-tile-body"><div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' +
           escapeHtmlLite(s.title || '') + '">' + escapeHtmlLite(s.title || ('Short ' + s.index)) + '</div>' +
         '<div style="opacity:.7">' + (s.duration || 0).toFixed(1) + ' s &middot; ' + shBytes(s.size || 0) + '</div>' +
-        '<div style="opacity:.6;font-size:11px" title="Source range">' + shFmt(s.start) + ' → ' + shFmt(s.end) + '</div>' +
+        '<div style="opacity:.6;font-size:11px" title="Where this is in the episode">' + shFmt(s.start) + ' → ' + shFmt(s.end) + '</div>' +
         '<div style="opacity:.6;font-size:11px">' + shLayoutNote(s.layouts) + '</div>' +
         '<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">' +
           '<a class="btn-sm" href="' + s.url + '?download=1">MP4</a>' +
@@ -8711,6 +8746,8 @@ GET  /api/shorts/analysis/&lt;analysis_id&gt;
 POST /api/shorts/render   {analysis_id, items:[{start,end,title}], reframe: auto|split|crop|fit, speaker?, subtitles}
 GET  /api/shorts/batches
 POST /api/shorts/batches/&lt;id&gt;/send   {destination_id, include_srt?, files?, filename?}</pre>
+      <h3>Order and numbering</h3>
+      <p>Shorts are numbered in the order their moments happen in the episode, not by score and not by the order they were ticked: <code>&hellip;_short_01_&hellip;</code> is the earliest moment and the highest number the latest, so a folder sorted by name, the zip and a destination all read in story order. Each short in a batch shows that number on its picture and where in the episode it comes from. In the list of moments, <strong>List in</strong> switches between episode order (the default) and best first, and each ticked moment shows the number its short will get (&ldquo;Short 3 of 8&rdquo;); unticking one renumbers the rest. A short that fails to render leaves its number unused. Batches saved before this are also listed in episode order, though their filenames keep the numbers they were given.</p>
       <h3>Sending</h3>
       <p><strong>Send all</strong> at the top of a batch copies every short (and its captions) to a video destination set up under <strong>Config &gt; Network</strong>, under the names they have. Each short also has its own <strong>Send&hellip;</strong>: it opens a destination and a filename box, filled in with the short&rsquo;s current name, and nothing is sent until you press Send there &mdash; change the name first to rename the file as it goes out. The extension stays the file&rsquo;s own, spaces become underscores, and the short&rsquo;s .srt goes with it under the same name. The saved short keeps its original name, and a file of the same name already at the destination is replaced.</p>
     </div>

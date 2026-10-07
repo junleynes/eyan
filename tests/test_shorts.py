@@ -912,6 +912,43 @@ def test_render_validates_every_item(env, monkeypatch):
         'on when asked; never with Fit (nothing is cropped); junk is not a yes; default from the server; off wins'
 
 
+def test_shorts_are_numbered_and_listed_in_the_order_they_happen_in_the_episode(env, monkeypatch):
+    """Ticked in any order, ranked in any order: short 01 is the earliest
+    moment and the last number is the latest, in the filenames and on screen."""
+    Services(monkeypatch)
+    client, headers = _client()
+    a = _analysis(client, _analyze(client, headers, env))
+    items = [{'start': 17.0, 'end': 21.0, 'title': 'Late'}, {'start': 2.0, 'end': 6.0, 'title': ''},
+             {'start': 9.0, 'end': 13.0, 'title': 'Middle'}]
+    batch = _render(client, headers, a['analysis_id'], items, reframe='fit', subtitles=False)['result']['batch']
+    assert [(s['number'], s['index'], s['title'], s['start']) for s in batch['shorts']] == [
+        (1, 1, 'Short 1', 2.0), (2, 2, 'Middle', 9.0), (3, 3, 'Late', 17.0)]
+    assert [s['file'] for s in batch['shorts']] == ['episode_short_01_Short_1.mp4', 'episode_short_02_Middle.mp4',
+                                                    'episode_short_03_Late.mp4']
+    bdir = os.path.join(shorts.SHORTS_DIR, batch['batch_id'])
+    assert sorted(f for f in os.listdir(bdir) if f.endswith('.mp4')) == [s['file'] for s in batch['shorts']], \
+        'sorted by name, the folder is in episode order too'
+    # A batch saved before this, numbered by rank: still listed in episode
+    # order, each one called by its place in that order.
+    path = os.path.join(bdir, 'batch.json')
+    with open(path) as f:
+        m = json.load(f)
+    m.pop('numbering')
+    m['shorts'] = [dict(m['shorts'][2], index=1), dict(m['shorts'][0], index=2), dict(m['shorts'][1], index=3)]
+    with open(path, 'w') as f:
+        json.dump(m, f)
+    old = client.get('/api/shorts/batches').get_json()['items'][0]
+    assert [(s['number'], s['index'], s['start']) for s in old['shorts']] == [(1, 2, 2.0), (2, 3, 9.0), (3, 1, 17.0)]
+    # One that could not be rendered leaves its number unused rather than renumbering the rest.
+    m['numbering'] = 'episode'
+    m['shorts'] = [dict(m['shorts'][1], index=1), dict(m['shorts'][0], index=3)]
+    m['errors'] = [{'index': 2, 'title': 'Middle', 'error': 'x'}]
+    with open(path, 'w') as f:
+        json.dump(m, f)
+    gap = client.get('/api/shorts/batches').get_json()['items'][0]
+    assert [s['number'] for s in gap['shorts']] == [1, 3] and gap['errors'][0]['index'] == 2
+
+
 def test_full_flow_render_save_download_send_delete(env, monkeypatch):
     Services(monkeypatch)
     client, headers = _client(user_id=7, role='user', username='ana')

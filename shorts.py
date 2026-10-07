@@ -222,9 +222,16 @@ def _load_manifest(bid):
 def _batch_public(m):
     bid = m.get('batch_id')
     shorts = []
-    for s in m.get('shorts') or []:
+    # Always shown in episode order. `number` is what to call each one: the
+    # number in its filename when that is already its place in the episode,
+    # its place in this list for a batch made when files were numbered by
+    # rank instead (there the two do not agree, and the order is what helps).
+    by_episode = m.get('numbering') == 'episode'
+    in_order = sorted(m.get('shorts') or [], key=lambda s: (float(s.get('start') or 0), s.get('index') or 0))
+    for at, s in enumerate(in_order, 1):
         d = {k: s.get(k) for k in ('index', 'title', 'file', 'srt', 'start', 'end', 'duration', 'size',
                                    'layouts', 'captions')}
+        d['number'] = s.get('index') if by_episode and s.get('index') else at
         d['url'] = f"/api/shorts/file/{bid}/{s['file']}"
         d['thumb_url'] = f"/api/shorts/file/{bid}/{s['thumb']}" if s.get('thumb') else None
         d['srt_url'] = f"/api/shorts/file/{bid}/{s['srt']}" if s.get('srt') else None
@@ -491,7 +498,12 @@ def _run_render(jid, params):
     report = params.get('_report') or functools.partial(pipeline.job_set, jid)
     a = params['analysis']
     src, info = a['path'], a['info']
-    items, reframe = params['items'], params['reframe']
+    # In the order they happen in the episode, whatever order they were
+    # ticked, ranked or listed in: the number in a short's filename is then
+    # its place in the story, and a folder of them sorts into that order.
+    items = sorted(params['items'], key=lambda it: (float(it['start']), float(it['end'])))
+    items = [dict(it, title=it.get('title') or f'Short {n}') for n, it in enumerate(items, 1)]
+    reframe = params['reframe']
     fps = info['fps']
     if not os.path.exists(src):
         report(error='The source video is no longer staged on the server (staged files are '
@@ -536,6 +548,7 @@ def _run_render(jid, params):
                             'subtitle_size': params['subtitle_size'],
                             'face_detector': detector.kind if detector else None,
                             'speaker': speaker},
+                'numbering': 'episode',       # short N is the Nth of these moments in the episode
                 'shorts': [], 'errors': [], 'warnings': warnings}
     _write_manifest(bdir, manifest)
 
@@ -1007,19 +1020,23 @@ def api_shorts_render():
     for n, it in enumerate(raw, 1):
         if not isinstance(it, dict):
             return jsonify(error=f'Moment {n} is not valid.'), 400
-        title = ' '.join(str(it.get('title') or '').split())[:80] or f'Short {n}'
+        title = ' '.join(str(it.get('title') or '').split())[:80]
+        label = title or f'Moment {n}'
         try:
             start, end = float(it.get('start')), float(it.get('end'))
         except (TypeError, ValueError):
-            return jsonify(error=f'"{title}": start and end must be numbers (seconds).'), 400
+            return jsonify(error=f'"{label}": start and end must be numbers (seconds).'), 400
         start, end = max(0.0, start), min(duration, end)
         if end - start < SHORTS_MIN_CLIP:
-            return jsonify(error=f'"{title}": must be at least {int(SHORTS_MIN_CLIP)} seconds long and '
+            return jsonify(error=f'"{label}": must be at least {int(SHORTS_MIN_CLIP)} seconds long and '
                                  'inside the video.'), 400
         if end - start > SHORTS_MAX_CLIP + 0.05:
-            return jsonify(error=f'"{title}": is {end - start:.0f}s long; the limit is '
+            return jsonify(error=f'"{label}": is {end - start:.0f}s long; the limit is '
                                  f'{int(SHORTS_MAX_CLIP)}s per short.'), 400
         items.append({'start': start, 'end': end, 'title': title})
+    # Episode order (see _run_render), and an untitled one named for its place in it.
+    items.sort(key=lambda it: (it['start'], it['end']))
+    items = [dict(it, title=it['title'] or f'Short {k}') for k, it in enumerate(items, 1)]
     params = dict(_render_options(data), analysis=a, items=items,
                   user_id=session.get('user_id'), username=session.get('username'))
     jid = _start_job('render', _run_render, params, f"{a['orig_name']} (vertical shorts: {len(items)} to render)",
