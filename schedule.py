@@ -81,6 +81,7 @@ def _public(m):
             'size': m.get('size'), 'file': m.get('file'), 'layers': m.get('layers'), 'layered': m.get('layered'),
             'prompt': m.get('prompt'), 'animation': m.get('animation'), 'read_by': m.get('read_by'),
             'style': m.get('style'), 'style_label': m.get('style_label'),
+            'roles': m.get('roles'), 'text_motion': m.get('text_motion'),
             'music': m.get('music'), 'notes': m.get('notes') or [],
             'url': f"/api/schedule/file/{pid}/{m['file']}",
             'preview_url': f"/api/schedule/file/{pid}/{m['preview']}" if m.get('preview') else None,
@@ -91,12 +92,12 @@ def _public(m):
 # The job
 # --------------------------------------------------------------------------
 
-def _read_prompt(prompt, layer_names, notes, style=None):
+def _read_prompt(prompt, layer_names, notes, style=None, content=None):
     """(recipe, who read it). The chosen style is the starting point and the
     prompt changes what it names. The built-in reading always runs; the
     language model, when it is reachable, gets to refine it. Nothing here
     can fail the job: a plug in the plain style is still a plug."""
-    base = sk.parse_prompt(prompt, layer_names, base=sk.style_recipe(style))
+    base = sk.parse_prompt(prompt, layer_names, base=sk.style_recipe(style, content))
     if not (prompt and SCHEDULE_USE_LLM):
         return base, 'built-in'
     prod = pipeline.load_production_defaults()
@@ -116,7 +117,7 @@ def _read_prompt(prompt, layer_names, notes, style=None):
     except Exception as e:
         print(f'Schedule Plug: animation prompt read without the language model ({e}).')
         notes.append('The animation prompt was read by keyword matching, because the AI model could not be used '
-                     f'({str(e)[:120]}). Simple instructions (wipe, slide, fade, pop, stop motion, float, a direction) '
+                     f'({str(e)[:120]}). Simple instructions (wipe, slide, fade, pop, stop motion, float, grow, rotate left, a direction) '
                      'work the same either way.')
         return base, 'built-in'
 
@@ -134,12 +135,14 @@ def _run(jid, params):
     notes = list(art['notes'])
 
     report(percent=10, step='Planning the animation')
-    recipe, read_by = _read_prompt(params.get('prompt'), names, notes, params.get('style'))
+    roles = [ly['role'] for ly in art['layers']]
+    recipe, read_by = _read_prompt(params.get('prompt'), names, notes, params.get('style'), params.get('content'))
     recipe, cannot = sk.fit_to_artwork(recipe, names)
     if cannot:
         notes.append(cannot)
-    timeline = sk.build_timeline(recipe, names, duration)
-    animation = sk.describe_recipe(recipe, names)
+    notes.extend(sk.role_notes(roles, recipe))
+    timeline = sk.build_timeline(recipe, names, duration, roles)
+    animation = sk.describe_recipe(recipe, names, roles)
 
     pid = f'{int(time.time())}_{secrets.token_hex(3)}'
     pdir = os.path.join(SCHEDULE_DIR, pid)
@@ -189,7 +192,8 @@ def _run(jid, params):
             if not os.path.exists(os.path.join(pdir, preview)):
                 preview = None
         poster = 'poster.jpg'
-        if not cv2.imwrite(os.path.join(pdir, poster), cv2.resize(animator.frame(duration), (640, 360),
+        # The artwork as designed, not a frame: the moving layers are never all at rest at once.
+        if not cv2.imwrite(os.path.join(pdir, poster), cv2.resize(sk._flatten(art['layers'], sk.CANVAS), (640, 360),
                                                                   interpolation=cv2.INTER_AREA)):
             poster = None
         manifest = {'plug_id': pid, 'created': time.time(), 'user_id': params.get('user_id'),
@@ -198,6 +202,7 @@ def _run(jid, params):
                     'size': os.path.getsize(out), 'preview': preview, 'poster': poster,
                     'layers': names, 'layered': art['layered'], 'prompt': params.get('prompt') or '',
                     'style': params.get('style'), 'style_label': sk.style_label(params.get('style')),
+                    'roles': roles, 'text_motion': recipe.get('content'),
                     'animation': animation, 'read_by': read_by, 'music': params.get('music_name'),
                     'fps': f'{fps[0]}/{fps[1]}', 'notes': notes}
         _write_manifest(pdir, manifest)
@@ -261,6 +266,8 @@ def api_schedule_options():
     return jsonify(ok=True, durations=list(sk.DURATIONS),
                    formats=[{'key': k, 'label': v['label']} for k, v in pipeline.EXPORT_FORMATS.items()],
                    styles=[{'key': k, 'label': label} for k, label, _ in sk.STYLES], default_style=sk.DEFAULT_STYLE,
+                   text_motions=[{'key': k, 'label': label} for k, label in sk.CONTENT_MODES],
+                   default_text_motion=sk.DEFAULT_CONTENT,
                    effects=list(sk.EFFECTS), psd_supported=psd, max_layers=sk.MAX_LAYERS,
                    extensions=sorted(sk.IMAGE_EXTENSIONS if psd else sk.IMAGE_EXTENSIONS - {'psd', 'psb'}))
 
@@ -280,6 +287,9 @@ def api_schedule_render():
     style = (request.form.get('style') or '').strip() or sk.DEFAULT_STYLE
     if not sk.style_label(style):
         return jsonify(error='Choose one of the listed animation styles.'), 400
+    content = (request.form.get('text_motion') or '').strip() or sk.DEFAULT_CONTENT
+    if content not in dict(sk.CONTENT_MODES):
+        return jsonify(error='Choose whether the logo and schedule text hold still or breathe.'), 400
     image = pipeline._resolve_upload('schedule_image', sk.IMAGE_EXTENSIONS)
     if not image:
         return jsonify(error='Pick the schedule artwork first, using Browse library.'), 400
@@ -300,7 +310,7 @@ def api_schedule_render():
     orig = original('schedule_image', image)
     params = {'image': image, 'orig_name': orig, 'music': music,
               'music_name': (original('schedule_music', music) if music else None),
-              'duration': duration, 'format': fmt, 'style': style,
+              'duration': duration, 'format': fmt, 'style': style, 'content': content,
               'prompt': ' '.join((request.form.get('prompt') or '').split())[:600],
               'user_id': session.get('user_id'), 'username': session.get('username')}
     jid = pipeline.job_new(user_id=session.get('user_id'), username=session.get('username'))

@@ -4,8 +4,9 @@ timing the layers and drawing the frames.
 
 What an editor is promised, pinned here:
 
-  * the last frame IS the artwork, to the pixel -- the whole reason this is
-    drawn rather than generated is that a schedule's text must not change;
+  * the logo and the text come to rest exactly as designed, to the pixel --
+    the whole reason this is drawn rather than generated is that a
+    schedule's text must not change;
   * in a layered Photoshop file the background is on screen, still, from
     the first frame and the layers above it arrive one by one; a file
     whose layers cannot be put back together faithfully is animated as one
@@ -15,9 +16,12 @@ What an editor is promised, pinned here:
     not a language model is there to help, and a bad model reply can never
     make the result worse than no reply;
   * everything is on screen, complete, for more than half the plug;
-  * an animation style is a way of arriving plus something the layers keep
-    doing until the end, the background takes no part in either, and the
-    prompt changes only what it names on top of the style.
+  * a layered file is animated in three groups: the background is static;
+    the logo and the schedule's text appear and then hold still (or
+    breathe); every other layer is on screen from the first frame and moves
+    in a loop from the first frame to the last;
+  * an animation style is a way for the logo and text to appear plus a
+    loop for the other layers, and the prompt changes only what it names.
 """
 import json
 
@@ -75,6 +79,7 @@ def _diff(a, b):
 def test_a_layered_psd_becomes_one_layer_per_top_level_layer_bottom_first(layered):
     art = sk.load_artwork(layered['psd'])
     assert [ly['name'] for ly in art['layers']] == NAMES and art['layered'] and art['notes'] == []
+    assert [ly['role'] for ly in art['layers']] == ['background', 'content', 'content', 'content']
     title = art['layers'][1]
     assert (title['x'], title['y']) == (200, 80) and title['px'].shape == (141, 1501, 4), 'cropped to its own pixels'
     assert _diff(sk._flatten(art['layers'], sk.CANVAS), layered['want']) < 0.5
@@ -83,6 +88,7 @@ def test_a_layered_psd_becomes_one_layer_per_top_level_layer_bottom_first(layere
 def test_a_flat_image_is_one_layer(layered):
     art = sk.load_artwork(layered['png'])
     assert [ly['name'] for ly in art['layers']] == ['Image'] and not art['layered']
+    assert art['layers'][0]['role'] == 'picture'
     assert _diff(sk._flatten(art['layers'], sk.CANVAS), layered['want']) < 0.5
 
 
@@ -357,17 +363,38 @@ def test_delivery_formats_are_drawn_at_their_own_frame_rate():
 # ---- animation styles: arriving + what goes on until the end ----
 
 def test_the_styles_on_offer():
-    assert [k for k, _, _ in sk.STYLES] == ['fade_shine', 'wipe_shine', 'slide_float', 'pop_pulse', 'stop_motion',
-                                           'fade_still']
-    assert sk.DEFAULT_STYLE == 'fade_shine' and sk.style_label('slide_float') == 'Slide up + gentle float'
+    assert [k for k, _, _ in sk.STYLES] == ['wipe_mix', 'fade_shine', 'wipe_shine', 'slide_float', 'pop_pulse',
+                                           'stop_motion', 'pop_dance', 'pop_grow', 'fade_rotate_left',
+                                           'fade_rotate_right', 'fade_still']
+    assert sk.DEFAULT_STYLE == 'wipe_mix' and sk.style_label('slide_float') == 'Slide up + gentle float'
     assert sk.style_label('nope') is None and sk.style_recipe('nope') == sk.style_recipe(sk.DEFAULT_STYLE)
-    says = {k: sk.describe_recipe(sk.style_recipe(k), NAMES) for k, _, _ in sk.STYLES}
-    assert says == {'fade_shine': 'background: static; 3 layers: fade; then light sweep',
-                    'wipe_shine': 'background: static; 3 layers: wipe right; then light sweep',
-                    'slide_float': 'background: static; 3 layers: slide up; then gentle float',
-                    'pop_pulse': 'background: static; 3 layers: pop; then pulse one by one',
-                    'stop_motion': 'background: static; 3 layers: wipe right; stop motion; then wobble',
-                    'fade_still': 'background: static; 3 layers: fade'}
+    roles = ['background', 'content', 'decor', 'decor']
+    says = {k: sk.describe_recipe(sk.style_recipe(k), NAMES, roles) for k, _, _ in sk.STYLES}
+    head = 'background: static; logo and text: '
+    assert says == {
+        'wipe_mix': head + 'wipe right, then hold still; other layers: grow, rotate left, rotate right '
+                           '(layers take turns)',
+        'fade_shine': head + 'fade, then hold still; other layers: light sweep',
+        'wipe_shine': head + 'wipe right, then hold still; other layers: light sweep',
+        'slide_float': head + 'slide up, then hold still; other layers: gentle float',
+        'pop_pulse': head + 'pop, then hold still; other layers: pulse one by one',
+        'stop_motion': head + 'wipe right, then hold still; other layers: wobble; stop motion',
+        'pop_dance': head + 'pop, then hold still; other layers: dancing',
+        'pop_grow': head + 'pop, then hold still; other layers: grow and shrink',
+        'fade_rotate_left': head + 'fade, then hold still; other layers: rotate left',
+        'fade_rotate_right': head + 'fade, then hold still; other layers: rotate right',
+        'fade_still': head + 'fade, then hold still; other layers: hold still'}
+    assert [k for k, _ in sk.CONTENT_MODES] == ['hold', 'breathe'] and sk.DEFAULT_CONTENT == 'hold'
+    assert sk.style_recipe('pop_dance')['content'] == 'hold'
+    assert sk.style_recipe('pop_dance', 'breathe')['content'] == 'breathe'
+    assert sk.style_recipe('pop_dance', 'gallop')['content'] == 'hold'
+    assert sk.describe_recipe(sk.style_recipe('pop_dance', 'breathe'), NAMES, roles) == (
+        head + 'pop, then breathe; other layers: dancing')
+    # Each group is mentioned only if the file has such layers.
+    assert sk.describe_recipe(sk.style_recipe('pop_dance'), NAMES, ['background'] + ['content'] * 3) == (
+        head + 'pop, then hold still')
+    assert sk.describe_recipe(sk.style_recipe('pop_dance'), NAMES, ['background'] + ['decor'] * 3) == (
+        'background: static; other layers: dancing')
 
 
 @pytest.mark.parametrize('style, prompt, says', [
@@ -381,7 +408,28 @@ def test_the_styles_on_offer():
      'then light sweep'),
     ('pop_pulse', 'quickly, and hold still', 'background: static; 3 layers: pop; fast'),
     ('fade_still', 'a light sweep across it', 'background: static; 3 layers: fade; then light sweep'),
-    ('fade_still', 'make the rows breathe', 'background: static; 3 layers: fade; then pulse one by one'),
+    ('fade_still', 'make the rows pulse', 'background: static; 3 layers: fade; then pulse one by one'),
+    ('fade_still', 'grow and shrink', 'background: static; 3 layers: fade; then grow and shrink'),
+    ('fade_still', 'rows sink and grow', 'background: static; 3 layers: fade; then grow and shrink'),
+    ('fade_still', 'rotate left', 'background: static; 3 layers: fade; then rotate left'),
+    ('fade_still', 'everything rotates to the right', 'background: static; 3 layers: fade; then rotate right'),
+    ('fade_still', 'spin counter-clockwise', 'background: static; 3 layers: fade; then rotate left'),
+    ('fade_still', 'rotate left and right', 'background: static; 3 layers: fade; then sway left and right'),
+    ('fade_still', 'make them dance', 'background: static; 3 layers: fade; then dancing'),
+    ('fade_still', 'mixed motion', 'background: static; 3 layers: fade; then grow, rotate left, rotate right '
+                                   '(layers take turns)'),
+    # A layer named in the clause gets the motion to itself; the rest keep the style's.
+    ('fade_shine', 'title rotates left, schedule grows and shrinks',
+     'background: static; Title: then rotate left; Schedule Mon: then grow and shrink; '
+     'Schedule Tue: then grow and shrink; then light sweep'),
+    ('fade_shine', 'title pops in and rotates left', 'background: static; 2 layers: fade; '
+                                                     'Title: pop, then rotate left; then light sweep'),
+    ('fade_shine', 'title pops in and everything floats', 'background: static; 2 layers: fade; Title: pop; '
+                                                          'then gentle float'),
+    ('slide_float', 'title holds still', 'background: static; 2 layers: slide up; Title: then hold still; '
+                                         'then gentle float'),
+    # The background can be made to arrive, never to keep moving.
+    ('fade_still', 'fade in the background and rotate it left', 'background: fade; 3 layers: fade'),
     ('wipe_shine', 'shaky', 'background: static; 3 layers: wipe right; then wobble'),
     # "Float up" is a way of arriving, not something to go on doing.
     ('fade_shine', 'bring the title in with a bounce and float the rest up',
@@ -405,31 +453,148 @@ def test_the_model_is_shown_the_style_and_may_change_what_happens_afterwards():
     assert sk.parse_recipe_reply('{"ambient": "fireworks", "speed": "slow"}', NAMES, base)['ambient'] == 'float'
 
 
+# The schedule, dressed: two layers that are neither logo nor text.
+DRESSED = PARTS + [('Ribbon', lambda: _block([200, 640, 1700, 700], (230, 40, 110, 255))),
+                   ('Star', lambda: _block([1750, 100, 1850, 200], (255, 220, 60, 255)))]
+DRESSED_NAMES = [n for n, _ in DRESSED]
+DRESSED_ROLES = ['background', 'content', 'content', 'content', 'decor', 'decor']
+TEXT = (slice(60, 600), slice(180, 1718))            # where the title and the schedule rows are
+
+
+@pytest.fixture(scope='module')
+def dressed(tmp_path_factory):
+    d = tmp_path_factory.mktemp('dressed')
+    want = _psd(d / 'dressed.psd', parts=DRESSED)
+    return {'psd': str(d / 'dressed.psd'), 'want': want}
+
+
+def test_layers_are_sorted_into_background_logo_and_text_and_the_rest(dressed):
+    art = sk.load_artwork(dressed['psd'])
+    assert [ly['role'] for ly in art['layers']] == DRESSED_ROLES
+    for name in ('GMA Logo', 'logo_white', 'Schedule', 'SCHED TEXT', 'Title', 'Show titles', 'MON', 'Tuesday', 'TIME',
+                 '8PM', 'Air date', 'Program info', 'Text copy 2', 'Station bug'):
+        assert sk.layer_role(name) == 'content', name
+    for name in ('Ribbon', 'Star left', 'Shape 1', 'Layer 5', 'Glow', 'Burst', 'Talent photo', 'Confetti', 'Frame', ''):
+        assert sk.layer_role(name) == 'decor', name
+    assert sk.layer_role('Layer 5', is_text=True) == 'content', 'Photoshop says it is text, whatever it is called'
+
+    class Fake:
+        def __init__(self, kind, children=()):
+            self.kind, self._children = kind, list(children)
+
+        def is_group(self):
+            return self.kind == 'group'
+
+        def descendants(self):
+            return iter(self._children)
+    assert sk._is_text(Fake('type')) and not sk._is_text(Fake('pixel'))
+    assert sk._is_text(Fake('group', [Fake('pixel'), Fake('type')])), 'a group holding text moves as text'
+    assert not sk._is_text(Fake('group', [Fake('pixel'), Fake('shape')]))
+
+    r = sk.style_recipe('pop_dance')
+    assert sk.role_notes(DRESSED_ROLES, r) == []
+    only_text = ['background', 'content', 'content', 'content']
+    assert 'nothing keeps moving' in sk.role_notes(only_text, r)[0]
+    assert sk.role_notes(only_text, sk.style_recipe('pop_dance', 'breathe')) == []
+    assert 'No logo or text layer was recognised' in sk.role_notes(['background', 'decor', 'decor'], r)[0]
+    assert sk.role_notes(['picture'], r) == []
+
+
+def test_only_logo_and_text_arrive_the_other_layers_are_there_from_the_start():
+    r = sk.style_recipe('wipe_mix')
+    tl = sk.build_timeline(r, DRESSED_NAMES, 10, DRESSED_ROLES)
+    assert [(t['effect'], t['start'], t['dur']) for t in tl[4:]] == [('cut', 0.0, 0.0)] * 2, 'decor: there at once'
+    assert [t['effect'] for t in tl[1:4]] == ['wipe'] * 3 and tl[1]['start'] >= 0.4
+    assert tl[1]['start'] < tl[2]['start'] < tl[3]['start'] and sk.settle_time(tl) <= 5.0
+    # Fewer layers arriving: the same window is not stretched over the ones that do not.
+    assert sk.settle_time(tl) == sk.settle_time(sk.build_timeline(r, NAMES, 10))
+    # A decor layer the editor gives an arrival to takes its turn like the rest.
+    named = sk.parse_prompt('star pops in', DRESSED_NAMES, base=r)
+    tl = sk.build_timeline(named, DRESSED_NAMES, 10, DRESSED_ROLES)
+    assert tl[5]['effect'] == 'pop' and tl[5]['start'] > tl[3]['start'] and tl[4]['start'] == 0.0
+    # Nothing but decor: nothing arrives.
+    tl = sk.build_timeline(r, ['Background', 'A', 'B'], 10, ['background', 'decor', 'decor'])
+    assert [(t['start'], t['dur']) for t in tl] == [(0.0, 0.0)] * 3
+    # Without roles every layer arrives, as for artwork that was not sorted.
+    assert all(t['start'] > 0 for t in sk.build_timeline(r, DRESSED_NAMES, 10)[1:])
+
+
+@pytest.mark.parametrize('prompt, says, content', [
+    ('breathing', 'background: static; logo and text: fade, then breathe; other layers: light sweep', 'breathe'),
+    ('the text breathes', 'background: static; logo and text: fade, then breathe; other layers: light sweep',
+     'breathe'),
+    ('title breathes', 'background: static; logo and text: fade, then hold still; other layers: light sweep; '
+                       'Title: then breathe', 'hold'),
+    ('star dances, ribbon holds still', 'background: static; logo and text: fade, then hold still; '
+                                        'other layers: light sweep; Ribbon: then hold still; Star: then dancing',
+     'hold'),
+])
+def test_breathing_is_for_logo_and_text_and_a_named_layer_can_be_overruled(prompt, says, content):
+    r = sk.parse_prompt(prompt, DRESSED_NAMES, base=sk.style_recipe('fade_shine'))
+    assert sk.describe_recipe(r, DRESSED_NAMES, DRESSED_ROLES) == says and r['content'] == content
+    assert r['ambient'] == 'shine', 'breathing never becomes the motion of the other layers'
+
+
 @pytest.mark.parametrize('style', [k for k, _, _ in sk.STYLES])
-def test_layers_keep_moving_until_the_end_over_a_background_that_never_does(layered, style):
-    art = sk.load_artwork(layered['psd'])
-    r = sk.style_recipe(style)
-    an = sk.Animator(art, sk.build_timeline(r, NAMES, 10), r, 10)
-    bare, want = sk._flatten(art['layers'][:1], sk.CANVAS), layered['want']
-    assert np.array_equal(an.frame(0.0), bare), 'opens on the background, whole'
-    moving = []
+@pytest.mark.parametrize('content', ['hold', 'breathe'])
+def test_background_static_logo_and_text_calm_everything_else_looping_start_to_end(dressed, style, content):
+    if content == 'breathe' and style not in ('wipe_mix', 'pop_dance', 'fade_still'):
+        pytest.skip('breathing is checked against three styles; the rest differ only in what the other layers do')
+    art = sk.load_artwork(dressed['psd'])
+    r = sk.style_recipe(style, content)
+    an = sk.Animator(art, sk.build_timeline(r, DRESSED_NAMES, 10, DRESSED_ROLES), r, 10)
+    bare, want = sk._flatten(art['layers'][:1], sk.CANVAS), dressed['want']
+    f0 = an.frame(0.0)
+    assert np.array_equal(f0[TEXT], bare[TEXT]), 'no logo or text yet on the first frame'
+    assert f0[670, 950, 2] > 200 and f0[150, 1800, 1] > 180, 'the ribbon and the star are already there'
+    text, other = [], []
     for t in np.arange(0.0, 10.0, 1.0 / 15):
         f = an.frame(float(t))
-        assert np.array_equal(f[:60], bare[:60]) and np.array_equal(f[800:], bare[800:]), (style, t)
-        assert np.array_equal(f[:, :100], bare[:, :100]) and np.array_equal(f[:, 1800:], bare[:, 1800:]), (style, t)
+        # The background never changes: not where nothing is, not at any time.
+        assert np.array_equal(f[900:], bare[900:]) and np.array_equal(f[:40], bare[:40]), (style, t)
+        assert np.array_equal(f[:, :100], bare[:, :100]) and np.array_equal(f[:, 1890:], bare[:, 1890:]), (style, t)
+        g, w = f.copy(), want.copy()
+        g[TEXT], w[TEXT] = 0, 0
+        other.append((float(t), _diff(g, w)))
         if t > an.settled_at + 0.1:
-            moving.append((float(t), _diff(f, want)))
-    if style == 'fade_still':
-        assert max(d for _, d in moving) == 0, 'nothing moves once it is built'
+            text.append((float(t), _diff(f[TEXT], want[TEXT])))
+    if content == 'hold':
+        assert max(d for _, d in text) == 0, 'logo and text appear and then do not move'
     else:
-        assert max(d for t, d in moving if t < 6.5) > 0.2, 'moving soon after the build'
-        assert max(d for t, d in moving if t > 7.5) > 0.2, 'and still moving late in the plug'
-        assert max(d for _, d in moving) < 12, 'but never by much: it has to stay readable'
-    assert _diff(an.frame(10.0), want) < 0.5, 'the last frame is the artwork exactly'
+        assert max(d for t, d in text if t < 6.5) > 0.2 and max(d for t, d in text if t > 7.5) > 0.2, 'they breathe'
+        assert max(d for _, d in text) < 8, 'by little enough to read through'
+    if style == 'fade_still':
+        assert max(d for _, d in other) == 0, 'this style leaves the other layers still too'
+    else:
+        for a, b in ((0.0, 3.3), (3.3, 6.6), (6.6, 10.0)):
+            assert max(d for t, d in other if a <= t < b) > 0.02, f'the other layers are moving between {a} and {b} s'
+    last = an.frame(10.0)
+    assert np.array_equal(last[TEXT], want[TEXT]), 'logo and text end exactly as designed'
     # Rewinding gives the same picture as getting there in order.
     late = an.frame(7.3)
     an.frame(1.0)
     assert np.array_equal(an.frame(7.3), late)
+
+
+def test_the_mixed_style_shares_three_motions_out_among_the_moving_layers(tmp_path):
+    parts = [PARTS[0], PARTS[1]] + [(name, lambda k=k: _block([150 + 300 * k, 700, 350 + 300 * k, 800],
+                                                              (255, 120, 0, 255)))
+                                    for k, name in enumerate(('Ribbon', 'Star', 'Burst', 'Arrow'))]
+    names = [n for n, _ in parts]
+    _psd(tmp_path / 'mix.psd', parts=parts)
+    art = sk.load_artwork(str(tmp_path / 'mix.psd'))
+    roles = [ly['role'] for ly in art['layers']]
+    r = sk.style_recipe('wipe_mix')
+    an = sk.Animator(art, sk.build_timeline(r, names, 10, roles), r, 10)
+    assert an._amb == ['none', 'none', 'grow', 'rotate_left', 'rotate_right', 'grow'], 'text sits the turns out'
+    # Rotating left lifts the right-hand end of a layer; rotating right lifts the left.
+    r = sk.parse_prompt('ribbon rotates left, star rotates right', names, base=sk.style_recipe('fade_still'))
+    an = sk.Animator(art, sk.build_timeline(r, names, 10, roles), r, 10)
+    f = an.frame(2.0)                                   # half-way through a four-second swing: leaning the most
+    orange = lambda x, y: f[y, x, 2] > 200 and f[y, x, 0] < 60        # noqa: E731
+    assert orange(330, 690) and not orange(170, 690), 'ribbon: right end up'
+    assert orange(470, 690) and not orange(630, 690), 'star: left end up'
+    assert not any(orange(x, 690) for x in (770, 930, 1070, 1230)), 'the unnamed layers hold still in this style'
 
 
 def test_a_flat_picture_takes_a_light_sweep_and_nothing_that_would_move_its_background(layered):

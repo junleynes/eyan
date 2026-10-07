@@ -48,23 +48,45 @@ SPEEDS = {'slow': 1.5, 'normal': 1.0, 'fast': 0.6}
 STOP_MOTION_FPS = 12.0      # "animated on twos": the stepping that reads as stop motion
 PUSH_IN = 0.05              # how much larger the picture is by the last frame of a push-in
 
-# What the layers do once they have arrived, until the end of the plug. The
-# background takes no part in any of them.
-AMBIENTS = ('none', 'shine', 'float', 'pulse', 'wobble')
+# A layered file is animated in three groups (see layer_role):
+#   background   the bottom layer -- static, on screen from the first frame;
+#   content      the logo and the schedule's text -- they appear, and then
+#                hold still or breathe, because they are there to be read;
+#   decor        every other layer -- on screen from the first frame and
+#                moving in a loop from the first frame to the last.
+# These are the loops. A style names one for the decor layers.
+AMBIENTS = ('none', 'shine', 'float', 'pulse', 'wobble', 'grow', 'rotate_left', 'rotate_right', 'sway', 'dance',
+            'mix', 'breathe')
 AMBIENT_LABELS = {'none': 'hold still', 'shine': 'light sweep', 'float': 'gentle float',
-                  'pulse': 'pulse one by one', 'wobble': 'wobble'}
-# Animation styles: how the layers arrive + what they do afterwards. The
-# prompt, if there is one, changes whatever it names on top of the style.
+                  'pulse': 'pulse one by one', 'wobble': 'wobble', 'grow': 'grow and shrink',
+                  'rotate_left': 'rotate left', 'rotate_right': 'rotate right', 'sway': 'sway left and right',
+                  'dance': 'dancing', 'mix': 'grow, rotate left, rotate right (layers take turns)',
+                  'breathe': 'breathe'}
+# The logo and the schedule's text are there to be read: they appear and
+# then either hold still or breathe. Only the other layers take the style's
+# motion.
+CONTENT_MODES = (('hold', 'Appear, then hold still'), ('breathe', 'Appear, then breathe'))
+DEFAULT_CONTENT = 'hold'
+MIX = ('grow', 'rotate_left', 'rotate_right')      # what 'mix' hands out, layer by layer up the stack
+# Animation styles: how the logo and text appear + how the other layers
+# move. The prompt, if there is one, changes whatever it names on top.
 STYLES = (
+    ('wipe_mix', 'Wipe reveal + grow, rotate left, rotate right (mixed)', {'effect': 'wipe', 'direction': 'right',
+                                                                           'ambient': 'mix'}),
     ('fade_shine', 'Fade in + light sweep', {'effect': 'fade', 'direction': 'right', 'ambient': 'shine'}),
     ('wipe_shine', 'Wipe reveal + light sweep', {'effect': 'wipe', 'direction': 'right', 'ambient': 'shine'}),
     ('slide_float', 'Slide up + gentle float', {'effect': 'slide', 'direction': 'up', 'ambient': 'float'}),
     ('pop_pulse', 'Pop in + pulse one by one', {'effect': 'pop', 'direction': 'right', 'ambient': 'pulse'}),
     ('stop_motion', 'Stop motion wipe + wobble', {'effect': 'wipe', 'direction': 'right', 'ambient': 'wobble',
                                                   'stop_motion': True}),
+    ('pop_dance', 'Pop in + dancing', {'effect': 'pop', 'direction': 'right', 'ambient': 'dance'}),
+    ('pop_grow', 'Pop in + grow and shrink', {'effect': 'pop', 'direction': 'right', 'ambient': 'grow'}),
+    ('fade_rotate_left', 'Fade in + rotate left', {'effect': 'fade', 'direction': 'right', 'ambient': 'rotate_left'}),
+    ('fade_rotate_right', 'Fade in + rotate right', {'effect': 'fade', 'direction': 'right',
+                                                     'ambient': 'rotate_right'}),
     ('fade_still', 'Fade in + hold still', {'effect': 'fade', 'direction': 'right', 'ambient': 'none'}),
 )
-DEFAULT_STYLE = 'fade_shine'
+DEFAULT_STYLE = 'wipe_mix'
 
 
 class ArtworkError(ValueError):
@@ -142,6 +164,33 @@ def _flatten(layers, canvas):
     for ly in layers:
         paste(out, ly['px'], ly['x'], ly['y'])
     return out
+
+
+_CONTENT_NAME = re.compile(
+    r'\b(logo\w*|bug|brand\w*|wordmark|sched\w*|text\w*|txt|title\w*|time\w*|date\w*|days?'
+    r'|mon|tues?|wed|thur?s?|fri|sat|sun|(mon|tues|wednes|thurs|fri|satur|sun)days?'
+    r'|program\w*|shows?|line\s?up|info|copy|label\w*|caption\w*|headline\w*|tagline|cta|episode\w*'
+    r'|[0-9]{1,2}\s?(am|pm))\b')
+
+
+def layer_role(name, is_text=False):
+    """'content' for a layer that is there to be read -- a logo, or the
+    schedule's text -- and 'decor' for anything else.
+
+    Photoshop knows which layers are text (`is_text`: a type layer, or a
+    group holding one). Text that was rasterised, and logos, can only be
+    told by what the designer called the layer."""
+    plain = re.sub(r'[^a-z0-9]+', ' ', str(name or '').lower())
+    return 'content' if is_text or _CONTENT_NAME.search(plain) else 'decor'
+
+
+def _is_text(layer):
+    try:
+        if layer.kind == 'type':
+            return True
+        return bool(layer.is_group()) and any(d.kind == 'type' for d in layer.descendants())
+    except Exception:
+        return False
 
 
 def _merge_backdrop(layers, doc, canvas, notes):
@@ -238,7 +287,9 @@ def _load_psd(path, canvas):
             continue
         px, cx, cy = cut
         left, top = layer.bbox[0], layer.bbox[1]
-        layers.append(dict(_place(px, left + cx, top + cy, doc, canvas), name=str(layer.name or 'Layer').strip()))
+        name = str(layer.name or 'Layer').strip()
+        layers.append(dict(_place(px, left + cx, top + cy, doc, canvas), name=name,
+                           role=layer_role(name, _is_text(layer))))
 
     reference = None
     try:
@@ -291,8 +342,11 @@ def load_artwork(path, canvas=CANVAS):
     """Reads `path` into {'layers': [...], 'size': (w, h) of the source,
     'layered': bool, 'notes': [str]}.
 
-    Each layer is {'name', 'px': premultiplied BGRA crop, 'x', 'y'} already
-    scaled and positioned for `canvas`, bottom layer first. The artwork is
+    Each layer is {'name', 'role', 'px': premultiplied BGRA crop, 'x', 'y'}
+    already scaled and positioned for `canvas`, bottom layer first. 'role'
+    is 'background' (the bottom layer: static), 'content' (logo or text:
+    appears, then holds or breathes), 'decor' (keeps moving) or, for a flat
+    file, 'picture'. The artwork is
     fitted inside the canvas whole (never cropped: the edge of a schedule is
     usually where the times are), on black."""
     ext = os.path.splitext(path)[1].lower().lstrip('.')
@@ -307,6 +361,8 @@ def load_artwork(path, canvas=CANVAS):
     if size[0] < canvas[0] * 0.75:
         notes.append(f'The artwork is only {size[0]} pixels wide and was enlarged to {canvas[0]}; text may '
                      'look soft. Use artwork at 1920x1080 or larger.')
+    for i, ly in enumerate(layers):
+        ly['role'] = 'picture' if len(layers) == 1 else ('background' if i == 0 else ly.get('role') or 'decor')
     return {'layers': layers, 'size': size, 'layered': len(layers) > 1, 'notes': notes}
 
 
@@ -324,15 +380,18 @@ def default_recipe():
     return {'stop_motion': False, 'push_in': False, 'speed': 'normal', 'ambient': 'none',
             'background': {'effect': 'static', 'direction': 'right'},
             'default': {'effect': 'fade', 'direction': 'right'},
-            'layers': {}}
+            'layers': {},                   # layer name (lower case) -> its own way of arriving
+            'layer_ambient': {},            # layer name (lower case) -> its own motion afterwards
+            'content': DEFAULT_CONTENT}     # what logo and text layers do afterwards: 'hold' or 'breathe'
 
 
-def style_recipe(key):
+def style_recipe(key, content=None):
     """The recipe one of STYLES stands for (the default style for a key
-    that isn't one)."""
+    that isn't one), with the chosen behaviour for logo and text layers."""
     by_key = {k: v for k, _, v in STYLES}
     v = by_key.get(key) or by_key[DEFAULT_STYLE]
     r = default_recipe()
+    r['content'] = content if content in dict(CONTENT_MODES) else DEFAULT_CONTENT
     r['default'] = {'effect': v['effect'], 'direction': v['direction']}
     r['ambient'] = v['ambient']
     r['stop_motion'] = bool(v.get('stop_motion'))
@@ -346,8 +405,8 @@ def style_label(key):
 def fit_to_artwork(recipe, layer_names):
     """(recipe, note or None): the recipe as this artwork can carry it out.
 
-    Floating, pulsing and wobbling move layers over a background that stays
-    put. A flat picture has no layers to move and its background is part of
+    Floating, pulsing, wobbling, growing and rotating move layers over a
+    background that stays put. A flat picture has no layers to move and its background is part of
     it, so those would shake the whole frame; it holds still instead. A light
     sweep moves nothing, so it works on anything."""
     if len(layer_names) > 1 or recipe.get('ambient', 'none') in ('none', 'shine'):
@@ -359,13 +418,39 @@ def fit_to_artwork(recipe, layer_names):
         'arrived. A light-sweep style works on flat pictures; for the rest, use a layered Photoshop file.')
 
 
+def role_notes(roles, recipe):
+    """What the editor should know about how this file's layers were sorted,
+    when the sorting leaves them with something other than they may expect."""
+    if len(roles) < 2:
+        return []
+    decor, content = roles.count('decor'), roles.count('content')
+    if not decor and recipe.get('content') != 'breathe':
+        return ['Every layer above the background is a logo or text layer, so once they have appeared nothing '
+                'keeps moving. For motion until the end, add separate layers for the things that should move '
+                '(shapes, pictures, ornaments), or set Logo and schedule text to "Appear, then breathe".']
+    if not content:
+        return ['No logo or text layer was recognised, so nothing appears: every layer is on screen from the '
+                'first frame and keeps moving. To have a layer appear and then hold still, keep it as a Photoshop '
+                'text layer or put a word such as logo, schedule, text, title, time or date in its name.']
+    return []
+
+
 _AMBIENT_WORDS = (
     ('none', r'\bhold(s|ing)?\s+still\b|\bstay(s|ing)?\s+still\b|\bthen\s+(hold|freeze)s?\b|\bno\s+loop(ing)?\b'),
     ('shine', r'\blight\s+sweeps?\b|\bshin(e|es|ing|y)\b|\bshimmer\w*|\bglint\w*|\bsheen\b|\bgloss\w*|\bglimmer\w*'),
     # "float the rest up" is a way of arriving; "then everything floats" is what it does afterwards.
     ('float', r'\bfloat(s|ing)?\b(?!\s+(\w+\s+){0,3}(up|in|into|on|down)\b)|\bhover(s|ing)?\b|\bbob(s|bing)?\b'),
-    ('pulse', r'\bpuls(e|es|ing)\b|\bbreath(e|es|ing)\b|\bthrob\w*|\bheartbeat\b'),
+    ('breathe', r'\bbreath(e|es|ing)\b'),
+    ('pulse', r'\bpuls(e|es|ing)\b|\bthrob\w*|\bheartbeat\b'),
+    ('dance', r'\bdanc\w*|\bgroov\w*|\bboogi\w*'),
     ('wobble', r'\bwobbl\w*|\bjitter\w*|\bwiggl\w*|\bshak(e|es|ing|y)\b'),
+    ('mix', r'\bmix(ed|es|ing)?\b|\bassorted\b|\bdifferent\s+(motion|movement|animation)s?\b'),
+    ('grow', r'\bgrow(s|ing)?\b|\bshrink(s|ing)?\b|\bsink(s|ing)?\b|\bswell(s|ing)?\b'),
+    ('sway', r'\bsidetoside\b'),
+    ('rotate_left', r'\b(rotat|tilt|turn|spin|rock|sway|swing)\w*\s+(\w+\s+){0,2}left\b'
+                    r'|\b(counter|anti)[\s-]?clockwise\b'),
+    ('rotate_right', r'\b(rotat|tilt|turn|spin|rock|sway|swing)\w*\s+(\w+\s+){0,2}right\b|\bclockwise\b'),
+    ('sway', r'\bsway\w*|\bswing\w*|\brock(s|ing)?\b|\brotat\w*|\btilt\w*'),
 )
 
 
@@ -401,9 +486,10 @@ def parse_prompt(prompt, layer_names=(), base=None):
     the animator has and nothing else: which effect (wipe, slide, fade, pop,
     cut), which way, how fast, the two looks that apply to the whole clip
     (stop motion, a slow push in) and what the layers do once they are in
-    (light sweep, float, pulse, wobble, hold still). A clause that names a
-    layer applies to that layer; one that doesn't sets the default for all
-    of them. Anything it doesn't recognise is ignored -- this is the floor
+    (light sweep, float, pulse, wobble, grow and shrink, rotate left or
+    right, sway, a mix, hold still). A clause that names a layer applies to
+    that layer -- its arrival, its motion afterwards, or both; one that
+    doesn't sets the default for all of them. Anything it doesn't recognise is ignored -- this is the floor
     the result never drops below, not the ceiling.
 
     The background stays static unless a clause is about the background by
@@ -413,13 +499,11 @@ def parse_prompt(prompt, layer_names=(), base=None):
     text = ' '.join(str(prompt or '').lower().split())
     if not text:
         return r
-    for name, pat in _AMBIENT_WORDS:
-        if re.search(pat, text):
-            r['ambient'] = name
-            break
-    # Those words are spoken for: "light sweep" is not also a slide.
-    for _, pat in _AMBIENT_WORDS:
-        text = re.sub(pat, ' ', text)
+    r.setdefault('layer_ambient', {})
+    # One motion, both ways -- kept in one piece through the split on "and".
+    text = re.sub(r'\b(left\s+and\s+right|right\s+and\s+left|back\s+and\s+forth|side\s+to\s+side)\b', 'sidetoside', text)
+    size = r'(grow|shrink|sink|swell)\w*'
+    text = re.sub(r'\b' + size + r'\s+and\s+' + size + r'\b', 'grows', text)
     if re.search(r'stop[\s-]?motion|stopmotion|claymation|frame[\s-]by[\s-]frame|choppy|jerky', text):
         r['stop_motion'] = True
     if re.search(r'push[\s-]?in|zoom(s|ing)?\s*(in|slowly)?\b|ken\s+burns|slow\s+zoom|drift', text):
@@ -432,28 +516,55 @@ def parse_prompt(prompt, layer_names=(), base=None):
         r['speed'] = 'slow'
 
     named = [(n, re.sub(r'[^a-z0-9]+', ' ', n.lower()).strip()) for n in layer_names]
-    general = None
-    for clause in re.split(r'[.;,\n]|\band\b|\bthen\b|\bwhile\b', text):
+    general, afterwards, subject = None, None, []
+    parts = re.split(r'([.;,\n]|\band\b|\bthen\b|\bwhile\b)', text)
+    for joined, clause in zip([''] + parts[1::2], parts[0::2]):
+        ambient = next((name for name, pat in _AMBIENT_WORDS if re.search(pat, clause)), None)
+        # Those words are spoken for: "light sweep" is not also a slide,
+        # "rotate to the left" not also a direction to arrive from.
+        for _, pat in _AMBIENT_WORDS:
+            clause = re.sub(pat, ' ', clause)
         effect, direction = _clause_choice(clause)
-        if not effect and not direction:
+        if not effect and not direction and not ambient:
+            subject = []
             continue
         plain = re.sub(r'[^a-z0-9]+', ' ', clause)
         hit = [orig for orig, low in named
                if len(low) >= 3 and (re.search(r'\b' + re.escape(low) + r'\b', plain)
                                      or any(len(w) >= 4 and re.search(r'\b' + re.escape(w) + r's?\b', plain)
                                             for w in low.split()))]
+        # "the title pops in and rotates left": still the title -- unless the
+        # second half says who it is about ("and everything floats").
+        carried = (not hit and joined == 'and' and 'background' not in plain
+                   and not re.search(r'\b(everything|all|rest|others?|every|each|whole|layers)\b', plain))
+        if carried and subject == 'background':
+            continue                            # "...the background and rotate it": it can arrive, never keep moving
+        if carried and subject:
+            hit = subject
+        subject = 'background' if 'background' in plain else hit
         # A direction on its own turns the style's effect that way round.
         choice = {'effect': effect or r['default']['effect'],
                   'direction': direction or ('right' if effect else r['default']['direction'])}
         if hit and 'background' not in plain:
             for name in hit:
-                r['layers'][name.lower()] = dict(choice)
-        elif 'background' in plain and (effect or direction):
-            r['background'] = dict(choice)
-        elif general is None:
-            general = choice
+                if effect or direction:
+                    r['layers'][name.lower()] = dict(choice)
+                if ambient:
+                    r['layer_ambient'][name.lower()] = ambient
+        elif 'background' in plain:
+            if effect or direction:             # the background can be made to arrive; it never keeps moving
+                r['background'] = dict(choice)
+        else:
+            if (effect or direction) and general is None:
+                general = choice
+            if ambient == 'breathe':            # breathing is what logo and text do; the rest keep the style's motion
+                r['content'] = 'breathe'
+            elif ambient and afterwards is None:
+                afterwards = ambient
     if general:
         r['default'] = general
+    if afterwards:
+        r['ambient'] = afterwards
     return r
 
 
@@ -466,7 +577,9 @@ def recipe_prompt(prompt, layer_names, base=None):
     b = base or default_recipe()
     now = json.dumps({'stop_motion': b['stop_motion'], 'push_in': b['push_in'], 'speed': b['speed'],
                       'ambient': b.get('ambient', 'none'), 'default': b['default'],
-                      'layers': [dict(v, name=k) for k, v in b['layers'].items()]})
+                      'layers': [dict(b['layers'].get(k, {}), name=k,
+                                      **({'ambient': b['layer_ambient'][k]} if k in b.get('layer_ambient', {}) else {}))
+                                 for k in dict.fromkeys(list(b['layers']) + list(b.get('layer_ambient', {})))]})
     return (
         'You turn a motion designer\'s brief into settings for a simple layer animator. '
         'A still graphic (a TV schedule) is built up on screen layer by layer, bottom layer first, '
@@ -486,11 +599,16 @@ def recipe_prompt(prompt, layer_names, base=None):
         '- "speed": "slow", "normal" or "fast"\n'
         '- "ambient": what the layers do once they have arrived, until the end: "shine" (a light sweeps '
         'across them), "float" (they drift gently up and down), "pulse" (each in turn swells slightly), '
-        '"wobble" (a hand-made tremble) or "none" (they hold still)\n\n'
+        '"wobble" (a hand-made tremble), "grow" (they slowly grow and shrink), "rotate_left" or '
+        '"rotate_right" (they tilt a little that way and back), "sway" (they tilt left and right), '
+        '"dance" (they hop and sway in a loop), "mix" (grow, rotate_left and rotate_right shared out among '
+        'the layers) or "none" (they hold still). Logo and text layers do not take part in it: they only '
+        'appear\n\n'
         f'The settings so far:\n{now}\n\n'
         'Reply with JSON only, in exactly that shape, with "layers" as a list of '
         '{"name": "<a layer name from the list>", "effect": "wipe", "direction": "right"}. '
-        'Keep every setting the brief does not ask to change.\n'
+        'A layer row may also carry its own "ambient" when the brief gives that layer a different motion '
+        'from the rest. Keep every setting the brief does not ask to change.\n'
         '"default" is for every layer above the background that you do not list. List a layer '
         'under "layers" only when the brief treats it differently from the rest. Use only the words given '
         'above; if the brief asks for something this animator cannot do, choose the closest of them.\n\n'
@@ -528,31 +646,59 @@ def parse_recipe_reply(text, layer_names, base=None):
     r = {'stop_motion': bool(obj.get('stop_motion', base['stop_motion'])),
          'push_in': bool(obj.get('push_in', base['push_in'])),
          'speed': obj.get('speed') if obj.get('speed') in SPEEDS else base['speed'],
-         'ambient': obj.get('ambient') if obj.get('ambient') in AMBIENTS else base.get('ambient', 'none'),
+         'ambient': (obj.get('ambient') if obj.get('ambient') in AMBIENTS and obj.get('ambient') != 'breathe'
+                     else base.get('ambient', 'none')),
          # Not the model's to decide: static unless the editor's own words
          # were about the background (which parse_prompt has already read).
          'background': dict(base['background']),
          'default': _choice(obj.get('default'), base['default']),
-         'layers': dict(base['layers'])}
+         'layers': dict(base['layers']),
+         'layer_ambient': dict(base.get('layer_ambient') or {}),
+         'content': base.get('content', DEFAULT_CONTENT)}
     real = {n.lower(): n for n in layer_names[1:]}
     rows = obj.get('layers')
     if isinstance(rows, dict):
         rows = [dict(v, name=k) for k, v in rows.items() if isinstance(v, dict)]
     for row in rows if isinstance(rows, list) else []:
         if isinstance(row, dict) and str(row.get('name') or '').strip().lower() in real:
-            r['layers'][str(row['name']).strip().lower()] = _choice(row, r['default'])
+            key = str(row['name']).strip().lower()
+            if 'effect' in row or 'direction' in row:
+                r['layers'][key] = _choice(row, r['default'])
+            if row.get('ambient') in AMBIENTS:
+                r['layer_ambient'][key] = row['ambient']
     return r
 
 
-def describe_recipe(recipe, layer_names):
+def describe_recipe(recipe, layer_names, roles=None):
     """One line saying what was understood, for the editor to check against
-    what they meant."""
+    what they meant. With `roles` (one per layer, from load_artwork) it is
+    told by group: how the logo and text appear and what they do then, and
+    how the other layers move -- each only if the file has such layers."""
     def say(c):
         return c['effect'] if c['effect'] in ('fade', 'pop', 'cut', 'static') else f"{c['effect']} {c['direction']}"
+    own = recipe.get('layer_ambient') or {}
+
+    def one(n):
+        k = n.lower()
+        said = [say(recipe['layers'][k])] if k in recipe['layers'] else []
+        if k in own:
+            said.append(f"then {AMBIENT_LABELS[own[k]]}")
+        return f"{n}: {', '.join(said)}"
     bits = []
-    if len(layer_names) > 1:
+    if len(layer_names) > 1 and roles is not None:
+        # By group: what the logo and text do, what the other layers do,
+        # then any layer the editor singled out.
         bits.append(f"background: {say(recipe['background'])}")
-        special = [f"{n}: {say(recipe['layers'][n.lower()])}" for n in layer_names[1:] if n.lower() in recipe['layers']]
+        special = [one(n) for n in layer_names[1:] if n.lower() in recipe['layers'] or n.lower() in own]
+        if 'content' in roles[1:]:
+            bits.append(f"logo and text: {say(recipe['default'])}, then "
+                        f"{'breathe' if recipe.get('content') == 'breathe' else 'hold still'}")
+        if 'decor' in roles[1:]:
+            bits.append(f"other layers: {AMBIENT_LABELS[recipe.get('ambient', 'none')]}")
+        bits.extend(special)
+    elif len(layer_names) > 1:
+        bits.append(f"background: {say(recipe['background'])}")
+        special = [one(n) for n in layer_names[1:] if n.lower() in recipe['layers'] or n.lower() in own]
         rest = len(layer_names) - 1 - len(special)
         if rest:
             bits.append(f"{rest} layer{'s' if rest != 1 else ''}: {say(recipe['default'])}")
@@ -565,7 +711,7 @@ def describe_recipe(recipe, layer_names):
         bits.append('slow push in')
     if recipe['speed'] != 'normal':
         bits.append(recipe['speed'])
-    if recipe.get('ambient', 'none') != 'none':
+    if recipe.get('ambient', 'none') != 'none' and not (roles is not None and len(layer_names) > 1):
         bits.append(f"then {AMBIENT_LABELS[recipe['ambient']]}")
     return '; '.join(bits)
 
@@ -574,8 +720,12 @@ def describe_recipe(recipe, layer_names):
 # Timing
 # --------------------------------------------------------------------------
 
-def build_timeline(recipe, layer_names, duration):
+def build_timeline(recipe, layer_names, duration, roles=None):
     """[{'effect', 'direction', 'start', 'dur'}] per layer, bottom first.
+
+    With `roles` (one per layer, from load_artwork), only the logo and text
+    layers arrive: a 'decor' layer is on screen from the first frame, already
+    moving, unless the recipe gives that layer an arrival of its own.
 
     The background of layered artwork is there from the first frame (unless
     the recipe animates it); the rest follow one after another in stacking
@@ -593,17 +743,25 @@ def build_timeline(recipe, layer_names, duration):
         bg = {'effect': 'cut', 'direction': recipe['background']['direction'], 'start': 0.0, 'dur': 0.0}
     else:
         bg = dict(recipe['background'], start=lead, dur=min(1.0, max(0.4, 0.7 * k)))
-    rest = n - 1
+    there = {'effect': 'cut', 'direction': 'right', 'start': 0.0, 'dur': 0.0}
+    arrives = [roles is None or roles[i] != 'decor' or layer_names[i].lower() in recipe['layers'] for i in range(1, n)]
+    rest = sum(arrives)
+    if not rest:
+        return [bg] + [dict(there) for _ in range(n - 1)]
     window = min(duration * 0.45, 6.0, max(1.2, rest * 0.9)) * k
     window = min(window, duration * 0.6)
     each = float(np.clip(window / rest * 1.6, 0.35, 1.2 * max(k, 1.0)))
     gap = (window - each) / (rest - 1) if rest > 1 else 0.0
     # A beat on the bare background before anything lands on it.
     first = max(0.4, bg['start'] + bg['dur'] * 0.6)
-    out = [bg]
-    for i, name in enumerate(layer_names[1:]):
+    out, turn = [bg], 0
+    for name, arriving in zip(layer_names[1:], arrives):
+        if not arriving:
+            out.append(dict(there))
+            continue
         c = recipe['layers'].get(name.lower(), recipe['default'])
-        out.append(dict(c, start=first + i * max(gap, 0.0), dur=each))
+        out.append(dict(c, start=first + turn * max(gap, 0.0), dur=each))
+        turn += 1
     return out
 
 
@@ -688,9 +846,34 @@ def _paste_shifted(dst, px, x, y, dx, dy):
     paste(dst, moved, x + ix - 1, y + iy - 1)
 
 
+def _paste_turned(dst, px, x, y, scale=1.0, degrees=0.0, dx=0.0, dy=0.0):
+    """paste() scaled and/or rotated about the layer's own centre, and moved
+    by (dx, dy). `degrees` is counter-clockwise (the top of the layer leans
+    left)."""
+    if abs(scale - 1.0) < 1e-4 and abs(degrees) < 1e-3:
+        _paste_shifted(dst, px, x, y, dx, dy)
+        return
+    ix, iy = int(math.floor(dx)), int(math.floor(dy))
+    x, y = x + ix, y + iy
+    h, w = px.shape[:2]
+    c, sn = abs(math.cos(math.radians(degrees))) * scale, abs(math.sin(math.radians(degrees))) * scale
+    pad_x = int(math.ceil(max(0.0, (w * c + h * sn - w) / 2.0))) + 3
+    pad_y = int(math.ceil(max(0.0, (w * sn + h * c - h) / 2.0))) + 3
+    m = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), degrees, scale)
+    m[0, 2] += pad_x + (dx - ix)
+    m[1, 2] += pad_y + (dy - iy)
+    moved = cv2.warpAffine(px, m, (w + 2 * pad_x, h + 2 * pad_y), flags=cv2.INTER_LINEAR,
+                           borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    paste(dst, moved, x - pad_x, y - pad_y)
+
+
 SHINE_EVERY, SHINE_LASTS, SHINE_WIDTH, SHINE_GAIN, SHINE_LEAN = 3.2, 1.2, 90.0, 0.38, 0.4
 PULSE_EVERY, PULSE_LASTS, PULSE_GROW = 1.1, 0.9, 0.04
 FLOAT_RISE, FLOAT_PERIOD = 4.0, 4.5
+GROW_BY, GROW_PERIOD = 0.035, 3.6
+BREATHE_BY, BREATHE_PERIOD = 0.018, 4.2     # small enough to read through
+DANCE_BEAT, DANCE_HOP, DANCE_SIDE, DANCE_SWELL = 1.2, 7.0, 4.0, 0.03
+ROTATE_MAX_DEG, ROTATE_MAX_SWING, ROTATE_PERIOD = 12.0, 18.0, 4.0
 EASE_OFF = 0.8              # ongoing motion eases away over the last moments: the final frame is the artwork
 
 
@@ -703,8 +886,9 @@ class Animator:
     per frame rather than a full composite. frame() is therefore meant to be
     called with rising t (rewinding works, it just rebuilds).
 
-    Whatever the layers do after arriving, they have stopped doing it by the
-    last frame, which is the artwork exactly."""
+    Logo and text layers, and a flat picture, are at rest on the last frame,
+    exactly as designed. Decor layers are in motion from the first frame to
+    the last, without easing in or out: they loop."""
 
     def __init__(self, artwork, timeline, recipe, duration, canvas=CANVAS):
         self.layers, self.timeline, self.recipe = artwork['layers'], timeline, recipe
@@ -712,8 +896,27 @@ class Animator:
         self.settled_at = settle_time(timeline)
         n = len(self.layers)
         self.ambient = fit_to_artwork(recipe, [None] * n)[0].get('ambient', 'none')
-        # Layers from here up keep moving after they arrive; below it, never.
-        self._movers = n if self.ambient == 'none' else (1 if n > 1 else 0)
+        # What each layer does once it is in. The background of layered
+        # artwork: nothing. A logo or text layer: nothing, or it breathes. Any
+        # other layer: the clip's motion. A layer the recipe names: its own.
+        own = recipe.get('layer_ambient') or {}
+        calm = 'breathe' if recipe.get('content') == 'breathe' else 'none'
+        self._amb, self._loops, turn = [], [], 0
+        for i, ly in enumerate(self.layers):
+            name, role = str(ly.get('name', '')).lower(), ly.get('role')
+            self._loops.append(role == 'decor')
+            if n == 1:
+                a = self.ambient
+            elif i == 0:
+                a = 'none'
+            else:
+                a = own.get(name) or (calm if role == 'content' else self.ambient)
+            if a == 'mix':
+                a, turn = MIX[turn % len(MIX)], turn + 1
+            self._amb.append(a)
+        # Layers from here up may keep moving after they arrive; below it, never.
+        self._movers = n if all(a == 'none' for a in self._amb) else (1 if n > 1 else 0)
+        self._pulsers = [i for i, a in enumerate(self._amb) if a == 'pulse']
         self._base = np.zeros((canvas[1], canvas[0], 3), np.uint8)
         self._baked = 0
         self._last_t = -1.0
@@ -727,9 +930,32 @@ class Animator:
         ly, tl = self.layers[i], self.timeline[i]
         px, x, y = ly['px'], ly['x'], ly['y']
         w, h = self.canvas
-        if self.ambient in ('float', 'wobble'):
-            env = _smooth((tm - tl['start'] - tl['dur']) / EASE_OFF) * _smooth((self.duration - tm) / EASE_OFF)
-            if self.ambient == 'float':
+        amb = self._amb[i]
+        if amb in ('float', 'wobble', 'grow', 'breathe', 'dance', 'rotate_left', 'rotate_right', 'sway'):
+            since = tm - tl['start'] - tl['dur']
+            env = _smooth(since / EASE_OFF) if tl['dur'] > 0 else 1.0     # there from the start: moving from the start
+            if not self._loops[i]:
+                env *= _smooth((self.duration - tm) / EASE_OFF)
+            if amb == 'breathe':
+                # Together, like one thing breathing: text that swelled out of step would look loose.
+                _paste_turned(dst, px, x, y, scale=1.0 + BREATHE_BY * env * math.sin(2.0 * math.pi * tm / BREATHE_PERIOD))
+            elif amb == 'dance':
+                # A hop on every beat, a lean and a swell across two, each layer off the beat of its neighbour.
+                ph = math.pi * tm / DANCE_BEAT - 0.8 * i
+                most = min(ROTATE_MAX_DEG, math.degrees(math.atan2(ROTATE_MAX_SWING, max(px.shape[1], px.shape[0]) / 2.0)))
+                _paste_turned(dst, px, x, y, scale=1.0 + DANCE_SWELL * env * math.sin(2.0 * ph),
+                              degrees=most * env * math.sin(ph),
+                              dx=DANCE_SIDE * env * math.sin(ph), dy=-DANCE_HOP * env * abs(math.sin(ph)))
+            elif amb == 'grow':
+                # Up past its own size and back down under it, each layer a beat behind the one below.
+                _paste_turned(dst, px, x, y, scale=1.0 + GROW_BY * env * math.sin(2.0 * math.pi * tm / GROW_PERIOD - 0.9 * i))
+            elif amb in ('rotate_left', 'rotate_right', 'sway'):
+                # A long layer turns less: its ends swing no further than a short one's.
+                most = min(ROTATE_MAX_DEG, math.degrees(math.atan2(ROTATE_MAX_SWING, max(px.shape[1], px.shape[0]) / 2.0)))
+                ph = 2.0 * math.pi * since / ROTATE_PERIOD
+                lean = math.sin(ph) if amb == 'sway' else (0.5 - 0.5 * math.cos(ph)) * (1 if amb == 'rotate_left' else -1)
+                _paste_turned(dst, px, x, y, degrees=most * env * lean)
+            elif amb == 'float':
                 # One slow wave running up the stack, each layer a little behind the one below.
                 ph = 2.0 * math.pi * tm / FLOAT_PERIOD - 0.7 * i
                 _paste_shifted(dst, px, x, y, 1.5 * env * math.sin(0.5 * ph + i), FLOAT_RISE * env * math.sin(ph))
@@ -740,12 +966,13 @@ class Animator:
                 rng = np.random.default_rng(7919 * (i + 1) + int(math.floor(tm * STOP_MOTION_FPS + 1e-6)) // 2)
                 paste(dst, px, x + int(rng.integers(-2, 3)), y + int(rng.integers(-1, 2)))
             return
-        if self.ambient == 'shine':
-            since = tm - (self.settled_at + 0.3)
+        if amb == 'shine':
+            since = tm - 0.2
             k = math.floor(since / SHINE_EVERY) if since >= 0 else -1
             u = (since - k * SHINE_EVERY) / SHINE_LASTS
-            ends = self.settled_at + 0.3 + k * SHINE_EVERY + SHINE_LASTS
-            if k < 0 or u >= 1.0 or ends > self.duration - 0.15:      # a sweep that could not finish does not start
+            ends = 0.2 + k * SHINE_EVERY + SHINE_LASTS
+            # On a layer that ends at rest, a sweep that could not finish does not start.
+            if k < 0 or u >= 1.0 or (ends > self.duration - 0.15 and not self._loops[i]):
                 paste(dst, px, x, y)
                 return
             centre = -0.25 * w + u * 1.5 * w
@@ -765,13 +992,13 @@ class Animator:
             lit[:, c0:c1] = (part + 0.5).astype(np.uint8)
             paste(dst, lit, x, y)
             return
-        if self.ambient == 'pulse':
-            since = tm - (self.settled_at + 0.4)
+        if amb == 'pulse':
+            since = tm - 0.3
             beat = math.floor(since / PULSE_EVERY) if since >= 0 else -1
             u = (since - beat * PULSE_EVERY) / PULSE_LASTS
-            ends = self.settled_at + 0.4 + beat * PULSE_EVERY + PULSE_LASTS
-            turn = beat % (len(self.layers) - self._movers) + self._movers if beat >= 0 else -1
-            if turn != i or u >= 1.0 or ends > self.duration - 0.15:
+            ends = 0.3 + beat * PULSE_EVERY + PULSE_LASTS
+            turn = self._pulsers[beat % len(self._pulsers)] if beat >= 0 else -1
+            if turn != i or u >= 1.0 or (ends > self.duration - 0.15 and not self._loops[i]):
                 paste(dst, px, x, y)
                 return
             s = 1.0 + PULSE_GROW * math.sin(math.pi * u) ** 2

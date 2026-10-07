@@ -7684,13 +7684,21 @@ document.addEventListener('DOMContentLoaded', function(){
 <span class="net-file-chip" id=schedule_music_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('schedule_music')">&#10005;</span></span>
 <p class="sh-note" style="margin-top:6px">Trimmed to the length with a fade out, looped if it is shorter, and levelled to the loudness target under Config &gt; Production. Without music the plug is silent.</p>
 
-<label style="margin-top:12px">Animation style:</label>
-<select id=sp-style style="width:300px"><option value=fade_shine selected>Fade in + light sweep</option><option value=wipe_shine>Wipe reveal + light sweep</option><option value=slide_float>Slide up + gentle float</option><option value=pop_pulse>Pop in + pulse one by one</option><option value=stop_motion>Stop motion wipe + wobble</option><option value=fade_still>Fade in + hold still</option></select>
-<p class="sh-note" style="margin-top:6px">How the layers arrive + what they keep doing until the end. In layered artwork the <b>background is static</b>: on screen from the first frame, with the other layers appearing over it and then moving as the style says. <b>Light sweep</b>: a glint passes across them every few seconds. <b>Gentle float</b>: they drift slowly up and down. <b>Pulse</b>: each in turn swells slightly. <b>Wobble</b>: a hand-made tremble. The motion eases off just before the end, so the last frame is the artwork exactly. A flat picture has no separate layers: the whole picture arrives, and only the light sweep can run on it afterwards.</p>
+<div class="sh-row" style="margin-top:12px">
+  <div>
+    <label>Animation style:</label>
+    <select id=sp-style style="width:400px"><option value=wipe_mix selected>Wipe reveal + grow, rotate left, rotate right (mixed)</option><option value=fade_shine>Fade in + light sweep</option><option value=wipe_shine>Wipe reveal + light sweep</option><option value=slide_float>Slide up + gentle float</option><option value=pop_pulse>Pop in + pulse one by one</option><option value=stop_motion>Stop motion wipe + wobble</option><option value=pop_dance>Pop in + dancing</option><option value=pop_grow>Pop in + grow and shrink</option><option value=fade_rotate_left>Fade in + rotate left</option><option value=fade_rotate_right>Fade in + rotate right</option><option value=fade_still>Fade in + hold still</option></select>
+  </div>
+  <div>
+    <label>Logo and schedule text:</label>
+    <select id=sp-text style="width:240px"><option value=hold selected>Appear, then hold still</option><option value=breathe>Appear, then breathe</option></select>
+  </div>
+</div>
+<p class="sh-note" style="margin-top:6px">A layered file is animated in three groups. The <b>background</b> (bottom layer) is static. The <b>logo and schedule text</b> only appear, the way the style says (wipe, fade, slide, pop) &mdash; then hold still, or breathe if you choose it &mdash; so they stay readable. <b>Every other layer</b> (shapes, ornaments, pictures) is on screen from the first frame and moves in a loop from the first frame to the last, in the style&rsquo;s motion: <b>mixed</b> (layers take turns growing and shrinking, rotating left, rotating right), <b>light sweep</b>, <b>gentle float</b>, <b>pulse</b>, <b>wobble</b>, <b>dancing</b>, <b>grow and shrink</b>, <b>rotate left</b> or <b>right</b>. Logo and text layers are Photoshop text layers, groups that hold one, and layers with a word like <i>logo, schedule, text, title, time, date</i> or a day in their name &mdash; rename a layer to move it between groups; the result lists which layer went where. A flat picture has no separate layers: the whole picture arrives, and only the light sweep can run on it.</p>
 
 <label style="margin-top:12px">Extra direction (optional):</label>
 <input type=text id=sp-prompt class=input-box maxlength=600 placeholder="e.g. title pops in, wipe in reveal schedule from the left">
-<p class="sh-note" style="margin-top:6px">Changes whatever it names on top of the style. What it can say: <b>wipe</b>, <b>slide</b>, <b>fade</b>, <b>pop</b> or <b>cut</b> each layer in, from a direction (&ldquo;from the left&rdquo;, &ldquo;bottom to top&rdquo;); <b>stop motion</b>; <b>fast</b> or <b>slow</b>; <b>light sweep</b>, <b>float</b>, <b>pulse</b>, <b>wobble</b> or <b>hold still</b> for afterwards. Name a layer to treat it differently (&ldquo;title pops in, schedule slides up&rdquo;).</p>
+<p class="sh-note" style="margin-top:6px">Changes whatever it names on top of the style. What it can say: <b>wipe</b>, <b>slide</b>, <b>fade</b>, <b>pop</b> or <b>cut</b> each layer in, from a direction (&ldquo;from the left&rdquo;, &ldquo;bottom to top&rdquo;); <b>stop motion</b>; <b>fast</b> or <b>slow</b>; <b>light sweep</b>, <b>float</b>, <b>pulse</b>, <b>wobble</b>, <b>dance</b>, <b>grow and shrink</b>, <b>rotate left</b>, <b>rotate right</b>, <b>sway</b>, <b>mixed</b> or <b>hold still</b> for the moving layers. Name a layer to treat it differently, in how it appears or how it moves &mdash; this is also how to overrule the grouping for one layer (&ldquo;title pops in, stars dance, logo breathes, ribbon holds still, burst pops in&rdquo;).</p>
 
 <div class="promo-actions" style="margin-top:14px">
   <button class="btn btn-primary-promo" type=button id=sp-go-btn onclick="scheduleRender()">Generate schedule plug</button>
@@ -7752,6 +7760,14 @@ async function scheduleOnTabOpen(){
         var o = document.createElement('option'); o.value = x.key; o.textContent = x.label; st.appendChild(o)
       })
       st.value = d.styles.some(function(x){ return x.key === was }) ? was : d.default_style
+    }
+    var tx = spEl('sp-text'), had = tx.value
+    if(d.text_motions && d.text_motions.length){
+      tx.innerHTML = ''
+      d.text_motions.forEach(function(x){
+        var o = document.createElement('option'); o.value = x.key; o.textContent = x.label; tx.appendChild(o)
+      })
+      tx.value = d.text_motions.some(function(x){ return x.key === had }) ? had : d.default_text_motion
     }
     if(!d.psd_supported){
       spNote('Photoshop files cannot be read on this server yet (the <code>psd-tools</code> package is not installed). PNG, JPEG and TIFF artwork works now.', true)
@@ -7832,6 +7848,7 @@ async function scheduleRender(){
   fd.append('duration', spEl('sp-duration').value)
   fd.append('delivery_format', spEl('sp-format').value)
   fd.append('style', spEl('sp-style').value)
+  fd.append('text_motion', spEl('sp-text').value)
   fd.append('prompt', spEl('sp-prompt').value)
 
   spEl('sp-result').style.display = 'none'
@@ -7860,6 +7877,15 @@ function spCard(p, fresh){
   var when = p.created ? new Date(p.created * 1000).toLocaleString() : ''
   var playable = p.preview_url || p.url
   var notes = (p.notes || []).map(function(w){ return '<div class="sh-warn">' + escapeHtmlLite(w) + '</div>' }).join('')
+  // Which layers were taken for logo/text and which keep moving, so a wrongly sorted one can be renamed.
+  var groups = ''
+  if(p.layered && p.roles && p.layers && p.roles.length === p.layers.length){
+    var pick = function(role){ return p.layers.filter(function(_, i){ return p.roles[i] === role }).map(escapeHtmlLite).join(', ') }
+    var still = pick('content'), moving = pick('decor')
+    groups = '<p class="sh-note"><b>Static background:</b> ' + pick('background') +
+      (still ? ' &middot; <b>Logo and text (' + (p.text_motion === 'breathe' ? 'breathe' : 'hold still') + '):</b> ' + still : '') +
+      (moving ? ' &middot; <b>Keep moving:</b> ' + moving : '') + '</p>'
+  }
   card.innerHTML =
     '<div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline">' +
       '<div><b>' + escapeHtmlLite(p.title || 'Schedule plug') + '</b> <span style="font-size:12px;opacity:.7">' +
@@ -7878,7 +7904,7 @@ function spCard(p, fresh){
       '<b>Animation:</b> ' + escapeHtmlLite(p.animation || 'fade') +
       (p.layered ? ' &middot; ' + (p.layers || []).length + ' layers' : ' &middot; one flat picture') +
       (p.music ? ' &middot; music: ' + escapeHtmlLite(p.music) : ' &middot; no music') +
-      (p.read_by ? ' &middot; prompt read by ' + escapeHtmlLite(p.read_by) : '') + '</p>' +
+      (p.read_by ? ' &middot; prompt read by ' + escapeHtmlLite(p.read_by) : '') + '</p>' + groups +
     (fresh ? '<p class="sh-note">Saved under <b>Saved plugs</b>. Not what you meant? Pick another style or reword the direction and generate again &mdash; it takes under a minute.</p>' : '')
   card.addEventListener('click', function(e){
     if(e.target.closest('[data-del]')) scheduleDelete(p.plug_id)
@@ -8596,7 +8622,7 @@ GET  /api/shorts/batches</pre>
       <h3 style="margin-top:0">Schedule Plug</h3>
       <p>Turns one schedule still into an animated 16:9 plug of 10, 15, 20 or 30 seconds with a music bed, in any of the delivery formats the promo generator offers.</p>
       <h3>Why it is drawn, not generated</h3>
-      <p>A schedule is text: titles, dates, times. A video model repaints every pixel of every frame, so that text would come back warped. Here each layer's own pixels are moved, faded or uncovered, and the last frame is the artwork exactly.</p>
+      <p>A schedule is text: titles, dates, times. A video model repaints every pixel of every frame, so that text would come back warped. Here each layer's own pixels are moved, faded or uncovered, so the logo and the text come to rest exactly as designed.</p>
       <h3>Artwork</h3>
       <ul style="line-height:1.8;padding-left:20px">
         <li><strong>Flat image</strong> (PNG, JPEG, TIFF): animated as one picture.</li>
@@ -8605,14 +8631,20 @@ GET  /api/shorts/batches</pre>
         <li>Design at 1920&times;1080. Other shapes are shown whole with black around them, never cropped.</li>
       </ul>
       <h3>Animation style and direction</h3>
-      <p>In a layered file the bottom layer is the <strong>background</strong>: it is static, on screen from the first frame, and never animates (unless the direction says &ldquo;fade in the background&rdquo;). Layers directly above it that cover the whole picture, such as a texture or a gradient, count as background too. Every other layer appears over it, one after another, all in place within the first part of the plug, and then keeps moving until the end.</p>
-      <p>The <strong>Animation style</strong> dropdown picks the combination: how the layers arrive + what they do afterwards &mdash; <strong>Fade in + light sweep</strong>, <strong>Wipe reveal + light sweep</strong>, <strong>Slide up + gentle float</strong>, <strong>Pop in + pulse one by one</strong>, <strong>Stop motion wipe + wobble</strong>, or <strong>Fade in + hold still</strong> for no motion after the build. The ongoing motion is small enough to read through and eases off before the end, so the last frame is the artwork exactly. A flat picture arrives whole from black; only the light sweep can run on it, because the other motions would move its background.</p>
-      <p><strong>Extra direction</strong> is optional and changes whatever it names on top of the style: <strong>wipe</strong>, <strong>slide</strong>, <strong>fade</strong>, <strong>pop</strong> or <strong>cut</strong>, from a direction; <strong>stop motion</strong>; a <strong>slow push in</strong> (this one moves the whole frame, background included); <strong>fast</strong> or <strong>slow</strong>; <strong>light sweep</strong>, <strong>float</strong>, <strong>pulse</strong>, <strong>wobble</strong> or <strong>hold still</strong>. Name a layer to treat it differently. The words are matched directly and, when Ollama is reachable, also read by the AI model so it can tell which named layer an instruction is about. Each result states the style and how the direction was understood.</p>
+      <p>A layered file is animated in three groups:</p>
+      <ul style="line-height:1.8;padding-left:20px">
+        <li><strong>Background</strong> &mdash; the bottom layer, plus any layers directly above it that cover the whole picture (a texture, a gradient). Static, on screen from the first frame. It never animates unless the direction says &ldquo;fade in the background&rdquo;.</li>
+        <li><strong>Logo and schedule text</strong> &mdash; Photoshop text layers, groups that hold a text layer, and layers with a word such as <em>logo, schedule, text, title, time, date, program, show</em> or a day (<em>Mon, Tuesday</em>) in their name. They appear one after another, lowest first, the way the style says; afterwards they <strong>hold still</strong> or, if chosen, <strong>breathe</strong> (swell and settle by under two percent, all together). They are at rest, exactly as designed, on the last frame.</li>
+        <li><strong>Every other layer</strong> &mdash; shapes, pictures, ornaments. On screen from the first frame and moving in a loop from the first frame to the last, without easing in or out.</li>
+      </ul>
+      <p>The result lists which layer went into which group. If a layer landed in the wrong one, rename it in Photoshop (rasterised text called &ldquo;Layer 5&rdquo; will be taken for an ornament and will move), or name it in the direction. A file with nothing but logo and text above the background has nothing left to keep moving, and the result says so.</p>
+      <p>The <strong>Animation style</strong> dropdown picks the combination: how the logo and text appear + how the other layers move &mdash; <strong>Wipe reveal + grow, rotate left, rotate right (mixed)</strong>, where the moving layers take those three motions in turn (the default), <strong>Fade in + light sweep</strong>, <strong>Wipe reveal + light sweep</strong>, <strong>Slide up + gentle float</strong>, <strong>Pop in + pulse one by one</strong>, <strong>Stop motion wipe + wobble</strong>, <strong>Pop in + dancing</strong> (a hop on every beat with a lean and a swell), <strong>Pop in + grow and shrink</strong>, <strong>Fade in + rotate left</strong>, <strong>Fade in + rotate right</strong>, or <strong>Fade in + hold still</strong> for no motion at all after the build. A rotating layer tilts up to twelve degrees and comes back; long layers turn less so their ends do not swing into their neighbours. A flat picture arrives whole from black; only the light sweep can run on it, because the other motions would move its background.</p>
+      <p><strong>Extra direction</strong> is optional and changes whatever it names on top of the style: <strong>wipe</strong>, <strong>slide</strong>, <strong>fade</strong>, <strong>pop</strong> or <strong>cut</strong>, from a direction; <strong>stop motion</strong>; a <strong>slow push in</strong> (this one moves the whole frame, background included); <strong>fast</strong> or <strong>slow</strong>; <strong>light sweep</strong>, <strong>float</strong>, <strong>pulse</strong>, <strong>wobble</strong>, <strong>dance</strong>, <strong>grow and shrink</strong>, <strong>rotate left</strong>, <strong>rotate right</strong>, <strong>sway</strong>, <strong>mixed</strong> or <strong>hold still</strong> for the moving layers. Name a layer to give it its own arrival or its own motion, whatever group it is in (&ldquo;stars dance, logo breathes, ribbon holds still, burst pops in&rdquo;). The words are matched directly and, when Ollama is reachable, also read by the AI model so it can tell which named layer an instruction is about. Each result states the style and how the direction was understood.</p>
       <h3>Music</h3>
       <p>Optional, from the Music network folder. Trimmed to the length with a fade out, looped if shorter, and levelled to the loudness target under Config &gt; Production.</p>
       <h3>Setup</h3>
       <p>Set the artwork folder under <strong>Config &gt; Network &gt; Schedule plug artwork</strong>. Photoshop files need the <code>psd-tools</code> package on the server.</p>
-      <pre>POST /api/schedule/render   + schedule_image_network, duration (10|15|20|30), delivery_format, style?, prompt?, schedule_music_network?
+      <pre>POST /api/schedule/render   + schedule_image_network, duration (10|15|20|30), delivery_format, style?, text_motion? (hold|breathe), prompt?, schedule_music_network?
 GET  /api/schedule/progress/&lt;job_id&gt;
 GET  /api/schedule/items</pre>
     </div>
