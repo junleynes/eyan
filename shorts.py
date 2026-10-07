@@ -1122,7 +1122,10 @@ def api_shorts_batch_zip(bid):
 def api_shorts_batch_send(bid):
     """Copies a batch's MP4s (and optionally their .srt files) to one of the
     network destinations configured under Config > Network -- the same ones
-    the promo generator delivers to."""
+    the promo generator delivers to. `files` narrows it to some of the
+    shorts; with exactly one, `filename` names the copy at the destination
+    (its .srt, if sent, takes the same name). The saved short keeps its own
+    name either way."""
     m, err = _batch_or_error(bid)
     if err:
         return err
@@ -1137,17 +1140,28 @@ def api_shorts_batch_send(bid):
     shorts = [s for s in m.get('shorts') or [] if not isinstance(wanted, list) or s['file'] in wanted]
     if not shorts:
         return jsonify(ok=False, error='Nothing to send.'), 400
+    rename = None
+    if ' '.join(str(data.get('filename') or '').split()):
+        if len(shorts) != 1:
+            return jsonify(ok=False, error='A new name can be given to one short at a time. Send the shorts '
+                           'one by one to rename them, or send them all under their own names.'), 400
+        rename, bad = pipeline.destination_filename(data.get('filename'), shorts[0]['file'])
+        if bad:
+            return jsonify(ok=False, error=bad), 400
     bdir, sent = _batch_dir(bid), []
     for s in shorts:
         for k in ('file', 'srt') if data.get('include_srt') else ('file',):
             if not s.get(k):
                 continue
+            # A renamed short's captions go with it under the same name.
+            name = (os.path.splitext(rename)[0] + os.path.splitext(s[k])[1]) if rename else s[k]
             try:
-                pipeline.send_file_to_network_destination(os.path.join(bdir, s[k]), s[k], dest)
+                pipeline.send_file_to_network_destination(os.path.join(bdir, s[k]), name, dest)
             except ValueError as e:
                 return jsonify(ok=False, error=str(e), sent=sent), 502
-            sent.append(s[k])
-    audit_log('shorts_send_to_destination', target=f'{dest["name"]}: {len(sent)} file(s) from {m.get("orig_name")}',
+            sent.append(name)
+    audit_log('shorts_send_to_destination', target=f'{dest["name"]}: {len(sent)} file(s) from {m.get("orig_name")}'
+              + (f' ({shorts[0]["file"]} as {rename})' if rename and rename != shorts[0]['file'] else ''),
               user_id=session.get('user_id'), username=session.get('username'), ip=_client_ip())
     return jsonify(ok=True, sent=sent, destination=dest['name'])
 

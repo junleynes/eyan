@@ -7561,20 +7561,84 @@ function shBatchCard(b, fresh){
         '<div style="opacity:.7">' + (s.duration || 0).toFixed(1) + ' s &middot; ' + shBytes(s.size || 0) + '</div>' +
         '<div style="opacity:.6;font-size:11px" title="Source range">' + shFmt(s.start) + ' → ' + shFmt(s.end) + '</div>' +
         '<div style="opacity:.6;font-size:11px">' + shLayoutNote(s.layouts) + '</div>' +
-        '<div style="display:flex;gap:6px;margin-top:6px">' +
+        '<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">' +
           '<a class="btn-sm" href="' + s.url + '?download=1">MP4</a>' +
           (s.srt_url ? '<a class="btn-sm" href="' + s.srt_url + '?download=1">SRT</a>' : '') +
-        '</div></div></div>'
+          // Shown once the destinations are known to exist (shFillSend).
+          '<button type=button class="btn-sm" data-send-one="' + i + '" style="display:none">Send&hellip;</button>' +
+        '</div>' +
+        '<div data-send-panel="' + i + '" style="display:none;margin-top:8px"></div>' +
+        '</div></div>'
   }).join('')
   card.innerHTML = head + notes + '<div class="sh-grid">' + tiles + '</div>' +
     (fresh ? '<p class="sh-note">Saved under <b>Saved shorts</b>. Render again with a different reframe or other moments at any time while this analysis is open.</p>' : '')
   card.addEventListener('click', function(e){
     var p = e.target.closest('[data-play]')
     if(p){ var s = b.shorts[parseInt(p.getAttribute('data-play'), 10)]; shortsPlay(s.url, s.title); return }
-    if(e.target.closest('[data-del]')) shortsDeleteBatch(b.batch_id, card)
+    if(e.target.closest('[data-del]')){ shortsDeleteBatch(b.batch_id, card); return }
+    var one = e.target.closest('[data-send-one]')
+    if(one){
+      var k = parseInt(one.getAttribute('data-send-one'), 10)
+      shSendOnePanel(card.querySelector('[data-send-panel="' + k + '"]'), b.batch_id, b.shorts[k])
+    }
   })
   shFillSend(card.querySelector('[data-send]'), b.batch_id)
   return card
+}
+
+// One short to a destination, under its own name or another. Opens under the
+// short's buttons with the name filled in to be changed; nothing is sent
+// until Send is pressed there. The extension is the file's own and is shown,
+// not typed; the short's captions, if it has any, go with it under the same
+// name. The saved short keeps the name it has.
+function shSendOnePanel(panel, bid, s){
+  if(!panel || !SH.destinations || !SH.destinations.length) return
+  if(panel.getAttribute('data-built')){
+    panel.style.display = panel.style.display === 'none' ? 'block' : 'none'
+    if(panel.style.display === 'block') panel.querySelector('[data-send-name]').focus()
+    return
+  }
+  var file = s.file || '', dot = file.lastIndexOf('.')
+  var stem = dot > 0 ? file.slice(0, dot) : file, ext = dot > 0 ? file.slice(dot) : ''
+  panel.setAttribute('data-built', '1')
+  panel.style.display = 'block'
+  panel.innerHTML =
+    '<select aria-label="Send to" style="width:100%;margin:0 0 6px;padding:4px 28px 4px 8px;font-size:12px">' +
+      SH.destinations.map(function(x){ return '<option value="' + x.id + '">' + escapeHtmlLite(x.name) + '</option>' }).join('') +
+    '</select>' +
+    '<div style="display:flex;align-items:center;gap:3px;font-size:12px">' +
+      '<input type=text data-send-name maxlength=120 spellcheck=false aria-label="Filename at the destination" ' +
+        'title="The filename this short gets at the destination. The saved short keeps its own name." ' +
+        'style="flex:1;min-width:0;margin:0;padding:4px 8px;font-size:12px">' +
+      '<span style="opacity:.7">' + escapeHtmlLite(ext) + '</span></div>' +
+    '<div style="display:flex;gap:6px;align-items:center;margin-top:6px">' +
+      '<button type=button class="btn-sm" data-send-go>Send</button>' +
+      '<button type=button class="btn-sm" data-send-close style="opacity:.75">Cancel</button></div>' +
+    '<div data-send-out style="font-size:12px;margin-top:4px;overflow-wrap:anywhere"></div>'
+  var sel = panel.querySelector('select'), name = panel.querySelector('[data-send-name]')
+  var go = panel.querySelector('[data-send-go]'), out = panel.querySelector('[data-send-out]')
+  // The batch's own destination choice, if one is showing, is the likely one here too.
+  var batchSel = panel.closest('.card').querySelector('[data-send] select')
+  if(batchSel) sel.value = batchSel.value
+  name.value = stem
+  name.focus(); name.select()
+  name.addEventListener('keydown', function(e){ if(e.key === 'Enter'){ e.preventDefault(); go.click() } })
+  panel.querySelector('[data-send-close]').addEventListener('click', function(){ panel.style.display = 'none' })
+  go.addEventListener('click', async function(){
+    go.disabled = true
+    out.style.color = ''; out.textContent = 'Sending…'
+    var typed = name.value.trim()
+    try{
+      var r = await (await fetch('/api/shorts/batches/' + bid + '/send', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        // Left as it was, no name is sent: the server uses the short's own.
+        body: JSON.stringify({destination_id: parseInt(sel.value, 10), include_srt: true, files: [file],
+                              filename: typed === stem ? '' : typed})})).json()
+      if(r.ok){ out.style.color = 'var(--phosphor)'; out.textContent = 'Sent to ' + r.destination + ' as ' + (r.sent || []).join(' + ') }
+      else{ out.style.color = 'var(--tally)'; out.textContent = r.error || 'Send failed' }
+    }catch(err){ out.style.color = 'var(--tally)'; out.textContent = 'Send failed: ' + err }
+    go.disabled = false
+  })
 }
 
 // The same destinations the promo generator sends to (Config > Network),
@@ -7588,10 +7652,13 @@ async function shFillSend(host, bid){
     }catch(e){ SH.destinations = [] }
   }
   if(!SH.destinations.length) return
+  // There is somewhere to send to: each short gets its own Send as well.
+  var card = host.closest('.card')
+  if(card) card.querySelectorAll('[data-send-one]').forEach(function(b){ b.style.display = '' })
   host.style.cssText = 'display:inline-flex;gap:6px;align-items:center'
-  host.innerHTML = '<select style="width:auto;margin:0;padding:4px 28px 4px 8px;font-size:12px">' +
+  host.innerHTML = '<select style="width:auto;margin:0;padding:4px 28px 4px 8px;font-size:12px" aria-label="Send all to">' +
     SH.destinations.map(function(x){ return '<option value="' + x.id + '">' + escapeHtmlLite(x.name) + '</option>' }).join('') +
-    '</select><button type=button class="btn-sm">Send</button><span style="font-size:12px"></span>'
+    '</select><button type=button class="btn-sm">Send all</button><span style="font-size:12px"></span>'
   var sel = host.querySelector('select'), btn = host.querySelector('button'), out = host.querySelector('span')
   btn.addEventListener('click', async function(e){
     e.stopPropagation()
@@ -8642,7 +8709,10 @@ job. Configured via env vars:
 GET  /api/shorts/progress/&lt;job_id&gt;
 GET  /api/shorts/analysis/&lt;analysis_id&gt;
 POST /api/shorts/render   {analysis_id, items:[{start,end,title}], reframe: auto|split|crop|fit, speaker?, subtitles}
-GET  /api/shorts/batches</pre>
+GET  /api/shorts/batches
+POST /api/shorts/batches/&lt;id&gt;/send   {destination_id, include_srt?, files?, filename?}</pre>
+      <h3>Sending</h3>
+      <p><strong>Send all</strong> at the top of a batch copies every short (and its captions) to a video destination set up under <strong>Config &gt; Network</strong>, under the names they have. Each short also has its own <strong>Send&hellip;</strong>: it opens a destination and a filename box, filled in with the short&rsquo;s current name, and nothing is sent until you press Send there &mdash; change the name first to rename the file as it goes out. The extension stays the file&rsquo;s own, spaces become underscores, and the short&rsquo;s .srt goes with it under the same name. The saved short keeps its original name, and a file of the same name already at the destination is replaced.</p>
     </div>
 
     <div class="docs-pane" id="docs-schedule">

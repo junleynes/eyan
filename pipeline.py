@@ -7808,6 +7808,31 @@ def build_scene_list_csv(row):
                      f"{s.get('duration','')},{s.get('quality','')},\"{desc}\"")
     return '\n'.join(lines) + '\n'
 
+_SEND_MEDIA_EXT = re.compile(r'\.(mp4|mov|mxf|m4v|mkv|avi|webm|srt)$', re.I)
+
+
+def destination_filename(custom, original):
+    """(filename to write at the destination, error or None).
+
+    `custom` is what the editor typed, or nothing for the file's own name.
+    The extension is always the delivery file's own -- renaming must not be
+    able to make an MP4 look like a ProRes .mov -- so one typed on the end
+    is dropped, while a dot that is part of the name ("Promo v1.2") stays.
+    The rest is reduced to what is safe as a filename on a network share:
+    the same rule the promo generator applies to its custom export names."""
+    custom = ' '.join(str(custom or '').split())
+    if not custom:
+        return original, None
+    ext = os.path.splitext(original)[1]
+    # Both kinds of slash become word breaks first, so the result is the same
+    # on the Windows server as anywhere else, and is never a path.
+    stem = secure_filename(re.sub(r'[\\/]+', ' ', _SEND_MEDIA_EXT.sub('', custom)))[:120].rstrip('._-')
+    if not stem:
+        return None, ('That name has nothing in it that can be used in a filename. Use letters, numbers, '
+                      'spaces, dashes or underscores.')
+    return stem + ext, None
+
+
 def send_file_to_network_destination(local_path, remote_filename, destination):
     """Copies an already-exported local file to `destination` (a
     network_destinations row) -- the write-side counterpart to

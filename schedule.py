@@ -21,7 +21,6 @@ import time
 import traceback
 
 import cv2
-from werkzeug.utils import secure_filename
 from flask import request, jsonify, session, send_from_directory
 
 from core import app, _job_submit_limiter, _client_ip
@@ -422,31 +421,6 @@ def api_schedule_delete(pid):
     return jsonify(ok=True)
 
 
-_MEDIA_EXT = re.compile(r'\.(mp4|mov|mxf|m4v|mkv|avi|webm)$', re.I)
-
-
-def _send_name(custom, original):
-    """(filename to write at the destination, error or None).
-
-    `custom` is what the editor typed, or nothing for the plug's own name.
-    The extension is always the delivery file's own -- renaming must not be
-    able to make an MP4 look like a ProRes .mov -- so one typed on the end
-    is dropped, while a dot that is part of the name ("Promo v1.2") stays.
-    The rest is reduced to what is safe as a filename on a network share:
-    the same rule the promo generator applies to its custom export names."""
-    custom = ' '.join(str(custom or '').split())
-    if not custom:
-        return original, None
-    ext = os.path.splitext(original)[1]
-    # Both kinds of slash become word breaks first, so the result is the same
-    # on the Windows server as anywhere else, and is never a path.
-    stem = secure_filename(re.sub(r'[\\/]+', ' ', _MEDIA_EXT.sub('', custom)))[:120].rstrip('._-')
-    if not stem:
-        return None, ('That name has nothing in it that can be used in a filename. Use letters, numbers, '
-                      'spaces, dashes or underscores.')
-    return stem + ext, None
-
-
 @app.route('/api/schedule/items/<pid>/send', methods=['POST'])
 @require_permission('schedule_plug')
 def api_schedule_send(pid):
@@ -464,7 +438,7 @@ def api_schedule_send(pid):
     if dest.get('delivery_kind') != 'video':
         return jsonify(ok=False, error=f'"{dest["name"]}" is set up for scene lists or edit packages, not '
                        'finished video. Pick a video destination.'), 400
-    name, bad = _send_name(data.get('filename'), m['file'])
+    name, bad = pipeline.destination_filename(data.get('filename'), m['file'])
     if bad:
         return jsonify(ok=False, error=bad), 400
     try:

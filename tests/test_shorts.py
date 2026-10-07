@@ -1006,6 +1006,30 @@ def test_full_flow_render_save_download_send_delete(env, monkeypatch):
     r = client.post(send_url, json={'destination_id': 1, 'include_srt': True, 'files': [s2['file']]}, headers=headers)
     assert r.get_json()['sent'] == [s2['file'], s2['srt']]
 
+    # One short, renamed on the way out: its captions go with it under the same
+    # name, the extensions stay the files' own, and the saved short is untouched.
+    for typed, stem in (('Tadhan EP101 teaser', 'Tadhan_EP101_teaser'), (' teaser_v1.2.mp4 ', 'teaser_v1.2'),
+                        ('..\\..\\share\\x', 'share_x')):
+        del sent[:]
+        r = client.post(send_url, json={'destination_id': 1, 'include_srt': True, 'files': [s2['file']],
+                                        'filename': typed}, headers=headers).get_json()
+        assert r == {'ok': True, 'sent': [stem + '.mp4', stem + '.srt'], 'destination': 'Social team'}, typed
+        assert sent == [(s2['file'], stem + '.mp4', 'Social team'), (s2['srt'], stem + '.srt', 'Social team')]
+    del sent[:]
+    r = client.post(send_url, json={'destination_id': 1, 'files': [s1['file']], 'filename': 'solo'}, headers=headers)
+    assert r.get_json()['sent'] == ['solo.mp4'] and sent == [(s1['file'], 'solo.mp4', 'Social team')]
+    # Left blank, the short's own name. A name for several at once, or one that is unusable, sends nothing.
+    del sent[:]
+    r = client.post(send_url, json={'destination_id': 1, 'files': [s1['file']], 'filename': '  '}, headers=headers)
+    assert r.get_json()['sent'] == [s1['file']]
+    del sent[:]
+    r = client.post(send_url, json={'destination_id': 1, 'filename': 'everything'}, headers=headers)
+    assert r.status_code == 400 and 'one short at a time' in r.get_json()['error']
+    r = client.post(send_url, json={'destination_id': 1, 'files': [s1['file']], 'filename': '///'}, headers=headers)
+    assert r.status_code == 400 and 'can be used in a filename' in r.get_json()['error'] and sent == []
+    assert sorted(f for f in os.listdir(os.path.join(shorts.SHORTS_DIR, batch['batch_id'])) if f.endswith('.mp4')) == \
+        sorted([s1['file'], s2['file']])
+
     def boom(local, remote, dest):
         raise ValueError('Could not write to "Social team": access denied')
     monkeypatch.setattr(pipeline, 'send_file_to_network_destination', boom)
