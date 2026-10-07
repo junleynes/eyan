@@ -764,3 +764,140 @@ def test_follow_the_speaker_leaves_every_other_kind_of_shot_alone():
                            speech=_words([(0, 4), (4.6, 8), (8.2, 12)]))
     assert [(s['a'], s['b'], bool(s.get('speaker'))) for s in segs] == [
         (0, 110, True), (111, 199, True), (200, 299, False)]
+
+
+# ---- split screen ----
+
+def _two(n_frames, lx=500, rx=1500, w=160, step=5, extra=None):
+    """A wide two-shot with plain 4-value faces (no mouth data)."""
+    return [(i, [_face(lx, w), _face(rx, w)] + (extra or [])) for i in range(0, n_frames, step)]
+
+
+def test_split_pane_window_is_a_full_height_9_by_8_slice():
+    w, h = sc.split_pane_size(1920, 1080)
+    assert (w, h) == (1216, 1080) and abs(w / h - 1080 / 960) < 0.002
+    assert sc.split_pane_size(640, 360) == (404, 360)
+    assert sc.split_pane_size(1080, 1920) == (1080, 960), 'a source narrower than a pane: full width instead'
+
+
+def test_split_gives_each_of_two_people_half_the_frame_left_on_top():
+    segs = sc.plan_reframe(_two(100), [], 100, 1920, 1080, 608, mode='split')
+    assert len(segs) == 1
+    s = segs[0]
+    assert (s['a'], s['b'], s['layout'], s['x'], s['keys']) == (0, 99, 'split', None, None)
+    w, h = s['size']
+    assert (w, h) == (1216, 1080), 'no tightening needed: the two are far enough apart'
+    (tx, ty), (bx, by) = s['panes']
+    assert tx == 0 and bx == 1920 - 1216, 'each window pushed to its own side of the picture'
+    assert tx + w < 1500 - 80 and bx > 500 + 80, "and neither holds the other person's face"
+    assert ty == 0 and by == 0
+    # The same shot in Auto is shown whole; in "always crop" one side is chosen.
+    assert [x['layout'] for x in sc.plan_reframe(_two(100), [], 100, 1920, 1080, 608)] == ['fit']
+    assert [x['layout'] for x in sc.plan_reframe(_two(100), [], 100, 1920, 1080, 608, mode='crop')] == ['crop']
+
+
+def test_split_tightens_the_window_until_the_other_face_is_out_of_it():
+    # Close together, and the left one near the edge so their window cannot be centred on them.
+    people = ((200.0, 400.0, 160.0, 160.0), (1000.0, 400.0, 160.0, 160.0))
+    w, h = sc.split_window(people, 1920, 1080)
+    assert w < 1216 and abs(w / h - 1216 / 1080) < 0.01, 'tightened, same shape'
+    lx, _ = sc._pane_origin(people[0], w, h, 1920, 1080)
+    rx, _ = sc._pane_origin(people[1], w, h, 1920, 1080)
+    assert lx + w <= 1000 - 80 and rx >= 200 + 80
+    # Faces lifted towards the top of their pane, never past the picture's edge.
+    _, y = sc._pane_origin((960.0, 500.0, 160.0, 160.0), w, h, 1920, 1080)
+    assert abs((500 - y) / h - sc.SPLIT_FACE_AT) < 0.02
+    assert sc._pane_origin((960.0, 1000.0, 160.0, 160.0), w, h, 1920, 1080)[1] == 1080 - h
+    assert sc._pane_origin((960.0, 100.0, 160.0, 160.0), w, h, 1920, 1080)[1] == 0
+    # Too close to separate without blowing a face up: no split.
+    assert sc.split_window(((700.0, 400.0, 260.0, 260.0), (1000.0, 400.0, 260.0, 260.0)), 1920, 1080) is None
+
+
+def test_split_only_applies_to_exactly_two_people_too_far_apart():
+    def plan(samples, **kw):
+        return [(x['a'], x['b'], x['layout'], x['x'], x['keys']) for x in
+                sc.plan_reframe(samples, [], 100, 1920, 1080, 608, **kw)]
+    third = _two(100, extra=[_face(1000, 150)])
+    assert plan(third, mode='split') == [(0, 99, 'fit', None, None)], 'a third person has no pane: show everyone'
+    close = _two(100, lx=800, rx=1150, w=260)
+    assert plan(close, mode='split') == plan(close) == [(0, 99, 'fit', None, None)], 'cannot be separated cleanly'
+    for samples in (_two(100, lx=800, rx=1050), _samples(100, lambda i: [_face(500)]), _samples(100, lambda i: [])):
+        assert plan(samples, mode='split') == plan(samples), 'two who fit, one person, nobody: exactly as Auto'
+
+
+def test_every_split_shot_in_a_clip_shares_one_window_size():
+    samples = _two(100) + [(i, [_face(200), _face(1000)]) for i in range(100, 200, 5)]
+    segs = sc.plan_reframe(samples, [100], 200, 1920, 1080, 608, mode='split')
+    assert [(s['a'], s['b'], s['layout']) for s in segs] == [(0, 99, 'split'), (100, 199, 'split')]
+    assert segs[0]['size'] == segs[1]['size'] and segs[0]['size'][0] < 1216, 'the tighter of the two, for both'
+    assert segs[0]['panes'] != segs[1]['panes']
+    w = segs[0]['size'][0]
+    for s in segs:
+        (lcx, _, lw, _), (rcx, _, rw, _) = s['people']
+        assert s['panes'][0][0] + w <= rcx - rw / 2 and s['panes'][1][0] >= lcx + lw / 2
+    # Two consecutive shots framed identically are one instruction.
+    same = sc.plan_reframe(_two(200), [100], 200, 1920, 1080, 608, mode='split')
+    assert [(s['a'], s['b']) for s in same] == [(0, 199)]
+
+
+def test_split_with_follow_the_speaker_splits_a_conversation_and_frames_a_monologue():
+    speech = _words([(0, 8)])
+    conversation = _talking(200, [(0, 4)], [(4, 8)])
+    segs = sc.plan_reframe(conversation, [], 200, 1920, 1080, 608, mode='split', speaker=True, speech=speech)
+    assert [s['layout'] for s in segs] == ['split'], 'both talk: both stay on screen'
+    monologue = _talking(200, [(0, 8)], [])
+    segs = sc.plan_reframe(monologue, [], 200, 1920, 1080, 608, mode='split', speaker=True, speech=speech)
+    assert [(s['layout'], round(s['x']), s['speaker']) for s in segs] == [('crop', 196, True)], \
+        'one person talking: half the screen is not spent on the listener'
+    # One line from the other person in a long speech is not a conversation.
+    aside = _talking(500, [(0, 16.6), (18.2, 20)], [(16.6, 18.2)])
+    segs = sc.plan_reframe(aside, [], 500, 1920, 1080, 608, mode='split', speaker=True, speech=_words([(0, 20)]))
+    assert all(s['layout'] == 'crop' and s['speaker'] for s in segs) and len(segs) == 3
+    # Nothing to go on (no transcript): split, which is what the mode is for.
+    segs = sc.plan_reframe(conversation, [], 200, 1920, 1080, 608, mode='split', speaker=True, speech=[])
+    assert [s['layout'] for s in segs] == ['split']
+
+
+def test_filtergraph_with_a_split_layout_alone_and_mixed_with_the_others():
+    info = {'width': 1920, 'height': 1080, 'disp_w': 1920, 'disp_h': 1080, 'sar': 1.0, 'sd_matrix': False}
+    samples = (_samples(50, lambda i: [_face(400)]) + [(i, f) for i, f in _two(100) if i >= 50] +
+               [(i, [_face(500), _face(1000, 150), _face(1500)]) for i in range(100, 150, 5)])
+    segs = sc.plan_reframe(samples, [50, 100], 150, 1920, 1080, 608, mode='split')
+    assert [(s['a'], s['b'], s['layout']) for s in segs] == [(0, 49, 'crop'), (50, 99, 'split'), (100, 149, 'fit')]
+    g = sc.build_filtergraph(info, segs, ass_name='c.ass')
+    assert ',split=3[c0][f0][s0];' in g
+    assert "[sa]crop=1216:1080:x='between(n,50,99)*0':y='between(n,50,99)*0',scale=1080:960:flags=lanczos[st]" in g
+    assert "[sb]crop=1216:1080:x='between(n,50,99)*704':y='between(n,50,99)*0',scale=1080:960:flags=lanczos[sm]" in g
+    assert '[st][sm]vstack,drawbox=x=0:y=957:w=1080:h=6' in g
+    assert "[cv][fv]overlay=0:0:enable='between(n,100,149)'[m0];[m0][sv]overlay=0:0:enable='between(n,50,99)'[v1]" in g
+    assert g.index('ass=c.ass') > g.index('[v1]'), 'captions go on after the layouts are combined'
+    # Every frame belongs to exactly one layout.
+    for n in range(150):
+        on = [name for name, pat in (('fit', r"\[cv\]\[fv\]overlay=0:0:enable='([^']*)'"),
+                                     ('split', r"\[sv\]overlay=0:0:enable='([^']*)'"))
+              if _eval_expr(re.search(pat, g).group(1), n)]
+        assert on == ([] if n < 50 else ['split'] if n < 100 else ['fit']), (n, on)
+
+    only = sc.build_filtergraph(info, [s for s in sc.plan_reframe(_two(100), [], 100, 1920, 1080, 608, mode='split')])
+    assert 'overlay' not in only and 'boxblur' not in only and '[st][sm]vstack' in only
+    two = sc.build_filtergraph(info, segs[:2])
+    assert ',split=2[c0][s0];' in two and "[cv][sv]overlay=0:0:enable='between(n,50,99)'[v1]" in two
+    # The two-layout graph that already existed is unchanged.
+    old = sc.build_filtergraph(info, [segs[0], segs[2]])
+    assert ",split=2[c0][f0];" in old and "[cv][fv]overlay=0:0:enable='between(n,100,149)'[v1]" in old
+
+
+def test_captions_over_a_split_shot_sit_on_the_join(tmp_path):
+    segs = [{'a': 0, 'b': 49, 'layout': 'crop', 'x': 0.0, 'keys': None},
+            {'a': 50, 'b': 99, 'layout': 'split', 'x': None, 'keys': None}]
+    cues = [{'start': 0.2, 'end': 1.4, 'text': 'in the crop'}, {'start': 1.8, 'end': 2.4, 'text': 'straddles the cut'},
+            {'start': 2.5, 'end': 3.6, 'text': 'in the split'}]
+    placed = sc.place_cues(cues, segs, 25.0)
+    assert [c['seam'] for c in placed] == [False, True, True], 'by midpoint: 2.1 s is frame 52'
+    path = tmp_path / 'c.ass'
+    sc.write_ass(placed, str(path))
+    lines = [ln for ln in path.read_text(encoding='utf-8').splitlines() if ln.startswith('Dialogue:')]
+    assert lines[0].endswith(',,in the crop')
+    assert lines[2].endswith(',,{\\an5\\pos(540,960)}in the split')
+    assert all(c['seam'] is False for c in sc.place_cues(list(cues), segs[:1], 25.0))
+

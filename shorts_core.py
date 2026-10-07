@@ -1160,8 +1160,149 @@ def _speaker_segments(hits, a, b, fps, speech, crop_w, max_x, static_px):
         near = [f[0] for i, f in obs if fa <= i <= fb] or allx
         cx = np.median(allx) if max(allx) - min(allx) <= static_px else np.median(near)
         out.append({'a': fa, 'b': fb, 'layout': 'crop', 'x': float(np.clip(cx - crop_w / 2.0, 0.0, max_x)),
-                    'keys': None, 'speaker': True})
+                    'keys': None, 'speaker': True, 'person': who})
     return out
+
+
+# ---- Split screen (optional) ----
+# Two people too far apart for one vertical frame, each given half of it:
+# the one on the left of the picture on top, the one on the right below.
+SPLIT_PANE_ASPECT = (OUT_W, OUT_H // 2)     # each pane is 1080x960, i.e. 9:8
+SPLIT_FACE_AT = 0.42                         # how far down its pane a face's centre sits
+SPLIT_MIN_ZOOM_OUT = 0.45                    # a pane may shrink to this share of the largest window, no further
+
+
+def split_pane_size(disp_w, disp_h):
+    """The largest source window with a pane's shape: (w, h). For a
+    landscape source that is the full height."""
+    pw, ph = SPLIT_PANE_ASPECT
+    h = even(disp_h)
+    w = even(h * pw / float(ph))
+    if w > disp_w:
+        w = even(disp_w)
+        h = even(w * ph / float(pw))
+    return min(w, even(disp_w)), min(h, even(disp_h))
+
+
+def _split_people(hits):
+    """The two people of a wide two-shot as (left, right), each the median
+    (cx, cy, w, h) of where that face was seen -- or None when the shot is
+    not two people (one, or three and more: a third person has no pane)."""
+    if len(hits) < 3:
+        return None
+    need = max(2, int(math.ceil(0.3 * len(hits))))
+    tracks = [t for t in _face_tracks(hits) if len(t['obs']) >= need]
+    if len(tracks) != 2:
+        return None
+    people = [tuple(float(np.median([f[k] for _, f in t['obs']])) for k in range(4)) for t in tracks]
+    return tuple(sorted(people, key=lambda f: f[0]))
+
+
+def _pane_origin(face, w, h, disp_w, disp_h):
+    x = float(np.clip(face[0] - w / 2.0, 0.0, max(0.0, disp_w - w)))
+    y = float(np.clip(face[1] - SPLIT_FACE_AT * h, 0.0, max(0.0, disp_h - h)))
+    return x, y
+
+
+def split_window(people, disp_w, disp_h):
+    """The widest pane window (w, h) that shows each person WITHOUT the
+    other one's face in it, or None if no acceptable window does.
+
+    Starts from the largest window and tightens. Tightening is what keeps a
+    slice of the other person's cheek out of the edge of the pane when the
+    two sit close, or when one is near the edge of the picture and their
+    window cannot be centred on them; it is also a zoom, so it stops at
+    SPLIT_MIN_ZOOM_OUT rather than blow a face up into mush."""
+    full_w, full_h = split_pane_size(disp_w, disp_h)
+    left, right = people
+    w = float(full_w)
+    while w >= SPLIT_MIN_ZOOM_OUT * full_w:
+        h = w * full_h / float(full_w)
+        lx, _ = _pane_origin(left, w, h, disp_w, disp_h)
+        rx, _ = _pane_origin(right, w, h, disp_w, disp_h)
+        gap_l = (right[0] - right[2] / 2.0) - (lx + w)     # right face's near edge, past the left pane
+        gap_r = rx - (left[0] + left[2] / 2.0)             # and the mirror of it
+        own = (left[0] - left[2] / 2.0 >= lx and left[0] + left[2] / 2.0 <= lx + w
+               and right[0] - right[2] / 2.0 >= rx and right[0] + right[2] / 2.0 <= rx + w)
+        margin = 0.1 * max(left[2], right[2])
+        if own and gap_l >= margin and gap_r >= margin:
+            return even(w), even(h)
+        w *= 0.96
+    return None
+
+
+def _split_segment(hits, a, b, disp_w, disp_h):
+    people = _split_people(hits)
+    if not people:
+        return None
+    size = split_window(people, disp_w, disp_h)
+    if not size:
+        return None
+    return {'a': a, 'b': b, 'layout': 'split', 'x': None, 'keys': None, 'people': people, 'size': size}
+
+
+def _finish_split(segs, disp_w, disp_h):
+    """Gives every split segment of a clip the SAME window size (the
+    tightest any of them needs) and works out where each pane's window sits.
+
+    One size for the whole clip because ffmpeg's crop can move its window
+    frame by frame but cannot resize it; a tighter window than a shot
+    strictly needs only frames its two people a little closer."""
+    splits = [s for s in segs if s['layout'] == 'split']
+    if not splits:
+        return
+    w = min(s['size'][0] for s in splits)
+    full_w, full_h = split_pane_size(disp_w, disp_h)
+    h = min(even(w * full_h / float(full_w)), even(disp_h))
+    for s in splits:
+        s['size'] = (w, h)
+        s['panes'] = [tuple(int(round(v)) for v in _pane_origin(f, w, h, disp_w, disp_h)) for f in s['people']]
+
+
+def split_exprs(segs):
+    """ffmpeg expressions for the two panes' crop origins, as functions of
+    the frame number: ((top x, top y), (bottom x, bottom y))."""
+    def expr(pane, axis):
+        return '+'.join(f"between(n,{s['a']},{s['b']})*{s['panes'][pane][axis]}"
+                        for s in segs if s['layout'] == 'split') or '0'
+    return (expr(0, 0), expr(0, 1)), (expr(1, 0), expr(1, 1))
+
+
+# The quieter of two people must hold the floor for this share of a shot
+# before the shot counts as a conversation worth splitting the screen for.
+SPLIT_MIN_SHARE = 0.2
+
+
+def _both_talk(turns, a, b):
+    """Whether a shot's speaker turns amount to two people talking, not one
+    person talking and the other getting a word (or a laugh) in. Measured on
+    a real clip: one speaker for 19 of 20 seconds, the other credited with
+    the last second, and the whole shot was being split on the strength of
+    that second."""
+    held = {}
+    for t in turns:
+        held[t['person']] = held.get(t['person'], 0) + (t['b'] - t['a'] + 1)
+    shares = sorted(held.values(), reverse=True)
+    return len(shares) > 1 and shares[1] >= SPLIT_MIN_SHARE * (b - a + 1)
+
+
+def _wide_shot(hits, a, b, fps, mode, speaker, speech, disp_w, disp_h, crop_w, max_x, static_px):
+    """Segments for a shot whose faces don't fit one vertical frame, or None
+    for 'always crop' to commit to a side (which the caller does).
+
+    In order: split the screen if asked and both people are (or may be)
+    talking; follow the speaker if asked and it can be called; otherwise
+    the whole frame."""
+    turns = _speaker_segments(hits, a, b, fps, speech, crop_w, max_x, static_px) if speaker else None
+    if mode == 'split' and (turns is None or _both_talk(turns, a, b)):
+        seg = _split_segment(hits, a, b, disp_w, disp_h)
+        if seg:
+            return [seg]
+    if turns:
+        return turns
+    if mode in ('auto', 'split'):
+        return [{'a': a, 'b': b, 'layout': 'fit', 'x': None, 'keys': None}]
+    return None
 
 
 def plan_reframe(samples, shot_starts, n_frames, disp_w, disp_h, crop_w, mode='auto', fps=25.0,
@@ -1193,7 +1334,14 @@ def plan_reframe(samples, shot_starts, n_frames, disp_w, disp_h, crop_w, mode='a
     and `speech`, the [(start, end)] of the spoken words in clip seconds):
     the shot is then cut between tight framings of whoever is speaking,
     see speaker_turns(). A shot it can't call falls through to what `mode`
-    would have done anyway."""
+    would have done anyway.
+
+    mode='split' is 'auto' with a different answer to that same second case:
+    when the shot is exactly two people, each gets half the frame, stacked
+    (layout 'split'; _finish_split adds its 'size' and 'panes'). With
+    speaker=True as well it is split only while BOTH of them talk: a shot
+    where one person does all the talking is framed on that person, since
+    half the screen is a lot to give to someone listening."""
     n_frames = int(n_frames)
     max_x = max(0.0, float(disp_w - crop_w))
     center = max_x / 2.0
@@ -1222,11 +1370,9 @@ def plan_reframe(samples, shot_starts, n_frames, disp_w, disp_h, crop_w, mode='a
         fits = [t['span_w'] <= 0.9 * crop_w for _, t in hits]
         if sum(fits) >= 0.6 * len(hits):
             targets = [(i, t['span_cx'] if ok else t['big_cx']) for (i, t), ok in zip(hits, fits)]
-        elif speaker and (turns := _speaker_segments(hits, a, b, fps, speech, crop_w, max_x, static_px)):
-            segs.extend(turns)
-            continue
-        elif mode == 'auto':
-            segs.append({'a': a, 'b': b, 'layout': 'fit', 'x': None, 'keys': None})
+        elif (placed := _wide_shot(hits, a, b, fps, mode, speaker, speech, disp_w, disp_h,
+                                   crop_w, max_x, static_px)) is not None:
+            segs.extend(placed)
             continue
         else:
             mid = float(np.median([t['span_cx'] for _, t in hits]))
@@ -1295,11 +1441,13 @@ def plan_reframe(samples, shot_starts, n_frames, disp_w, disp_h, crop_w, mode='a
             keys.append((b, x_b))
         segs.append({'a': a, 'b': b, 'layout': 'crop', 'x': None, 'keys': keys})
 
+    _finish_split(segs, disp_w, disp_h)
     merged = []
     for s in segs:
         p = merged[-1] if merged else None
         if p and p['layout'] == s['layout'] and not p['keys'] and not s['keys'] and (
-                s['layout'] == 'fit' or abs((p['x'] or 0) - (s['x'] or 0)) < 1.0):
+                s['layout'] == 'fit' or (s['layout'] == 'split' and p['panes'] == s['panes'])
+                or (s['layout'] == 'crop' and abs((p['x'] or 0) - (s['x'] or 0)) < 1.0)):
             p['b'] = s['b']
         else:
             merged.append(dict(s))
@@ -1366,8 +1514,6 @@ def build_filtergraph(info, segs, out_w=OUT_W, out_h=OUT_H, ass_name=None):
     pre.append('setsar=1')
     pre = ','.join(pre)
 
-    has_crop = any(s['layout'] == 'crop' for s in segs)
-    has_fit = any(s['layout'] == 'fit' for s in segs)
     y = even((disp_h - crop_h) / 2.0) if disp_h > crop_h else 0
     crop_chain = (f"crop={crop_w}:{crop_h}:x='{crop_x_expr(segs)}':y={y},"
                   f"scale={out_w}:{out_h}:flags=lanczos")
@@ -1379,14 +1525,35 @@ def build_filtergraph(info, segs, out_w=OUT_W, out_h=OUT_H, ass_name=None):
                  f"boxblur=12:2,scale={out_w}:{out_h}:flags=bilinear,lutyuv=y='16+(val-16)*0.72'[bg];"
                  f"[fb]scale={fg_w}:{fg_h}:flags=lanczos[fg];"
                  f"[bg][fg]overlay=(W-w)/2:(H-h)/2")
-    if has_crop and has_fit:
-        enable = '+'.join(f"between(n,{s['a']},{s['b']})" for s in segs if s['layout'] == 'fit')
-        g = (f"[0:v]{pre},split=2[c0][f0];[c0]{crop_chain}[cv];[f0]{fit_chain}[fv];"
-             f"[cv][fv]overlay=0:0:enable='{enable}'[v1]")
-    elif has_fit:
-        g = f"[0:v]{pre},{fit_chain}[v1]"
+    chains = {'crop': crop_chain, 'fit': fit_chain}
+    splits = [s for s in segs if s['layout'] == 'split']
+    if splits:
+        # Two windows of one size, each moved to its person shot by shot and
+        # stacked, with a thin dark line where they meet so the join reads
+        # as a deliberate split rather than a torn frame.
+        sw, sh = splits[0]['size']
+        (tx, ty), (bx, by) = split_exprs(segs)
+        half = out_h // 2
+        chains['split'] = (f"split=2[sa][sb];"
+                           f"[sa]crop={sw}:{sh}:x='{tx}':y='{ty}',scale={out_w}:{half}:flags=lanczos[st];"
+                           f"[sb]crop={sw}:{sh}:x='{bx}':y='{by}',scale={out_w}:{half}:flags=lanczos[sm];"
+                           f"[st][sm]vstack,drawbox=x=0:y={half - 3}:w={out_w}:h=6:color=black@0.85:t=fill")
+    # One version of the clip per layout in use, the first as the base and
+    # each other laid over it only during its own shots, switched by frame
+    # number. (crop, fit, split) is also the order the labels are built in.
+    used = [name for name in ('crop', 'fit', 'split') if any(s['layout'] == name for s in segs)] or ['crop']
+    if len(used) == 1:
+        g = f"[0:v]{pre},{chains[used[0]]}[v1]"
     else:
-        g = f"[0:v]{pre},{crop_chain}[v1]"
+        tag = {'crop': 'c', 'fit': 'f', 'split': 's'}
+        g = f"[0:v]{pre},split={len(used)}" + ''.join(f'[{tag[u]}0]' for u in used) + ';'
+        g += ';'.join(f'[{tag[u]}0]{chains[u]}[{tag[u]}v]' for u in used) + ';'
+        base = f'[{tag[used[0]]}v]'
+        for i, u in enumerate(used[1:]):
+            enable = '+'.join(f"between(n,{s['a']},{s['b']})" for s in segs if s['layout'] == u)
+            out = '[v1]' if i == len(used) - 2 else f'[m{i}]'
+            g += f"{base}[{tag[u]}v]overlay=0:0:enable='{enable}'{out}" + ('' if out == '[v1]' else ';')
+            base = out
     # setpts first: frame 0 at time 0 exactly, so captions (timed from the
     # clip start) and the encoder's frame slots both line up with `n`.
     tail = 'setpts=PTS-STARTPTS,' + (f'ass={ass_name},' if ass_name else '') + 'format=yuv420p,setsar=1'
@@ -1464,6 +1631,22 @@ def subtitle_cues(words, segments, start, end, max_chars=26, max_words=6, max_du
     return out
 
 
+def place_cues(cues, segs, fps):
+    """Marks the cues that play over a split-screen shot (cue['seam'] = True)
+    so write_ass centres them on the join between the two panes.
+
+    Their usual place, low in the frame, is the middle of the lower pane --
+    across the chin of whoever is in it. The join is the one strip of a
+    split screen with nobody's face on it. A cue belongs to the layout its
+    midpoint falls in, so one that straddles a cut isn't moved for the sake
+    of a few frames."""
+    spans = [(s['a'], s['b']) for s in segs if s['layout'] == 'split']
+    for c in cues:
+        mid = (c['start'] + c['end']) / 2.0 * fps
+        c['seam'] = any(a <= mid <= b for a, b in spans)
+    return cues
+
+
 def _ass_time(t):
     cs = int(round(max(0.0, t) * 100))
     return f'{cs // 360000}:{(cs // 6000) % 60:02d}:{(cs // 100) % 60:02d}.{cs % 100:02d}'
@@ -1495,6 +1678,8 @@ def write_ass(cues, path, size='m', font='Arial', out_w=OUT_W, out_h=OUT_H):
     for c in cues:
         text = c['text'].replace('\\', '/').replace('{', '(').replace('}', ')')
         text = ' '.join(text.split())
+        if c.get('seam'):       # see place_cues: centred on the join of a split screen
+            text = f'{{\\an5\\pos({out_w // 2},{out_h // 2})}}' + text
         lines.append(f"Dialogue: 0,{_ass_time(c['start'])},{_ass_time(c['end'])},Cap,,0,0,0,,{text}")
     with open(path, 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines) + '\n')

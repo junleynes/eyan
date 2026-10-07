@@ -6990,6 +6990,7 @@ document.getElementById('vf').addEventListener('submit', async function(e){
     <span style="display:inline-flex;gap:6px;align-items:center;font-size:12px">Reframe
       <select id=sh-reframe title="How a 16:9 picture becomes 9:16, decided shot by shot" onchange="shSyncSpeaker()">
         <option value=auto selected>Auto &mdash; follow faces, keep wide two-shots whole</option>
+        <option value=split>Split screen &mdash; follow faces, stack wide two-shots</option>
         <option value=crop>Always crop &mdash; fill the screen</option>
         <option value=fit>Fit &mdash; whole frame, blurred background</option>
       </select>
@@ -7519,6 +7520,7 @@ function shLayoutNote(l){
   if(l.tracked) how.push(l.tracked + ' following movement')
   if(l.speaker) how.push(l.speaker + ' on the speaker')
   if(l.crop) bits.push(l.crop + ' cropped' + (how.length ? ' (' + how.join(', ') + ')' : ''))
+  if(l.split) bits.push(l.split + ' split screen')
   if(l.fit) bits.push(l.fit + ' shown whole')
   return bits.length ? 'Shots: ' + bits.join(', ') : ''
 }
@@ -7529,7 +7531,7 @@ function shBatchCard(b, fresh){
   card.setAttribute('data-batch', b.batch_id)
   var when = b.created ? new Date(b.created * 1000).toLocaleString() : ''
   var o = b.options || {}
-  var reframe = {auto: 'auto reframe', crop: 'always crop', fit: 'fit'}[o.reframe] || ''
+  var reframe = {auto: 'auto reframe', split: 'split screen', crop: 'always crop', fit: 'fit'}[o.reframe] || ''
   var head = '<div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline">' +
     '<div><b>' + escapeHtmlLite(b.orig_name || 'Untitled') + '</b> <span style="font-size:12px;opacity:.7">' +
       b.shorts.length + ' short' + (b.shorts.length === 1 ? '' : 's') + (reframe ? ' &middot; ' + reframe : '') +
@@ -8258,8 +8260,9 @@ job. Configured via env vars:
       <h3>3. Render</h3>
       <ul style="line-height:1.8;padding-left:20px">
         <li><strong>Auto</strong> reframes shot by shot: it crops to the face or faces, follows a subject that really moves, and for a shot where two similar-sized faces are too far apart to fit a vertical frame it shows the whole picture over a blurred copy of itself rather than cut someone out.</li>
+        <li><strong>Split screen</strong> is Auto with a different answer for those wide two-shots: when the shot is exactly two people, each gets half the frame &mdash; the one on the left on top, the one on the right below &mdash; and captions move to the join between them. Each half is tightened until the other person's face is out of it. A shot with three or more faces, or two it cannot separate cleanly, is shown whole as in Auto.</li>
         <li><strong>Always crop</strong> fills the screen on every shot and commits to one side of a wide two-shot. <strong>Fit</strong> always shows the whole picture.</li>
-        <li><strong>Follow the speaker</strong> (off unless ticked) changes only those wide two-shots: it cuts between close framings of whoever is talking, holding each for at least a second or so and changing just before the next line. It decides from how much each mouth moves while the transcript says words are being spoken. Where it cannot tell &mdash; nobody speaking, a face turned away, two mouths moving alike &mdash; the shot is reframed exactly as it would be with the option off.</li>
+        <li><strong>Follow the speaker</strong> (off unless ticked) changes only those wide two-shots: it cuts between close framings of whoever is talking, holding each for at least a second or so and changing just before the next line. It decides from how much each mouth moves while the transcript says words are being spoken. Where it cannot tell &mdash; nobody speaking, a face turned away, two mouths moving alike &mdash; the shot is reframed exactly as it would be with the option off. With <strong>Split screen</strong> it works the other way round: the screen is split while both people talk, and a shot where only one of them talks is framed on that one.</li>
         <li><strong>Captions</strong> are burned in from the transcript a few words at a time, and an <code>.srt</code> is saved next to each MP4.</li>
       </ul>
       <p>Batches are kept under <strong>Saved shorts</strong> until deleted: play, download one or all (.zip), or send to a video network destination.</p>
@@ -8274,7 +8277,7 @@ job. Configured via env vars:
                           + auto_render=1, reframe, speaker, subtitles, subtitle_size  (render every moment found, no review)
 GET  /api/shorts/progress/&lt;job_id&gt;
 GET  /api/shorts/analysis/&lt;analysis_id&gt;
-POST /api/shorts/render   {analysis_id, items:[{start,end,title}], reframe, speaker?, subtitles}
+POST /api/shorts/render   {analysis_id, items:[{start,end,title}], reframe: auto|split|crop|fit, speaker?, subtitles}
 GET  /api/shorts/batches</pre>
     </div>
 

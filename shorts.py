@@ -546,7 +546,8 @@ def _run_render(jid, params):
                   if speaker else None)
         segs = sc.plan_reframe(samples, shot_starts, n_frames, info['disp_w'], info['disp_h'], crop_w,
                                mode=reframe, fps=fps, speaker=speaker, speech=speech)
-        cues = sc.subtitle_cues(a['words'], a['segments'], start_f / fps, end_f / fps, max_chars=max_chars)
+        cues = sc.place_cues(
+            sc.subtitle_cues(a['words'], a['segments'], start_f / fps, end_f / fps, max_chars=max_chars), segs, fps)
 
         name = f"{stem}_short_{n:02d}_{sc.slugify(it['title'], 40) or 'clip'}"
         out_path = os.path.join(bdir, name + '.mp4')
@@ -581,7 +582,8 @@ def _run_render(jid, params):
                  'layouts': {'crop': sum(1 for s in segs if s['layout'] == 'crop'),
                              'fit': sum(1 for s in segs if s['layout'] == 'fit'),
                              'tracked': sum(1 for s in segs if s.get('keys')),
-                             'speaker': sum(1 for s in segs if s.get('speaker'))},
+                             'speaker': sum(1 for s in segs if s.get('speaker')),
+                             'split': sum(1 for s in segs if s['layout'] == 'split')},
                  'captions': bool(ass_name)}
         if cues:
             sc.write_srt(cues, os.path.join(bdir, name + '.srt'))
@@ -774,7 +776,7 @@ def _render_options(data):
     """reframe / speaker / subtitles / subtitle_size from a request body --
     JSON for /render, form fields for /analyze's one-button path -- with
     anything unrecognised falling back to the default rather than failing."""
-    reframe = data.get('reframe') if data.get('reframe') in ('auto', 'crop', 'fit') else 'auto'
+    reframe = data.get('reframe') if data.get('reframe') in ('auto', 'split', 'crop', 'fit') else 'auto'
     # Absent means "whatever this server defaults to", so a client that
     # predates the option, or a script, gets the configured behaviour.
     speaker = data.get('speaker', SHORTS_SPEAKER_CROP) in (True, 1, '1', 'true', 'on', 'yes')

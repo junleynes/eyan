@@ -236,6 +236,43 @@ def test_mixed_layouts_switch_on_the_cut_and_fit_shows_the_whole_frame(split_sou
     assert top != _rgb(fr[30], 200, 960) and sum(top) > 30, 'bars are a darkened blur of the picture, not black'
 
 
+def test_split_screen_stacks_the_two_sides_and_switches_on_the_cut(split_source, tmp_path):
+    """Shot A is red|blue and shot B green|yellow, so a pane's colour says
+    which side of which shot it was cut from. Two "people", one deep in each
+    half of the picture: the left one must come out on top, the right one
+    below, each in a pane the other's side does not reach the middle of."""
+    info = sc.probe_source('ffprobe', str(split_source))
+    crop_w, _ = sc.crop_geometry(info['disp_w'], info['disp_h'])
+    faces = [(60.0, 150.0, 60.0, 60.0), (580.0, 150.0, 60.0, 60.0)]
+    samples = [(i, [(100.0, 150.0, 60.0, 60.0)] if i < 20 else faces) for i in range(0, 60, 2)]
+    # The short runs from source frame 20; the source cuts at 50, i.e. frame 30 here.
+    segs = sc.plan_reframe(samples, [20, 30], 60, info['disp_w'], info['disp_h'], crop_w, mode='split')
+    assert [(s['a'], s['b'], s['layout']) for s in segs] == [(0, 19, 'crop'), (20, 59, 'split')]
+    out = tmp_path / 'splitscreen.mp4'
+    ok, err = sc.render_short('ffmpeg', str(split_source), str(out), 20, 60, info, segs, preset='ultrafast')
+    assert ok, err
+    fr = _frames(out)
+    assert len(fr) == 60 and fr[0].shape[:2] == (1920, 1080)
+    assert _colour(fr[19], 540, 480) == 'red' and _colour(fr[19], 540, 1440) == 'red', 'still the single crop'
+    # Frame 20 on: top pane from the left of the picture, bottom pane from the right.
+    assert (_colour(fr[20], 200, 480), _colour(fr[20], 880, 1440)) == ('red', 'blue')
+    assert (_colour(fr[29], 200, 480), _colour(fr[29], 880, 1440)) == ('red', 'blue')
+    # And the source's own cut lands on its frame inside the split.
+    assert (_colour(fr[30], 200, 480), _colour(fr[30], 880, 1440)) == ('green', 'yellow')
+    assert sum(_rgb(fr[40], 540, 960)) < 120, 'a dark line where the two panes meet'
+
+    # All three layouts in one short.
+    three = [{'a': 0, 'b': 19, 'layout': 'fit', 'x': None, 'keys': None}, dict(segs[1], b=39),
+             {'a': 40, 'b': 59, 'layout': 'crop', 'x': float(info['disp_w'] - crop_w), 'keys': None}]
+    out3 = tmp_path / 'three.mp4'
+    ok, err = sc.render_short('ffmpeg', str(split_source), str(out3), 20, 60, info, three, preset='ultrafast')
+    assert ok, err
+    fr = _frames(out3)
+    assert (_colour(fr[10], 200, 960), _colour(fr[10], 880, 960)) == ('red', 'blue'), 'fit: both halves side by side'
+    assert (_colour(fr[25], 200, 480), _colour(fr[25], 880, 1440)) == ('red', 'blue'), 'split: stacked'
+    assert _colour(fr[45], 540, 480) == 'yellow' and _colour(fr[45], 540, 1440) == 'yellow', 'crop: right of shot B'
+
+
 def test_a_panning_crop_moves_smoothly_between_keyframes(split_source, tmp_path):
     info = sc.probe_source('ffprobe', str(split_source))
     crop_w, _ = sc.crop_geometry(info['disp_w'], info['disp_h'])
@@ -803,6 +840,8 @@ def test_render_validates_every_item(env, monkeypatch):
     # A valid request: range clamped to the video, blank title given a name, unknown options defaulted.
     r = post([{'start': -5, 'end': 8, 'title': '  '}, {'start': 16, 'end': 99, 'title': 'x' * 200}],
              reframe='sideways', subtitle_size='huge', subtitles=False)
+    post([{'start': 0, 'end': 8, 'title': 'T'}], reframe='split')
+    assert started.pop()['reframe'] == 'split'
     assert r.status_code == 200 and len(started) == 1
     p = started[0]
     assert [(i['start'], i['title'][:8]) for i in p['items']] == [(0.0, 'Short 1'), (16.0, 'xxxxxxxx')]
@@ -840,7 +879,7 @@ def test_full_flow_render_save_download_send_delete(env, monkeypatch):
     assert s1['file'] == 'episode_short_01_Ang_lihim_ni_Ramon.mp4', 'a safe filename from the title'
     assert s2['file'] == 'episode_short_02_Short_2.mp4' and s2['title'] == 'Short 2'
     assert batch['options']['speaker'] is False
-    assert abs(s2['duration'] - 4.0) < 0.05 and s2['layouts'] == {'crop': 1, 'fit': 0, 'tracked': 0, 'speaker': 0}, \
+    assert abs(s2['duration'] - 4.0) < 0.05 and s2['layouts'] == {'crop': 1, 'fit': 0, 'tracked': 0, 'speaker': 0, 'split': 0}, \
         'two faceless shots, both centre-cropped at the same x, merge into one instruction'
     bdir = os.path.join(shorts.SHORTS_DIR, batch['batch_id'])
     assert sorted(os.listdir(bdir)) == sorted(['batch.json'] + [s[k] for s in (s1, s2) for k in ('file', 'srt')] +
@@ -971,11 +1010,11 @@ def test_follow_the_speaker_is_applied_only_when_asked_and_recorded_on_the_batch
 
     off = _render(client, headers, aid, items, subtitles=False)['result']['batch']
     assert off['options']['speaker'] is False
-    assert off['shorts'][0]['layouts'] == {'crop': 0, 'fit': 1, 'tracked': 0, 'speaker': 0}, 'shown whole, as before'
+    assert off['shorts'][0]['layouts'] == {'crop': 0, 'fit': 1, 'tracked': 0, 'speaker': 0, 'split': 0}, 'shown whole, as before'
 
     on = _render(client, headers, aid, items, subtitles=False, speaker=True)['result']['batch']
     assert on['options']['speaker'] is True and on['warnings'] == []
-    assert on['shorts'][0]['layouts'] == {'crop': 2, 'fit': 0, 'tracked': 0, 'speaker': 2}, \
+    assert on['shorts'][0]['layouts'] == {'crop': 2, 'fit': 0, 'tracked': 0, 'speaker': 2, 'split': 0}, \
         'one framing per person: the cut between them falls inside the 3-6 s shot, not on a shot change'
     assert asked == [False, True]
     fr = _frames(os.path.join(shorts.SHORTS_DIR, on['batch_id'], on['shorts'][0]['file']))
@@ -984,6 +1023,19 @@ def test_follow_the_speaker_is_applied_only_when_asked_and_recorded_on_the_batch
     # "Fit" crops nothing, so there is nothing for the option to do.
     fit = _render(client, headers, aid, items, subtitles=False, speaker=True, reframe='fit')['result']['batch']
     assert fit['options']['speaker'] is False and fit['shorts'][0]['layouts']['speaker'] == 0
+
+    # "Split screen": the same two people stacked instead of shown whole...
+    split = _render(client, headers, aid, items, subtitles=False, reframe='split')['result']['batch']
+    assert split['options']['reframe'] == 'split'
+    assert split['shorts'][0]['layouts'] == {'crop': 0, 'fit': 0, 'tracked': 0, 'speaker': 0, 'split': 1}
+    fr = _frames(os.path.join(shorts.SHORTS_DIR, split['batch_id'], split['shorts'][0]['file']))
+    assert len(fr) == 200 and fr[0].shape[:2] == (1920, 1080)
+    # ...and with "Follow the speaker" as well, only where both of them talk.
+    # Here no shot holds a real exchange (the second voice gets a second of
+    # the middle one), so each is framed on its speaker and nobody is stacked.
+    both = _render(client, headers, aid, items, subtitles=False, reframe='split', speaker=True)['result']['batch']
+    assert both['options'] == dict(split['options'], speaker=True)
+    assert both['shorts'][0]['layouts'] == {'crop': 2, 'fit': 0, 'tracked': 0, 'speaker': 2, 'split': 0}
 
 
 def test_follow_the_speaker_without_a_transcript_is_skipped_with_a_warning(env, monkeypatch):
@@ -1027,7 +1079,7 @@ def test_one_failed_short_does_not_lose_the_others(env, monkeypatch):
     assert batch['status'] == 'partial'
     assert [s['title'] for s in batch['shorts']] == ['One', 'Three']
     assert batch['errors'] == [{'index': 2, 'title': 'Two', 'error': 'Conversion failed!'}]
-    assert all(s['layouts'] == {'crop': 0, 'fit': 1, 'tracked': 0, 'speaker': 0} and s['captions'] is False for s in batch['shorts'])
+    assert all(s['layouts'] == {'crop': 0, 'fit': 1, 'tracked': 0, 'speaker': 0, 'split': 0} and s['captions'] is False for s in batch['shorts'])
     assert all(s['srt'] for s in batch['shorts']), 'the .srt is written even when captions are not burned in'
 
 
