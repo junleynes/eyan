@@ -405,7 +405,10 @@ class Services:
         self.vision_reply = lambda n: {'response': json.dumps({'score': 4 if n % 2 else 2, 'desc': 'two people arguing'})}
         self.story_reply = self._default_story
         monkeypatch.setattr(sc.requests, 'post', self._post)
-        monkeypatch.setattr(pipeline, 'transcribe_video', lambda path: (self.words, self.segs))
+        self.heard = {'ok': True, 'reason': None if (self.words or self.segs)
+                      else 'the speech-to-text service found no speech in the audio'}
+        monkeypatch.setattr(pipeline, 'transcribe_video_detailed',
+                            lambda path: (self.words, self.segs, self.heard))
         monkeypatch.setattr(pipeline, 'unload_ollama_model', lambda m: self.unloaded.append(m))
 
     @staticmethod
@@ -753,6 +756,34 @@ def test_a_phase_maps_its_progress_and_keeps_done_to_itself(monkeypatch):
     assert calls == [('j1', {'percent': 56, 'step': 'Preparing'}),
                      ('j1', {'percent': 100, 'step': 'Done', 'done': True,
                              'result': {'batch': {'batch_id': 'b'}, 'analysis_id': 'abc'}})]
+
+
+def test_a_failed_transcription_stops_the_job_with_the_reason_instead_of_guessing(env, monkeypatch):
+    """The whisper service was up (it passed the check at the start) and then
+    answered the actual request with an error. That used to look exactly
+    like an episode with no dialogue: moments were picked on picture alone
+    and offered as if they had been checked for story."""
+    svc = Services(monkeypatch, words=[], segs=[])
+    svc.heard = {'ok': False, 'reason': 'the speech-to-text service at http://localhost:8000 answered with an '
+                                        'error (HTTP 500 for model "large-v2"): CUDA out of memory'}
+    client, headers = _client()
+    job = _analyze(client, headers, env)
+    assert job['done'] and job['error'].startswith('Could not transcribe the dialogue: ')
+    assert 'HTTP 500' in job['error'] and 'CUDA out of memory' in job['error']
+    assert shorts.ANALYSES == {} and svc.story_prompts == []
+    # The one-button path stops there too: nothing is rendered from a guess.
+    job = _analyze(client, headers, env, auto_render='1')
+    assert 'Could not transcribe' in job['error'] and os.listdir(shorts.SHORTS_DIR) == []
+
+
+def test_a_source_with_nothing_to_hear_still_falls_back_and_says_what_was_found(env, monkeypatch):
+    svc = Services(monkeypatch, words=[], segs=[])
+    svc.heard = {'ok': True, 'reason': 'the file has no audio track'}
+    svc.vision_reply = lambda n: {'response': json.dumps({'score': 5, 'desc': 'a fight'})}
+    client, headers = _client()
+    a = _analysis(client, _analyze(client, headers, env))
+    assert a['candidates'] and all(c['source'] == 'visual' for c in a['candidates'])
+    assert any(w.startswith('No dialogue was transcribed (the file has no audio track)') for w in a['warnings'])
 
 
 def test_a_source_too_short_for_the_requested_length_is_refused(env, monkeypatch):

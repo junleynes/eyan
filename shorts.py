@@ -380,7 +380,16 @@ def _run_analysis(jid, params):
 
     # ---- Layer 2: does it tell a story ----
     report(percent=46, step='Transcribing dialogue')
-    words, segments = pipeline.transcribe_video(path)
+    words, segments, heard = pipeline.transcribe_video_detailed(path)
+    if not heard.get('ok'):
+        # A transcription that FAILED is not a programme without dialogue.
+        # Carrying on would pick moments on picture alone and present them
+        # like any others -- the outcome the up-front service check exists
+        # to prevent, arrived at by a different road.
+        report(error=f"Could not transcribe the dialogue: {heard.get('reason') or 'unknown error'}. "
+                     'Moments are chosen from what is said as well as what is seen, so nothing was picked. '
+                     'Fix the speech-to-text service (Config > Services) and try again.')
+        return
     words, segments = sc.normalize_transcript(words, segments)
 
     warnings = []
@@ -422,9 +431,9 @@ def _run_analysis(jid, params):
             pipeline.unload_ollama_model(story_model)
     else:
         beats = sc.visual_windows(visual, min_dur, max_dur, duration, count)
-        warnings.append('No dialogue was transcribed (a source with no speech, or the speech-to-text service '
-                        'returned nothing), so these were picked on visual intensity alone -- they are not '
-                        'checked for making sense as a story.')
+        warnings.append(f"No dialogue was transcribed ({heard.get('reason') or 'nothing was heard'}), so these "
+                        'were picked on visual intensity alone -- they are not checked for making sense as a '
+                        'story.')
 
     if (params.get('focus') or params.get('avoid')) and beats and beats[0].get('source') in ('heuristic', 'visual'):
         # The two fallbacks rank on sound and picture; neither reads meaning,

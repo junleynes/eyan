@@ -2930,67 +2930,140 @@ def nearest_beat(target, beats, lo, hi):
     return min(candidates, key=lambda b: abs(b - target))
 
 # ---- whisper service — dialogue transcription to improve scene selection ----
-def transcribe_video(path):
-    """Transcribe the source video's dialogue via the local whisper service
+# How long one transcription request may take. A whole episode on a busy or
+# CPU-only whisper server runs well past the ten minutes this used to be
+# fixed at, and a request cut off at the limit looks exactly like a file
+# with no speech in it.
+WHISPER_TIMEOUT = int(os.environ.get('WHISPER_TIMEOUT', 1800))
+
+
+def _whisper_request(audio_path, upload_name):
+    """One transcription request. Both granularities are asked for by name:
+    asked for 'word' alone, some servers leave `segments` out or send it as
+    null, which is not the same as there being no speech."""
+    with open(audio_path, 'rb') as f:
+        return requests.post(
+            f'{WHISPER_URL}/v1/audio/transcriptions',
+            files={'file': (upload_name, f, 'audio/wav')},
+            data={
+                'model': WHISPER_MODEL,
+                'response_format': 'verbose_json',
+                'timestamp_granularities[]': ['word', 'segment'],
+            },
+            timeout=WHISPER_TIMEOUT,
+        )
+
+
+def _whisper_reply(data):
+    """(words, segments) from a verbose_json reply, whatever the server left
+    out: a missing or null list is an empty one, a row without usable times
+    is skipped, and lines are built from the words when only words came."""
+    if not isinstance(data, dict):
+        raise ValueError(f'unexpected reply ({type(data).__name__}, not a JSON object)')
+    words, segments = [], []
+    for seg in data.get('segments') or []:
+        try:
+            text = (seg.get('text') or '').strip()
+            if text:
+                segments.append({'start': float(seg['start']), 'end': float(seg['end']), 'text': text})
+        except (AttributeError, KeyError, TypeError, ValueError):
+            continue
+    for w in data.get('words') or []:
+        try:
+            word = (w.get('word') or '').strip()
+            if word:
+                words.append({'start': float(w['start']), 'end': float(w['end']), 'word': word})
+        except (AttributeError, KeyError, TypeError, ValueError):
+            continue
+    if words and not segments:
+        import shorts_core      # no PRISM imports of its own, so nothing circular
+        segments = shorts_core.segments_from_words(words)
+    return words, segments
+
+
+def _whisper_problem(e):
+    """A sentence an editor can act on for why a transcription request failed."""
+    if isinstance(e, requests.exceptions.Timeout):
+        return (f'the speech-to-text service at {WHISPER_URL} did not answer within {WHISPER_TIMEOUT} seconds. '
+                'It may be overloaded or running without a GPU; WHISPER_TIMEOUT in .env raises the limit')
+    if isinstance(e, requests.exceptions.ConnectionError):
+        return f'could not connect to the speech-to-text service at {WHISPER_URL}'
+    if isinstance(e, requests.exceptions.HTTPError) and e.response is not None:
+        body = ' '.join((e.response.text or '').split())[:240]
+        return (f'the speech-to-text service at {WHISPER_URL} answered with an error '
+                f'(HTTP {e.response.status_code} for model "{WHISPER_MODEL}")' + (f': {body}' if body else ''))
+    return f'the speech-to-text service at {WHISPER_URL} sent a reply that could not be read ({e})'
+
+
+def transcribe_video_detailed(path):
+    """Transcribe the source's dialogue via the local whisper service
     (WHISPER_URL, an OpenAI-compatible /v1/audio/transcriptions endpoint), with
-    word-level timestamps. Returns (words, segments):
+    word-level timestamps. Returns (words, segments, outcome):
       words:    [{'start','end','word'}, ...]
       segments: [{'start','end','text'}, ...]
-    Returns ([], []) if the service is unreachable or transcription fails —
-    callers should treat that as 'feature unavailable' and continue without it.
+      outcome:  {'ok': bool, 'reason': str or None}
 
-    The video's audio is extracted to 16 kHz mono WAV first. This used to POST
-    the whole source container -- for a 45-minute episode that meant pushing
-    several GB over HTTP so the service could demux and discard the video track
-    anyway. Whisper resamples to 16 kHz mono internally regardless, so doing it
-    here costs one cheap ffmpeg pass and cuts the upload by ~100x."""
+    The outcome is what tells an empty result apart. ok=False: it FAILED
+    (audio could not be extracted, the service refused, errored or timed
+    out) and `reason` says how -- nothing is known about the dialogue.
+    ok=True with nothing transcribed: it worked and there was nothing to
+    hear, `reason` saying whether that is a file with no audio track or
+    audio with no speech in it. The two used to be indistinguishable, so a
+    whisper server answering HTTP 500 was reported to editors as "the file
+    contains no speech".
+
+    The audio is extracted to 16 kHz mono WAV first. This used to POST the
+    whole source container -- for a 45-minute episode that meant pushing
+    several GB over HTTP so the service could demux and discard the video
+    track anyway. Whisper resamples to 16 kHz mono internally regardless, so
+    doing it here costs one cheap ffmpeg pass and cuts the upload by ~100x."""
     audio_path = None
     try:
         audio_path = os.path.join(app.config['UPLOAD_FOLDER'],
                                   f'stt_{uuid.uuid4().hex}.wav')
         try:
-            run_ffmpeg([FFMPEG, '-y', '-i', path, '-vn', '-ac', '1', '-ar', '16000',
-                        '-c:a', 'pcm_s16le', audio_path],
-                       timeout=FFMPEG_LONG_TIMEOUT, label='STT audio extract')
+            r = run_ffmpeg([FFMPEG, '-y', '-i', path, '-vn', '-ac', '1', '-ar', '16000',
+                            '-c:a', 'pcm_s16le', audio_path],
+                           timeout=FFMPEG_LONG_TIMEOUT, label='STT audio extract')
         except MediaToolTimeout as e:
             print(f'Whisper: audio extraction timed out ({e}); skipping transcription.')
-            return [], []
+            return [], [], {'ok': False, 'reason': f'extracting the audio took too long and was stopped ({e})'}
         if not (os.path.exists(audio_path) and os.path.getsize(audio_path) > 0):
             print('Whisper: could not extract an audio track from the source; skipping transcription.')
-            return [], []
+            if not probe_media_info(path).get('has_audio'):
+                return [], [], {'ok': True, 'reason': 'the file has no audio track'}
+            import shorts_core
+            why = shorts_core.ffmpeg_error(getattr(r, 'stderr', '') or '', 300)
+            return [], [], {'ok': False, 'reason': 'ffmpeg could not read the audio track' + (f' ({why})' if why else '')}
         upload_name = os.path.splitext(os.path.basename(path))[0] + '.wav'
-        with open(audio_path, 'rb') as f:
-            r = requests.post(
-                f'{WHISPER_URL}/v1/audio/transcriptions',
-                files={'file': (upload_name, f, 'audio/wav')},
-                data={
-                    'model': WHISPER_MODEL,
-                    'response_format': 'verbose_json',
-                    'timestamp_granularities[]': 'word',
-                },
-                timeout=600,
-            )
-        r.raise_for_status()
-        data = r.json()
-        words, segments = [], []
-        for seg in data.get('segments', []):
-            text = (seg.get('text') or '').strip()
-            if text:
-                segments.append({'start': seg['start'], 'end': seg['end'], 'text': text})
-        for w in data.get('words', []):
-            word = (w.get('word') or '').strip()
-            if word:
-                words.append({'start': w['start'], 'end': w['end'], 'word': word})
-        return words, segments
+        try:
+            r = _whisper_request(audio_path, upload_name)
+            r.raise_for_status()
+            words, segments = _whisper_reply(r.json())
+        except Exception as e:
+            print(f'Whisper transcription error (service at {WHISPER_URL}): {e}')
+            return [], [], {'ok': False, 'reason': _whisper_problem(e)}
+        if not words and not segments:
+            return [], [], {'ok': True, 'reason': 'the speech-to-text service found no speech in the audio'}
+        return words, segments, {'ok': True, 'reason': None}
     except Exception as e:
         print(f'Whisper transcription error (service at {WHISPER_URL}): {e}')
-        return [], []
+        return [], [], {'ok': False, 'reason': f'unexpected error ({e})'}
     finally:
         if audio_path and os.path.exists(audio_path):
             try:
                 os.remove(audio_path)
             except OSError:
                 pass
+
+
+def transcribe_video(path):
+    """(words, segments) only -- ([], []) when nothing was transcribed for
+    whatever reason. For callers to which a missing transcript just means
+    carrying on without one (the promo pipeline's dialogue-aware cuts). A
+    caller that has to tell someone WHY uses transcribe_video_detailed()."""
+    words, segments, _ = transcribe_video_detailed(path)
+    return words, segments
 
 
 def transcribe_audio_file(path, trim_start=0.0, trim_end=None):
@@ -3020,28 +3093,10 @@ def transcribe_audio_file(path, trim_start=0.0, trim_end=None):
         if not (os.path.exists(audio_path) and os.path.getsize(audio_path) > 0):
             return [], []
         upload_name = os.path.splitext(os.path.basename(path))[0] + '.wav'
-        with open(audio_path, 'rb') as f:
-            r = requests.post(
-                f'{WHISPER_URL}/v1/audio/transcriptions',
-                files={'file': (upload_name, f, 'audio/wav')},
-                data={
-                    'model': WHISPER_MODEL,
-                    'response_format': 'verbose_json',
-                    'timestamp_granularities[]': 'word',
-                },
-                timeout=600,
-            )
+        r = _whisper_request(audio_path, upload_name)
         r.raise_for_status()
         data = r.json()
-        words, segments = [], []
-        for seg in data.get('segments', []):
-            text = (seg.get('text') or '').strip()
-            if text:
-                segments.append({'start': float(seg['start']), 'end': float(seg['end']), 'text': text})
-        for w in data.get('words', []) or []:
-            word = (w.get('word') or '').strip()
-            if word:
-                words.append({'start': float(w['start']), 'end': float(w['end']), 'word': word})
+        words, segments = _whisper_reply(data)
         # Some servers only return text without segments
         if not segments:
             full = (data.get('text') or '').strip()
@@ -8551,7 +8606,7 @@ def api_stt_transcribe():
     if not src:
         return jsonify(ok=False, error='Upload a video or audio file to transcribe.'), 400
     try:
-        words, segments = transcribe_video(src)
+        words, segments, outcome = transcribe_video_detailed(src)
     finally:
         if os.path.exists(src) and not os.path.basename(src).startswith('net_'):
             try:
@@ -8559,9 +8614,10 @@ def api_stt_transcribe():
             except OSError:
                 pass
     if not segments and not words:
-        return jsonify(ok=False, error='No speech was transcribed. Check that the whisper service '
-                                       f'at {WHISPER_URL} is reachable (see the Config tab) and '
-                                       'that the file actually contains audio.'), 502
+        reason = outcome.get('reason') or 'no reason was given'
+        if outcome.get('ok'):
+            return jsonify(ok=False, error=f'Nothing to transcribe: {reason}.'), 422
+        return jsonify(ok=False, error=f'Transcription failed: {reason}.'), 502
 
     full = ' '.join(sg['text'] for sg in segments).strip()
 
