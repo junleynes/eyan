@@ -455,6 +455,7 @@ def _batch_public(m):
         shorts.append(d)
     proj = sp.load(SHORTS_PROJECTS_DIR, m.get('project_id')) if m.get('project_id') else None
     return {'batch_id': bid, 'orig_name': m.get('orig_name'), 'created': m.get('created'),
+            'source_duration': m.get('source_duration'),
             'username': m.get('username'), 'status': m.get('status'), 'options': m.get('options') or {},
             'shorts': shorts, 'errors': m.get('errors') or [], 'warnings': m.get('warnings') or [],
             'project_id': proj['project_id'] if proj else None,
@@ -1055,6 +1056,7 @@ def _run_render(jid, params):
     manifest = {'batch_id': bid, 'created': time.time(), 'user_id': params.get('user_id'),
                 'username': params.get('username'), 'orig_name': a['orig_name'], 'status': 'rendering',
                 'project_id': a.get('project_id'),
+                'source_duration': round(float(info.get('duration') or 0), 3) or None,
                 'options': {'reframe': reframe, 'subtitles': want_captions,
                             'subtitle_size': params['subtitle_size'],
                             'face_detector': detector.kind if detector else None,

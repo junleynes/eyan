@@ -779,6 +779,8 @@ input.sh-num[type=number]{width:92px}
 .sh-cap-row button{padding:3px 0;line-height:1.2}
 .sh-cap-head{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-dim)}
 @media (max-width:640px){.sh-cap-row{grid-template-columns:62px 62px minmax(0,1fr) 26px}}
+.sh-trt{font-size:12px;opacity:.85;margin-top:10px;padding-top:8px;border-top:1px solid var(--line)}
+.sh-trt-sum{margin-top:14px;line-height:1.7}
 .sh-warn{font-size:12px;line-height:1.5;padding:8px 10px;border-radius:6px;border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);color:var(--amber);margin:8px 0}
 @media (max-width:640px){.sh-cand{grid-template-columns:1fr}}
 /* ---- Output peak/channel meter (Generate Promo Plug result) ---- */
@@ -7159,6 +7161,7 @@ document.getElementById('vf').addEventListener('submit', async function(e){
     <button type=button class="btn-sm" onclick="shortsAddCustom()">Add</button>
     <span id=sh-add-note style="font-size:12px;color:var(--amber)"></span>
   </div>
+  <div id=sh-review-trt class="sh-trt"></div>
 </div>
 
 <div id=sh-results style="display:none;margin-top:18px"></div>
@@ -7684,6 +7687,7 @@ function shSortCands(){
 // "Short 3" on each ticked moment: the number its file will carry, which is
 // its place in the episode among the ones being rendered.
 function shRenumber(){
+  shReviewTrt()
   var kept = SH.cands.filter(function(c){ return c.keep }).slice().sort(function(a, b){ return a.start - b.start || a.end - b.end })
   SH.cands.forEach(function(c, i){
     var chip = document.querySelector('#sh-cands [data-num="' + i + '"]')
@@ -7734,7 +7738,16 @@ function shRenderCands(){
   shUpdateRenderBtn()
 }
 
+function shReviewTrt(){
+  var el = shEl('sh-review-trt'), a = SH.analysis
+  if(!el || !a) return
+  var kept = SH.cands.filter(function(c){ return c.keep })
+  el.innerHTML = shTrtLine(a.duration, kept.length, kept.reduce(function(t, c){ return t + Math.max(0, c.end - c.start) }, 0), 'ticked moment') +
+    ' <span style="opacity:.6">(before any cliffhanger hold)</span>'
+}
+
 function shUpdateRenderBtn(){
+  shReviewTrt()
   var n = SH.cands.filter(function(c){ return c.keep }).length
   var b = shEl('sh-render-btn')
   b.textContent = n ? 'Render ' + n + ' short' + (n === 1 ? '' : 's') : 'Render selected'
@@ -8245,6 +8258,23 @@ async function shBatchCaptions(card, b, s){
 function shDl(url){ return url + (String(url).indexOf('?') < 0 ? '?' : '&') + 'download=1' }
 function shExt(name){ var d = String(name || '').lastIndexOf('.'); return d < 0 ? 'File' : String(name).slice(d + 1).toUpperCase() }
 
+// Running time as broadcast writes it: h:mm:ss, or m:ss under an hour.
+function shTrt(sec){
+  sec = Math.max(0, Math.round(sec || 0))
+  var h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60
+  var pad = function(n){ return (n < 10 ? '0' : '') + n }
+  return h ? h + ':' + pad(m) + ':' + pad(s) : m + ':' + pad(s)
+}
+
+function shTotal(list){ return list.reduce(function(t, s){ return t + (s.duration || 0) }, 0) }
+
+// "Source 45:12 · 8 shorts 9:41 (21% of the source)".
+function shTrtLine(srcDur, n, total, what){
+  return (srcDur ? 'Source TRT <b>' + shTrt(srcDur) + '</b> &middot; ' : '') +
+    n + ' ' + (what || 'short') + (n === 1 ? '' : 's') + ', total TRT <b>' + shTrt(total) + '</b>' +
+    (srcDur && total ? ' (' + Math.round(100 * total / srcDur) + '% of the source)' : '')
+}
+
 function shBatchCard(b, fresh){
   var card = document.createElement('div')
   card.className = 'card'
@@ -8302,6 +8332,7 @@ function shBatchCard(b, fresh){
   }).join('')
   card.innerHTML = head + notes + '<div class="sh-grid">' + tiles + '</div>' +
     '<div data-cap-panel style="display:none"></div>' +
+    '<div class="sh-trt" title="Total running time">' + shTrtLine(b.source_duration, b.shorts.length, shTotal(b.shorts)) + '</div>' +
     (fresh ? '<p class="sh-note">Saved in this project' + (b.project_name ? ', <b>' + escapeHtmlLite(b.project_name) + '</b>' : '') + ': see <b>Shorts in this project</b>. Render again with a different reframe or other moments at any time while this cut is open.</p>' : '')
   card.addEventListener('click', function(e){
     var p = e.target.closest('[data-play]')
@@ -8687,10 +8718,35 @@ async function shProjectBatches(pid){
       return
     }
     d.items.forEach(function(b){ host.appendChild(shBatchCard(b, false)) })
+    host.appendChild(shProjectTrt(d.items))
   }catch(e){
     if(SH.openProject !== pid) return
     host.innerHTML = '<div class=no-data><span style="color:var(--amber)">Could not load this project\'s shorts: ' + escapeHtmlLite(String(e)) + '</span></div>'
   }
+}
+
+// Totals for the project, by source: each episode's running time once, and
+// every short made from it across all its batches.
+function shProjectTrt(batches){
+  var by = {}, order = []
+  batches.forEach(function(b){
+    var k = b.orig_name || 'Untitled'
+    if(!by[k]){ by[k] = {dur: null, n: 0, total: 0}; order.push(k) }
+    if(b.source_duration) by[k].dur = b.source_duration
+    by[k].n += b.shorts.length; by[k].total += shTotal(b.shorts)
+  })
+  var el = document.createElement('div')
+  el.className = 'sh-trt sh-trt-sum'
+  var src = 0, n = 0, total = 0, known = true
+  el.innerHTML = '<b>Totals</b>' + order.map(function(k){
+    var x = by[k]
+    if(x.dur) src += x.dur; else known = false
+    n += x.n; total += x.total
+    return '<div>' + escapeHtmlLite(k) + ': ' + shTrtLine(x.dur, x.n, x.total) + '</div>'
+  }).join('') +
+  (order.length > 1 ? '<div style="margin-top:4px">All sources: ' + shTrtLine(known ? src : null, n, total) + '</div>' : '') +
+  (known ? '' : '<div style="opacity:.6">Source TRT is shown for shorts rendered from now on; older batches did not record it.</div>')
+  return el
 }
 
 function shProjectClose(){
@@ -9734,6 +9790,7 @@ job. Configured via env vars:
           </ul></li>
       </ul>
       <p>Batches are kept in their <strong>project</strong> until deleted: play, download one or all (.zip), or send to a video network destination.</p>
+      <p><strong>Running times.</strong> The bottom of the review list gives the source&rsquo;s total running time (TRT) and the TRT of the moments ticked, as they are ticked and re-timed (before any cliffhanger hold). Each batch ends with its source TRT and the TRT of its shorts, and the bottom of <strong>Shorts in this project</strong> totals them by source &mdash; every short made from that episode, across all its batches &mdash; with the share of the source they come to. Batches rendered before this was added did not record their source&rsquo;s TRT, so only their shorts&rsquo; is shown.</p>
       <h3>Changing captions on a saved short</h3>
       <p><strong>Captions</strong> on a saved short opens the same editor on that short&rsquo;s lines. What saving does depends on where the captions are:</p>
       <ul style="line-height:1.8;padding-left:20px">

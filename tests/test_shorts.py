@@ -2836,3 +2836,13 @@ def test_frames_the_vision_model_sees_as_credits_keep_moments_clear_of_their_sho
     a = _analysis(client, _analyze(client, headers, env))
     assert a['candidates'] and all(c['end'] <= 14.0 + 1e-6 for c in a['candidates'])
     assert any('credits' in w for w in a['warnings'] if w.startswith('Left out of every moment'))
+
+
+def test_a_batch_records_the_running_time_of_its_source(env, monkeypatch):
+    Services(monkeypatch)
+    client, headers = _client()
+    aid = _analyze(client, headers, env)['result']['analysis_id']
+    batch = _render(client, headers, aid, [{'start': 1.0, 'end': 6.0, 'title': 'One'}], reframe='fit')['result']['batch']
+    assert abs(batch['source_duration'] - float(_probe(env['path'])['video']['duration'])) < 0.2
+    listed = client.get(f"/api/shorts/batches?project_id={env['project']}").get_json()['items']
+    assert listed[0]['source_duration'] == batch['source_duration']
