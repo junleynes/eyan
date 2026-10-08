@@ -726,6 +726,191 @@ def test_the_hold_is_made_only_from_frames_in_which_nothing_is_really_moving(tmp
     assert sc.still_frames(str(tmp_path / 'missing.avi'), 39, 25.0) == 1, 'unreadable is not an error here'
 
 
+# ---- line timings moved onto the sound; people found without their faces; the editor's framing ----
+
+def _bursts(spans, seconds=14.0, rate=16000, bed=-52.0, seed=2):
+    rng = np.random.default_rng(seed)
+    t = np.arange(int(seconds * rate)) / rate
+    x = rng.normal(0, 10 ** (bed / 20.0), len(t))
+    for a, b in spans:
+        m = (t >= a) & (t < b)
+        x[m] += 0.12 * np.sin(2 * np.pi * 170 * t[m]) * (0.6 + 0.4 * np.sin(2 * np.pi * 6 * t[m]))
+    return sc.audio_envelope(x, rate)
+
+
+def test_lines_timed_to_the_whole_second_are_moved_onto_their_sound():
+    """Reported, from the caption editor: every line starting and ending on
+    a whole second (30.29, 32.29, 33.29...). The service gives times for
+    lines only, rounded; captions and cut points were up to a second out."""
+    true = [(1.3, 2.6), (3.1, 4.9), (5.4, 6.1), (8.7, 10.2), (10.5, 12.8)]
+    db = _bursts(true)
+    rounded = [{'start': float(round(a + 0.29) - 0.29), 'end': float(round(b + 0.29) - 0.29), 'text': f'line {k}'}
+               for k, (a, b) in enumerate(true)]
+    rounded[2]['end'] = 6.71                                 # (the rounding made this one zero-length)
+    rounded[3]['start'] = 6.71                               # and this one took in two seconds of silence
+    out, moved = sc.align_segments(rounded, db)
+    assert moved == 5 and [s['text'] for s in out] == [s['text'] for s in rounded]
+    for (a, b), s in zip(true, out):
+        assert abs(s['start'] - a) < 0.08 and abs(s['end'] - b) < 0.08, (a, b, s)
+    assert all(out[k]['start'] >= out[k - 1]['end'] for k in range(1, len(out))), 'never over each other'
+    # Over a wall of sound (no quiet to find), or with nothing to go on, a line keeps its times.
+    flat = sc.audio_envelope(np.full(16000 * 14, 0.1) * np.sin(np.arange(16000 * 14) / 7.0), 16000)
+    assert sc.align_segments(rounded, flat) == (rounded, 0)
+    assert sc.align_segments(rounded, None) == (rounded, 0) and sc.align_segments([], db) == ([], 0)
+    # Already right: left alone.
+    exact = [{'start': a - 0.03, 'end': b + 0.03, 'text': 'x'} for a, b in true]
+    again, moved = sc.align_segments(exact, db)
+    assert all(abs(p['start'] - q['start']) < 0.05 and abs(p['end'] - q['end']) < 0.05 for p, q in zip(exact, again))
+
+
+def test_a_shot_with_no_face_follows_the_figure_the_body_detector_agrees_on():
+    """Reported: a boy walking away from the camera, centre-cropped wherever
+    he was. No face to find; his head and shoulders can be."""
+    samples = [(i, []) for i in range(0, 200, 5)]
+
+    def figure(cx, h=400, w=380):
+        return (float(cx), 500.0, float(w), float(h))
+    seg = sc.plan_reframe(samples, [], 200, 1920, 1080, 608,
+                          bodies=[(i, [figure(1300)] if (i // 5) % 10 < 7 else []) for i in range(0, 200, 5)])
+    assert [(s['layout'], s['keys']) for s in seg] == [('crop', None)] and abs(seg[0]['x'] - (1300 - 304)) <= 2
+    walk = sc.plan_reframe(samples, [], 200, 1920, 1080, 608, bodies=[(i, [figure(700 + 4 * i)]) for i in range(0, 200, 5)])
+    xs = [x for _, x in walk[0]['keys']]
+    assert xs == sorted(xs) and xs[-1] > xs[0] + 500, 'followed as he walks'
+    centre = (1920 - 608) / 2.0
+    for name, bodies in (('seen in 20% of frames', [(i, [figure(1300)] if (i // 5) % 5 == 0 else []) for i in range(0, 200, 5)]),
+                         ('too small: someone in the background', [(i, [figure(1300, 150, 140)]) for i in range(0, 200, 5)]),
+                         ('all over the place: noise', [(i, [figure(200 + (i * 37) % 1500)]) for i in range(0, 200, 5)]),
+                         ('none', None)):
+        assert sc.plan_reframe(samples, [], 200, 1920, 1080, 608, bodies=bodies)[0]['x'] == centre, name
+    # A shot WITH faces is framed on them; what the body detector says is not asked.
+    faces = [(i, [(500.0, 400.0, 160.0, 160.0)]) for i in range(0, 200, 5)]
+    assert abs(sc.plan_reframe(faces, [], 200, 1920, 1080, 608, bodies=[(i, [figure(1300)]) for i in range(0, 200, 5)])[0]['x'] - 196) <= 2
+
+
+def test_head_and_shoulders_are_looked_for_only_where_no_face_was_found(tmp_path):
+    frames = [np.full((180, 320, 3), 90, np.uint8) for _ in range(30)]
+    clip = _clip(tmp_path / 'b.avi', frames)
+
+    class Detector:
+        def detect(self, frame):
+            self.n = getattr(self, 'n', 0) + 1
+            return [(100, 50, 40, 40, 1.0)] if self.n % 2 else []
+
+        def detect_bodies(self, frame):
+            return [(150, 60, 80, 100)]
+    bodies = []
+    faces = sc.sample_faces(clip, 0, 30, 25.0, Detector(), sar=1.0, bodies=bodies)
+    assert [i for i, f in faces] == [0, 5, 10, 15, 20, 25]
+    assert [i for i, _ in bodies] == [5, 15, 25], 'only the frames with no face'
+    assert bodies[0][1] == [(190.0, 110.0, 80.0, 100.0)], 'centres, like faces'
+    assert sc.sample_faces(clip, 0, 30, 25.0, Detector(), sar=1.0) == faces, 'not asked: nothing changes'
+    # The real one runs on a plain frame without complaint and finds nothing there.
+    assert sc.FaceDetector().detect_bodies(np.full((360, 640, 3), 90, np.uint8)) == []
+
+
+def test_the_editor_can_reframe_a_shot_or_show_it_whole():
+    segs = [{'a': 0, 'b': 49, 'layout': 'crop', 'x': 100.0, 'keys': None},
+            {'a': 50, 'b': 69, 'layout': 'crop', 'x': 300.0, 'keys': None, 'speaker': True},
+            {'a': 70, 'b': 99, 'layout': 'crop', 'x': 900.0, 'keys': None, 'speaker': True},
+            {'a': 100, 'b': 149, 'layout': 'fit', 'x': None, 'keys': None}]
+    assert sc.shot_bounds([50, 100], 150) == [(0, 49), (50, 99), (100, 149)] and sc.shot_bounds([], 10) == [(0, 9)]
+
+    def laid(overrides):
+        return [(s['a'], s['b'], s['layout'], s['x']) for s in sc.apply_framing(segs, [50, 100], 150, overrides, 1312.0)]
+    # The middle shot cut between two speakers; set to one crop for the whole shot.
+    assert laid([(60, 'crop', 500)]) == [(0, 49, 'crop', 100.0), (50, 99, 'crop', 500.0), (100, 149, 'fit', None)]
+    # A shot shown whole made a crop, kept inside the picture; one cropped made whole.
+    assert laid([(120, 'crop', 9999), (10, 'fit', None)]) == [
+        (0, 49, 'fit', None), (50, 69, 'crop', 300.0), (70, 99, 'crop', 900.0), (100, 149, 'crop', 1312.0)]
+    # Two for the same shot: the first. One for no shot, or 'auto': nothing changes.
+    assert laid([(10, 'crop', 7), (20, 'crop', 9)])[0] == (0, 49, 'crop', 7.0)
+    assert laid([(500, 'crop', 7), (10, 'auto', None)]) == laid([]) == [(s['a'], s['b'], s['layout'], s['x']) for s in segs]
+    # Shots the planner joined because they were framed alike: one of them changed on its own.
+    joined = [{'a': 0, 'b': 149, 'layout': 'crop', 'x': 656.0, 'keys': None}]
+    assert [(g['a'], g['b'], g['x']) for g in sc.apply_framing(joined, [50, 100], 150, [(70, 'crop', 10)], 1312.0)] == [
+        (0, 49, 656.0), (50, 99, 10.0), (100, 149, 656.0)]
+    # A split shot replaced keeps the rest of the clip renderable.
+    split = [{'a': 0, 'b': 49, 'layout': 'split', 'x': None, 'keys': None, 'size': (1214, 1080), 'panes': [(0, 0), (700, 0)]},
+             {'a': 50, 'b': 99, 'layout': 'crop', 'x': 600.0, 'keys': None}]
+    out = sc.apply_framing(split, [50], 100, [(5, 'crop', 10)], 1312.0)
+    assert [s['layout'] for s in out] == ['crop', 'crop']
+    info = {'width': 1920, 'height': 1080, 'disp_w': 1920, 'disp_h': 1080, 'sar': 1.0, 'sd_matrix': False,
+            'fps': 25.0, 'audio_index': 1, 'tag_709': True, 'v_offset': 0.0}
+    assert 'split' not in sc.build_filtergraph(info, out) and 'between(n,0,49)*10' in sc.build_filtergraph(info, out)
+    # And at the small preview size.
+    small = sc.build_filtergraph(info, out, 360, 640)
+    assert 'scale=360:640' in small and 'scale=1080:1920' not in small
+
+
+# ---- a shot with no face in it: where the picture is in focus ----
+
+def _dof_scene(subject_x, soft=True, seed=2):
+    """A 1920x1080 picture: a sharply detailed figure 300 px wide at
+    `subject_x`, over a background that is soft (shallow focus) or as
+    sharp as the figure (deep focus)."""
+    rng = np.random.default_rng(seed)
+    bg = rng.integers(0, 255, (1080, 1920, 3)).astype(np.uint8)
+    bg = cv2.GaussianBlur(bg, (0, 0), 14) if soft else bg
+    figure = cv2.GaussianBlur(rng.integers(0, 255, (700, 300, 3)).astype(np.uint8), (0, 0), 1.0)
+    bg[300:1000, subject_x - 150:subject_x + 150] = figure
+    return bg
+
+
+def test_the_sharpest_part_of_the_picture_is_where_the_person_is():
+    """Drama is shot with the subject sharp and the background soft: someone
+    walking away from the camera has no face to find, but is the one thing
+    in focus."""
+    for x in (500, 1300, 1700):
+        at, strength = sc.focus_point(_dof_scene(x), 608)
+        assert strength >= sc.FOCUS_STRENGTH and abs(at - x) <= 304 - 150, (x, at, strength)
+    at, strength = sc.focus_point(_dof_scene(900, soft=False), 608)
+    assert strength < sc.FOCUS_STRENGTH, 'sharp all over: no answer'
+    # Anamorphic: the window is measured in display pixels, the picture stored narrower.
+    squeezed = cv2.resize(_dof_scene(1300), (1440, 1080), interpolation=cv2.INTER_AREA)
+    at, strength = sc.focus_point(squeezed, 608, sar=4 / 3.0)
+    assert abs(at - 1300) <= 160 and strength >= sc.FOCUS_STRENGTH
+    assert sc.focus_point(np.zeros((360, 640, 3), np.uint8), 608) is None, 'a black frame has nothing in focus'
+
+
+def test_a_faceless_shot_is_framed_on_what_is_in_focus_when_the_readings_agree():
+    no_faces = [(i, []) for i in range(0, 100, 5)]
+    steady = [(i, (1300.0 + (i % 3), 2.2)) for i in range(0, 100, 5)]
+    seg = sc.plan_reframe(no_faces, [], 100, 1920, 1080, 608, focus=steady)
+    assert [(s['layout'], s['keys']) for s in seg] == [('crop', None)] and abs(seg[0]['x'] - (1301 - 304)) <= 2
+    # Weak readings, or too few of them: centre crop, as without it.
+    weak = [(i, (1300.0, 1.1)) for i in range(0, 100, 5)]
+    few = [(i, (1300.0, 2.2) if i < 20 else (900.0, 1.0)) for i in range(0, 100, 5)]
+    scattered = [(i, (200.0 if (i // 5) % 2 else 1750.0, 2.2)) for i in range(0, 100, 5)]
+    for focus in (weak, few, scattered, None):
+        seg = sc.plan_reframe(no_faces, [], 100, 1920, 1080, 608, focus=focus)
+        assert seg[0]['x'] == (1920 - 608) / 2.0, focus and focus[:2]
+    # A face, when there is one, still decides.
+    faces = [(i, [_face(500)]) for i in range(0, 100, 5)]
+    assert abs(sc.plan_reframe(faces, [], 100, 1920, 1080, 608, focus=steady)[0]['x'] - (500 - 304)) <= 2
+    # And it is a shot-by-shot matter: one shot in focus on the right, the next with a face on the left.
+    mixed = [(i, [] if i < 50 else [_face(400)]) for i in range(0, 100, 5)]
+    segs = sc.plan_reframe(mixed, [50], 100, 1920, 1080, 608, focus=[(i, (1500.0, 2.0)) for i in range(0, 50, 5)])
+    assert [(s['a'], round(s['x'])) for s in segs] == [(0, 1196), (50, 96)]
+
+
+def test_focus_is_read_only_from_frames_with_no_face(tmp_path):
+    frames = [cv2.resize(_dof_scene(1300), (640, 360), interpolation=cv2.INTER_AREA) for _ in range(20)]
+    face = frames[0].copy()
+    cv2.circle(face, (200, 150), 50, (150, 170, 210), -1)
+
+    class Detector:
+        kind = 'test'
+
+        def detect(self, frame):
+            return [(150.0, 100.0, 100.0, 100.0, 1.0)] if frame[150, 200, 2] > 200 and frame[150, 200, 0] > 140 else []
+    clip = _clip(tmp_path / 'f.avi', frames[:10] + [face] * 10)
+    focus = []
+    samples = sc.sample_faces(clip, 0, 20, 25.0, Detector(), focus=focus, focus_w=608 / 3.0)
+    assert [i for i, _ in focus] == [0, 5] and all(i >= 10 for i, fs in samples if fs)
+    assert all(f is not None and abs(f[0] - 1300 / 3.0) < 80 for _, f in focus)
+    assert sc.sample_faces(clip, 0, 20, 25.0, Detector()) == samples, 'nothing changes unless it is asked for'
+
+
 # ---- reported together: a 16-second "short" at a 60-second minimum, crops on nobody, a caption 30 s early ----
 
 def test_a_line_timed_as_lasting_far_longer_than_its_words_is_given_a_start_they_allow():

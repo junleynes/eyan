@@ -22,6 +22,7 @@ import time
 import unittest.mock as mock
 import zipfile
 import io
+import hashlib
 
 import cv2
 import numpy as np
@@ -1798,6 +1799,149 @@ def test_what_a_saved_batch_keeps_for_later_stays_on_the_server(env, monkeypatch
 
 
 # --------------------------------------------------------------------------
+# Framing: checked in 9:16 and corrected shot by shot before rendering
+# --------------------------------------------------------------------------
+
+def test_a_moments_shots_are_shown_with_their_framing_and_can_be_corrected(env, monkeypatch):
+    Services(monkeypatch)
+    client, headers = _client()
+    a = _analysis(client, _analyze(client, headers, env))
+    aid = a['analysis_id']
+
+    def post(url, **body):
+        return client.post(url, headers=headers, json=dict({'analysis_id': aid}, **body))
+    # 2.0-8.0 s of the episode: the end of one coloured shot and two whole ones (cuts at 3 and 6).
+    d = post('/api/shorts/framing', start=2.0, end=8.0).get_json()
+    assert d['ok'] and (d['disp_w'], d['disp_h'], d['crop_w'], d['max_x']) == (320, 180, 102, 218)
+    assert [(sh['start'], sh['end']) for sh in d['shots']] == [(2.0, 3.0), (3.0, 6.0), (6.0, 8.0)]
+    assert all(sh['auto'] == 'crop' and sh['x'] == 109.0 for sh in d['shots']), 'no faces: the middle'
+    assert all(2.0 <= sh['at'] < 8.0 and sh['start'] <= sh['at'] < sh['end'] for sh in d['shots'])
+    thumb = client.get(d['shots'][1]['thumb'])
+    assert thumb.status_code == 200 and cv2.imdecode(np.frombuffer(thumb.data, np.uint8), 1).shape[:2] == (216, 384)
+    assert post('/api/shorts/framing', start=2.0, end=3.0).status_code == 400
+    assert client.post('/api/shorts/framing', headers=headers, json={'analysis_id': 'gone', 'start': 2, 'end': 8}).status_code == 404
+    # The plan is worked out once for an in/out and setting, not every time it is asked for.
+    calls = []
+    real = shorts._plan_moment
+    monkeypatch.setattr(shorts, '_plan_moment', lambda *x, **k: (calls.append(1), real(*x, **k))[1])
+    post('/api/shorts/framing', start=2.0, end=8.0)
+    post('/api/shorts/framing', start=2.0, end=8.0, reframe='fit')
+    assert calls == [1], 'the second ask is answered from the first; a different setting is worked out'
+
+    # The vertical preview, as the editor has set it: the middle shot shown whole, the last cropped at the left edge.
+    framing = {'shots': [{'at': d['shots'][1]['at'], 'layout': 'fit'}, {'at': d['shots'][2]['at'], 'layout': 'crop', 'x': 0}]}
+    pv = post('/api/shorts/vpreview', start=2.0, end=8.0, framing=framing, subtitles=False).get_json()
+    assert pv['ok'] and pv['url'].startswith('/uploads/shv_')
+    path = os.path.join(main.app.config['UPLOAD_FOLDER'], pv['url'].split('/')[-1])
+    st = _probe(path)
+    assert (st['video']['width'], st['video']['height']) == (360, 640) and abs(float(st['video']['duration']) - 6.0) < 0.1
+    again = post('/api/shorts/vpreview', start=2.0, end=8.0, framing=framing, subtitles=False).get_json()
+    assert again['url'] == pv['url'], 'the same preview asked for twice is made once'
+    for bad in ({'shots': [{'at': 4.0, 'layout': 'zoom'}]}, {'shots': 'all'}, {'shots': [{'at': 99, 'layout': 'fit'}]},
+                {'shots': [{'at': 4.0, 'layout': 'crop', 'x': 'left'}]}):
+        r = post('/api/shorts/vpreview', start=2.0, end=8.0, framing=bad)
+        assert r.status_code == 400 and 'framing is not valid' in r.get_json()['error'], bad
+
+    # Rendered with it: the plan the short was made from says so, and a re-render for captions keeps it.
+    batch = _render(client, headers, aid, [{'start': 2.0, 'end': 8.0, 'title': 'Set by hand', 'framing': framing}],
+                    reframe='auto')['result']['batch']
+    m = shorts._read_manifest(os.path.join(shorts.SHORTS_DIR, batch['batch_id']))
+    sh = m['shorts'][0]
+    assert sh['framing_edited'] is True
+    assert [(g['a'], g['b'], g['layout'], g['x']) for g in sh['plan']['segs']] == [
+        (0, 24, 'crop', 109.0), (25, 99, 'fit', None), (100, 149, 'crop', 0.0)]
+    # The in point moved a second earlier afterwards: the corrections stay on their shots.
+    batch = _render(client, headers, aid, [{'start': 1.0, 'end': 8.0, 'title': 'Moved', 'framing': framing}],
+                    reframe='auto')['result']['batch']
+    segs = shorts._read_manifest(os.path.join(shorts.SHORTS_DIR, batch['batch_id']))['shorts'][0]['plan']['segs']
+    assert [(g['a'], g['b'], g['layout']) for g in segs] == [(0, 49, 'crop'), (50, 124, 'fit'), (125, 174, 'crop')]
+    r = client.post('/api/shorts/render', headers=headers, json={'analysis_id': aid, 'items': [
+        {'start': 2.0, 'end': 8.0, 'title': 'Bad', 'framing': {'shots': [{'at': 4, 'layout': 'tilt'}]}}]})
+    assert r.status_code == 400 and '"Bad"' in r.get_json()['error']
+
+
+def test_line_times_are_moved_onto_the_sound_when_the_service_gives_lines_only(env, monkeypatch):
+    # Line times rounded to the whole second, as the reported service gives them.
+    segs = [{'start': 1.29, 'end': 3.29, 'text': 'Linya isa.'}, {'start': 3.29, 'end': 5.29, 'text': 'Linya dalawa.'},
+            {'start': 6.29, 'end': 9.29, 'text': 'Linya tatlo.'}, {'start': 10.29, 'end': 12.29, 'text': 'Linya apat.'},
+            {'start': 13.29, 'end': 15.29, 'text': 'Linya lima.'}, {'start': 16.29, 'end': 19.29, 'text': 'Linya anim.'}]
+    svc = Services(monkeypatch, words=[], segs=segs)
+    svc.story_reply = lambda ids, payload: {'response': json.dumps({'moments': [
+        {'start_id': ids[0], 'end_id': ids[-1], 'title': 'All of it', 'score': 8}]})}
+    true = [(1.42, 2.66), (3.48, 4.71), (6.67, 8.48), (10.6, 12.1), (13.5, 15.0), (16.9, 18.7)]
+    hop = sc.ENVELOPE_HOP
+    db = np.full(int(24 / hop), -60.0, np.float32)
+    for a, b in true:
+        db[int(a / hop):int(b / hop)] = -18.0
+    asked = []
+    monkeypatch.setattr(sc, 'read_envelope', lambda ffmpeg, src, info, **k: (asked.append(src), db)[1])
+    client, headers = _client()
+    a = _analysis(client, _analyze(client, headers, env))
+    assert asked == [env['path']] and a['stats']['lines_aligned'] == 6
+    assert any('gave times for whole lines only, rounded to the second' in w and '6 of 6 lines were moved' in w
+               for w in a['warnings'])
+    an = shorts.analysis_get(a['analysis_id'])
+    for (s0, e0), sg in zip(true, an['segments']):
+        assert abs(sg['start'] - s0) < 0.06 and abs(sg['end'] - e0) < 0.06, sg
+    # Line times given finely, not rounded: left as they are, and the sound is not read.
+    asked.clear()
+    fine = Services(monkeypatch, words=[], segs=[dict(sg, start=sg['start'] + 0.013 * k, end=sg['end'] - 0.037 * k)
+                                                 for k, sg in enumerate(segs)])
+    fine.story_reply = svc.story_reply
+    c = _analysis(client, _analyze(client, headers, env))
+    assert asked == [] and c['stats']['lines_aligned'] == 0
+    assert not sc.coarse_times(segs[:5]) and sc.coarse_times(segs), 'and it takes a few lines to tell'
+    # With word timings there is nothing to move, and the sound is not read.
+    asked.clear()
+    Services(monkeypatch)
+    b = _analysis(client, _analyze(client, headers, env))
+    assert asked == [] and b['stats']['lines_aligned'] == 0 and not any('whole lines only' in w for w in b['warnings'])
+
+
+def test_the_whole_files_sound_is_read_as_a_level_without_holding_it_in_memory(tmp_path):
+    src = _talking_source(tmp_path / 't.mp4', [(1.0, 2.0), (3.0, 3.5)], seconds=5)
+    info = sc.probe_source('ffprobe', src)
+    db = sc.read_envelope('ffmpeg', src, info)
+    assert abs(len(db) - 500) <= 3 and db.dtype == np.float32
+    assert db[150] > db[250] + 30 and db[320] > db[250] + 30, 'the words, and the quiet between them'
+    assert sc.read_envelope('ffmpeg', src, dict(info, audio_index=None)) is None
+    assert sc.read_envelope('ffmpeg', str(tmp_path / 'missing.mp4'), info) is None
+
+
+def test_the_better_face_model_can_be_installed_by_an_admin_and_only_as_published(env, monkeypatch, tmp_path):
+    target = tmp_path / 'models' / 'face_detection_yunet_2023mar.onnx'
+    monkeypatch.setattr(shorts, 'YUNET_FILE', str(target))
+    user, uh = _client(user_id=7, role='user', username='ana')
+    assert user.post('/api/shorts/face-model', headers=uh).status_code == 403
+    admin, ah = _client()
+
+    class Reply:
+        def __init__(self, data):
+            self.content, self.raw = data, None
+
+        def raise_for_status(self):
+            pass
+    monkeypatch.setattr(shorts.requests, 'get', lambda url, **k: Reply(b'not the model'))
+    r = admin.post('/api/shorts/face-model', headers=ah)
+    assert r.status_code == 502 and 'checksum does not match' in r.get_json()['error'] and not target.exists()
+
+    def offline(url, **k):
+        raise shorts.requests.ConnectionError('no route to host')
+    monkeypatch.setattr(shorts.requests, 'get', offline)
+    r = admin.post('/api/shorts/face-model', headers=ah)
+    assert r.status_code == 502 and 'no internet access' in r.get_json()['error'] and str(target) in r.get_json()['error']
+    # The published file: saved where Vertical Shorts looks, and used.
+    data = b'a model' * 100
+    monkeypatch.setattr(shorts, 'YUNET_SHA256', hashlib.sha256(data).hexdigest())
+    monkeypatch.setattr(shorts.requests, 'get', lambda url, **k: Reply(data))
+    monkeypatch.setattr(shorts, '_face_model_path', lambda: str(target) if target.exists() else None)
+    monkeypatch.setattr(sc, 'FaceDetector', lambda model=None: type('D', (), {'kind': 'yunet' if model else 'haar'})())
+    r = admin.post('/api/shorts/face-model', headers=ah)
+    assert r.status_code == 200 and r.get_json()['face_detector'] == 'yunet' and target.read_bytes() == data
+    assert shorts.YUNET_URL.endswith('/face_detection_yunet/face_detection_yunet_2023mar.onnx')
+
+
+# --------------------------------------------------------------------------
 # Projects
 # --------------------------------------------------------------------------
 
@@ -2140,7 +2284,7 @@ def test_follow_the_speaker_is_applied_only_when_asked_and_recorded_on_the_batch
     aid = _analyze(client, headers, env)['result']['analysis_id']
     asked = []
 
-    def two_people(path, start_f, n_frames, fps, detector, step_sec=0.2, sar=1.0, mouth=False):
+    def two_people(path, start_f, n_frames, fps, detector, step_sec=0.2, sar=1.0, mouth=False, bodies=None, **_):
         # A wide two-shot throughout. The one on the left has the first two
         # lines of the transcript (1.0-4.5 s), the one on the right the next two.
         asked.append(mouth)

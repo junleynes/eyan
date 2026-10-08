@@ -759,6 +759,17 @@ input.sh-num[type=number]{width:92px}
 .sh-poster{position:relative;aspect-ratio:9/16;background:#000}
 .sh-place{position:absolute;top:8px;left:8px;z-index:1;min-width:26px;padding:3px 7px;border-radius:999px;background:rgba(0,0,0,.72);color:#fff;font:600 13px/1.2 var(--mono,monospace);text-align:center;pointer-events:none}
 .sh-tile-body{padding:8px 10px;font-size:12px;line-height:1.45}
+.sh-frame{margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+.sh-frame-body{display:grid;grid-template-columns:190px minmax(0,1fr);gap:14px;margin-top:8px;align-items:start}
+.sh-frame-pv{display:flex;flex-direction:column;gap:6px;align-items:stretch}
+.sh-frame-pv video,.sh-frame-pv .sh-frame-empty{width:180px;height:320px;border-radius:8px;background:#000;object-fit:contain}
+.sh-frame-empty{display:flex;align-items:center;justify-content:center;text-align:center;font-size:12px;color:rgba(255,255,255,.6);padding:12px;box-sizing:border-box}
+.sh-frame-shots{max-height:420px;overflow-y:auto;padding-right:4px}
+.sh-shot{display:grid;grid-template-columns:200px minmax(0,1fr);gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)}
+.sh-shot canvas{width:200px;height:auto;border-radius:4px;background:#000;display:block}
+.sh-shot select{width:auto;margin:0;padding:4px 28px 4px 8px;font-size:12px}
+.sh-shot input[type=range]{width:100%;margin:6px 0 0}
+@media (max-width:640px){.sh-frame-body,.sh-shot{grid-template-columns:1fr}}
 .sh-cap{margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
 .sh-cap-rows{max-height:340px;overflow-y:auto;margin:8px 0;padding-right:4px}
 .sh-cap-row{display:grid;grid-template-columns:74px 74px minmax(0,1fr) 28px;gap:6px;align-items:center;margin:4px 0}
@@ -7286,7 +7297,9 @@ async function shortsLoadOptions(){
     var bits = []
     if(d.error) bits.push('<span style="color:var(--amber)">' + escapeHtmlLite(d.error) + '</span>')
     bits.push(d.face_detector === 'yunet' ? 'Face tracking: YuNet.'
-      : d.face_detector === 'haar' ? 'Face tracking: built-in Haar cascades (set SHORTS_FACE_MODEL to a YuNet model file for better tracking of profiles and small faces).'
+      : d.face_detector === 'haar' ? 'Face tracking: built-in Haar cascades, which miss many profile, lowered and small faces. ' +
+          (d.face_model_download ? '<button type=button class="btn-sm" id=sh-get-yunet>Download the YuNet face model</button> (230 KB, from the OpenCV model zoo; checked before use).'
+                                 : 'An admin can install the better YuNet model from here.')
       : 'No face detector available: shots will be centre-cropped.')
     if(!d.captions_available){
       bits.push('<span style="color:var(--amber)">This server\'s ffmpeg has no libass, so captions cannot be burned in (.srt files are still written).</span>')
@@ -7294,6 +7307,15 @@ async function shortsLoadOptions(){
       shEl('sh-captions').disabled = true
     }
     cap.innerHTML = bits.join(' ')
+    var get = shEl('sh-get-yunet')
+    if(get) get.addEventListener('click', async function(){
+      get.disabled = true; get.textContent = 'Downloading…'
+      var r
+      try{ r = await (await fetch('/api/shorts/face-model', {method: 'POST'})).json() }catch(e){ r = {ok: false, error: String(e)} }
+      if(r.ok){ SH.options = null; shortsLoadOptions(); return }
+      get.disabled = false; get.textContent = 'Download the YuNet face model'
+      cap.insertAdjacentHTML('beforeend', ' <span style="color:var(--amber)">' + escapeHtmlLite(r.error || 'Could not install it.') + '</span>')
+    })
   }catch(e){
     vis.innerHTML = '<option value="">Config &gt; Production default</option>'
     if(cap) cap.innerHTML = '<span style="color:var(--amber)">Could not load options: ' + escapeHtmlLite(String(e)) + '</span>'
@@ -7563,6 +7585,8 @@ function shRenderCands(){
           ' <span data-dur="' + i + '">' + (c.end - c.start).toFixed(1) + ' s</span>' +
           ' <button type=button class="btn-sm" data-act="preview" data-i="' + i + '">Preview</button>' +
           ' <button type=button class="btn-sm" data-act="captions" data-i="' + i + '" title="Read and correct the captions this short will get">Captions&hellip;</button>' +
+          ' <button type=button class="btn-sm" data-act="framing" data-i="' + i + '" title="See the moment in 9:16 and correct the crop shot by shot">Framing&hellip;</button>' +
+          (c.framing ? ' <span class="score-chip" data-frame-chip title="Rendered with the framing you set">framing set</span>' : '') +
           (c.captions ? ' <span class="score-chip" data-cap-chip title="Rendered with the captions you corrected">captions edited</span>' : '') + '</div>' +
         '<div class="score-chips"><span class="score-chip face" data-num="' + i + '"></span>' + shCandMeta(c) + '</div>' +
         (c.hook ? '<div class="sh-note"><b>Hook:</b> ' + escapeHtmlLite(c.hook) + '</div>' : '') +
@@ -7570,6 +7594,7 @@ function shRenderCands(){
         (c.text ? '<details class="sh-note"><summary style="cursor:pointer">Dialogue</summary>' +
                   '<div style="margin-top:4px;color:var(--ink)">' + escapeHtmlLite(c.text) + '</div></details>' : '') +
         '<div data-cap-host="' + i + '" style="display:none"></div>' +
+        '<div data-frame-host="' + i + '" style="display:none"></div>' +
       '</div>'
     host.appendChild(row)
   })
@@ -7599,7 +7624,9 @@ function shortsSelectAll(on){
     var t = e.target.closest('[data-act=preview]')
     if(t){ shortsPreview(parseInt(t.getAttribute('data-i'), 10)); return }
     t = e.target.closest('[data-act=captions]')
-    if(t) shCandCaptions(parseInt(t.getAttribute('data-i'), 10))
+    if(t){ shCandCaptions(parseInt(t.getAttribute('data-i'), 10)); return }
+    t = e.target.closest('[data-act=framing]')
+    if(t) shCandFraming(parseInt(t.getAttribute('data-i'), 10))
   })
   host.addEventListener('change', function(e){
     var t = e.target, act = t.getAttribute && t.getAttribute('data-act')
@@ -7686,9 +7713,11 @@ async function shortsRenderSelected(){
     alert('Fix the in/out points marked in red first.'); return
   }
   var items = SH.cands.filter(function(c){ return c.keep }).map(function(c){
-    // Captions the editor corrected go with the moment; the rest are made as usual.
-    return c.captions ? {start: c.start, end: c.end, title: c.title, captions: c.captions}
-                      : {start: c.start, end: c.end, title: c.title}
+    // Captions and framing the editor corrected go with the moment; the rest are made as usual.
+    var it = {start: c.start, end: c.end, title: c.title}
+    if(c.captions) it.captions = c.captions
+    if(c.framing) it.framing = c.framing
+    return it
   })
   if(!items.length) return
   shBusy(true, 'Starting render...')
@@ -7861,6 +7890,144 @@ async function shCandCaptions(i){
     },
     onReset: function(){ delete c.captions; chip(); host.style.display = 'none'; shCandCaptions(i) }
   })
+}
+
+// ---- Framing: the moment in 9:16, and the crop corrected shot by shot ----
+var SH_SHOT_WORDS = {crop: 'Crop', follow: 'Follows movement', speaker: 'Cuts between who is speaking',
+                     fit: 'Whole frame', split: 'Split screen'}
+
+function shDrawShot(canvas, img, d, sh, choice){
+  var w = canvas.width = img.naturalWidth || 384, h = canvas.height = img.naturalHeight || 216
+  var g = canvas.getContext('2d')
+  g.drawImage(img, 0, 0, w, h)
+  var layout = choice.layout === 'auto' ? sh.auto : choice.layout
+  var x = choice.layout === 'crop' ? choice.x : sh.x
+  if(layout === 'fit' || layout === 'split' || x == null){
+    g.strokeStyle = 'rgba(52,230,197,.95)'; g.lineWidth = 3; g.strokeRect(1.5, 1.5, w - 3, h - 3)
+    return
+  }
+  var k = w / d.disp_w, wx = x * k, ww = d.crop_w * k
+  g.fillStyle = 'rgba(0,0,0,.55)'
+  g.fillRect(0, 0, wx, h); g.fillRect(wx + ww, 0, w - wx - ww, h)
+  g.strokeStyle = choice.layout === 'auto' ? 'rgba(255,255,255,.9)' : 'rgba(52,230,197,.95)'
+  g.lineWidth = 3
+  if(choice.layout === 'auto') g.setLineDash([8, 6])
+  g.strokeRect(wx + 1.5, 1.5, ww - 3, h - 3)
+  g.setLineDash([])
+}
+
+// The editor's framing for one moment: c.framing = {shots: [{at, layout, x}]},
+// one entry per corrected shot, `at` a time inside that shot (so the
+// correction stays on its shot when the in or out point moves).
+async function shCandFraming(i){
+  var c = SH.cands[i], host = document.querySelector('[data-frame-host="' + i + '"]')
+  if(!c || !host || !SH.analysis) return
+  if(host.style.display === 'block'){ host.style.display = 'none'; host.innerHTML = ''; return }
+  host.style.display = 'block'
+  host.innerHTML = '<div class="sh-frame sh-note">Finding the faces in this moment&hellip; (a few seconds per minute of footage)</div>'
+  var opts = shRenderOptions()
+  var base = {analysis_id: SH.analysis.analysis_id, start: c.start, end: c.end, reframe: opts.reframe, speaker: opts.speaker}
+  var d
+  try{ d = await (await fetch('/api/shorts/framing', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(base)})).json() }
+  catch(e){ host.innerHTML = '<div class="sh-warn">Could not work out the framing: ' + escapeHtmlLite(String(e)) + '</div>'; return }
+  if(!d.ok){ host.innerHTML = '<div class="sh-warn">' + escapeHtmlLite(d.error || 'Could not work out the framing.') + '</div>'; return }
+  var saved = (c.framing && c.framing.shots) || []
+  var choices = d.shots.map(function(sh){
+    var o = saved.filter(function(o){ return o.at >= sh.start - 1e-3 && o.at < sh.end - 1e-3 })[0]
+    return o ? {layout: o.layout, x: o.x} : {layout: 'auto', x: sh.x}
+  })
+  var crops = opts.reframe !== 'fit'
+  host.innerHTML = '<div class="sh-frame">' +
+    '<div class="sh-note" style="margin-top:0">How each shot of this moment will be framed. The dashed box is what was worked out' +
+      (d.detector ? '' : ' (no face detector here: shots are centre-cropped)') +
+      '; choose <b>Crop here</b> and slide the box to put it somewhere else, or <b>Whole frame</b> to show the whole picture. ' +
+      '<b>Make vertical preview</b> shows the result in 9:16, captions and all.</div>' +
+    '<div class="sh-frame-body">' +
+      '<div class="sh-frame-pv"><div class="sh-frame-empty" data-pv>No preview yet</div>' +
+        '<button type=button class="btn-sm" data-pv-make>Make vertical preview</button></div>' +
+      '<div class="sh-frame-shots" data-shots></div></div>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px">' +
+      '<button type=button class=btn data-fr-save>Use this framing</button>' +
+      '<button type=button class="btn-sm" data-fr-reset title="Drop your corrections and frame every shot automatically">Back to automatic</button>' +
+      '<button type=button class="btn-sm" data-fr-close style="opacity:.75">Close</button>' +
+      '<span data-fr-out style="font-size:12px"></span></div></div>'
+  var list = host.querySelector('[data-shots]'), out = host.querySelector('[data-fr-out]')
+  d.shots.forEach(function(sh, k){
+    var ch = choices[k]
+    var row = document.createElement('div')
+    row.className = 'sh-shot'
+    row.innerHTML = '<canvas aria-label="Shot ' + (k + 1) + ' and its crop"></canvas>' +
+      '<div><div style="font-size:12px"><b>Shot ' + (k + 1) + '</b> &middot; ' + shFmt(sh.start) + '&ndash;' + shFmt(sh.end) +
+        ' &middot; <span style="opacity:.75">worked out: ' + escapeHtmlLite(SH_SHOT_WORDS[sh.auto] || sh.auto) + '</span></div>' +
+      '<div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">' +
+        '<select data-shot-layout aria-label="Framing of shot ' + (k + 1) + '">' +
+          '<option value=auto>As worked out</option>' + (crops ? '<option value=crop>Crop here</option>' : '') +
+          '<option value=fit>Whole frame</option></select></div>' +
+      '<input type=range data-shot-x min=0 max=' + d.max_x + ' step=1 aria-label="Where the crop of shot ' + (k + 1) + ' sits"></div>'
+    var canvas = row.querySelector('canvas'), sel = row.querySelector('[data-shot-layout]'), slide = row.querySelector('[data-shot-x]')
+    var img = new Image()
+    function draw(){ if(img.complete && img.naturalWidth) shDrawShot(canvas, img, d, sh, ch) }
+    img.onload = draw
+    if(sh.thumb) img.src = sh.thumb
+    sel.value = ch.layout
+    slide.value = ch.x != null ? ch.x : d.max_x / 2
+    slide.style.display = ch.layout === 'crop' ? '' : 'none'
+    sel.addEventListener('change', function(){
+      ch.layout = sel.value
+      if(ch.layout === 'crop' && ch.x == null) ch.x = parseFloat(slide.value)
+      slide.style.display = ch.layout === 'crop' ? '' : 'none'
+      draw()
+    })
+    slide.addEventListener('input', function(){ ch.x = parseFloat(slide.value); draw() })
+    // Clicking the still puts the box there.
+    canvas.addEventListener('click', function(ev){
+      if(!crops) return
+      var r = canvas.getBoundingClientRect(), fx = (ev.clientX - r.left) / r.width * d.disp_w
+      ch.layout = 'crop'; ch.x = Math.max(0, Math.min(d.max_x, fx - d.crop_w / 2))
+      sel.value = 'crop'; slide.value = ch.x; slide.style.display = ''; draw()
+    })
+    list.appendChild(row)
+  })
+  function current(){
+    var shots = []
+    d.shots.forEach(function(sh, k){
+      var ch = choices[k]
+      if(ch.layout === 'crop') shots.push({at: sh.at, layout: 'crop', x: Math.round(ch.x)})
+      else if(ch.layout === 'fit') shots.push({at: sh.at, layout: 'fit'})
+    })
+    return shots.length ? {shots: shots} : null
+  }
+  function chip(){
+    var row = host.closest('.sh-cand'), at = row && row.querySelector('.sh-times'), old = row && row.querySelector('[data-frame-chip]')
+    if(old) old.remove()
+    if(at && c.framing) at.insertAdjacentHTML('beforeend', ' <span class="score-chip" data-frame-chip title="Rendered with the framing you set">framing set</span>')
+  }
+  host.querySelector('[data-pv-make]').addEventListener('click', async function(){
+    var btn = this, pv = host.querySelector('[data-pv]')
+    btn.disabled = true
+    pv.outerHTML = '<div class="sh-frame-empty" data-pv>Rendering a small 9:16 copy&hellip;</div>'
+    var body = Object.assign({}, base, {subtitles: opts.subtitles, subtitle_size: opts.subtitle_size,
+                                        framing: current(), captions: c.captions || null})
+    var r
+    try{ r = await (await fetch('/api/shorts/vpreview', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})).json() }
+    catch(e){ r = {ok: false, error: String(e)} }
+    btn.disabled = false
+    var now = host.querySelector('[data-pv]')
+    if(!r.ok){ now.outerHTML = '<div class="sh-frame-empty" data-pv style="color:var(--amber)">' + escapeHtmlLite(r.error || 'Could not make the preview.') + '</div>'; return }
+    now.outerHTML = '<video data-pv controls playsinline preload=auto src="' + r.url + '"></video>'
+    btn.textContent = 'Update vertical preview'
+  })
+  host.querySelector('[data-fr-save]').addEventListener('click', function(){
+    var f = current()
+    if(f) c.framing = f; else delete c.framing
+    chip()
+    out.style.color = 'var(--phosphor)'
+    out.textContent = f ? 'Kept: ' + f.shots.length + ' shot' + (f.shots.length === 1 ? '' : 's') + ' will be framed as you set.' : 'Every shot will be framed automatically.'
+  })
+  host.querySelector('[data-fr-reset]').addEventListener('click', function(){
+    delete c.framing; chip(); host.style.display = 'none'; host.innerHTML = ''; shCandFraming(i)
+  })
+  host.querySelector('[data-fr-close]').addEventListener('click', function(){ host.style.display = 'none'; host.innerHTML = '' })
 }
 
 // Polls a job that is not the create form's (so it leaves that form's
@@ -9399,15 +9566,17 @@ job. Configured via env vars:
         <li><strong>How it looks.</strong> A bounded number of frames, spread across the whole video, are rated 1&ndash;5 by the AI Vision model for visible drama.</li>
         <li><strong>What it means.</strong> The dialogue is transcribed, and a story model reads it in overlapping five-minute stretches &mdash; with those visual notes placed in line &mdash; and proposes moments that stand on their own: a setup, a turn, a payoff.</li>
         <li><strong>Where it cuts.</strong> Each proposal is fitted to your length range, then its in and out points are moved so they never fall inside a spoken word and land on a shot change when one is close. Too long, it loses its opening lines, never its ending. Too short, it is given the lines around it &mdash; first without crossing a pause of more than 6 seconds, then, if it has to, pauses of up to 10 &mdash; and then up to 6 seconds of the quiet before and after it. <strong>The minimum is a minimum:</strong> a moment that still falls short of it is left out, and a note above the list says how many were. (If every moment found falls short, they are listed as they are, marked <em>Short</em>.)</li>
+        <li><strong>Lines timed to the line only.</strong> A speech-to-text service that returns times for whole lines rather than words &mdash; often rounded to the second &mdash; leaves every caption and cut point up to a second out. When that is what came back and the times are rounded to the second (most of them sharing one fraction of a second, as in 0:30.29, 0:32.29, 0:33.29), the episode&rsquo;s sound is read once and each line is moved onto where its sound really starts and stops: a line given a start in silence begins where the sound does, one given a start in the middle of sound began where that sound started, and the same for its end. Over a wall of music or a crowd, where speech cannot be told from a gap, a line keeps its times. A note above the list says how many lines were moved. A service that returns word timings is still better: captions then change with the words.</li>
         <li><strong>When a line was really spoken.</strong> A speech-to-text service places the end of a line well, but after a stretch with no speech it often gives the line the start of that stretch as its own: three words timed as lasting thirty seconds. Left alone, that line&rsquo;s caption comes up half a minute before anyone speaks, and a short that opens on it opens on dead air. So a line timed as lasting far longer than its words could take (more than double, and by more than 3 seconds) is taken to have ended where it says and started as late as its words allow. A line that really is delivered slowly is left as timed.</li>
       </ul>
       <p>Each candidate's score (0&ndash;100) weighs story most, then visual drama, then dialogue pace. Both Ollama and faster-whisper must be reachable; the job refuses to start otherwise rather than choose on half the evidence. The same goes for a transcription that fails part-way (the service errors or times out): the job stops and says why. Only a source with genuinely nothing to hear &mdash; no audio track, or no speech in it &mdash; falls back to picture alone. A warning above the list tells you when a fallback was used (no story found, or no dialogue at all). The speech-to-text service has to return timings as well as text: it is asked for <code>verbose_json</code> with timestamps and, if it answers that with the text alone, for <code>srt</code> and then <code>vtt</code>, which every Whisper server can write. Subtitle timings are per line, not per word, so captions made that way change a line at a time. A server that gives no timings in any of the three stops the job with a message saying so. On a master that keeps its sound on separate tracks or channels (eight mono tracks, say, with the full mix on 3 and 4), the dialogue is looked for where there is sound rather than on the first track: silent channels are never sent, a stereo pair recorded out of phase is sent as one side, and if the first candidate has no speech in it the next is tried, up to four. A note above the list says which track the dialogue was read from, and the shorts and their previews take their sound from the same place. When nothing is found, the warning lists what was tried and at what level.</p>
       <h3>2. Review</h3>
       <p>Play any candidate, edit its title and its in/out (type <code>m:ss.s</code> or seconds), untick the ones you do not want, or add a range of your own. The preview shows the source framing; reframing happens at render.</p>
+      <p><strong>Framing&hellip;</strong> on a candidate shows each of its shots as a still, with the 9:16 window drawn where it will be: dashed for what was worked out, solid for a correction. For any shot, choose <strong>Crop here</strong> and slide the window (or click the still where it should go), or <strong>Whole frame</strong> to show the whole picture over a blurred copy. <strong>Make vertical preview</strong> renders a small 9:16 copy of the moment as it will come out &mdash; framing, corrections and captions &mdash; in a few seconds, without spending a full render. <strong>Use this framing</strong> keeps the corrections with that moment (marked <em>framing set</em>); a corrected shot is framed that way for its whole length, even where the plan had followed someone, cut between speakers or split the screen. The corrections belong to the shots, not to the in and out points: move those afterwards and each correction stays on the shot it was made for. <strong>Back to automatic</strong> drops them.</p>
       <p><strong>Captions&hellip;</strong> on a candidate opens the lines it will be captioned with, exactly as they will appear: change the wording, change when a line is on screen (times are from the start of the short, to a hundredth of a second), empty a line to drop it, or add one. <strong>Use these captions</strong> keeps them with that moment &mdash; it is marked <em>captions edited</em> &mdash; and they are what is burned in and written to its .srt. Moving the in or out point afterwards does not lose them: the lines still inside the new range stay, moved to where they now fall, and whatever the range gained at either end gets the automatic captions. <strong>Back to automatic</strong> drops the corrections. One caption is on screen at a time, so where two lines overlap the earlier one ends as the next begins.</p>
       <h3>3. Render</h3>
       <ul style="line-height:1.8;padding-left:20px">
-        <li><strong>Auto</strong> reframes shot by shot: it crops to the face or faces, follows a subject that really moves, and for a shot where two similar-sized faces are too far apart to fit a vertical frame it shows the whole picture over a blurred copy of itself rather than cut someone out. Who a shot is of is worked out from the whole shot, not frame by frame: a face counts as a person when it is found in the same place in at least 30% of the frames that show any face, and a person the detector loses for a moment (a turned head, hair, a passing hand) is taken to be where they were last seen. So the window is centred on the people in the shot and stays there. When the faces do not fit together but one is clearly nearer the camera (1.6 times the area of the next), the shot is of that person and the crop is centred on them.</li>
+        <li><strong>Auto</strong> reframes shot by shot: it crops to the face or faces, follows a subject that really moves, and for a shot where two similar-sized faces are too far apart to fit a vertical frame it shows the whole picture over a blurred copy of itself rather than cut someone out. Who a shot is of is worked out from the whole shot, not frame by frame: a face counts as a person when it is found in the same place in at least 30% of the frames that show any face, and a person the detector loses for a moment (a turned head, hair, a passing hand) is taken to be where they were last seen. So the window is centred on the people in the shot and stays there. When the faces do not fit together but one is clearly nearer the camera (1.6 times the area of the next), the shot is of that person and the crop is centred on them. A shot with <strong>no face</strong> in it &mdash; someone seen from behind, side-on or looking down &mdash; is searched for head and shoulders instead; if the same figure, large enough to be who the shot is of, is found in at least 40% of its frames, the crop follows them. Failing that, the crop goes where the picture is in focus: drama keeps its subject sharp and the background soft, so the sharpest part of the frame is usually the person. That is used only when it is clear &mdash; the sharpest stretch at least 1.3 times as sharp as the average, in at least 40% of the shot&rsquo;s frames, and in much the same place each time. A picture sharp all over, as in a deep-focus wide shot, is centre-cropped. Anything worked out wrong can be corrected under <strong>Framing&hellip;</strong>.</li>
         <li><strong>Split screen</strong> is Auto with a different answer for those wide two-shots: when the shot is exactly two people, each gets half the frame &mdash; the one on the left on top, the one on the right below &mdash; and captions move to the join between them. Each half is tightened until the other person's face is out of it. A shot with three or more faces, or two it cannot separate cleanly, is shown whole as in Auto.</li>
         <li><strong>Always crop</strong> fills the screen on every shot and commits to one side of a wide two-shot. <strong>Fit</strong> always shows the whole picture.</li>
         <li><strong>Follow the speaker</strong> (off unless ticked) changes only those wide two-shots: it cuts between close framings of whoever is talking, holding each for at least a second or so and changing just before the next line. It decides from how much each mouth moves while the transcript says words are being spoken. Where it cannot tell &mdash; nobody speaking, a face turned away, two mouths moving alike &mdash; the shot is reframed exactly as it would be with the option off. With <strong>Split screen</strong> it works the other way round: the screen is split while both people talk, and a shot where only one of them talks is framed on that one.</li>
@@ -9437,7 +9606,7 @@ job. Configured via env vars:
         <li>Candidates are proposals. A local model can misjudge what stands alone &mdash; preview before rendering.</li>
         <li>One continuous stretch per short; it does not assemble a short from separate scenes, and adds no music, titles or graphics.</li>
         <li>Follow the speaker reads mouth movement, not voices. It can pick the wrong person when a listener laughs, chews or mouths along while someone else talks, and it cannot follow a speaker who is off screen or facing away. Check wide two-shots before publishing, and render again with it unticked if one is wrong.</li>
-        <li>Face tracking uses OpenCV's built-in Haar cascades unless a YuNet model file is supplied. The cascades miss many profile, tilted, lowered and small faces, and <strong>a shot with no detected face is centre-cropped</strong>, wherever the person in it is standing &mdash; this is the commonest reason for a crop that is not on anyone. <em>Advanced</em>, on the create form, says which detector this server is using. To use YuNet, put <code>face_detection_yunet_2023mar.onnx</code> (from the OpenCV model zoo, about 230 KB) in a <code>models</code> folder next to the app, or point <code>SHORTS_FACE_MODEL</code> at it, and restart.</li>
+        <li>Face tracking uses OpenCV's built-in Haar cascades unless a YuNet model file is supplied. The cascades miss many profile, tilted, lowered and small faces, and <strong>a shot with no detected face is centre-cropped</strong>, wherever the person in it is standing &mdash; this is the commonest reason for a crop that is not on anyone. <em>Advanced</em>, on the create form, says which detector this server is using; where it is the Haar cascades, an admin sees <strong>Download the YuNet face model</strong> there. That fetches <code>face_detection_yunet_2023mar.onnx</code> (about 230 KB, MIT licence) from the OpenCV model zoo on GitHub, checks it is exactly the published file, and puts it in a <code>models</code> folder next to the app, where it is used from the next render. A server with no internet access can be given the same file by hand, or <code>SHORTS_FACE_MODEL</code> pointed at it.</li>
         <li>Captions are only as well timed as the transcript. A service that returns word timings gives captions that change with the words; one that returns only lines (the subtitle fallback) gives captions that change a line at a time, and if its times are to the whole second they can be up to a second early or late.</li>
       </ul>
       <pre>POST /api/shorts/analyze  + shorts_file_network, min_dur, max_dur, count, focus?, avoid?

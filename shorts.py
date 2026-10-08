@@ -160,6 +160,15 @@ def _touch(path):
         pass
 
 
+# The YuNet face model, as published in the OpenCV model zoo (MIT licence).
+# What is downloaded is checked against this before it is used.
+YUNET_URL = ('https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/'
+             'face_detection_yunet_2023mar.onnx')
+YUNET_SHA256 = '8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4'
+YUNET_SIZE = 232589
+YUNET_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models', 'face_detection_yunet_2023mar.onnx')
+
+
 def _face_model_path():
     """YuNet model file if one is around: SHORTS_FACE_MODEL, then whatever
     the promo pipeline found, then a models/ folder next to the app.
@@ -469,6 +478,18 @@ def _run_analysis(jid, params):
     if heard.get('audio'):
         warnings.append(f"The dialogue was read from {heard['audio']} of this file's audio"
                         + ('; the shorts use the same audio.' if heard.get('take') else '.'))
+    aligned = 0
+    if segments and not words and sc.coarse_times(segments):
+        # Timed only to the line, and rounded to the whole second: every line
+        # is moved onto where its sound really starts and stops, which is what
+        # captions, in and out points and the cliffhanger all go by.
+        report(percent=55, step='Matching the dialogue to the sound')
+        db = sc.read_envelope(pipeline.FFMPEG, path, info, timeout=pipeline.FFMPEG_LONG_TIMEOUT)
+        segments, aligned = sc.align_segments(segments, db)
+        if aligned:
+            warnings.append(f'The speech-to-text service gave times for whole lines only, rounded to the second, so '
+                            f'{aligned} of {len(segments)} lines were moved onto where their sound starts and stops. '
+                            'Captions change a line at a time; a service that returns word timings would be closer still.')
     if errors:
         warnings.append(f'{len(errors)} of {len(items)} frames could not be rated by the vision model '
                         f'({errors[0][:120]}); the rest were used.')
@@ -562,6 +583,7 @@ def _run_analysis(jid, params):
         'options': {'min_dur': min_dur, 'max_dur': max_dur, 'count': 'auto' if auto else count,
                     'focus': params.get('focus'), 'avoid': params.get('avoid')},
         'stats': {'shots': len(shots), 'frames_rated': len(visual), 'transcript_lines': len(segments),
+                  'lines_aligned': aligned,
                   'story_parts': len(chunks), 'vision_model': vision_model, 'story_model': story_model},
     })
     _touch(path)
@@ -583,6 +605,64 @@ def _poster(video_path, thumb_path, at):
     except pipeline.MediaToolTimeout:
         return False
     return os.path.exists(thumb_path) and os.path.getsize(thumb_path) > 0
+
+
+def _framing_overrides(it, start_f, fps):
+    """The editor's per-shot framing for a moment, as apply_framing wants
+    it: [(frame counted from the clip's first, layout, x)]."""
+    fr = it.get('framing') or {}
+    return [(int(round(o['at'] * fps)) - start_f, o['layout'], o.get('x')) for o in fr.get('shots') or []]
+
+
+def _plan_moment(a, src, info, start_f, end_f, reframe, speaker, detector, framing=None, mouth=None):
+    """How one moment is reframed: (segments, shot starts within it).
+
+    The faces (and, where there are none, the head-and-shoulders) in it are
+    sampled, the planner decides shot by shot, and the editor's corrections,
+    if any, are laid over that. Shared by the render and the framing
+    preview, so what the editor is shown is what is rendered."""
+    fps = info['fps']
+    n_frames = end_f - start_f
+    crop_w, _ = sc.crop_geometry(info['disp_w'], info['disp_h'])
+    bodies, focus = [], []
+    samples = (sc.sample_faces(src, start_f, n_frames, fps, detector, sar=info['sar'],
+                               mouth=speaker if mouth is None else mouth, bodies=bodies,
+                               focus=focus, focus_w=crop_w)
+               if detector else [])
+    shot_starts = [c - start_f for c in a['cut_frames'] if start_f < c < end_f]
+    t0, t1 = start_f / fps, end_f / fps
+    speech = ([(s - t0, e - t0) for s, e in sc.speech_units(a['words'], a['segments']) if e > t0 and s < t1]
+              if speaker else None)
+    segs = sc.plan_reframe(samples, shot_starts, n_frames, info['disp_w'], info['disp_h'], crop_w,
+                           mode=reframe, fps=fps, speaker=speaker, speech=speech, bodies=bodies,
+                           focus=focus)
+    if framing:
+        segs = sc.apply_framing(segs, shot_starts, n_frames, framing, max(0.0, float(info['disp_w'] - crop_w)))
+    return segs, shot_starts
+
+
+def _parse_framing(raw, label, duration):
+    """An item's per-shot framing from a request -> ({'shots': [{'at',
+    'layout', 'x'}]} or None, error or None). `at` is a time in the source,
+    in seconds, inside the shot meant; `x` the window's left edge in source
+    pixels, for 'crop'."""
+    if raw in (None, '', False):
+        return None, None
+    shots = raw.get('shots') if isinstance(raw, dict) else None
+    if not isinstance(shots, list) or len(shots) > 500:
+        return None, f'"{label}": its framing is not valid.'
+    out = []
+    for o in shots:
+        try:
+            at = float(o.get('at'))
+            layout = str(o.get('layout'))
+            x = float(o.get('x')) if layout == 'crop' else None
+        except (AttributeError, TypeError, ValueError):
+            return None, f'"{label}": its framing is not valid.'
+        if layout not in ('crop', 'fit') or not (0.0 <= at <= duration) or (x is not None and not math.isfinite(x)):
+            return None, f'"{label}": its framing is not valid.'
+        out.append({'at': round(at, 3), 'layout': layout, 'x': None if x is None else round(max(0.0, x), 1)})
+    return ({'shots': out} if out else None), None
 
 
 def _auto_cues(a, max_chars):
@@ -762,9 +842,8 @@ def _run_render(jid, params):
             continue
 
         report(percent=int(base), step=f'Short {n}/{total}: finding faces')
-        samples = (sc.sample_faces(src, start_f, n_frames, fps, detector, sar=info['sar'], mouth=speaker)
-                   if detector else [])
-        shot_starts = [c - start_f for c in a['cut_frames'] if start_f < c < end_f]
+        segs, shot_starts = _plan_moment(a, src, info, start_f, end_f, reframe, speaker, detector,
+                                         framing=_framing_overrides(it, start_f, fps))
         # How long the clip's last shot has been on screen by its last frame:
         # the cliffhanger hold is made from the end of it, never across a cut.
         room = n_frames - max(shot_starts) if shot_starts else n_frames
@@ -791,10 +870,6 @@ def _run_render(jid, params):
             if heard == 'pause' and audio_out - n_frames / fps > 0.05:
                 print(f'Vertical Shorts: short {n}/{total}: last word runs '
                       f'{audio_out - n_frames / fps:.2f}s past the out point; the sound is let finish under the hold')
-        speech = ([(s - t0, e - t0) for s, e in sc.speech_units(a['words'], a['segments']) if e > t0 and s < t1]
-                  if speaker else None)
-        segs = sc.plan_reframe(samples, shot_starts, n_frames, info['disp_w'], info['disp_h'], crop_w,
-                               mode=reframe, fps=fps, speaker=speaker, speech=speech)
         cues, edited = _item_cues(a, it, start_f / fps, end_f / fps, max_chars)
         cues = sc.place_cues(cues, segs, fps)
         plan = {'start_f': start_f, 'n_frames': n_frames, 'segs': segs, 'room': room,
@@ -831,6 +906,7 @@ def _run_render(jid, params):
                              'speaker': sum(1 for s in segs if s.get('speaker')),
                              'split': sum(1 for s in segs if s['layout'] == 'split')},
                  'captions': bool(burn and cues),
+                 'framing_edited': bool((it.get('framing') or {}).get('shots')),
                  # Kept so the captions can be changed afterwards: the lines
                  # themselves, and the plan a re-render needs.
                  'cues': cues, 'captions_edited': edited, 'plan': plan}
@@ -1067,6 +1143,8 @@ def api_shorts_options():
     return jsonify(ok=True, vision_models=vision, text_models=names, error=error,
                    default_vision_model=prod.get('vision_model'),
                    face_detector=det.kind, captions_available=_captions_available(),
+                   face_model_download=(det.kind != 'yunet' and session.get('role') == 'admin'
+                                        and hasattr(cv2, 'FaceDetectorYN')),
                    speaker_default=SHORTS_SPEAKER_CROP,
                    vision_frames=SHORTS_VISION_FRAMES, max_items=SHORTS_MAX_ITEMS,
                    auto_min_story=SHORTS_AUTO_MIN_STORY,
@@ -1276,6 +1354,214 @@ def api_shorts_captions():
                    spoken=bool(a['words'] or a['segments']))
 
 
+def _moment_request(data):
+    """(analysis, start frame, end frame, error) for a request about one
+    moment of an analysis: the framing and preview routes."""
+    a, err = _analysis_or_error(str(data.get('analysis_id') or '').strip())
+    if err:
+        return None, None, None, err
+    if not os.path.exists(a['path']):
+        return None, None, None, (jsonify(ok=False, error='The source video is no longer staged -- pick it again '
+                                                          'and re-analyse.'), 410)
+    info = a['info']
+    try:
+        start, end = max(0.0, float(data.get('start'))), min(float(info['duration']), float(data.get('end')))
+    except (TypeError, ValueError):
+        return None, None, None, (jsonify(ok=False, error='Invalid start/end time.'), 400)
+    if end - start < SHORTS_MIN_CLIP or end - start > SHORTS_MAX_CLIP + 0.05:
+        return None, None, None, (jsonify(ok=False, error=f'Must be {int(SHORTS_MIN_CLIP)} to {int(SHORTS_MAX_CLIP)} '
+                                                          'seconds long and inside the video.'), 400)
+    fps = info['fps']
+    start_f = int(round(start * fps))
+    end_f = min(info['frames'], int(round(end * fps)))
+    _touch(a['path'])
+    return a, start_f, end_f, None
+
+
+def _cached_plan(a, start_f, end_f, reframe, speaker):
+    """The automatic plan for a moment (no corrections), worked out once per
+    analysis for each in/out and reframe setting: sampling the faces is the
+    slow part, and the editor moves between the shot list and the preview."""
+    key = (start_f, end_f, reframe, bool(speaker))
+    plans = a.setdefault('_plans', {})
+    if key not in plans:
+        info = a['info']
+        crop_w, _ = sc.crop_geometry(info['disp_w'], info['disp_h'])
+        detector = None
+        if reframe != 'fit' and info['disp_w'] > crop_w:
+            detector = sc.FaceDetector(_face_model_path())
+            detector = detector if detector.available() else None
+        speaker = bool(speaker) and detector is not None and bool(a['words'] or a['segments'])
+        if len(plans) > 40:
+            plans.pop(next(iter(plans)))
+        plans[key] = _plan_moment(a, a['path'], info, start_f, end_f, reframe, speaker, detector) + (
+            detector.kind if detector else None,)
+    return plans[key]
+
+
+def _shot_kind(segs):
+    """How the plan frames one shot, in a word, and the window position to
+    start a correction from."""
+    layouts = {s['layout'] for s in segs}
+    if 'split' in layouts:
+        return 'split', None
+    if 'fit' in layouts and len(layouts) == 1:
+        return 'fit', None
+    crops = [s for s in segs if s['layout'] == 'crop']
+    if any(s.get('speaker') for s in crops):
+        kind = 'speaker'
+    elif any(s.get('keys') for s in crops):
+        kind = 'follow'
+    else:
+        kind = 'crop'
+    xs = [x for s in crops for x in ([k[1] for k in s['keys']] if s.get('keys') else [s['x']]) if x is not None]
+    return kind, (float(sorted(xs)[len(xs) // 2]) if xs else None)
+
+
+@app.route('/api/shorts/framing', methods=['POST'])
+@require_permission('vertical_shorts')
+def api_shorts_framing():
+    """A moment's shots, each with how it will be framed and a still of it,
+    for the editor to check and correct before rendering."""
+    data = request.get_json(silent=True) or {}
+    a, start_f, end_f, err = _moment_request(data)
+    if err:
+        return err
+    opts = _render_options(data)
+    info = a['info']
+    fps = info['fps']
+    segs, shot_starts, kind = _cached_plan(a, start_f, end_f, opts['reframe'], opts['speaker'])
+    crop_w, _ = sc.crop_geometry(info['disp_w'], info['disp_h'])
+    shots = []
+    cap = cv2.VideoCapture(a['path'])
+    try:
+        for k, (sa, sb) in enumerate(sc.shot_bounds(shot_starts, end_f - start_f)):
+            how, x = _shot_kind([s for s in segs if s['a'] <= sb and s['b'] >= sa])     # joined shots span several
+            mid = start_f + (sa + sb) // 2
+            name = 'shf_' + hashlib.sha1(('%s_%d' % (a['path'], mid)).encode()).hexdigest()[:16] + '.jpg'
+            path = os.path.join(app.config['UPLOAD_FOLDER'], name)
+            if not os.path.exists(path):
+                cap.set(cv2.CAP_PROP_POS_FRAMES, mid)
+                ok, frame = cap.read()
+                if ok:
+                    h, w = frame.shape[:2]
+                    # Square pixels, as the planner measures: x in the picture is x here.
+                    frame = cv2.resize(frame, (384, max(2, int(round(384 * info['disp_h'] / float(info['disp_w']))))),
+                                       interpolation=cv2.INTER_AREA)
+                    cv2.imwrite(path, frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            shots.append({'index': k, 'start': round((start_f + sa) / fps, 3), 'end': round((start_f + sb + 1) / fps, 3),
+                          'at': round(mid / fps, 3), 'auto': how, 'x': None if x is None else round(x, 1),
+                          'thumb': f'/uploads/{name}' if os.path.exists(path) else None})
+    finally:
+        cap.release()
+    return jsonify(ok=True, shots=shots, disp_w=info['disp_w'], disp_h=info['disp_h'], crop_w=crop_w,
+                   max_x=max(0, info['disp_w'] - crop_w), detector=kind,
+                   start=round(start_f / fps, 3), end=round(end_f / fps, 3))
+
+
+@app.route('/api/shorts/vpreview', methods=['POST'])
+@require_permission('vertical_shorts')
+def api_shorts_vpreview():
+    """A small 9:16 render of one moment as it will come out -- the framing,
+    with any corrections, and the captions -- to check before spending a
+    full render on it. No ending, and quickly encoded: it is for looking at."""
+    data = request.get_json(silent=True) or {}
+    a, start_f, end_f, err = _moment_request(data)
+    if err:
+        return err
+    opts = _render_options(data)
+    info = a['info']
+    fps = info['fps']
+    duration = float(info['duration'])
+    framing, bad = _parse_framing(data.get('framing'), 'This moment', duration)
+    if bad:
+        return jsonify(ok=False, error=bad), 400
+    captions, bad = _parse_captions(data.get('captions'), 'This moment', duration)
+    if bad:
+        return jsonify(ok=False, error=bad), 400
+    segs, shot_starts, _ = _cached_plan(a, start_f, end_f, opts['reframe'], opts['speaker'])
+    crop_w, _ = sc.crop_geometry(info['disp_w'], info['disp_h'])
+    n_frames = end_f - start_f
+    item = {'framing': framing, 'captions': captions}
+    segs = sc.apply_framing(segs, shot_starts, n_frames, _framing_overrides(item, start_f, fps),
+                            max(0.0, float(info['disp_w'] - crop_w)))
+    burn = opts['subtitles'] and _captions_available()
+    cues = []
+    if burn:
+        try:
+            cues, _ = _item_cues(a, item, start_f / fps, end_f / fps, sc.SUBTITLE_SIZES[opts['subtitle_size']][1])
+        except ValueError as e:
+            return jsonify(ok=False, error=str(e)), 400
+        cues = sc.place_cues(cues, segs, fps)
+    key = json.dumps([a['path'], start_f, end_f, segs, cues, opts['subtitle_size']], sort_keys=True, default=str)
+    out_name = 'shv_' + hashlib.sha1(key.encode()).hexdigest()[:16] + '.mp4'
+    out_path = os.path.join(app.config['UPLOAD_FOLDER'], out_name)
+    if not os.path.exists(out_path):
+        work = app.config['UPLOAD_FOLDER']
+        tag = secrets.token_hex(6)
+        ass_name = f'shsub_pv_{tag}.ass' if cues else None
+        part = os.path.join(work, f'shpart_{tag}.mp4')
+        try:
+            if ass_name:
+                sc.write_ass(cues, os.path.join(work, ass_name), size=opts['subtitle_size'], font=SHORTS_SUB_FONT)
+            ok, err = sc.render_short(pipeline.FFMPEG, a['path'], part, start_f, n_frames, info, segs,
+                                      ass_name=ass_name, work_dir=work, crf=30, preset='veryfast',
+                                      loudness=SHORTS_LOUDNESS, true_peak=SHORTS_TRUE_PEAK,
+                                      timeout=pipeline.FFMPEG_TIMEOUT, out_w=360, out_h=640)
+        except sc.ToolTimeout as e:
+            ok, err = False, f'The preview took too long ({e}).'
+        finally:
+            if ass_name:
+                try:
+                    os.remove(os.path.join(work, ass_name))
+                except OSError:
+                    pass
+        if not ok:
+            if os.path.exists(part):
+                os.remove(part)
+            return jsonify(ok=False, error=f'Could not make the preview: {err}'), 502
+        try:
+            os.replace(part, out_path)
+        except OSError:
+            if os.path.exists(part):
+                os.remove(part)
+    return jsonify(ok=True, url=f'/uploads/{out_name}')
+
+
+@app.route('/api/shorts/face-model', methods=['POST'])
+def api_shorts_face_model():
+    """Fetches the YuNet face model from the OpenCV model zoo and puts it
+    where Vertical Shorts looks for it (models/, next to the app). Admins
+    only: it writes into the app's folder. What arrives is used only if it
+    is exactly the published file -- its SHA-256 is checked -- and OpenCV
+    can load it."""
+    if session.get('role') != 'admin':
+        return jsonify(ok=False, error='Admin access required.'), 403
+    try:
+        r = requests.get(YUNET_URL, timeout=60, stream=True)
+        r.raise_for_status()
+        data = r.raw.read(YUNET_SIZE * 2 + 1, decode_content=True) if hasattr(r, 'raw') and r.raw else r.content
+    except Exception as e:
+        return jsonify(ok=False, error=f'Could not download the face model from GitHub ({e}). If this server has no '
+                                       f'internet access, download it elsewhere from {YUNET_URL} and copy it to '
+                                       f'{YUNET_FILE}.'), 502
+    if hashlib.sha256(data).hexdigest() != YUNET_SHA256:
+        return jsonify(ok=False, error='What was downloaded is not the published face model (its checksum does not '
+                                       'match), so it was not used.'), 502
+    os.makedirs(os.path.dirname(YUNET_FILE), exist_ok=True)
+    tmp = YUNET_FILE + '.part'
+    with open(tmp, 'wb') as f:
+        f.write(data)
+    os.replace(tmp, YUNET_FILE)
+    det = sc.FaceDetector(_face_model_path())
+    if det.kind != 'yunet':
+        return jsonify(ok=False, error="The face model was saved but this server's OpenCV could not load it, so the "
+                                       'built-in Haar cascades are still used. OpenCV 4.8 or newer is needed.'), 500
+    audit_log('shorts_face_model', target=os.path.basename(YUNET_FILE), user_id=session.get('user_id'),
+              username=session.get('username'), ip=_client_ip())
+    return jsonify(ok=True, face_detector=det.kind, path=YUNET_FILE)
+
+
 @app.route('/api/shorts/render', methods=['POST'])
 @require_permission('vertical_shorts')
 def api_shorts_render():
@@ -1311,7 +1597,10 @@ def api_shorts_render():
         captions, bad = _parse_captions(it.get('captions'), label, duration)
         if bad:
             return jsonify(error=bad), 400
-        items.append({'start': start, 'end': end, 'title': title, 'captions': captions})
+        framing, bad = _parse_framing(it.get('framing'), label, duration)
+        if bad:
+            return jsonify(error=bad), 400
+        items.append({'start': start, 'end': end, 'title': title, 'captions': captions, 'framing': framing})
     # Episode order (see _run_render), and an untitled one named for its place in it.
     items.sort(key=lambda it: (it['start'], it['end']))
     items = [dict(it, title=it['title'] or f'Short {k}') for k, it in enumerate(items, 1)]

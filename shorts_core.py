@@ -30,6 +30,7 @@ import math
 import os
 import re
 import subprocess
+import time
 
 import cv2
 import numpy as np
@@ -917,6 +918,27 @@ class FaceDetector:
     def available(self):
         return self.kind is not None
 
+    def detect_bodies(self, frame):
+        """[(x, y, w, h)] of head-and-shoulders, in the frame's own pixels:
+        for the shots where no face is found -- someone seen from behind,
+        in profile, looking down. OpenCV's upper-body cascade, which ships
+        with it. It sees backs as well as fronts, and it is not precise:
+        what it finds is only used when it is found in the same place
+        across a shot (see plan_reframe)."""
+        if getattr(self, '_upper', None) is None:
+            base = getattr(getattr(cv2, 'data', None), 'haarcascades', None)
+            casc = cv2.CascadeClassifier(os.path.join(base, 'haarcascade_upperbody.xml')) if base else None
+            self._upper = casc if casc is not None and not casc.empty() else False
+        if self._upper is False:
+            return []
+        h, w = frame.shape[:2]
+        k = min(1.0, self.max_dim / float(max(w, h)))
+        small = cv2.resize(frame, (max(2, int(w * k)), max(2, int(h * k))),
+                           interpolation=cv2.INTER_AREA) if k < 1.0 else frame
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        m = max(24, int(small.shape[0] * BODY_MIN_FRAC))
+        return [(x / k, y / k, bw / k, bh / k) for (x, y, bw, bh) in self._upper.detectMultiScale(gray, 1.05, 3, minSize=(m, m))]
+
     def detect(self, frame):
         """[(x, y, w, h, score)] in the frame's own pixel coordinates."""
         h, w = frame.shape[:2]
@@ -1020,7 +1042,62 @@ def mouth_activity(gray_a, gray_b, box):
     return max(0.0, mouth - floor) / max(12.0, float(pa.std()))
 
 
-def sample_faces(path, start_f, n_frames, fps, detector, step_sec=0.2, sar=1.0, mouth=False):
+# A head-and-shoulders smaller than this share of the picture's height is
+# someone in the background, not who the shot is of.
+BODY_MIN_FRAC = 0.2
+
+
+# ---- Where the picture is in focus ----
+# Drama is shot with the subject sharp and the background soft. In a shot
+# with no face to go by, where the picture is sharpest is where the person
+# is: someone walking away, a back, a hand on a table.
+FOCUS_STRENGTH = 1.3        # how much sharper than average the sharpest window must be to mean anything
+
+
+def focus_point(frame, win_w, sar=1.0):
+    """(centre x in DISPLAY pixels of the sharpest `win_w`-wide window of the
+    picture, how much sharper it is than the average window), or None.
+
+    Sharpness is the Laplacian -- fine detail -- summed down each column of
+    a small grey copy, over the top 85% of the picture (the bottom is where
+    graphics and captions go). Grain and noise are fine detail everywhere,
+    which is why the answer comes with how much the best window stands out:
+    a picture sharp all over has no answer worth taking."""
+    h, w = frame.shape[:2]
+    k = 320.0 / float(w)
+    small = cv2.resize(frame, (320, max(8, int(round(h * k)))), interpolation=cv2.INTER_AREA)
+    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    lap = np.abs(cv2.Laplacian(gray, cv2.CV_32F, ksize=3))
+    col = lap[:int(lap.shape[0] * 0.85)].sum(axis=0)
+    col = np.convolve(col, np.ones(5) / 5.0, mode='same')
+    win = max(4, min(len(col) - 1, int(round(win_w / float(sar) * k))))
+    sums = np.convolve(col, np.ones(win), mode='valid')
+    if not len(sums) or float(sums.mean()) <= 1e-6:
+        return None
+    best = int(np.argmax(sums))
+    return ((best + win / 2.0) / k) * sar, float(sums[best] / sums.mean())
+
+
+def _focus_targets(focus, a, b, max_x, crop_w):
+    """[(frame, x)] of where a shot with no face in it is in focus, if the
+    readings agree: sharply enough in at least 40% of the frames sampled.
+    None otherwise -- and a picture in focus all over, or a shot that cannot
+    make up its mind, is better centre-cropped than put somewhere wrong."""
+    ss = [(i, f) for i, f in focus or [] if a <= i <= b]
+    if len(ss) < 3:
+        return None
+    good = [(i, f[0]) for i, f in ss if f and f[1] >= FOCUS_STRENGTH]
+    if len(good) < max(2, int(math.ceil(0.4 * len(ss)))):
+        return None
+    xs = sorted(x for _, x in good)
+    lo, hi = xs[len(xs) // 10], xs[-1 - len(xs) // 10]
+    if hi - lo > 1.5 * crop_w:
+        return None                     # all over the place: no one thing is in focus
+    return good
+
+
+def sample_faces(path, start_f, n_frames, fps, detector, step_sec=0.2, sar=1.0, mouth=False, bodies=None,
+                 focus=None, focus_w=None):
     """Runs the detector over a clip at ~1/step_sec samples a second.
 
     Returns [(frame index relative to the clip start, [(cx, cy, w, h), ...])]
@@ -1032,7 +1109,16 @@ def sample_faces(path, start_f, n_frames, fps, detector, step_sec=0.2, sar=1.0, 
     With mouth=True each face gains a fifth value: mouth_activity() between
     the sampled frame and one MOUTH_LAG_SEC later (None where it couldn't be
     measured). That costs one more decoded frame per sample and no extra
-    detection; it is what plan_reframe's speaker option reads."""
+    detection; it is what plan_reframe's speaker option reads.
+
+    `bodies`, a list if given, collects (frame index, [(cx, cy, w, h)]) of
+    head-and-shoulders for every sampled frame in which no face was found
+    -- from the frame already decoded, so it costs no extra reading.
+    plan_reframe falls back on them for a shot with no faces in it.
+
+    `focus`, likewise, collects (frame index, focus_point()) for those
+    frames, for a window `focus_w` display pixels wide (the crop's): the
+    next thing plan_reframe falls back on."""
     out = []
     cap = cv2.VideoCapture(path)
     try:
@@ -1047,6 +1133,11 @@ def sample_faces(path, start_f, n_frames, fps, detector, step_sec=0.2, sar=1.0, 
                     break
                 dets = detector.detect(frame)
                 out.append((i, [((x + w / 2.0) * sar, y + h / 2.0, w * sar, h) for (x, y, w, h, _) in dets]))
+                if bodies is not None and not dets and hasattr(detector, 'detect_bodies'):
+                    bodies.append((i, [((x + w / 2.0) * sar, y + h / 2.0, w * sar, h)
+                                       for (x, y, w, h) in detector.detect_bodies(frame)]))
+                if focus is not None and not dets and focus_w:
+                    focus.append((i, focus_point(frame, focus_w, sar)))
                 pending = (cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), dets) if lag and dets else None
             elif pending is not None and i % step == lag:
                 ok, frame = cap.read()
@@ -1492,8 +1583,32 @@ def _wide_shot(hits, a, b, fps, mode, speaker, speech, disp_w, disp_h, crop_w, m
     return None
 
 
+def _body_targets(bodies, a, b, disp_h):
+    """[(frame, x)] to follow the person in a shot with no faces in it, from
+    head-and-shoulders detections -- or None if they do not show one.
+
+    The upper-body cascade is noisy, so it has to agree with itself: the
+    same figure, large enough to be who the shot is of, in at least 40% of
+    the frames sampled, and if several, the largest of those."""
+    ss = [(i, bs) for i, bs in bodies or [] if a <= i <= b]
+    if len(ss) < 3:
+        return None
+    hits = [(i, {'sig': [f for f in bs if f[3] >= BODY_MIN_FRAC * disp_h]}) for i, bs in ss]
+    hits = [(i, t) for i, t in hits if t['sig']]
+    if len(hits) < max(2, int(math.ceil(0.4 * len(ss)))):
+        return None
+    need = max(2, int(math.ceil(0.4 * len(ss))))
+    tracks = [t for t in _face_tracks(hits) if len(t['obs']) >= need]
+    if not tracks:
+        return None
+    best = max(tracks, key=lambda t: float(np.median([f[2] * f[3] for _, f in t['obs']])))
+    person = {'frames': [i for i, _ in best['obs']], 'xs': [f[0] for _, f in best['obs']],
+              'w': float(np.median([f[2] for _, f in best['obs']]))}
+    return _group_targets([person], [i for i, _ in hits])
+
+
 def plan_reframe(samples, shot_starts, n_frames, disp_w, disp_h, crop_w, mode='auto', fps=25.0,
-                 min_face_frac=0.05, speaker=False, speech=None):
+                 min_face_frac=0.05, speaker=False, speech=None, bodies=None, focus=None):
     """Decides, shot by shot, how a landscape clip becomes a portrait one.
 
     Returns segments [{'a', 'b', 'layout', 'x', 'keys'}] covering frames
@@ -1513,7 +1628,10 @@ def plan_reframe(samples, shot_starts, n_frames, disp_w, disp_h, crop_w, mode='a
         shows the whole frame (cutting to one of them would silently drop
         whoever is speaking half the time), 'crop' commits to the side
         with more face on it for the whole shot;
-      * no faces -> centre crop.
+      * no faces -> the person seen from behind or side-on, if a body
+        detector (see sample_faces' `bodies`) agrees with itself about one
+        across the shot; failing that, where the picture is in focus, if
+        that is clear (see focus_point); otherwise centre crop.
 
     Who is in a shot is decided from the shot as a whole, not frame by
     frame (see _people), so a face the detector loses now and then neither
@@ -1557,9 +1675,15 @@ def plan_reframe(samples, shot_starts, n_frames, disp_w, disp_h, crop_w, mode='a
             ss = [(i, fs) for i, fs in ss if a + 1 < i < b - 1] or ss
         info = [(i, _frame_target(fs, crop_w, disp_h, min_face_frac)) for i, fs in ss]
         hits = [(i, t) for i, t in info if t]
-        if not ss or len(hits) < max(1, math.ceil(0.25 * len(ss))):
+        faceless = not ss or len(hits) < max(1, math.ceil(0.25 * len(ss)))
+        targets = (_body_targets(bodies, a, b, disp_h) or _focus_targets(focus, a, b, max_x, crop_w)
+                   if faceless else None)
+        if faceless and not targets:
+            # No face, and no figure the body detector agrees on: the middle.
             segs.append({'a': a, 'b': b, 'layout': 'crop', 'x': center, 'keys': None})
             continue
+        if faceless:
+            ss = [(i, []) for i, _ in targets]        # the frames the path is drawn through
 
         # "Too wide for one frame" is a question about TWO people. One face
         # always fits, in the sense that matters: there is nobody to lose by
@@ -1568,7 +1692,7 @@ def plan_reframe(samples, shot_starts, n_frames, disp_w, disp_h, crop_w, mode='a
         # handled like a wide two-shot -- a single person shown small over a
         # blurred background, the opposite of what a close-up should get.
         # Who the shot is of, read from the shot as a whole (see _people).
-        people = _people(hits)
+        people = None if faceless else _people(hits)
         group = lead = None
         if people:
             left = min(p['cx'] - p['w'] / 2.0 for p in people)
@@ -1578,7 +1702,9 @@ def plan_reframe(samples, shot_starts, n_frames, disp_w, disp_h, crop_w, mode='a
             elif people[0]['area'] >= DOMINANT_FACE * people[1]['area']:
                 lead = people[0]                # they do not, but one of them is the subject
         fits = [len(t['sig']) < 2 or t['span_w'] <= 0.9 * crop_w for _, t in hits]
-        if group:
+        if faceless:
+            pass                                    # following a figure: targets already set
+        elif group:
             targets = _group_targets(group, [i for i, _ in hits])
         elif people is None and sum(fits) >= 0.6 * len(hits):
             targets = [(i, t['span_cx'] if ok else t['big_cx']) for (i, t), ok in zip(hits, fits)]
@@ -1666,6 +1792,63 @@ def plan_reframe(samples, shot_starts, n_frames, disp_w, disp_h, crop_w, mode='a
         else:
             merged.append(dict(s))
     return merged
+
+
+def shot_bounds(shot_starts, n_frames):
+    """[(a, b)] of each shot of a clip, inclusive, from where its cuts are."""
+    bounds = sorted(set([0] + [int(c) for c in shot_starts or [] if 0 < int(c) < int(n_frames)]))
+    return [(a, (bounds[k + 1] - 1) if k + 1 < len(bounds) else int(n_frames) - 1) for k, a in enumerate(bounds)]
+
+
+def apply_framing(segs, shot_starts, n_frames, overrides, max_x):
+    """The planned framing with the editor's corrections laid over it.
+
+    `overrides` are [(frame, layout, x)]: for the shot containing `frame`
+    (counted from the clip's first frame), 'crop' at window position `x`,
+    or 'fit' (the whole picture). A shot named twice takes the first; a
+    shot not named keeps its plan. A frame rather than a shot number names
+    the shot, so a correction stays on the shot it was made for when the
+    in point is moved and the shots are counted differently.
+
+    A corrected shot is one segment, still: whatever the plan had done
+    within it (followed someone, cut between speakers, split the screen)
+    gives way to what the editor chose."""
+    if not overrides:
+        return segs
+    chosen = {}
+    for a, b in shot_bounds(shot_starts, n_frames):
+        for f, layout, x in overrides:
+            if a <= f <= b and layout in ('crop', 'fit'):
+                chosen[(a, b)] = (layout, x)
+                break
+    if not chosen:
+        return segs
+    # The planner joins neighbouring shots framed alike into one segment.
+    # Cut those back into shots first, so one of them can be changed alone.
+    # (Only ever ones held still: a moving window is never joined.)
+    pieces = []
+    for s in segs:
+        if s.get('keys'):
+            pieces.append(s)
+            continue
+        for a, b in shot_bounds(shot_starts, n_frames):
+            if a <= s['b'] and b >= s['a']:
+                pieces.append(dict(s, a=max(a, s['a']), b=min(b, s['b'])))
+    segs = pieces
+    out = []
+    for s in segs:
+        own = next(((a, b) for (a, b) in chosen if a <= s['a'] <= b), None)
+        if own is None:
+            out.append(s)
+            continue
+        if out and out[-1].get('_editor') == own:
+            continue                                # the rest of a shot already replaced
+        layout, x = chosen[own]
+        out.append({'a': own[0], 'b': own[1], 'layout': layout, 'keys': None, '_editor': own,
+                    'x': float(min(max(0.0, float(x or 0.0)), max_x)) if layout == 'crop' else None})
+    for s in out:
+        s.pop('_editor', None)
+    return out
 
 
 def thin_keys(keys, tol=1.0):
@@ -1936,6 +2119,157 @@ def word_end(db, at, next_speech=None, hop=ENVELOPE_HOP):
     gaps = [j for j in gaps if quiet[j]] or gaps
     j = min(gaps, key=lambda j: (abs(j - i), -j))
     return round(j * hop, 3), 'dip'
+
+
+def read_envelope(ffmpeg, src, info, rate=8000, hop=ENVELOPE_HOP, timeout=1800):
+    """The level (dB, one reading every `hop` seconds) of a whole file's
+    sound -- the same sound a short gets (see read_pcm) -- read as it is
+    decoded, so a 45-minute episode is never held in memory as samples:
+    about a quarter of a million readings. None if there is no sound."""
+    take = info.get('audio_take')
+    if take:
+        pick = ['-filter_complex', take_to_stereo(take) + '[a]', '-map', '[a]']
+    elif info.get('audio_index') is not None:
+        pick = ['-map', f"0:a:{info['audio_index']}"]
+    else:
+        return None
+    step = max(1, int(round(rate * hop)))
+    cmd = [ffmpeg, '-hide_banner', '-nostats', '-loglevel', 'error', '-ss', f"{max(0.0, info.get('v_offset', 0.0)):.6f}",
+           '-i', src, '-vn'] + pick + ['-ac', '1', '-ar', str(int(rate)), '-f', 's16le', '-']
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except OSError:
+        return None
+    power, carry = [], np.zeros(0, dtype=np.float64)
+    started = time.time()
+    try:
+        while True:
+            chunk = proc.stdout.read(step * 2 * 2000)            # 20 s at a time
+            if not chunk:
+                break
+            if time.time() - started > timeout:
+                proc.kill()
+                return None
+            x = np.concatenate([carry, np.frombuffer(chunk[:len(chunk) // 2 * 2], dtype='<i2') / 32768.0])
+            n = len(x) // step
+            if n:
+                power.append((x[:n * step] ** 2).reshape(n, step).mean(axis=1))
+            carry = x[n * step:]
+    finally:
+        try:
+            proc.stdout.close()
+        except OSError:
+            pass
+        proc.wait()
+    if not power:
+        return None
+    p = np.concatenate(power)
+    p = np.convolve(p, np.ones(2) / 2.0, mode='same')
+    db = 10.0 * np.log10(np.maximum(p, 1e-10))
+    return np.convolve(np.pad(db, 1, mode='edge'), np.ones(3) / 3.0, mode='valid').astype(np.float32)
+
+
+# Lines timed only to the line, by a service that rounds -- to the whole
+# second, in the case that was reported -- are moved onto the sound.
+ALIGN = {'early': 0.6,      # a line may really start this much before the time it was given
+         'late': 1.5,       # ...or this much after (more often: it took in the silence before it)
+         'end_early': 1.0,  # and end this much before
+         'end_late': 0.7,   # or after
+         'window': 3.0,     # seconds either side judged together for what is loud and quiet here
+         'sound': 0.06,     # a start is sound lasting at least this long after quiet
+         'quiet': 0.08}     # an end is quiet lasting at least this long after sound
+
+
+def coarse_times(segments, min_lines=6, share=0.7):
+    """True when a transcript's line times are rounded -- to the whole second,
+    as reported, whatever offset they carry (0:30.29, 0:32.29, 0:33.29...):
+    most of them share one fraction of a second. Times given to the
+    hundredth are left as they are: moving those onto the sound gains
+    little, and over a busy soundtrack can lose."""
+    times = [float(t) for sg in segments or [] for t in (sg['start'], sg['end'])]
+    if len(segments or []) < min_lines:
+        return False
+    buckets = {}
+    for t in times:
+        b = int(round((t % 1.0) / 0.05)) % 20
+        buckets[b] = buckets.get(b, 0) + 1
+    return max(buckets.values()) >= share * len(times)
+
+
+def align_segments(segments, db, hop=ENVELOPE_HOP):
+    """Line timings moved onto the sound: (segments, how many were moved).
+
+    For a transcript timed only to the line. Each line's start goes to
+    where its sound begins after quiet, and its end to where it gives way
+    to quiet, looked for on whichever side of the time it was given the
+    sound says: a line given a start in silence begins later, one given a
+    start in the middle of sound began earlier.
+    Where the sound cannot tell speech from a gap -- a wall of music, a
+    crowd -- the line keeps its times. A line never starts before the one
+    ahead of it has ended, so two lines are never moved over each other."""
+    if db is None or not len(db) or not segments:
+        return segments, 0
+    db = np.asarray(db, dtype=np.float64)
+    n = len(db)
+    sound_run = max(2, int(round(ALIGN['sound'] / hop)))
+    quiet_run = max(2, int(round(ALIGN['quiet'] / hop)))
+    out, moved = [], 0
+    for k, sg in enumerate(segments):
+        s, e = float(sg['start']), float(sg['end'])
+        lo = max(0, int((s - ALIGN['window']) / hop))
+        hi = min(n, int((e + ALIGN['window']) / hop) + 1)
+        here = db[lo:hi]
+        if len(here) < 30:
+            out.append(dict(sg))
+            continue
+        floor, top = float(np.percentile(here, 10)), float(np.percentile(here, 95))
+        if top - floor < WORD_END['contrast']:
+            out.append(dict(sg))
+            continue
+        quiet = here < floor + max(4.0, 0.3 * (top - floor))
+        starts = [j for j in range(1, len(here) - sound_run)
+                  if quiet[j - 1] and not quiet[j:j + sound_run].any()]
+        ends = [j for j in range(1, len(here) - quiet_run)
+                if not quiet[j - 1] and quiet[j:j + quiet_run].all()]
+        prev_end = out[-1]['end'] if out else 0.0
+        nxt = float(segments[k + 1]['start']) if k + 1 < len(segments) else float('inf')
+
+        def sounding(t):
+            j = int(round(t / hop)) - lo
+            return 0 <= j < len(here) and quiet[max(0, j - 3):j + 4].mean() < 0.5
+
+        def times(cands):
+            return [(lo + j) * hop for j in cands]
+        # The start. Quiet at the time given: the line had not begun -- it
+        # begins where the sound first starts after it (it took in the
+        # silence ahead of it, often by more than a second). Sound at that
+        # time: it had already begun, where that sound started.
+        if sounding(s):
+            before = [t for t in times(starts) if max(s - ALIGN['early'], prev_end - 0.02) <= t <= s]
+            ns = before[-1] if before else None
+        else:
+            after = [t for t in times(starts) if s <= t <= min(e - 0.2, s + max(ALIGN['late'], 3.0))
+                     and t >= prev_end - 0.02]
+            ns = after[0] if after else None
+        # The end, the other way round: sound at the time given -- it went on
+        # to where the sound stops; quiet -- it had stopped already.
+        if sounding(e):
+            later = [t for t in times(ends) if e <= t <= min(e + ALIGN['end_late'], nxt + 0.5)]
+            ne = later[0] if later else None
+        else:
+            earlier = [t for t in times(ends) if e - ALIGN['end_early'] <= t <= e]
+            ne = earlier[-1] if earlier else None
+        new_s = round(ns - 0.03, 3) if ns is not None else s
+        new_e = round(ne + 0.03, 3) if ne is not None else e
+        if new_e - new_s < 0.2:
+            new_s, new_e = s, e
+        new_s = max(new_s, prev_end)
+        if new_e <= new_s:
+            new_s, new_e = max(s, prev_end), max(e, prev_end + 0.2)
+        if abs(new_s - s) > 0.02 or abs(new_e - e) > 0.02:
+            moved += 1
+        out.append(dict(sg, start=new_s, end=new_e))
+    return out, moved
 
 
 def read_pcm(ffmpeg, src, info, start, dur, rate=16000, timeout=60):
@@ -2516,8 +2850,10 @@ def frame_rate_arg(fps):
 
 def build_render_cmd(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=None,
                      crf=18, preset='medium', loudness=-14.0, true_peak=-1.5, ending=False, ending_room=None,
-                     ending_after=0, audio_out=None, audio_fade=None):
+                     ending_after=0, audio_out=None, audio_fade=None, out_w=OUT_W, out_h=OUT_H):
     """`ending` adds the cliffhanger ending (see cliffhanger_graph).
+    `out_w` x `out_h` is the picture size: the full 1080x1920 unless a
+    small preview of the framing is wanted.
     `ending_room` is how many frames the clip's last shot has run for by
     its last frame, when the caller knows where the cuts are, and
     `ending_after` how many usable frames follow the clip (see
@@ -2538,7 +2874,7 @@ def build_render_cmd(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_n
     # encoder then sometimes rounds it up and pads slot 0 with a duplicate
     # (measured -- which also pushes the last frame off the end).
     ss = max(0.0, info.get('v_offset', 0.0) + (start_f - 0.25) / fps)
-    graph = build_filtergraph(info, segs, ass_name=ass_name,
+    graph = build_filtergraph(info, segs, out_w, out_h, ass_name=ass_name,
                               ending=(n_frames, ending_room, ending_after) if ending else None)
     extra = cliffhanger_extra(n_frames, fps, ending_room, ending_after) if ending else 0
     if ending:
@@ -2615,7 +2951,7 @@ def ffmpeg_error(stderr, limit=600):
 
 def render_short(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=None, work_dir=None,
                  crf=18, preset='medium', loudness=-14.0, true_peak=-1.5, timeout=900, ending=False,
-                 ending_room=None, ending_after=0, audio_out=None, audio_fade=None):
+                 ending_room=None, ending_after=0, audio_out=None, audio_fade=None, out_w=OUT_W, out_h=OUT_H):
     """Renders one short. Returns (ok, error_text).
 
     Runs ffmpeg with `work_dir` as its working directory and refers to the
@@ -2628,7 +2964,7 @@ def render_short(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=
     cmd = build_render_cmd(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=ass_name,
                            crf=crf, preset=preset, loudness=loudness, true_peak=true_peak, ending=ending,
                            ending_room=ending_room, ending_after=ending_after, audio_out=audio_out,
-                           audio_fade=audio_fade)
+                           audio_fade=audio_fade, out_w=out_w, out_h=out_h)
     try:
         r = run_tool(cmd, timeout, cwd=work_dir, label='shorts render')
     except ToolTimeout:
