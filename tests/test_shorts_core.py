@@ -970,12 +970,12 @@ def test_the_minimum_length_is_a_minimum():
     both = sc.build_candidates(beats + [{'start_id': 10, 'end_id': 12, 'score': 4, 'title': 'Fine'}],
                                lines([(0, 5), (30, 46), (80, 90)]) + [dict(l, start=l['start'] + 200, end=l['end'] + 200) for l in plenty],
                                [], [], [], 700.0, min_dur=60, max_dur=120, report=told)
-    assert [c['title'] for c in both] == ['Fine'] and told == {'too_short': 1, 'kept_short': False}
+    assert [c['title'] for c in both] == ['Fine'] and told == {'not_story': 0, 'too_short': 1, 'kept_short': False}
     assert all(c['duration'] >= 60 for c in both), 'the weaker one that is long enough, not the stronger one that is not'
     # Every one of them short: listed as they are, and the caller is told so.
     only = sc.build_candidates(beats, alone, [], [], [], 100.0, min_dur=60, max_dur=120, report=told)
     assert [c['title'] for c in only] == ['Alone'] and 'short' in only[0]['flags']
-    assert told == {'too_short': 0, 'kept_short': True}
+    assert told == {'not_story': 0, 'too_short': 0, 'kept_short': True}
     # Short by a little is not short: the quiet around it is used first.
     near = lines([(100, 130), (131, 157)])
     c = sc.build_candidates([{'start_id': 0, 'end_id': 1, 'score': 7, 'title': 'Near'}], near, [], [], [], 400.0,
@@ -1674,3 +1674,69 @@ def test_frames_inside_each_moment_are_spread_within_budget_and_skip_ones_alread
     few = sc.inner_sample_times(cands, rated=[], budget=4, per_moment=4)
     assert sum(len(v) for v in few.values()) <= 4 and 0 in few
     assert sc.inner_sample_times(cands, [], budget=0) == {} and sc.inner_sample_times([], [], 50) == {}
+
+
+# --------------------------------------------------------------------------
+# What is not the drama
+# --------------------------------------------------------------------------
+
+def test_reading_what_kind_of_picture_and_which_lines_are_not_story():
+    assert sc.parse_vision_kind('{"score": 1, "desc": "names", "kind": "credits"}') == 'credits'
+    assert sc.parse_vision_kind('{"score": 1, "desc": "x", "kind": "Billboard"}') == 'logo'
+    assert sc.parse_vision_kind('{"score": 3, "desc": "a woman cr') is None
+    assert sc.parse_vision_kind('{"score": 3, "kind": "story", "desc": "cut off') == 'story'
+    reply = json.dumps({'moments': [], 'not_story': [
+        {'first_id': 2, 'last_id': 4, 'kind': 'billboard'}, {'first_id': 9, 'last_id': 7, 'kind': 'narration'},
+        {'first_id': 40, 'last_id': 41, 'kind': 'recap'}, {'first_id': 5, 'last_id': 5, 'kind': 'nonsense'}]})
+    assert sc.parse_story_skips(reply, 0, 20) == [{'start_id': 2, 'end_id': 4, 'kind': 'billboard'},
+                                                  {'start_id': 7, 'end_id': 9, 'kind': 'narration'}]
+    cut = '{"moments": [], "not_story": [{"first_id": 1, "last_id": 2, "kind": "credits"}, {"first_id": 5, "la'
+    assert sc.parse_story_skips(cut, 0, 20) == [{'start_id': 1, 'end_id': 2, 'kind': 'credits'}]
+    assert sc.parse_story_skips('{"moments": []}', 0, 20) == []
+
+
+def test_editor_ranges_are_read_or_refused():
+    assert sc.parse_ranges('0:00-1:45, 22:10 - 23:30; 44:05-end', 2700.0) == (
+        [(0.0, 105.0), (1330.0, 1410.0), (2645.0, 2700.0)], None)
+    assert sc.parse_ranges('1:02:03-1:02:10.5', 9999)[0] == [(3723.0, 3730.5)]
+    assert sc.parse_ranges('', 100) == ([], None)
+    for bad in ('5:00-4:00', 'abc-1:00', '1:00'):
+        assert sc.parse_ranges(bad, 600)[0] is None
+
+
+def test_not_story_ranges_from_lines_frames_and_the_editor():
+    segs = [{'start': float(k * 3), 'end': float(k * 3 + 2), 'text': f'l{k}'} for k in range(40)]
+    shots = [(0.0, 30.0), (30.0, 100.0), (100.0, 120.0)]
+    visual = [{'t': 50.0, 'score': 1, 'kind': 'credits'}, {'t': 62.0, 'score': 1, 'kind': 'credits'},
+              {'t': 80.0, 'score': 4, 'kind': 'story'}, {'t': 105.0, 'score': 1, 'kind': 'black'},
+              {'t': 10.0, 'score': 3, 'kind': None}]
+    r = sc.not_story_ranges([{'start_id': 2, 'end_id': 3, 'kind': 'billboard'}], segs, visual, shots, [(115, 120)])
+    assert r[0] == (6.0, 11.0, ['billboard'])
+    assert r[1] == (42.0, 70.0, ['credits']), 'two credit frames close together are one run, 8 s either side'
+    assert r[2] == (100.0, 113.0, ['black']), 'held to its shot, 8 s either side at most'
+    assert r[3] == (115.0, 120.0, ['editor'])
+    assert 'billboard 00:06-00:11' in sc.describe_ranges(r) and 'left out by you' in sc.describe_ranges(r)
+    assert sc.allowed_part(0, 60, r, prefer=(12, 30)) == (11.0, 42.0)
+    assert sc.allowed_part(43, 69, r) is None
+    bad = sc.blocked_lines(segs, r)
+    assert {2, 3, 14, 23, 34, 39} <= bad and not {1, 4, 13, 24, 26} & bad, 'lines half or more inside'
+
+
+def test_moments_are_built_clear_of_what_is_not_story():
+    segs = [{'start': float(k * 3), 'end': float(k * 3 + 2), 'text': f'l{k}'} for k in range(30)]
+    blocked = [(18.0, 26.0, ['narration'])]                    # lines 6-8
+    beats = [{'start_id': 2, 'end_id': 12, 'score': 8, 'title': 'Spans it'},
+             {'start_id': 6, 'end_id': 8, 'score': 9, 'title': 'All narration'}]
+    told = {}
+    out = sc.build_candidates(beats, segs, [], [], [], 120.0, min_dur=8, max_dur=30, report=told, blocked=blocked)
+    assert [c['title'] for c in out] == ['Spans it'] and told['not_story'] == 1
+    c = out[0]
+    assert c['start'] >= 26.0 and 'cleaned' in c['flags'], 'the longer clean run (lines 9-12), after the narration'
+    # Not lengthened back into it to reach the minimum, and the lead-in stops at its edge.
+    again = sc.build_candidates([{'start_id': 9, 'end_id': 9, 'score': 8, 'title': 'One line'}], segs, [], [], [],
+                                120.0, min_dur=8, max_dur=30, blocked=blocked)
+    assert again and again[0]['start'] >= 26.0
+    # Something found inside a moment afterwards: cut to the clean part, or dropped when too little is left.
+    m = [{'start': 30.0, 'end': 50.0, 'duration': 20.0, 'flags': []}, {'start': 60.0, 'end': 70.0, 'duration': 10.0, 'flags': []}]
+    kept, gone = sc.clear_of(m, [(45.0, 52.0, ['credits']), (62.0, 70.0, ['logo'])], min_dur=8, fps=25)
+    assert gone == 1 and kept[0]['end'] == 45.0 and 'cleaned' in kept[0]['flags']

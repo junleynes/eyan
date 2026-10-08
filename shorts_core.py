@@ -236,15 +236,50 @@ VISION_PROMPT = (
     '1 = nothing happening: an empty or establishing shot, a static wide shot, titles, '
     'credits, a logo or graphic.\n'
     'Also describe the frame in at most 12 words: who is visible and what they are doing.\n'
-    'Reply with JSON only: {"score": <1-5>, "desc": "<description>"}'
+    'And say what kind of picture it is:\n'
+    '"story" = a scene of the drama itself (on-screen text over a scene, such as a place name, is still story);\n'
+    '"credits" = credits, a title card, or text or a graphic filling the screen;\n'
+    '"logo" = a sponsor billboard, a product, a station or programme logo, an advertisement;\n'
+    '"host" = a host, presenter or narrator speaking to the camera or in a studio, not part of the drama;\n'
+    '"black" = a black or blank screen.\n'
+    'Reply with JSON only: {"score": <1-5>, "desc": "<description>", "kind": "<kind>"}'
 )
+
+# What the vision model can say a frame is. Anything but "story" is material
+# a short must not contain: billboards, credits, a host, black between acts.
+VISION_KINDS = ('story', 'credits', 'logo', 'host', 'black')
 
 VISION_FORMAT = {
     'type': 'object',
     'properties': {'score': {'type': 'integer', 'minimum': 1, 'maximum': 5},
-                   'desc': {'type': 'string'}},
-    'required': ['score', 'desc'],
+                   'desc': {'type': 'string'},
+                   'kind': {'type': 'string', 'enum': list(VISION_KINDS)}},
+    'required': ['score', 'desc', 'kind'],
 }
+
+
+_KIND_WORDS = {'story': 'story', 'scene': 'story', 'drama': 'story',
+               'credits': 'credits', 'credit': 'credits', 'title': 'credits', 'text': 'credits', 'graphic': 'credits',
+               'logo': 'logo', 'billboard': 'logo', 'sponsor': 'logo', 'ad': 'logo', 'advertisement': 'logo',
+               'host': 'host', 'presenter': 'host', 'narrator': 'host', 'anchor': 'host',
+               'black': 'black', 'blank': 'black'}
+
+
+def parse_vision_kind(text):
+    """The kind of picture a vision reply says a frame is (VISION_KINDS), or
+    None when it does not say -- which is taken as story, never as a reason
+    to leave anything out."""
+    text = (text or '').strip()
+    raw = None
+    if text.startswith('{'):
+        try:
+            raw = json.loads(text).get('kind')
+        except (ValueError, TypeError, AttributeError):
+            raw = None
+    if raw is None:
+        m = re.search(r'"kind"\s*:\s*"([^"]*)', text)
+        raw = m.group(1) if m else None
+    return _KIND_WORDS.get(' '.join(str(raw or '').lower().split()).strip(' ."'))
 
 
 def parse_vision_reply(text):
@@ -323,8 +358,21 @@ STORY_FORMAT = {
                 'required': ['start_id', 'end_id', 'title', 'score'],
             },
         },
+        'not_story': {
+            'type': 'array',
+            'items': {
+                'type': 'object',
+                'properties': {
+                    'first_id': {'type': 'integer'},
+                    'last_id': {'type': 'integer'},
+                    'kind': {'type': 'string', 'enum': ['billboard', 'credits', 'narration', 'host',
+                                                        'recap', 'teaser', 'sponsor']},
+                },
+                'required': ['first_id', 'last_id', 'kind'],
+            },
+        },
     },
-    'required': ['moments'],
+    'required': ['moments', 'not_story'],
 }
 
 
@@ -350,7 +398,8 @@ def build_story_prompt(segments, lo, hi, visual, min_dur, max_dur, max_moments=3
     for v in visual or []:
         if t_lo <= v['t'] <= t_hi and v.get('score'):
             desc = (v.get('desc') or '').strip() or 'no description'
-            rows.append((v['t'], 1, f"[SCREEN {fmt_ts(v['t'])}] {desc} (visual drama {v['score']}/5)"))
+            seen = f", looks like {v['kind']}" if v.get('kind') and v['kind'] != 'story' else ''
+            rows.append((v['t'], 1, f"[SCREEN {fmt_ts(v['t'])}] {desc} (visual drama {v['score']}/5{seen})"))
     rows.sort(key=lambda r: (r[0], r[1]))
     body = '\n'.join(r[2] for r in rows)
     extra = ''
@@ -375,14 +424,30 @@ def build_story_prompt(segments, lo, hi, visual, min_dur, max_dur, max_moments=3
         'or a cliffhanger,\n'
         '- opens on a line that grabs attention within the first three seconds,\n'
         '- does not start or end in the middle of a sentence or a thought.\n'
-        'Do not pick recaps, greetings, small talk, credits or sponsor reads. If nothing in this '
-        'stretch qualifies, return an empty list -- an empty list is a good answer.\n'
+        '- is the drama itself and nothing else (see below).\n'
+        'Do not pick greetings or small talk. If nothing in this stretch qualifies, return an empty '
+        'list -- an empty list is a good answer.\n'
+        '\nNOT STORY. A broadcast episode also carries material that is not the drama, and a short must '
+        'never contain any of it. List every such run of lines under "not_story" with its first and '
+        'last line ID and its kind:\n'
+        '- billboard: an opening or closing billboard (OBB/CBB), "this program is brought to you by", '
+        '"hatid sa inyo ng", sponsor and product mentions;\n'
+        '- sponsor: an advertisement or a sponsor read inside the programme;\n'
+        '- credits: opening titles, theme song over titles, end credits;\n'
+        '- narration: a narrator or voice-over telling the story rather than a character in a scene;\n'
+        '- host: a host or presenter speaking to the audience (introducing the episode, a studio '
+        'segment, a closing message);\n'
+        '- recap: "previously" / "sa nakaraang" summaries of earlier episodes;\n'
+        '- teaser: "next time" / "abangan" previews and plugs for other shows.\n'
+        'A moment may sit between such runs but must not include any line of them. If there is none, '
+        'return "not_story": [].\n'
         + extra +
         '\nFor each moment give: start_id and end_id (the first and last line IDs, inclusive), '
         'title (at most 8 words, in the language of the dialogue), hook (the line or idea that '
         'grabs attention), why (one sentence), and score (1-10: how strong it is as a stand-alone '
         'dramatic short).\n'
-        'Reply with JSON only: {"moments":[{"start_id":0,"end_id":0,"title":"","hook":"","why":"","score":0}]}\n\n'
+        'Reply with JSON only: {"moments":[{"start_id":0,"end_id":0,"title":"","hook":"","why":"","score":0}],'
+        '"not_story":[{"first_id":0,"last_id":0,"kind":"billboard"}]}\n\n'
         'EPISODE STRETCH\n' + body
     )
 
@@ -448,6 +513,190 @@ def parse_story_reply(text, lo, hi):
             'why': ' '.join(str(o.get('why') or '').split())[:240],
         })
     return beats
+
+
+NOT_STORY_LABELS = {'billboard': 'billboard', 'sponsor': 'sponsor read', 'credits': 'credits',
+                    'narration': 'narration', 'host': 'host', 'recap': 'recap', 'teaser': 'teaser',
+                    'logo': 'billboard / logo', 'black': 'black', 'editor': 'left out by you'}
+
+
+def parse_story_skips(text, lo, hi):
+    """The runs of lines a story reply says are not the drama (billboards,
+    credits, narration, a host, recaps, teasers): [{'start_id', 'end_id',
+    'kind'}], kept to the chunk asked about."""
+    text = re.sub(r'^```[a-zA-Z]*\s*|\s*```$', '', (text or '').strip())
+    items = None
+    a, b = text.find('{'), text.rfind('}')
+    for c in (text, text[a:b + 1] if 0 <= a < b else ''):
+        try:
+            data = json.loads(c)
+        except ValueError:
+            continue
+        if isinstance(data, dict) and isinstance(data.get('not_story'), list):
+            items = data['not_story']
+            break
+    if items is None:
+        # Truncated: whichever of its objects are intact.
+        items = []
+        for m in re.finditer(r'\{[^{}]*"first_id"[^{}]*\}', text):
+            try:
+                items.append(json.loads(m.group(0)))
+            except ValueError:
+                pass
+    out = []
+    for o in items:
+        if not isinstance(o, dict):
+            continue
+        kind = str(o.get('kind') or '').strip().lower()
+        if kind not in NOT_STORY_LABELS or kind in ('logo', 'black', 'editor'):
+            continue
+        try:
+            x, y = int(float(o.get('first_id'))), int(float(o.get('last_id')))
+        except (TypeError, ValueError):
+            continue
+        if x > y:
+            x, y = y, x
+        if y < lo or x >= hi:
+            continue
+        out.append({'start_id': max(x, lo), 'end_id': min(y, hi - 1), 'kind': kind})
+    return out
+
+
+def parse_ranges(text, duration):
+    """An editor's "leave out" list -- '0:00-1:30, 44:10-end' -- as
+    [(start, end)] seconds. (ranges, None) or (None, why)."""
+    out = []
+    for part in re.split(r'[,;\n]+', text or ''):
+        part = part.strip()
+        if not part:
+            continue
+        m = re.match(r'^(\S+)\s*(?:-|–|—|to)\s*(\S+)$', part)
+        if not m:
+            return None, f'"{part}" is not a range: write it as start-end, e.g. 0:00-1:30 or 44:10-end.'
+        try:
+            a = _parse_clock(m.group(1))
+            b = float(duration) if m.group(2).lower() in ('end', 'dulo') else _parse_clock(m.group(2))
+        except ValueError:
+            return None, f'"{part}" is not a range: write times as m:ss or h:mm:ss.'
+        if not 0 <= a < b:
+            return None, f'"{part}": the end must be after the start.'
+        out.append((a, min(b, float(duration))))
+    return out, None
+
+
+def _parse_clock(t):
+    t = t.strip()
+    if not re.match(r'^\d+(:\d{1,2}){0,2}(\.\d+)?$', t):
+        raise ValueError(t)
+    secs = 0.0
+    for p in t.split(':'):
+        secs = secs * 60 + float(p)
+    return secs
+
+
+def describe_ranges(ranges, most=6):
+    """'billboard 0:00-0:42; credits 44:10-45:30; ...' for a warning."""
+    bits = [f"{' / '.join(NOT_STORY_LABELS.get(k, k) for k in kinds)} {fmt_ts(a)}-{fmt_ts(b)}"
+            for a, b, kinds in ranges[:most]]
+    more = len(ranges) - most
+    return '; '.join(bits) + (f'; and {more} more' if more > 0 else '')
+
+
+def merge_ranges(ranges):
+    """Overlapping or touching (start, end, kind) ranges joined; the kinds
+    of a joined range are kept in order, without repeats."""
+    out = []
+    for a, b, kind in sorted(ranges, key=lambda r: (r[0], r[1])):
+        if out and a <= out[-1][1] + 0.05:
+            if b > out[-1][1]:
+                out[-1][1] = b
+            if kind not in out[-1][2]:
+                out[-1][2].append(kind)
+        else:
+            out.append([a, b, [kind]])
+    return [(a, b, kinds) for a, b, kinds in out]
+
+
+NOT_STORY_FRAME_REACH = 8.0     # a non-story frame in a long shot stands for this much either side of it
+NOT_STORY_BRIDGE = 20.0         # two non-story frames this close, with no story frame between, are one run
+
+
+def not_story_ranges(skips, segments, visual, shots, editor=None):
+    """Everything a short must not contain, as merged (start, end, kinds):
+    the lines the story model said are not the drama, the shots the vision
+    model saw as credits, a billboard, a host or black, and the ranges the
+    editor left out.
+
+    A frame stands for its shot, but no more than NOT_STORY_FRAME_REACH
+    either side of it (a credits roll with no cut in it would otherwise be
+    one frame wide, and one misread frame in a long scene would take the
+    whole scene). Two such frames close together with no story frame
+    between them are taken as one run: credits do not stop for a few
+    seconds in the middle."""
+    rng = []
+    n = len(segments or [])
+    for k in skips or []:
+        i, j = max(0, k['start_id']), min(n - 1, k['end_id'])
+        if i <= j:
+            # The whole run, the pauses inside it included.
+            rng.append((float(segments[i]['start']), float(segments[j]['end']), k['kind']))
+    shots = sorted(shots or [])
+    frames = sorted(visual or [], key=lambda v: v['t'])
+    prev = None
+    for v in frames:
+        kind = v.get('kind')
+        if not kind or kind == 'story':
+            prev = None
+            continue
+        t = float(v['t'])
+        a, b = t - NOT_STORY_FRAME_REACH, t + NOT_STORY_FRAME_REACH
+        for s0, s1 in shots:
+            if s0 <= t < s1:
+                a, b = max(a, s0), min(b, s1)
+                break
+        if prev is not None and t - prev[0] <= NOT_STORY_BRIDGE:
+            a = min(a, prev[1])
+        rng.append((a, b, kind))
+        prev = (t, b)
+    for a, b in editor or []:
+        rng.append((float(a), float(b), 'editor'))
+    return merge_ranges(rng)
+
+
+def _overlap(a, b, ranges):
+    return sum(max(0.0, min(b, r[1]) - max(a, r[0])) for r in ranges or [])
+
+
+def allowed_part(start, end, blocked, prefer=None):
+    """The part of [start, end] clear of every blocked range that keeps the
+    most of `prefer` (start, end -- the speech chosen), or the longest part
+    if there is none to keep. None when nothing is clear."""
+    parts, a = [], float(start)
+    for r0, r1, *_ in sorted(blocked or []):
+        if r1 <= a or r0 >= end:
+            continue
+        if r0 > a:
+            parts.append((a, r0))
+        a = max(a, r1)
+    if a < end:
+        parts.append((a, float(end)))
+    parts = [p for p in parts if p[1] - p[0] > 0.05]
+    if not parts:
+        return None
+    if prefer:
+        p0, p1 = prefer
+        return max(parts, key=lambda p: (max(0.0, min(p[1], p1) - max(p[0], p0)), p[1] - p[0]))
+    return max(parts, key=lambda p: p[1] - p[0])
+
+
+def blocked_lines(segments, blocked):
+    """Indices of the lines mostly (half or more) inside a blocked range."""
+    out = set()
+    for k, sg in enumerate(segments or []):
+        d = max(float(sg['end']) - float(sg['start']), 1e-3)
+        if _overlap(float(sg['start']), float(sg['end']), blocked) >= 0.5 * d:
+            out.add(k)
+    return out
 
 
 def heuristic_beats(segments, min_dur, max_dur, limit=12):
@@ -546,12 +795,14 @@ def _generate(base_url, payload, schema, timeout):
     return ollama_generate(base_url, payload, timeout)
 
 
-def ask_vision(base_url, model, jpeg_b64, num_predict=200, timeout=180):
-    """Rates one frame. Returns (score or None, description)."""
+def ask_vision(base_url, model, jpeg_b64, num_predict=200, timeout=180, with_kind=False):
+    """Rates one frame. Returns (score or None, description), and with
+    `with_kind` also the kind of picture (VISION_KINDS, or None)."""
     payload = {'model': model, 'prompt': VISION_PROMPT, 'stream': False, 'images': [jpeg_b64],
                'think': False, 'options': {'temperature': 0.1, 'num_predict': num_predict}}
     text, data = _generate(base_url, payload, VISION_FORMAT, timeout)
     score, desc = parse_vision_reply(text or (data.get('thinking') or ''))
+    kind = parse_vision_kind(text or (data.get('thinking') or ''))
     if score is None:
         # A reasoning model that spent its budget thinking leaves `response`
         # empty. One retry, unconstrained and with room to finish.
@@ -560,7 +811,8 @@ def ask_vision(base_url, model, jpeg_b64, num_predict=200, timeout=180):
         text, data = ollama_generate(base_url, payload, timeout)
         score, desc2 = parse_vision_reply(text or (data.get('thinking') or ''))
         desc = desc or desc2
-    return score, desc
+        kind = kind or parse_vision_kind(text or (data.get('thinking') or ''))
+    return (score, desc, kind) if with_kind else (score, desc)
 
 
 def ask_story(base_url, model, prompt, num_ctx=8192, num_predict=900, timeout=300):
@@ -580,7 +832,7 @@ def ask_story(base_url, model, prompt, num_ctx=8192, num_predict=900, timeout=30
 # From a proposed beat to an exact, safe window
 # --------------------------------------------------------------------------
 
-def fit_indices(segments, i, j, min_dur, max_dur, gap_limit=6.0, far_gap=10.0):
+def fit_indices(segments, i, j, min_dur, max_dur, gap_limit=6.0, far_gap=10.0, blocked=None):
     """Grows or shrinks the line range [i, j] to respect the length limits.
 
     Too long: lines are dropped from the START. The model picked this
@@ -594,7 +846,9 @@ def fit_indices(segments, i, j, min_dur, max_dur, gap_limit=6.0, far_gap=10.0):
     still has to be met, so longer pauses (up to `far_gap`) are crossed too,
     the shorter one first: a look held for ten seconds is a pause in a
     scene more often than the end of one. What still cannot reach the
-    minimum is flagged 'short', and the caller leaves it out."""
+    minimum is flagged 'short', and the caller leaves it out. Lines in
+    `blocked` (indices: billboards, credits, narration...) are never added."""
+    blocked = blocked or ()
     n = len(segments)
     i, j = max(0, min(i, n - 1)), max(0, min(j, n - 1))
     if i > j:
@@ -610,9 +864,9 @@ def fit_indices(segments, i, j, min_dur, max_dur, gap_limit=6.0, far_gap=10.0):
             flags.append('trimmed')
     back_first = True
     while dur(i, j) < min_dur:
-        can_back = (i > 0 and segments[i]['start'] - segments[i - 1]['end'] <= gap_limit
+        can_back = (i > 0 and i - 1 not in blocked and segments[i]['start'] - segments[i - 1]['end'] <= gap_limit
                     and dur(i - 1, j) <= max_dur)
-        can_fwd = (j < n - 1 and segments[j + 1]['start'] - segments[j]['end'] <= gap_limit
+        can_fwd = (j < n - 1 and j + 1 not in blocked and segments[j + 1]['start'] - segments[j]['end'] <= gap_limit
                    and dur(i, j + 1) <= max_dur)
         if can_back and (back_first or not can_fwd):
             i -= 1
@@ -625,8 +879,10 @@ def fit_indices(segments, i, j, min_dur, max_dur, gap_limit=6.0, far_gap=10.0):
         back_first = not back_first
     while dur(i, j) < min_dur:
         # Across longer pauses, whichever side has the shorter one.
-        back = segments[i]['start'] - segments[i - 1]['end'] if i > 0 and dur(i - 1, j) <= max_dur else None
-        fwd = segments[j + 1]['start'] - segments[j]['end'] if j < n - 1 and dur(i, j + 1) <= max_dur else None
+        back = (segments[i]['start'] - segments[i - 1]['end']
+                if i > 0 and i - 1 not in blocked and dur(i - 1, j) <= max_dur else None)
+        fwd = (segments[j + 1]['start'] - segments[j]['end']
+               if j < n - 1 and j + 1 not in blocked and dur(i, j + 1) <= max_dur else None)
         sides = [(g, side) for g, side in ((back, 'back'), (fwd, 'fwd')) if g is not None and g <= far_gap]
         if not sides:
             flags.append('short')
@@ -840,7 +1096,7 @@ def _word_start(db, at, prev_speech, hop=None):
     return round(max(0.0, last - t), 3), kind
 
 
-def refine_edges(cands, db, units, duration, min_dur, max_dur, fps, hop=None):
+def refine_edges(cands, db, units, duration, min_dur, max_dur, fps, hop=None, blocked=None):
     """Moves each moment's in and out points onto the sound: an out point
     that falls inside a word is moved to where the word ends (its pause,
     or -- where the speech runs straight on -- the gap between two words
@@ -875,7 +1131,8 @@ def refine_edges(cands, db, units, duration, min_dur, max_dur, fps, hop=None):
                 t += a * hop
                 if kind in ('pause', 'dip'):
                     t = min(t, start + max_dur, float(duration))
-                    if t - start >= min(min_dur, end - start) - 1e-6 and abs(t - end) > 0.5 / fps:
+                    if (t - start >= min(min_dur, end - start) - 1e-6 and abs(t - end) > 0.5 / fps
+                            and not _overlap(min(t, end), max(t, end), blocked)):
                         end = t
         # In point.
         a, b = int(max(0.0, start - span) / hop), min(len(db), int((start + span) / hop))
@@ -891,7 +1148,8 @@ def refine_edges(cands, db, units, duration, min_dur, max_dur, fps, hop=None):
                 t += a * hop
                 if kind in ('pause', 'dip'):
                     t = max(t, end - max_dur, 0.0)
-                    if end - t >= min(min_dur, end - start) - 1e-6 and abs(t - start) > 0.5 / fps:
+                    if (end - t >= min(min_dur, end - start) - 1e-6 and abs(t - start) > 0.5 / fps
+                            and not _overlap(min(t, start), max(t, start), blocked)):
                         start = t
         start = round(start * fps) / fps
         end = min(float(duration), round(end * fps) / fps)
@@ -903,6 +1161,32 @@ def refine_edges(cands, db, units, duration, min_dur, max_dur, fps, hop=None):
             c['duration'] = round(end - start, 2)
         c['edges'] = edges
     return moved
+
+
+def clear_of(cands, blocked, min_dur, fps):
+    """Moments built before something not-story was found inside them (by
+    the frames rated inside the moments): each cut to its clean part, and
+    left out when that is shorter than the minimum. Returns (kept, how
+    many were left out)."""
+    if not blocked:
+        return cands, 0
+    fps = float(fps) if fps and fps > 0 else 25.0
+    kept, gone = [], 0
+    for c in cands:
+        part = allowed_part(c['start'], c['end'], blocked)
+        if part is None:
+            gone += 1
+            continue
+        a, b = math.ceil(part[0] * fps - 1e-6) / fps, math.floor(part[1] * fps + 1e-6) / fps
+        if (a, b) != (c['start'], c['end']) and abs(a - c['start']) + abs(b - c['end']) > 1e-3:
+            if b - a < min_dur - 0.5:
+                gone += 1
+                continue
+            c['start'], c['end'], c['duration'] = round(a, 3), round(b, 3), round(b - a, 2)
+            if 'cleaned' not in c['flags']:
+                c['flags'].append('cleaned')
+        kept.append(c)
+    return kept, gone
 
 
 def dedupe_windows(cands, max_overlap=0.5):
@@ -927,7 +1211,7 @@ PAD_QUIET = 6.0             # seconds of non-speech a moment may be given, each 
 
 
 def build_candidates(beats, segments, words, cuts, visual, duration,
-                     min_dur=30.0, max_dur=90.0, limit=8, fps=25.0, min_story=None, report=None):
+                     min_dur=30.0, max_dur=90.0, limit=8, fps=25.0, min_story=None, report=None, blocked=None):
     """Beats (line ranges, or raw time windows from visual_windows) ->
     ranked, de-duplicated candidates with exact frame-aligned in/out points.
 
@@ -942,8 +1226,19 @@ def build_candidates(beats, segments, words, cuts, visual, duration,
     side and PAD_QUIET seconds at most; one that still falls short is left out. (Again unless that leaves
     nothing: then the short ones are listed, flagged.) `report`, a dict if
     given, is told how many were left out ('too_short') and whether short
-    ones had to be kept ('kept_short')."""
+    ones had to be kept ('kept_short').
+
+    `blocked` is what is not the drama -- billboards, credits, narration, a
+    host, recaps, black (see not_story_ranges): (start, end, kinds) ranges
+    no moment may include any of. A proposal running into one keeps the
+    longest clean run of its lines; lines are never added from one; and the
+    lead-in, tail and padding stop at its edge. ('cleaned' flags a moment
+    that lost something to this; report['not_story'] counts the proposals
+    that had nothing clean left.)"""
     units = speech_units(words, segments)
+    blocked = list(blocked or [])
+    bad_lines = blocked_lines(segments, blocked) if blocked else set()
+    gone = 0
     cuts = sorted(set([0.0, float(duration)] + [float(c) for c in cuts or []]))
     fps = float(fps) if fps and fps > 0 else 25.0
     out = []
@@ -957,7 +1252,29 @@ def build_candidates(beats, segments, words, cuts, visual, duration,
                 start, end = b['t0'], b['t1']
             lines = [s for s in segments if s['start'] < end and s['end'] > start]
         else:
-            i, j, flags = fit_indices(segments, b['start_id'], b['end_id'], min_dur, max_dur)
+            i0, j0 = max(0, min(b['start_id'], b['end_id'])), min(len(segments) - 1, max(b['start_id'], b['end_id']))
+            cleaned = False
+            if bad_lines and any(k in bad_lines for k in range(i0, j0 + 1)):
+                # The longest clean run of the lines chosen (later on a tie:
+                # the end is what the moment was picked for).
+                runs, run = [], []
+                for k in range(i0, j0 + 1):
+                    if k in bad_lines:
+                        if run:
+                            runs.append(run)
+                        run = []
+                    else:
+                        run.append(k)
+                if run:
+                    runs.append(run)
+                if not runs:
+                    gone += 1
+                    continue
+                best = max(runs, key=lambda r: (segments[r[-1]]['end'] - segments[r[0]]['start'], r[0]))
+                i0, j0, cleaned = best[0], best[-1], True
+            i, j, flags = fit_indices(segments, i0, j0, min_dur, max_dur, blocked=bad_lines)
+            if cleaned:
+                flags.append('cleaned')
             t0, t1 = speech_bounds(segments[i]['start'], segments[j]['end'], words)
             if t1 - t0 > max_dur:
                 # A single run-on line longer than the limit: nothing left
@@ -990,6 +1307,16 @@ def build_candidates(beats, segments, words, cuts, visual, duration,
                 room_before = start - (sorted(u[1] for u in units)[k] + 0.04 if k >= 0 else 0.0)
                 start -= max(0.0, min(room_before, PAD_QUIET - (t0 - start), min_dur - (end - start)))
             lines = segments[i:j + 1]
+        if blocked:
+            keep = (t0, t1) if 't0' not in b else (start, end)
+            part = allowed_part(start, end, blocked, prefer=keep)
+            if part is None:
+                gone += 1
+                continue
+            if part != (start, end):
+                start, end = part
+                if 'cleaned' not in flags:
+                    flags.append('cleaned')
         # Whole frames, so the render's frame maths starts from exact values.
         start = round(start * fps) / fps
         end = min(float(duration), round(end * fps) / fps)
@@ -1014,6 +1341,7 @@ def build_candidates(beats, segments, words, cuts, visual, duration,
         })
     long_enough = [c for c in out if 'short' not in c['flags']]
     if report is not None:
+        report['not_story'] = gone
         report['too_short'] = len(out) - len(long_enough) if long_enough else 0
         report['kept_short'] = bool(out) and not long_enough
     out = dedupe_windows(long_enough or out)

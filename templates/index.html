@@ -7052,6 +7052,10 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <input type=text id=sh-avoid class=input-box maxlength=300 placeholder="e.g. anything that gives away the ending, the hospital scenes, scenes with the children">
 <p class="sh-note" style="margin-top:6px">A moment that is mainly about this, or shows it, is left out even if it is strong. One that only mentions it in passing can still be picked.</p>
 
+<label for=sh-leave-out style="margin-top:12px">Leave out these parts of the video (optional)</label>
+<input type=text id=sh-leave-out class=input-box maxlength=600 placeholder="e.g. 0:00-1:45, 22:10-23:30, 44:05-end">
+<p class="sh-note" style="margin-top:6px">No moment will include any of it. Billboards (OBB/CBB), sponsor reads, opening and end credits, narration, a host, recaps and teasers are found and left out without this; use it for anything they miss.</p>
+
 <details style="margin-top:10px">
   <summary style="cursor:pointer;font-size:12px;opacity:.75">Advanced</summary>
   <div class="sh-row" style="margin-top:4px">
@@ -7447,6 +7451,7 @@ async function shortsAnalyze(auto){
   fd.append('count', shEl('sh-count').value)
   fd.append('focus', shEl('sh-focus').value)
   fd.append('avoid', shEl('sh-avoid').value)
+  fd.append('leave_out', shEl('sh-leave-out').value)
   if(auto){
     fd.append('auto_render', '1')
     var opts = shRenderOptions()
@@ -7660,6 +7665,7 @@ function shCandMeta(c){
     if(f === 'trimmed') chips.push('<span class="score-chip" title="Longer than the maximum, so its opening lines were dropped">Trimmed</span>')
     if(f === 'extended') chips.push('<span class="score-chip" title="Shorter than the minimum, so neighbouring lines were added">Extended</span>')
     if(f === 'short') chips.push('<span class="score-chip speech" title="Shorter than the minimum; nothing nearby to extend into">Short</span>')
+    if(f === 'cleaned') chips.push('<span class="score-chip" title="Cut short of a billboard, credits, narration, a host or a part you left out">Trimmed clear</span>')
   })
   return chips.join('')
 }
@@ -9695,6 +9701,7 @@ job. Configured via env vars:
       <h3>1. Find moments</h3>
       <p>Open the episode&rsquo;s project (see <em>Projects</em> below), go to <strong>Create shorts</strong>, pick the full episode and choose <strong>Preview the cut</strong>. Nothing is rendered in this step. <strong>Generate without preview</strong> runs the same analysis and then renders every moment it found, with the Output settings, as one job; the moments are still listed afterwards so any can be re-timed and rendered again.</p>
       <p><strong>Length of each short</strong> starts at 60 to 120 seconds. <strong>Moments to find</strong> is a ceiling &mdash; up to 5, 8, 12, 20, 50 or 100 &mdash; or <strong>Auto</strong>. A number keeps the best that many, weak ones included if there is room. Auto has no number: it keeps every distinct moment the story model rates {{ shorts_auto_min_story }}/10 or better (100 at most), and if none reaches that it lists everything it found and says so. An episode only holds so many: two moments may share up to half their length, so 45 minutes at 60&ndash;120 s yields a few dozen at most whatever is asked for. Each five-minute stretch of dialogue is asked for as many moments as it can hold end to end, eight at the very most. One render takes up to 100 shorts.</p>
+      <p><strong>Billboards, credits, narration and the like are never in a moment.</strong> A broadcast episode or a movie carries material that is not the drama: opening and closing billboards (OBB/CBB) and sponsor reads, opening titles and end credits, a narrator or voice-over telling the story, a host speaking to the audience, recaps (<em>sa nakaraang</em>) and teasers (<em>abangan</em>), and black between acts. The story model marks the lines that are any of these, and the AI Vision model says of every frame it rates whether it is the drama, credits or a title card, a logo or billboard, a host, or black &mdash; for the frames across the whole video and again for those inside each moment. A frame stands for its shot (up to 8 seconds either side of it), and non-drama frames less than 20 seconds apart with no drama between them are taken as one run, as credits are. No moment includes any of it: a moment that runs into one keeps its longest clean stretch of lines (marked <em>Trimmed clear</em>), is never lengthened into one, and its lead-in, tail and padding stop at its edge; one with too little left is dropped. A note above the list says what was left out and where. <strong>Leave out these parts of the video</strong> takes ranges of your own &mdash; <code>0:00-1:45, 44:05-end</code> &mdash; for anything they miss. Something left out by mistake can be added back with <em>Add your own moment</em>, which is never trimmed.</p>
       <p><strong>What should these shorts feature</strong> is a preference: matching moments are favoured, but a weak one is not picked just for matching. <strong>What should these shorts avoid</strong> is a rule: a moment mainly about it, or showing it, is left out however strong. Both are judged by the story model from the dialogue and the visual notes, so neither applies when a fallback had to be used (a warning says so).</p>
       <ul style="line-height:1.8;padding-left:20px">
         <li><strong>How it looks.</strong> A bounded number of frames, spread across the whole video, are rated 1&ndash;5 by the AI Vision model for visible drama. Once the moments are proposed, up to four more frames inside each are rated too (160 in all at most, skipping any already rated), so a moment is judged on its own pictures and not on wherever the first sample happened to fall. Half as many moments again as you asked for are looked at this way, and the closer look decides which make the list.</li>

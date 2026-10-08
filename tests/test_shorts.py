@@ -569,7 +569,7 @@ def test_analyze_produces_ranked_snapped_candidates(env, monkeypatch):
     # Layer 1: a bounded number of vision calls, to the chosen model, with an image and a constrained reply.
     assert 1 <= len(svc.vision_calls) <= 10 + 4 * 4 and a['stats']['frames_rated'] == len(svc.vision_calls)
     assert a['stats']['frames_inside'] >= 1, 'frames inside the moments are rated too'
-    assert all(c['model'] == 'test-vl' and c['images'] and c['format']['required'] == ['score', 'desc']
+    assert all(c['model'] == 'test-vl' and c['images'] and c['format']['required'] == ['score', 'desc', 'kind']
                for c in svc.vision_calls)
     # Layer 2: one story call (24 s fits one chunk), same model by default, big enough context, with
     # the visual notes and the editor's focus in the prompt.
@@ -1455,7 +1455,7 @@ def test_auto_keeps_every_moment_the_story_model_rates_well_and_no_others(env, m
     assert sorted(c['title'] for c in a['candidates']) == ['Good enough', 'Strong']
     assert a['options']['count'] == 'auto' and not any('Auto keeps' in w for w in a['warnings'])
     assert 'Find up to 8 moments' in svc.story_prompts[0]['prompt'], 'as many as a stretch can hold, eight at most'
-    assert svc.story_prompts[0]['options']['num_predict'] == 250 + 170 * 8, 'and room in the reply to list them'
+    assert svc.story_prompts[0]['options']['num_predict'] == 450 + 170 * 8, 'and room in the reply to list them'
     # A number is a ceiling and nothing else: the weak one is listed too.
     b = _analysis(client, _analyze(client, headers, env, count='12'))
     assert sorted(c['title'] for c in b['candidates']) == ['Good enough', 'Strong', 'Weak']
@@ -2777,3 +2777,62 @@ def test_an_episode_cleared_from_the_server_is_fetched_again_from_its_network_fo
 
 def test_fetching_a_network_file_remembers_where_it_came_from():
     assert pipeline.staged_origin('net_0_nothing.mp4') is None
+
+
+# --------------------------------------------------------------------------
+# Billboards, credits, narration and the editor's own ranges stay out
+# --------------------------------------------------------------------------
+
+def test_lines_the_story_model_marks_as_not_story_and_ranges_left_out_are_never_in_a_moment(env, monkeypatch):
+    svc = Services(monkeypatch)
+
+    def reply(ids, payload):
+        out = json.loads(Services._default_story(ids, payload)['response'])
+        out['not_story'] = [{'first_id': ids[3], 'last_id': ids[4], 'kind': 'narration'}]
+        return {'response': json.dumps(out)}
+
+    svc.story_reply = reply
+    client, headers = _client()
+    a = _analysis(client, _analyze(client, headers, env, leave_out='0:14-end'))
+    p = svc.story_prompts[0]
+    assert 'not_story' in p['format']['required'] and 'OBB/CBB' in p['prompt'] and 'sa nakaraang' in p['prompt']
+    words, segs = _transcript()
+    assert [c['title'] for c in a['candidates']] == ['Ang lihim ni Ramon'], 'the other one is all in the part left out'
+    c = a['candidates'][0]
+    assert c['end'] <= segs[3]['start'] and 'cleaned' in c['flags'], 'cut short of the narration'
+    assert c['duration'] >= 5 and c['start'] <= segs[1]['start'], 'and made up from the line before, not the narration'
+    w = next(w for w in a['warnings'] if w.startswith('Left out of every moment'))
+    assert 'narration 00:07' in w and 'left out by you 00:14' in w
+    an = shorts.analysis_get(a['analysis_id'])
+    assert [e['kinds'] for e in an['excluded']] == [['narration'], ['editor']]
+    assert an['options']['leave_out'][0][0] == 14.0
+    # A range that cannot be read is refused before anything runs.
+    r = client.post('/api/shorts/analyze', headers=headers, data={
+        'shorts_file_network': env['staged'], 'project_id': env['project'], 'min_dur': 5, 'max_dur': 12,
+        'leave_out': '0:00 until 1:30'})
+    assert r.status_code == 400 and 'Leave out' in r.get_json()['error']
+
+
+def test_frames_the_vision_model_sees_as_credits_keep_moments_clear_of_their_shot(env, monkeypatch):
+    svc = Services(monkeypatch)
+    story_post = svc._post
+    # Every frame from 14 s on is credits.
+    monkeypatch.setattr(shorts, '_grab_frames', lambda path, times, fps, **k: [
+        (t, 'CREDITS' if t >= 14 else 'SCENE') for t in times])
+
+    def post(url, json=None, timeout=None, **kw):
+        payload = json or {}
+        if not payload.get('images'):
+            return story_post(url, json=json, timeout=timeout, **kw)
+        svc.vision_calls.append(payload)
+        credits = payload['images'][0] == 'CREDITS'
+        resp = mock.Mock()
+        resp.json.return_value = {'response': __import__('json').dumps(
+            {'score': 1 if credits else 4, 'desc': 'x', 'kind': 'credits' if credits else 'story'})}
+        return resp
+
+    monkeypatch.setattr(sc.requests, 'post', post)
+    client, headers = _client()
+    a = _analysis(client, _analyze(client, headers, env))
+    assert a['candidates'] and all(c['end'] <= 14.0 + 1e-6 for c in a['candidates'])
+    assert any('credits' in w for w in a['warnings'] if w.startswith('Left out of every moment'))

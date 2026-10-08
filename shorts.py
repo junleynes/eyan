@@ -608,10 +608,10 @@ def _run_analysis(jid, params):
     def _rate(item):
         t, b64 = item
         try:
-            score, desc = sc.ask_vision(pipeline.OLLAMA_URL, vision_model, b64)
+            score, desc, kind = sc.ask_vision(pipeline.OLLAMA_URL, vision_model, b64, with_kind=True)
             if score is not None:
                 with lock:
-                    visual.append({'t': t, 'score': score, 'desc': desc})
+                    visual.append({'t': t, 'score': score, 'desc': desc, 'kind': kind})
         except Exception as e:
             with lock:
                 errors.append(str(e))
@@ -676,7 +676,7 @@ def _run_analysis(jid, params):
     if errors:
         warnings.append(f'{len(errors)} of {len(items)} frames could not be rated by the vision model '
                         f'({errors[0][:120]}); the rest were used.')
-    beats, chunks = [], []
+    beats, chunks, skips = [], [], []
     if segments:
         chunks = sc.chunk_segments(segments, SHORTS_STORY_CHUNK_SEC, SHORTS_STORY_OVERLAP_SEC)
         # How many to ask each stretch for: enough, over them all, to fill
@@ -695,13 +695,14 @@ def _run_analysis(jid, params):
             try:
                 # Room for the reply to list them all: a cut-off reply loses the last ones.
                 reply = sc.ask_story(pipeline.OLLAMA_URL, story_model, prompt, num_ctx=SHORTS_STORY_NUM_CTX,
-                                     num_predict=max(900, 250 + 170 * per_chunk))
+                                     num_predict=max(1100, 450 + 170 * per_chunk))
             except Exception as e:
                 failed += 1
                 first_err = first_err or str(e)
                 print(f'Vertical Shorts: story analysis failed on part {ci + 1}/{len(chunks)}: {e}')
                 continue
             beats.extend(sc.parse_story_reply(reply, lo, hi))
+            skips.extend(sc.parse_story_skips(reply, lo, hi))
         if failed == len(chunks):
             report(error=f'The story model "{story_model}" failed on every part of the transcript '
                              f'({first_err}). Check that it is pulled on the Ollama server, or pick another '
@@ -735,16 +736,22 @@ def _run_analysis(jid, params):
         # Neither fallback rates anything, so there is no "worth making" to
         # go by: as many as would fit the programme end to end, at most.
         limit = max(3, min(SHORTS_MAX_ITEMS, int(duration // ((min_dur + max_dur) / 2.0))))
+    # What is not the drama -- billboards, credits, narration, a host,
+    # recaps, teasers, black between acts, and what the editor left out --
+    # is kept out of every moment.
+    editor_out = [(a, min(b, duration)) for a, b in params.get('leave_out') or [] if a < duration]
+    blocked = sc.not_story_ranges(skips, segments, visual, shots, editor_out)
     lengths = {}
     # Half as many again as wanted are built, so that a closer look -- at
     # their own frames and their sound -- can change which make the list.
     pool = min(SHORTS_MAX_ITEMS * 2, int(math.ceil(limit * 1.5)) + 2)
     cands = sc.build_candidates(beats, segments, words, cuts, visual, duration,
                                 min_dur=min_dur, max_dur=max_dur, limit=pool, fps=fps,
-                                min_story=SHORTS_AUTO_MIN_STORY if auto else None, report=lengths)
+                                min_story=SHORTS_AUTO_MIN_STORY if auto else None, report=lengths,
+                                blocked=blocked)
     # In and out points onto the sound: not in the middle of a word.
     edges_moved = sc.refine_edges(cands, db, sc.speech_units(words, segments), duration,
-                                  min_dur, max_dur, fps) if db is not None else 0
+                                  min_dur, max_dur, fps, blocked=blocked) if db is not None else 0
     # A few frames inside each moment, rated like the first sample.
     inner = sc.inner_sample_times(cands, [v['t'] for v in visual], SHORTS_MOMENT_FRAMES,
                                   per_moment=SHORTS_MOMENT_FRAMES_EACH)
@@ -759,10 +766,10 @@ def _run_analysis(jid, params):
         def _rate_inner(item):
             t, b64 = item
             try:
-                score, desc = sc.ask_vision(pipeline.OLLAMA_URL, vision_model, b64)
+                score, desc, kind = sc.ask_vision(pipeline.OLLAMA_URL, vision_model, b64, with_kind=True)
                 if score is not None:
                     with lock:
-                        visual.append({'t': t, 'score': score, 'desc': desc})
+                        visual.append({'t': t, 'score': score, 'desc': desc, 'kind': kind})
             except Exception as e:
                 print(f'Vertical Shorts: rating a frame inside a moment failed: {e}')
             with lock:
@@ -777,6 +784,15 @@ def _run_analysis(jid, params):
         visual.sort(key=lambda v: v['t'])
         if prod.get('unload_vision_after_scoring', True):
             pipeline.unload_ollama_model(vision_model)
+        # A frame inside a moment may show it reaching into credits or a billboard.
+        blocked = sc.not_story_ranges(skips, segments, visual, shots, editor_out)
+        cands, gone = sc.clear_of(cands, blocked, min_dur, fps)
+        lengths['not_story'] = lengths.get('not_story', 0) + gone
+    if blocked:
+        warnings.append('Left out of every moment as not part of the drama: ' + sc.describe_ranges(blocked) + '. '
+                        'Moments are cut short of these, or dropped when too little is left'
+                        + (f" ({lengths['not_story']} dropped)" if lengths.get('not_story') else '') + '. '
+                        'If something was left out by mistake, add it back with "Add your own moment".')
     ref = sc.sound_reference(db)
     for c in cands:
         sc.rescore(c, visual, words, segments, sound=sc.sound_score(db, c['start'], c['end'], ref))
@@ -804,12 +820,14 @@ def _run_analysis(jid, params):
     _candidate_thumbs(path, cands, aid, fps)
     analysis_store(aid, {
         'origin': pipeline.staged_origin(os.path.basename(path)),
+        'excluded': [{'start': round(a, 2), 'end': round(b, 2), 'kinds': k} for a, b, k in blocked],
         'user_id': params.get('user_id'), 'username': params.get('username'),
         'project_id': params.get('project_id'),
         'path': path, 'orig_name': params['orig_name'], 'info': info, 'cut_frames': cut_frames,
         'words': words, 'segments': segments, 'candidates': cands, 'warnings': warnings,
         'options': {'min_dur': min_dur, 'max_dur': max_dur, 'count': 'auto' if auto else count,
-                    'focus': params.get('focus'), 'avoid': params.get('avoid')},
+                    'focus': params.get('focus'), 'avoid': params.get('avoid'),
+                    'leave_out': editor_out},
         'stats': {'shots': len(shots), 'frames_rated': len(visual), 'transcript_lines': len(segments),
                   'lines_aligned': aligned, 'edges_moved': edges_moved, 'frames_inside': inner_rated,
                   'story_parts': len(chunks), 'vision_model': vision_model, 'story_model': story_model},
@@ -1400,6 +1418,9 @@ def api_shorts_analyze():
     project = sp.load(SHORTS_PROJECTS_DIR, (request.form.get('project_id') or '').strip())
     if not project:
         return jsonify(error='Choose the project these shorts are for first, or create one under Projects.'), 400
+    leave_out, bad = sc.parse_ranges((request.form.get('leave_out') or '')[:600], 10 ** 7)
+    if bad:
+        return jsonify(error='Leave out: ' + bad), 400
     path, orig_name, err = _resolve_source()
     if not path:
         return jsonify(error=err), 400
@@ -1414,6 +1435,7 @@ def api_shorts_analyze():
         'vision_frames': _form_num('vision_frames', SHORTS_VISION_FRAMES, 10, 300, int),
         'focus': ' '.join((request.form.get('focus') or '').split())[:300] or None,
         'avoid': ' '.join((request.form.get('avoid') or '').split())[:300] or None,
+        'leave_out': leave_out,
         'vision_model': vision_model,
         # One model for both layers unless told otherwise: a vision model
         # reads text perfectly well, and keeping a single model loaded
