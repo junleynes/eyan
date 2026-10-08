@@ -531,9 +531,19 @@ def _run_analysis(jid, params):
         # Neither fallback rates anything, so there is no "worth making" to
         # go by: as many as would fit the programme end to end, at most.
         limit = max(3, min(SHORTS_MAX_ITEMS, int(duration // ((min_dur + max_dur) / 2.0))))
+    lengths = {}
     cands = sc.build_candidates(beats, segments, words, cuts, visual, duration,
                                 min_dur=min_dur, max_dur=max_dur, limit=limit, fps=fps,
-                                min_story=SHORTS_AUTO_MIN_STORY if auto else None)
+                                min_story=SHORTS_AUTO_MIN_STORY if auto else None, report=lengths)
+    if lengths.get('too_short'):
+        k = lengths['too_short']
+        warnings.append(f"{k} moment{'' if k == 1 else 's'} the story model picked could not be brought up to the "
+                        f"{int(min_dur)}-second minimum without running into another scene, and "
+                        f"{'was' if k == 1 else 'were'} left out. Lower the minimum to see "
+                        f"{'it' if k == 1 else 'them'}.")
+    elif lengths.get('kept_short'):
+        warnings.append(f'None of the moments found could be brought up to the {int(min_dur)}-second minimum, so '
+                        'they are listed as they are, marked Short. Lower the minimum, or lengthen them by hand.')
     if auto and cands and all(c['story_score'] is not None and c['story_score'] < SHORTS_AUTO_MIN_STORY
                               for c in cands):
         warnings.append(f'Auto keeps the moments the story model rates {SHORTS_AUTO_MIN_STORY}/10 or better. '

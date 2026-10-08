@@ -1415,6 +1415,30 @@ def test_lengths_default_to_60_to_120_seconds_and_a_hundred_moments_can_be_asked
         ('5', ''), ('8', ' selected'), ('12', ''), ('20', ''), ('50', ''), ('100', ''), ('auto', '')]
 
 
+def test_a_moment_that_cannot_reach_the_minimum_length_is_left_out_and_the_editor_is_told(env, monkeypatch):
+    """Reported: a 16.5-second moment in the list at a 60-second minimum."""
+    # Six lines back to back (0.5-12.5 s), then one on its own after more than ten seconds of nothing.
+    segs = [{'start': 0.5 + 2.0 * k, 'end': 2.4 + 2.0 * k, 'text': f'Linya {k} ng usapan.'} for k in range(6)]
+    segs.append({'start': 23.0, 'end': 23.8, 'text': 'Salamat.'})
+    svc = Services(monkeypatch, words=[], segs=segs)
+    svc.story_reply = lambda ids, payload: {'response': json.dumps({'moments': [
+        {'start_id': ids[1], 'end_id': ids[3], 'title': 'The talk', 'score': 6},
+        {'start_id': ids[-1], 'end_id': ids[-1], 'title': 'On its own', 'score': 9}]})}
+    client, headers = _client()
+    a = _analysis(client, _analyze(client, headers, env, min_dur=12, max_dur=18))
+    assert [c['title'] for c in a['candidates']] == ['The talk'], 'the stronger one is the one that cannot be made long enough'
+    c = a['candidates'][0]
+    assert c['duration'] >= 12 and 'short' not in c['flags'] and 'extended' in c['flags']
+    assert any('1 moment the story model picked could not be brought up to the 12-second minimum' in w
+               and 'was left out' in w for w in a['warnings']), a['warnings']
+    # When that is all there is, it is listed as it is, marked, with the reason.
+    svc.story_reply = lambda ids, payload: {'response': json.dumps({'moments': [
+        {'start_id': ids[-1], 'end_id': ids[-1], 'title': 'On its own', 'score': 9}]})}
+    b = _analysis(client, _analyze(client, headers, env, min_dur=12, max_dur=18))
+    assert [(c['title'], 'short' in c['flags']) for c in b['candidates']] == [('On its own', True)]
+    assert any('None of the moments found could be brought up to the 12-second minimum' in w for w in b['warnings'])
+
+
 def test_auto_keeps_every_moment_the_story_model_rates_well_and_no_others(env, monkeypatch):
     svc = Services(monkeypatch)
     svc.story_reply = lambda ids, payload: {'response': json.dumps({'moments': [

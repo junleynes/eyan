@@ -88,9 +88,41 @@ def segments_from_words(words, max_len=10.0, gap=0.6):
              'text': ' '.join(x['word'] for x in g)} for g in segs]
 
 
+# How long a line of so many words can plausibly take to say, generously:
+# slow, with pauses. A line that claims far more than that did not take it.
+def speaking_time(n_words):
+    return 1.5 + 0.8 * max(1, int(n_words))
+
+
+LONG_WORD = 2.0             # seconds; no single word takes this long to say
+
+
+def trim_absorbed_silence(start, end, n_words):
+    """The start of a line of `n_words` words timed start..end, moved later
+    if the line cannot really have begun there.
+
+    Reported: a caption on screen for thirty seconds before anyone spoke.
+    Whisper places a line's END well. Its START, after a stretch with no
+    speech -- music, a look, a walk across a room -- is often the start of
+    that stretch instead: "Oh, my God." timed 0:00 to 0:30. Everything
+    downstream then believes the line began there: its caption comes up 30
+    seconds early, and a short that opens on it opens on half a minute of
+    nothing.
+
+    So a line that lasts far longer than its words could take is taken to
+    end where it says and to have started as late as they allow. Only when
+    it is far out -- more than double, and by more than three seconds -- so
+    a line that really is delivered slowly is left exactly as timed."""
+    span = speaking_time(n_words)
+    if end - start > max(2.0 * span, span + 3.0):
+        return end - span
+    return start
+
+
 def normalize_transcript(words, segments, max_line=12.0):
     """Cleans a (words, segments) pair from the speech service into sorted,
-    well-formed lists, and splits over-long segments.
+    well-formed lists, splits over-long segments, and corrects starts that
+    cannot be right (see trim_absorbed_silence).
 
     The lines matter more here than in the promo pipeline: they are the
     units the story model points at ("lines 41-58") and the units a window
@@ -106,6 +138,10 @@ def normalize_transcript(words, segments, max_line=12.0):
             continue
         t = str(x.get('word') or '').strip()
         if t and e >= s:
+            # The same fault at the level of a word: the first one after a
+            # silence given the whole silence as its length.
+            if e - s > LONG_WORD:
+                s = e - 1.0
             w.append({'start': s, 'end': e, 'word': t})
     w.sort(key=lambda d: d['start'])
 
@@ -123,19 +159,29 @@ def normalize_transcript(words, segments, max_line=12.0):
     if not segs and w:
         return w, segments_from_words(w)
     if not w:
+        # Lines only. Their own word count is all there is to judge them by.
+        for sg in segs:
+            sg['start'] = trim_absorbed_silence(sg['start'], sg['end'], len(sg['text'].split()))
         return w, segs
 
     starts = [x['start'] for x in w]
     out = []
     for sg in segs:
-        if sg['end'] - sg['start'] <= max_line:
-            out.append(sg)
-            continue
         lo = bisect.bisect_left(starts, sg['start'] - 1.0)
         hi = bisect.bisect_right(starts, sg['end'])
         # By midpoint, so a word of the neighbouring line that merely starts
         # close to this one's edge isn't pulled into it.
         inner = [x for x in w[lo:hi] if sg['start'] - 0.02 <= (x['start'] + x['end']) / 2.0 <= sg['end'] + 0.02]
+        if inner:
+            # The words say when it was spoken; a line that starts well
+            # before its first word has taken in the silence ahead of it.
+            if inner[0]['start'] - sg['start'] > 1.0:
+                sg = dict(sg, start=inner[0]['start'])
+        else:
+            sg = dict(sg, start=trim_absorbed_silence(sg['start'], sg['end'], len(sg['text'].split())))
+        if sg['end'] - sg['start'] <= max_line:
+            out.append(sg)
+            continue
         parts = segments_from_words(inner, max_len=max_line * 0.8) if inner else []
         out.extend(parts if len(parts) > 1 else [sg])
     return w, out
@@ -533,7 +579,7 @@ def ask_story(base_url, model, prompt, num_ctx=8192, num_predict=900, timeout=30
 # From a proposed beat to an exact, safe window
 # --------------------------------------------------------------------------
 
-def fit_indices(segments, i, j, min_dur, max_dur, gap_limit=6.0):
+def fit_indices(segments, i, j, min_dur, max_dur, gap_limit=6.0, far_gap=10.0):
     """Grows or shrinks the line range [i, j] to respect the length limits.
 
     Too long: lines are dropped from the START. The model picked this
@@ -542,9 +588,12 @@ def fit_indices(segments, i, j, min_dur, max_dur, gap_limit=6.0):
     one that stops before the payoff does not.
 
     Too short: neighbouring lines are added, earlier context first, then
-    alternating, but never across a pause longer than `gap_limit` -- a gap
-    that long is usually a scene change, and pulling in the tail of the
-    previous scene is worse than running a little short."""
+    alternating, without crossing a pause longer than `gap_limit` -- a gap
+    that long is often a scene change. If that is not enough the minimum
+    still has to be met, so longer pauses (up to `far_gap`) are crossed too,
+    the shorter one first: a look held for ten seconds is a pause in a
+    scene more often than the end of one. What still cannot reach the
+    minimum is flagged 'short', and the caller leaves it out."""
     n = len(segments)
     i, j = max(0, min(i, n - 1)), max(0, min(j, n - 1))
     if i > j:
@@ -569,11 +618,25 @@ def fit_indices(segments, i, j, min_dur, max_dur, gap_limit=6.0):
         elif can_fwd:
             j += 1
         else:
-            flags.append('short')
             break
         if 'extended' not in flags:
             flags.append('extended')
         back_first = not back_first
+    while dur(i, j) < min_dur:
+        # Across longer pauses, whichever side has the shorter one.
+        back = segments[i]['start'] - segments[i - 1]['end'] if i > 0 and dur(i - 1, j) <= max_dur else None
+        fwd = segments[j + 1]['start'] - segments[j]['end'] if j < n - 1 and dur(i, j + 1) <= max_dur else None
+        sides = [(g, side) for g, side in ((back, 'back'), (fwd, 'fwd')) if g is not None and g <= far_gap]
+        if not sides:
+            flags.append('short')
+            break
+        if min(sides)[1] == 'back':
+            i -= 1
+        else:
+            j += 1
+        for f in ('extended', 'bridged'):
+            if f not in flags:
+                flags.append(f)
     return i, j, flags
 
 
@@ -701,8 +764,11 @@ def dedupe_windows(cands, max_overlap=0.5):
     return kept
 
 
+PAD_QUIET = 6.0             # seconds of non-speech a moment may be given, each side, to reach the minimum
+
+
 def build_candidates(beats, segments, words, cuts, visual, duration,
-                     min_dur=30.0, max_dur=90.0, limit=8, fps=25.0, min_story=None):
+                     min_dur=30.0, max_dur=90.0, limit=8, fps=25.0, min_story=None, report=None):
     """Beats (line ranges, or raw time windows from visual_windows) ->
     ranked, de-duplicated candidates with exact frame-aligned in/out points.
 
@@ -710,7 +776,14 @@ def build_candidates(beats, segments, words, cuts, visual, duration,
     of the moments the story model scored, those below it are left out.
     Moments it did not score (a fallback was used) are not judged by it, and
     if nothing reaches it everything found is kept -- a list of weak moments
-    to review is more use than an empty one."""
+    to review is more use than an empty one.
+
+    The minimum length is a minimum. A moment whose lines fall short of it
+    is first given the quiet around it, up to the next speech on either
+    side and PAD_QUIET seconds at most; one that still falls short is left out. (Again unless that leaves
+    nothing: then the short ones are listed, flagged.) `report`, a dict if
+    given, is told how many were left out ('too_short') and whether short
+    ones had to be kept ('kept_short')."""
     units = speech_units(words, segments)
     cuts = sorted(set([0.0, float(duration)] + [float(c) for c in cuts or []]))
     fps = float(fps) if fps and fps > 0 else 25.0
@@ -745,6 +818,18 @@ def build_candidates(beats, segments, words, cuts, visual, duration,
                 over -= give
                 if over > 0:
                     start += min(over, max(0.0, t0 - start))
+            if end - start < min_dur:
+                # Short of the minimum by a little: the quiet after it, then
+                # before it -- as far as the next speech either way, and no
+                # more than PAD_QUIET of it on a side. A few seconds of a
+                # reaction is part of the moment; half a minute of nothing
+                # is not a way to make sixteen seconds of talk a minute long.
+                k = bisect.bisect_left([u[0] for u in units], t1 - 1e-3)
+                room_after = (units[k][0] - 0.04 if k < len(units) else float(duration)) - end
+                end += max(0.0, min(room_after, PAD_QUIET - (end - t1), min_dur - (end - start)))
+                k = bisect.bisect_right(sorted(u[1] for u in units), t0 + 1e-3) - 1
+                room_before = start - (sorted(u[1] for u in units)[k] + 0.04 if k >= 0 else 0.0)
+                start -= max(0.0, min(room_before, PAD_QUIET - (t0 - start), min_dur - (end - start)))
             lines = segments[i:j + 1]
         # Whole frames, so the render's frame maths starts from exact values.
         start = round(start * fps) / fps
@@ -753,6 +838,11 @@ def build_candidates(beats, segments, words, cuts, visual, duration,
             end -= 1.0 / fps          # rounding to whole frames tipped it over by one
         if end - start < 3.0:
             continue
+        # Short is what it is once everything has been tried, not what its
+        # lines alone came to.
+        flags = [f for f in flags if f != 'short']
+        if end - start < min_dur - 0.5:
+            flags.append('short')
         sc = window_scores(start, end, b.get('score'), visual, words, segments)
         text = ' '.join(s['text'] for s in lines)
         out.append({
@@ -763,7 +853,11 @@ def build_candidates(beats, segments, words, cuts, visual, duration,
             'story_score': sc['story'], 'visual_score': sc['visual'], 'pace': sc['pace'],
             'score': sc['score'], 'text': text[:2400], 'lines': len(lines),
         })
-    out = dedupe_windows(out)
+    long_enough = [c for c in out if 'short' not in c['flags']]
+    if report is not None:
+        report['too_short'] = len(out) - len(long_enough) if long_enough else 0
+        report['kept_short'] = bool(out) and not long_enough
+    out = dedupe_windows(long_enough or out)
     if min_story is not None:
         strong = [c for c in out if c['story_score'] is None or c['story_score'] >= min_story]
         out = strong or out
@@ -1319,13 +1413,73 @@ def _both_talk(turns, a, b):
     return len(shares) > 1 and shares[1] >= SPLIT_MIN_SHARE * (b - a + 1)
 
 
-def _wide_shot(hits, a, b, fps, mode, speaker, speech, disp_w, disp_h, crop_w, max_x, static_px):
+# ---- Who is in the shot ----
+# One face clearly nearer the camera than the others is who the shot is of:
+# this many times their area (about a quarter larger across).
+DOMINANT_FACE = 1.6
+
+
+def _people(hits):
+    """The people a shot is of, largest first, each {'frames', 'xs', 'cx',
+    'w', 'area'} -- or None when the detections do not say.
+
+    Reported: crops that were not centred on anyone. The window used to be
+    placed from each sampled frame on its own -- on the one face found in
+    it, or midway between two -- and then averaged. But a face is not found
+    in every frame: it turns, hair falls across it, a hand passes. A second
+    person found in a third of the frames pulled the window part of the way
+    toward them and no further, centred on nobody; found on and off, they
+    were taken for movement, and the window drifted back and forth.
+
+    So the shot is read as a whole first. A person is a face seen in the
+    same place in at least 30% of the frames that show any face. Two are
+    two people only if they are seen TOGETHER at least twice: seen one
+    after the other, they may be one person who moved fast, or a pan from
+    one to the next, and the answer is None -- the frame-by-frame reading
+    that follows such a shot well is used instead."""
+    if len(hits) < 3:
+        return None
+    need = max(2, int(math.ceil(0.3 * len(hits))))
+    tracks = [t for t in _face_tracks(hits) if len(t['obs']) >= need]
+    if not tracks:
+        return None
+    seen = [set(i for i, _ in t['obs']) for t in tracks]
+    for k in range(len(tracks)):
+        for m in range(k + 1, len(tracks)):
+            if len(seen[k] & seen[m]) < 2:
+                return None
+    people = []
+    for t in tracks:
+        faces = [f for _, f in t['obs']]
+        people.append({'frames': [i for i, _ in t['obs']], 'xs': [f[0] for f in faces],
+                       'cx': float(np.median([f[0] for f in faces])),
+                       'w': float(np.median([f[2] for f in faces])),
+                       'area': float(np.median([f[2] * f[3] for f in faces]))})
+    people.sort(key=lambda p: p['area'], reverse=True)
+    return [p for p in people if p['area'] >= 0.4 * people[0]['area']]
+
+
+def _group_targets(people, frames):
+    """[(frame, x of the middle of the group)] at each of `frames`. A person
+    not found in a frame is taken to be where they were last seen, not to
+    have left: that is what keeps the window from lurching."""
+    out = []
+    for i in frames:
+        at = [float(np.interp(i, p['frames'], p['xs'])) for p in people]
+        left = min(x - p['w'] / 2.0 for x, p in zip(at, people))
+        right = max(x + p['w'] / 2.0 for x, p in zip(at, people))
+        out.append((i, (left + right) / 2.0))
+    return out
+
+
+def _wide_shot(hits, a, b, fps, mode, speaker, speech, disp_w, disp_h, crop_w, max_x, static_px, lead=False):
     """Segments for a shot whose faces don't fit one vertical frame, or None
-    for 'always crop' to commit to a side (which the caller does).
+    for the caller to crop it: 'always crop' committing to a side, or any
+    mode when one of them is clearly who the shot is of (`lead`).
 
     In order: split the screen if asked and both people are (or may be)
-    talking; follow the speaker if asked and it can be called; otherwise
-    the whole frame."""
+    talking; follow the speaker if asked and it can be called; the lead, if
+    there is one; otherwise the whole frame."""
     turns = _speaker_segments(hits, a, b, fps, speech, crop_w, max_x, static_px) if speaker else None
     if mode == 'split' and (turns is None or _both_talk(turns, a, b)):
         seg = _split_segment(hits, a, b, disp_w, disp_h)
@@ -1333,7 +1487,7 @@ def _wide_shot(hits, a, b, fps, mode, speaker, speech, disp_w, disp_h, crop_w, m
             return [seg]
     if turns:
         return turns
-    if mode in ('auto', 'split'):
+    if mode in ('auto', 'split') and not lead:
         return [{'a': a, 'b': b, 'layout': 'fit', 'x': None, 'keys': None}]
     return None
 
@@ -1353,11 +1507,17 @@ def plan_reframe(samples, shot_starts, n_frames, disp_w, disp_h, crop_w, mode='a
 
       * one face, or faces that all fit inside the 9:16 window -> crop
         centred on them (one face is cropped to however large it is);
+      * faces too far apart to fit, one of them clearly nearer the camera
+        (DOMINANT_FACE) -> crop centred on that one: the shot is of them;
       * two or more similar-sized faces too far apart to fit -> 'auto'
         shows the whole frame (cutting to one of them would silently drop
         whoever is speaking half the time), 'crop' commits to the side
         with more face on it for the whole shot;
       * no faces -> centre crop.
+
+    Who is in a shot is decided from the shot as a whole, not frame by
+    frame (see _people), so a face the detector loses now and then neither
+    drags the window off the person it is on nor sets it wandering.
 
     Within a shot the window is locked off unless the subject really moves
     (more than ~12% of the window's width); then it follows on a heavily
@@ -1407,13 +1567,27 @@ def plan_reframe(samples, shot_starts, n_frames, disp_w, disp_h, crop_w, mode='a
         # cascades box a face generously) used to fail this test and be
         # handled like a wide two-shot -- a single person shown small over a
         # blurred background, the opposite of what a close-up should get.
+        # Who the shot is of, read from the shot as a whole (see _people).
+        people = _people(hits)
+        group = lead = None
+        if people:
+            left = min(p['cx'] - p['w'] / 2.0 for p in people)
+            right = max(p['cx'] + p['w'] / 2.0 for p in people)
+            if len(people) == 1 or right - left <= 0.9 * crop_w:
+                group = people                  # everyone fits: frame them all, steadily
+            elif people[0]['area'] >= DOMINANT_FACE * people[1]['area']:
+                lead = people[0]                # they do not, but one of them is the subject
         fits = [len(t['sig']) < 2 or t['span_w'] <= 0.9 * crop_w for _, t in hits]
-        if sum(fits) >= 0.6 * len(hits):
+        if group:
+            targets = _group_targets(group, [i for i, _ in hits])
+        elif people is None and sum(fits) >= 0.6 * len(hits):
             targets = [(i, t['span_cx'] if ok else t['big_cx']) for (i, t), ok in zip(hits, fits)]
         elif (placed := _wide_shot(hits, a, b, fps, mode, speaker, speech, disp_w, disp_h,
-                                   crop_w, max_x, static_px)) is not None:
+                                   crop_w, max_x, static_px, lead=bool(lead))) is not None:
             segs.extend(placed)
             continue
+        elif lead:
+            targets = _group_targets([lead], [i for i, _ in hits])
         else:
             mid = float(np.median([t['span_cx'] for _, t in hits]))
             left_w = sum(f[2] * f[3] for _, t in hits for f in t['sig'] if f[0] < mid)

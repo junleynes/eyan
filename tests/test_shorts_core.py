@@ -726,6 +726,129 @@ def test_the_hold_is_made_only_from_frames_in_which_nothing_is_really_moving(tmp
     assert sc.still_frames(str(tmp_path / 'missing.avi'), 39, 25.0) == 1, 'unreadable is not an error here'
 
 
+# ---- reported together: a 16-second "short" at a 60-second minimum, crops on nobody, a caption 30 s early ----
+
+def test_a_line_timed_as_lasting_far_longer_than_its_words_is_given_a_start_they_allow():
+    """Reported: "Oh, my God." on screen from 0:00 to 0:30 of a short, with
+    nobody speaking until the end of it. The service had given the line the
+    whole silent stretch before it."""
+    lines = [{'start': 100.0, 'end': 130.0, 'text': 'Oh, my God.'},          # 3 words, "30 seconds"
+             {'start': 130.0, 'end': 132.0, 'text': "Let's go."},
+             {'start': 132.0, 'end': 133.0, 'text': 'Bored na-bored na ako dito.'},
+             {'start': 140.0, 'end': 146.5, 'text': 'Hindi... ko... alam.'},  # slow, with pauses: left alone
+             {'start': 150.0, 'end': 158.0, 'text': 'Mami?'}]                 # one word, "8 seconds"
+    _, segs = sc.normalize_transcript([], lines)
+    assert [(round(s['start'], 3), s['end']) for s in segs] == [
+        (126.1, 130.0), (130.0, 132.0), (132.0, 133.0), (140.0, 146.5), (155.7, 158.0)]
+    assert abs(sc.speaking_time(3) - 3.9) < 1e-9 and sc.trim_absorbed_silence(0.0, 7.7, 3) == 0.0, 'not unless it is far out'
+    assert abs(sc.trim_absorbed_silence(0.0, 7.9, 3) - 4.0) < 1e-9
+
+    # Its caption comes up when it is spoken, not when the silence began...
+    cues = sc.subtitle_cues([], segs, 99.71, 165.0)
+    assert cues[0]['text'] == 'Oh, my God.' and abs(cues[0]['start'] - 26.39) < 0.01 and cues[0]['end'] <= 30.3
+    old = sc.subtitle_cues([], lines, 99.71, 165.0)
+    assert old[0]['start'] < 0.3 and old[0]['end'] > 30.0, '(as it was: up for half a minute)'
+    # ...and a moment that opens on it opens on it, not on thirty seconds of nothing.
+    out = sc.build_candidates([{'start_id': 0, 'end_id': 2, 'score': 8, 'title': 'T'}], segs, [], [], [], 200.0,
+                              min_dur=5, max_dur=60)
+    assert 124.5 <= out[0]['start'] <= 126.1 and out[0]['duration'] < 10
+
+    # With word timings, the words say when: a line that starts long before its first word is pulled in to it,
+    words = [{'start': 128.6, 'end': 128.9, 'word': 'Oh,'}, {'start': 129.0, 'end': 129.3, 'word': 'my'},
+             {'start': 129.4, 'end': 130.0, 'word': 'God.'}]
+    _, segs = sc.normalize_transcript(words, lines[:1])
+    assert segs[0]['start'] == 128.6
+    # and a first word given the silence as its own length is cut down to a word.
+    w, segs = sc.normalize_transcript([dict(words[0], start=100.0)] + words[1:], lines[:1])
+    assert w[0]['start'] == 127.9 and w[0]['end'] == 128.9 and segs[0]['start'] == 127.9
+
+
+def test_the_minimum_length_is_a_minimum():
+    """Reported: a 16.5-second moment listed, flagged Short, at a 60-second
+    minimum. Its lines stood alone between two long pauses, and falling
+    short was allowed."""
+    def lines(times):
+        return [{'start': float(a), 'end': float(b), 'text': f'line {k}'} for k, (a, b) in enumerate(times)]
+    # A 16-second exchange with a 9-second pause before it and an 8-second one after.
+    talk = lines([(0, 20), (22, 40), (49, 57), (58, 65), (73, 90), (91, 110), (111, 130)])
+    i, j, flags = sc.fit_indices(talk, 2, 3, min_dur=60, max_dur=120)
+    assert sc.fit_indices(talk, 2, 3, min_dur=60, max_dur=120, far_gap=6.0) == (2, 3, ['short']), 'as it was'
+    assert talk[j]['end'] - talk[i]['start'] >= 60 and 'short' not in flags and 'bridged' in flags
+    assert (i, j) == (2, 5), 'across the shorter pause first, and no further than it has to go'
+    # Nothing within reach: flagged, for the caller to leave out.
+    alone = lines([(0, 5), (30, 46), (80, 90)])
+    assert sc.fit_indices(alone, 1, 1, min_dur=60, max_dur=120) == (1, 1, ['short'])
+
+    told = {}
+    beats = [{'start_id': 1, 'end_id': 1, 'score': 9, 'title': 'Alone'}]
+    plenty = lines([(k * 10, k * 10 + 9) for k in range(40)])
+    both = sc.build_candidates(beats + [{'start_id': 10, 'end_id': 12, 'score': 4, 'title': 'Fine'}],
+                               lines([(0, 5), (30, 46), (80, 90)]) + [dict(l, start=l['start'] + 200, end=l['end'] + 200) for l in plenty],
+                               [], [], [], 700.0, min_dur=60, max_dur=120, report=told)
+    assert [c['title'] for c in both] == ['Fine'] and told == {'too_short': 1, 'kept_short': False}
+    assert all(c['duration'] >= 60 for c in both), 'the weaker one that is long enough, not the stronger one that is not'
+    # Every one of them short: listed as they are, and the caller is told so.
+    only = sc.build_candidates(beats, alone, [], [], [], 100.0, min_dur=60, max_dur=120, report=told)
+    assert [c['title'] for c in only] == ['Alone'] and 'short' in only[0]['flags']
+    assert told == {'too_short': 0, 'kept_short': True}
+    # Short by a little is not short: the quiet around it is used first.
+    near = lines([(100, 130), (131, 157)])
+    c = sc.build_candidates([{'start_id': 0, 'end_id': 1, 'score': 7, 'title': 'Near'}], near, [], [], [], 400.0,
+                            min_dur=60, max_dur=120, report=told)[0]
+    assert c['duration'] >= 60 and 'short' not in c['flags'] and c['start'] <= 100.0 and told['too_short'] == 0
+
+
+def _faces(n, fn, step=5):
+    return [(i, fn(i)) for i in range(0, n, step)]
+
+
+def test_the_window_is_placed_on_the_people_in_the_shot_not_frame_by_frame():
+    """Reported: crops that were not centred on anyone. A second face found
+    in only some of the frames pulled the window part-way toward it, and
+    being found on and off was taken for movement."""
+    a, b = _face(800, 180), _face(1100, 170)                     # two people who fit one window together
+    whole = sc.plan_reframe(_faces(200, lambda i: [a, b]), [], 200, 1920, 1080, 608)
+    centre = (800 - 90 + 1100 + 85) / 2.0 - 304
+    assert whole[0]['keys'] is None and abs(whole[0]['x'] - centre) <= 2
+    # The second one lost by the detector in 60% of the frames: the same framing, and still.
+    flicker = sc.plan_reframe(_faces(200, lambda i: [a, b] if (i // 5) % 5 < 2 else [a]), [], 200, 1920, 1080, 608)
+    assert flicker[0]['layout'] == 'crop' and flicker[0]['keys'] is None, 'no wandering'
+    assert abs(flicker[0]['x'] - centre) <= 2, 'on the two of them'
+    # A face that turns up in a few frames only is not someone the shot is of.
+    stray = sc.plan_reframe(_faces(200, lambda i: [a, b] if (i // 5) % 7 == 0 else [a]), [], 200, 1920, 1080, 608)
+    assert stray[0]['keys'] is None and abs(stray[0]['x'] - (800 - 304)) <= 2, 'centred on the one who is'
+    # The two of them walking: followed together, one path.
+    walk = sc.plan_reframe(_faces(200, lambda i: [_face(600 + 3 * i, 180), _face(880 + 3 * i, 170)] if i % 15 else
+                                  [_face(600 + 3 * i, 180)]), [], 200, 1920, 1080, 608)[0]
+    xs = [x for _, x in walk['keys']]
+    assert walk['layout'] == 'crop' and xs == sorted(xs), 'never back toward one of them when the other is lost'
+    # Seen one after the other and never together -- a pan from one to the
+    # next, or one person crossing fast: followed as before, not called a two-shot.
+    pan = sc.plan_reframe(_faces(200, lambda i: [_face(500, 200)] if i < 100 else [_face(1400, 200)]), [], 200, 1920, 1080, 608)
+    assert [s['layout'] for s in pan] == ['crop'] and pan[0]['keys']
+    assert sc._people([(i, {'sig': [_face(500, 200)] if i < 50 else [_face(1400, 200)]}) for i in range(0, 100, 5)]) is None
+    assert sc._people([(0, {'sig': [a]}), (5, {'sig': [a]})]) is None, 'too few frames to say'
+
+
+def test_a_shot_of_one_person_with_another_behind_is_cropped_to_that_person():
+    """Reported earlier, with a frame: a woman in the middle, a man behind
+    her at the edge, shown as a small wide shot. They do not fit one window,
+    and nothing said she was the subject."""
+    woman, man = _face(960, 296), _face(1700, 226)               # her face 1.7 times the area of his
+    for mode in ('auto', 'crop'):
+        seg = sc.plan_reframe(_faces(200, lambda i: [woman, man]), [], 200, 1920, 1080, 608, mode=mode)
+        assert [(s['layout'], s['keys']) for s in seg] == [('crop', None)] and abs(seg[0]['x'] - (960 - 304)) <= 2, mode
+    # Split screen still gives them a pane each: that is what was asked for.
+    assert [s['layout'] for s in sc.plan_reframe(_faces(200, lambda i: [woman, man]), [], 200, 1920, 1080, 608,
+                                                 mode='split')] == ['split']
+    # Two people much the same size are still two people: nobody is cut out on a guess.
+    alike = sc.plan_reframe(_faces(200, lambda i: [_face(400, 260), _face(1500, 250)]), [], 200, 1920, 1080, 608)
+    assert [s['layout'] for s in alike] == ['fit']
+    nearly = sc.plan_reframe(_faces(200, lambda i: [_face(400, 300), _face(1500, 245)]), [], 200, 1920, 1080, 608)
+    assert [s['layout'] for s in nearly] == ['fit'], '1.5 times the area is not clearly nearer'
+    assert sc.DOMINANT_FACE == 1.6
+
+
 # ---- the cliffhanger: where its hold comes from, and where its sound stops ----
 
 def test_the_hold_is_made_from_the_frames_after_the_out_point_when_there_are_some():
