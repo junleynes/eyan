@@ -49,6 +49,8 @@ def test_succeeds_after_a_transient_sharing_violation(tmp_path):
         result = pipeline.fetch_network_file('test.wav', category='music')
     assert call_count[0] == 2
     assert (tmp_path / result).exists()
+    # Where it came from is remembered, so a tool can fetch it again once it is cleared.
+    assert pipeline.staged_origin(result) == {'category': 'music', 'subpath': '', 'name': 'test.wav'}
 
 
 def test_reset_connection_cache_recovers_a_lock_this_app_itself_still_holds(tmp_path):

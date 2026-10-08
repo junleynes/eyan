@@ -7011,6 +7011,7 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <div id="p-shorts-create" class="sub-panel">
 <div id=sh-create-elsewhere class=no-data style="display:none;text-align:left"></div>
 <div id=sh-create-form>
+<div id=sh-earlier style="display:none;margin-bottom:16px"></div>
 <p style="font-size:12px;opacity:.75;margin-top:-6px">Cuts a long-form programme into stand-alone 9:16 shorts. Step one finds the moments: the AI Vision model rates how dramatic the picture looks, the dialogue is transcribed, and a story model reads it to propose stretches that make sense on their own &mdash; a setup, a turn, a payoff &mdash; not just the loudest peaks. <b>Preview the cut</b> renders nothing until you have reviewed them; <b>Generate without preview</b> renders them all straight away.</p>
 
 <label>Long-form video (HIRES):</label>
@@ -7130,6 +7131,8 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 
 <div id=sh-review style="display:none;margin-top:18px">
   <div id=sh-review-status style="font-size:12px;opacity:.8"></div>
+  <div id=sh-review-source></div>
+  <div id=sh-review-saved style="font-size:11px;opacity:.6;margin-top:4px"></div>
   <div id=sh-review-warnings></div>
   <div class="sh-bar">
     <span style="font-size:12px;opacity:.75">Rendered with the <b>Output</b> settings above.</span>
@@ -7495,13 +7498,132 @@ async function shShowAnalysis(res, auto){
   try{
     var a = await (await fetch('/api/shorts/analysis/' + res.analysis_id)).json()
     if(!a.ok){ if(!auto) shNote(escapeHtmlLite(a.error || 'Could not load the analysis.'), true); return }
-    SH.analysis = a
-    SH.cands = a.candidates.map(function(c){ return Object.assign({}, c, {keep: true}) })
-    shSortCands()
+    shUseAnalysis(a)
     shRenderReview(auto)
   }catch(e){ if(!auto) shNote('Could not load the analysis: ' + escapeHtmlLite(String(e)), true) }
+  shLoadEarlier(SH.openProject)
   // After the list is drawn, or it would push the finished shorts off screen.
   if(auto && res.batch) host.scrollIntoView({behavior: 'smooth', block: 'start'})
+}
+
+// The moments of an analysis as the editor left them (its saved review), or
+// as they were found, all ticked.
+function shUseAnalysis(a){
+  SH.analysis = a
+  SH.cands = a.review
+    ? a.review.map(function(c){ return Object.assign({}, c) })
+    : a.candidates.map(function(c){ return Object.assign({}, c, {keep: true}) })
+  shSortCands()
+}
+
+// The review is saved as it is changed -- ticks, titles, in and out points,
+// captions and framing, moments added by hand -- so it can be picked up
+// again after a restart, or tomorrow, from Earlier cuts.
+function shReviewChanged(){
+  if(!SH.analysis) return
+  clearTimeout(SH.saveTimer)
+  var note = shEl('sh-review-saved')
+  if(note) note.textContent = 'Saving your review…'
+  SH.saveTimer = setTimeout(shSaveReview, 700)
+}
+
+async function shSaveReview(){
+  var a = SH.analysis, note = shEl('sh-review-saved')
+  if(!a) return
+  var items = SH.cands.map(function(c){
+    var it = {id: c.id, keep: !!c.keep, title: c.title || '', start: c.start, end: c.end, source: c.source}
+    if(c.captions) it.captions = c.captions
+    if(c.framing) it.framing = c.framing
+    return it
+  })
+  try{
+    var d = await (await fetch('/api/shorts/analysis/' + a.analysis_id + '/review', {method: 'POST',
+      headers: {'Content-Type': 'application/json'}, body: JSON.stringify({items: items})})).json()
+    if(SH.analysis !== a || !note) return
+    note.style.color = d.ok ? '' : 'var(--amber)'
+    note.textContent = d.ok ? 'Review saved ' + new Date().toLocaleTimeString() + ' — it can be reopened from Earlier cuts.'
+                            : 'Your review could not be saved: ' + (d.error || 'unknown error')
+  }catch(e){ if(note){ note.style.color = 'var(--amber)'; note.textContent = 'Your review could not be saved: ' + e } }
+}
+
+// Whether the episode is still on the server, and if not, a way to bring it back.
+function shRenderSource(){
+  var a = SH.analysis, host = shEl('sh-review-source')
+  if(!a || !host) return
+  if(a.source_available){ host.innerHTML = ''; return }
+  host.innerHTML = '<div class="sh-warn">' + (a.refetchable
+      ? 'The episode is no longer on the server (staged files are cleared after a while, and on a restart). ' +
+        'Previews and framing need it; a render fetches it by itself. ' +
+        '<button type=button class="btn-sm" data-refetch>Fetch the episode again</button> <span data-refetch-note></span>'
+      : 'The episode is no longer on the server and it was not taken from a network folder, so it cannot be fetched again. ' +
+        'Pick it again and re-run the analysis to preview or render these moments.') + '</div>'
+  var b = host.querySelector('[data-refetch]')
+  if(b) b.addEventListener('click', async function(){
+    var out = host.querySelector('[data-refetch-note]')
+    b.disabled = true; out.style.color = ''; out.textContent = 'Fetching from the network folder… (a long episode takes a while)'
+    try{
+      var d = await (await fetch('/api/shorts/analysis/' + a.analysis_id + '/refetch', {method: 'POST'})).json()
+      if(d.ok){ a.source_available = true; shRenderSource(); return }
+      out.style.color = 'var(--amber)'; out.textContent = d.error || 'It could not be fetched.'
+    }catch(e){ out.style.color = 'var(--amber)'; out.textContent = 'Request failed: ' + e }
+    b.disabled = false
+  })
+}
+
+// The analyses kept for the open project: earlier cuts, reopened as the editor left them.
+async function shLoadEarlier(pid){
+  var host = shEl('sh-earlier')
+  if(!host) return
+  if(!pid){ host.style.display = 'none'; host.innerHTML = ''; return }
+  var d
+  try{ d = await (await fetch('/api/shorts/analyses?project_id=' + encodeURIComponent(pid))).json() }catch(e){ return }
+  if(SH.openProject !== pid) return
+  var items = (d.ok && d.items) || []
+  if(!items.length){ host.style.display = 'none'; host.innerHTML = ''; return }
+  var open = SH.analysis ? SH.analysis.analysis_id : null
+  host.innerHTML = '<details class="sh-earlier"' + (SH.analysis ? '' : ' open') + '><summary style="cursor:pointer;font-size:13px"><b>Earlier cuts of this project</b> (' + items.length + ')' +
+    ' <span style="font-size:11px;opacity:.65">kept ' + d.keep_days + ' days after they were last opened</span></summary>' +
+    items.map(function(x){
+      var when = x.created ? new Date(x.created * 1000).toLocaleString() : ''
+      return '<div class="sh-bar" style="margin-top:6px">' +
+        '<span style="min-width:0;overflow:hidden;text-overflow:ellipsis"><b>' + escapeHtmlLite(x.orig_name || '') + '</b> &middot; ' + escapeHtmlLite(when) +
+        (x.username ? ' by ' + escapeHtmlLite(x.username) : '') + ' &middot; ' + x.candidates + ' moment' + (x.candidates === 1 ? '' : 's') +
+        (x.reviewed ? ', reviewed (' + x.kept + ' ticked)' : '') +
+        (x.source_available ? '' : x.refetchable ? ' &middot; <span style="opacity:.7">episode will be fetched again</span>' : ' &middot; <span style="color:var(--amber)">episode gone</span>') + '</span>' +
+        '<span style="flex:1"></span>' +
+        (x.analysis_id === open ? '<span class="score-chip face">Open below</span>'
+          : '<button type=button class="btn-sm" data-earlier-open="' + x.analysis_id + '">Open</button>') +
+        ' <button type=button class="btn-sm" data-earlier-del="' + x.analysis_id + '" title="Delete this analysis and its review (not the shorts made from it)">Delete</button></div>'
+    }).join('') + '</details>'
+  host.style.display = 'block'
+  host.querySelectorAll('[data-earlier-open]').forEach(function(b){
+    b.addEventListener('click', function(){ shOpenAnalysis(b.getAttribute('data-earlier-open')) })
+  })
+  host.querySelectorAll('[data-earlier-del]').forEach(function(b){
+    b.addEventListener('click', async function(){
+      var aid = b.getAttribute('data-earlier-del')
+      if(!confirm('Delete this analysis and the review saved with it? Shorts already made from it are kept.')) return
+      await fetch('/api/shorts/analysis/' + aid, {method: 'DELETE'})
+      if(SH.analysis && SH.analysis.analysis_id === aid){ SH.analysis = null; SH.cands = []; shEl('sh-review').style.display = 'none' }
+      shLoadEarlier(pid)
+    })
+  })
+}
+
+async function shOpenAnalysis(aid){
+  if(SH.busy) return
+  try{
+    var a = await (await fetch('/api/shorts/analysis/' + aid)).json()
+    if(!a.ok){ shNote(escapeHtmlLite(a.error || 'Could not open that analysis.'), true); return }
+    shEl('sh-results').style.display = 'none'
+    shEl('sh-results').innerHTML = ''
+    SH.formProject = SH.openProject
+    shUseAnalysis(a)
+    shRenderReview(false)
+    shNote('Reopened the cut of <b>' + escapeHtmlLite(a.orig_name || '') + '</b> as it was left. Changes are saved as you make them.')
+    shLoadEarlier(SH.openProject)
+    shEl('sh-review').scrollIntoView({behavior: 'smooth', block: 'start'})
+  }catch(e){ shNote('Could not open that analysis: ' + escapeHtmlLite(String(e)), true) }
 }
 
 function shRenderReview(alreadyRendered){
@@ -7513,6 +7635,9 @@ function shRenderReview(alreadyRendered){
     (st.transcript_lines || 0) + ' lines of dialogue. ' + (alreadyRendered
       ? 'All of these were rendered without review (see below the list). To change any, adjust its in and out or untick it, then render again.'
       : 'Preview each moment, adjust its in and out, untick what you do not want, then render.')
+  shRenderSource()
+  var saved = shEl('sh-review-saved')
+  if(saved){ saved.style.color = ''; saved.textContent = a.reviewed_at ? 'Review last saved ' + new Date(a.reviewed_at * 1000).toLocaleString() + '.' : '' }
   shEl('sh-review-warnings').innerHTML = (a.warnings || []).map(function(w){
     return '<div class="sh-warn">' + escapeHtmlLite(w) + '</div>'
   }).join('')
@@ -7526,6 +7651,7 @@ function shCandMeta(c){
   if(typeof c.score === 'number') chips.push('<span class="score-chip total" title="Overall: story, visual drama and pace combined (0-100)">' + c.score + '</span>')
   if(c.story_score != null) chips.push('<span class="score-chip" title="Story model: how well it stands alone as a dramatic short">Story ' + c.story_score + '/10</span>')
   if(c.visual_score != null) chips.push('<span class="score-chip" title="AI Vision: how dramatic the frames inside it look">Visual ' + c.visual_score + '/5</span>')
+  if(c.sound_score != null) chips.push('<span class="score-chip" title="How loud and lively it gets against the rest of the episode (5 is ordinary)">Sound ' + c.sound_score + '/10</span>')
   if(c.pace != null) chips.push('<span class="score-chip" title="Words per second">' + c.pace + ' w/s</span>')
   if(c.source === 'heuristic') chips.push('<span class="score-chip speech" title="Picked without story analysis">No story check</span>')
   if(c.source === 'visual') chips.push('<span class="score-chip speech" title="Picked on visual intensity alone">Visual only</span>')
@@ -7612,6 +7738,7 @@ function shUpdateRenderBtn(){
 function shortsSelectAll(on){
   SH.cands.forEach(function(c){ c.keep = on })
   shRenderCands()
+  shReviewChanged()
 }
 
 // One listener on the list rather than one per input: the list is rebuilt
@@ -7638,8 +7765,10 @@ function shortsSelectAll(on){
       t.closest('.sh-cand').classList.toggle('off', !c.keep)
       shRenumber()
       shUpdateRenderBtn()
+      shReviewChanged()
     }else if(act === 'title'){
       c.title = t.value.trim()
+      shReviewChanged()
     }else if(act === 'start' || act === 'end'){
       var v = shParse(t.value)
       var dur = SH.analysis ? SH.analysis.duration : 0
@@ -7652,6 +7781,7 @@ function shortsSelectAll(on){
       var d = host.querySelector('[data-dur="' + t.getAttribute('data-i') + '"]')
       if(d) d.textContent = (c.end - c.start).toFixed(1) + ' s'
       shRenumber()
+      shReviewChanged()
     }
   })
 })()
@@ -7670,6 +7800,7 @@ function shortsAddCustom(){
                     title: shEl('sh-add-title').value.trim() || 'My moment', score: null, flags: []})
   shEl('sh-add-in').value = ''; shEl('sh-add-out').value = ''; shEl('sh-add-title').value = ''
   shRenderCands()
+  shReviewChanged()
 }
 
 function shOpenPlayer(title, statusText){
@@ -7886,9 +8017,10 @@ async function shCandCaptions(i){
       if(!v.ok) return v.error || 'Those captions could not be used.'
       c.captions = {start: v.start, end: v.end, cues: v.cues}
       chip()
+      shReviewChanged()
       say('Kept: this short will be rendered with these ' + v.cues.length + ' line' + (v.cues.length === 1 ? '' : 's') + '.', 'var(--phosphor)')
     },
-    onReset: function(){ delete c.captions; chip(); host.style.display = 'none'; shCandCaptions(i) }
+    onReset: function(){ delete c.captions; chip(); shReviewChanged(); host.style.display = 'none'; shCandCaptions(i) }
   })
 }
 
@@ -8021,6 +8153,7 @@ async function shCandFraming(i){
     var f = current()
     if(f) c.framing = f; else delete c.framing
     chip()
+    shReviewChanged()
     out.style.color = 'var(--phosphor)'
     out.textContent = f ? 'Kept: ' + f.shots.length + ' shot' + (f.shots.length === 1 ? '' : 's') + ' will be framed as you set.' : 'Every shot will be framed automatically.'
   })
@@ -8530,6 +8663,7 @@ async function shProjectOpen(pid, refresh){
   if(!refresh) shInnerTab(p.shorts ? 'p-shorts-list' : 'p-shorts-create', true)
   else SH.inner = shEl('p-shorts-create').classList.contains('active') ? 'p-shorts-create' : 'p-shorts-list'
   shCreateSync()
+  shLoadEarlier(pid)
   return shProjectBatches(pid)
 }
 
@@ -9563,17 +9697,20 @@ job. Configured via env vars:
       <p><strong>Length of each short</strong> starts at 60 to 120 seconds. <strong>Moments to find</strong> is a ceiling &mdash; up to 5, 8, 12, 20, 50 or 100 &mdash; or <strong>Auto</strong>. A number keeps the best that many, weak ones included if there is room. Auto has no number: it keeps every distinct moment the story model rates {{ shorts_auto_min_story }}/10 or better (100 at most), and if none reaches that it lists everything it found and says so. An episode only holds so many: two moments may share up to half their length, so 45 minutes at 60&ndash;120 s yields a few dozen at most whatever is asked for. Each five-minute stretch of dialogue is asked for as many moments as it can hold end to end, eight at the very most. One render takes up to 100 shorts.</p>
       <p><strong>What should these shorts feature</strong> is a preference: matching moments are favoured, but a weak one is not picked just for matching. <strong>What should these shorts avoid</strong> is a rule: a moment mainly about it, or showing it, is left out however strong. Both are judged by the story model from the dialogue and the visual notes, so neither applies when a fallback had to be used (a warning says so).</p>
       <ul style="line-height:1.8;padding-left:20px">
-        <li><strong>How it looks.</strong> A bounded number of frames, spread across the whole video, are rated 1&ndash;5 by the AI Vision model for visible drama.</li>
+        <li><strong>How it looks.</strong> A bounded number of frames, spread across the whole video, are rated 1&ndash;5 by the AI Vision model for visible drama. Once the moments are proposed, up to four more frames inside each are rated too (160 in all at most, skipping any already rated), so a moment is judged on its own pictures and not on wherever the first sample happened to fall. Half as many moments again as you asked for are looked at this way, and the closer look decides which make the list.</li>
+        <li><strong>How it sounds.</strong> The episode&rsquo;s sound level is read once. A moment gets a <em>Sound</em> score (shown out of 10; 5 is an ordinary stretch of this programme) from how loud it gets against the episode as a whole and how much of it rises well above the usual &mdash; a raised voice, laughter, a slam. It counts for a little in the total, less than pace.</li>
         <li><strong>What it means.</strong> The dialogue is transcribed, and a story model reads it in overlapping five-minute stretches &mdash; with those visual notes placed in line &mdash; and proposes moments that stand on their own: a setup, a turn, a payoff.</li>
-        <li><strong>Where it cuts.</strong> Each proposal is fitted to your length range, then its in and out points are moved so they never fall inside a spoken word and land on a shot change when one is close. Too long, it loses its opening lines, never its ending. Too short, it is given the lines around it &mdash; first without crossing a pause of more than 6 seconds, then, if it has to, pauses of up to 10 &mdash; and then up to 6 seconds of the quiet before and after it. <strong>The minimum is a minimum:</strong> a moment that still falls short of it is left out, and a note above the list says how many were. (If every moment found falls short, they are listed as they are, marked <em>Short</em>.)</li>
+        <li><strong>Where it cuts.</strong> Each proposal is fitted to your length range, then its in and out points are moved so they never fall inside a spoken word and land on a shot change when one is close. Too long, it loses its opening lines, never its ending. Finally both ends are checked against the sound itself, since a transcript&rsquo;s word times are a guess and per-line times only approximate: an out point that lands while a word is still sounding is moved to where it stops (up to 0.8 s later, or the gap between two words where speech runs straight on), and an in point that lands inside a word is moved back to where that word starts &mdash; never into the line before, past the maximum length or under the minimum. Over a wall of music, where a word cannot be told from a gap, the ends stay where they were. Too short, it is given the lines around it &mdash; first without crossing a pause of more than 6 seconds, then, if it has to, pauses of up to 10 &mdash; and then up to 6 seconds of the quiet before and after it. <strong>The minimum is a minimum:</strong> a moment that still falls short of it is left out, and a note above the list says how many were. (If every moment found falls short, they are listed as they are, marked <em>Short</em>.)</li>
         <li><strong>Lines timed to the line only.</strong> A speech-to-text service that returns times for whole lines rather than words &mdash; often rounded to the second &mdash; leaves every caption and cut point up to a second out. When that is what came back and the times are rounded to the second (most of them sharing one fraction of a second, as in 0:30.29, 0:32.29, 0:33.29), the episode&rsquo;s sound is read once and each line is moved onto where its sound really starts and stops: a line given a start in silence begins where the sound does, one given a start in the middle of sound began where that sound started, and the same for its end. Over a wall of music or a crowd, where speech cannot be told from a gap, a line keeps its times. A note above the list says how many lines were moved. A service that returns word timings is still better: captions then change with the words.</li>
         <li><strong>When a line was really spoken.</strong> A speech-to-text service places the end of a line well, but after a stretch with no speech it often gives the line the start of that stretch as its own: three words timed as lasting thirty seconds. Left alone, that line&rsquo;s caption comes up half a minute before anyone speaks, and a short that opens on it opens on dead air. So a line timed as lasting far longer than its words could take (more than double, and by more than 3 seconds) is taken to have ended where it says and started as late as its words allow. A line that really is delivered slowly is left as timed.</li>
       </ul>
-      <p>Each candidate's score (0&ndash;100) weighs story most, then visual drama, then dialogue pace. Both Ollama and faster-whisper must be reachable; the job refuses to start otherwise rather than choose on half the evidence. The same goes for a transcription that fails part-way (the service errors or times out): the job stops and says why. Only a source with genuinely nothing to hear &mdash; no audio track, or no speech in it &mdash; falls back to picture alone. A warning above the list tells you when a fallback was used (no story found, or no dialogue at all). The speech-to-text service has to return timings as well as text: it is asked for <code>verbose_json</code> with timestamps and, if it answers that with the text alone, for <code>srt</code> and then <code>vtt</code>, which every Whisper server can write. Subtitle timings are per line, not per word, so captions made that way change a line at a time. A server that gives no timings in any of the three stops the job with a message saying so. On a master that keeps its sound on separate tracks or channels (eight mono tracks, say, with the full mix on 3 and 4), the dialogue is looked for where there is sound rather than on the first track: silent channels are never sent, a stereo pair recorded out of phase is sent as one side, and if the first candidate has no speech in it the next is tried, up to four. A note above the list says which track the dialogue was read from, and the shorts and their previews take their sound from the same place. When nothing is found, the warning lists what was tried and at what level.</p>
+      <p>Each candidate's score (0&ndash;100) weighs story most, then visual drama, then dialogue pace, then sound. Both Ollama and faster-whisper must be reachable; the job refuses to start otherwise rather than choose on half the evidence. The same goes for a transcription that fails part-way (the service errors or times out): the job stops and says why. Only a source with genuinely nothing to hear &mdash; no audio track, or no speech in it &mdash; falls back to picture alone. A warning above the list tells you when a fallback was used (no story found, or no dialogue at all). The speech-to-text service has to return timings as well as text: it is asked for <code>verbose_json</code> with timestamps and, if it answers that with the text alone, for <code>srt</code> and then <code>vtt</code>, which every Whisper server can write. Subtitle timings are per line, not per word, so captions made that way change a line at a time. A server that gives no timings in any of the three stops the job with a message saying so. On a master that keeps its sound on separate tracks or channels (eight mono tracks, say, with the full mix on 3 and 4), the dialogue is looked for where there is sound rather than on the first track: silent channels are never sent, a stereo pair recorded out of phase is sent as one side, and if the first candidate has no speech in it the next is tried, up to four. A note above the list says which track the dialogue was read from, and the shorts and their previews take their sound from the same place. When nothing is found, the warning lists what was tried and at what level.</p>
       <h3>2. Review</h3>
       <p>Play any candidate, edit its title and its in/out (type <code>m:ss.s</code> or seconds), untick the ones you do not want, or add a range of your own. The preview shows the source framing; reframing happens at render.</p>
       <p><strong>Framing&hellip;</strong> on a candidate shows each of its shots as a still, with the 9:16 window drawn where it will be: dashed for what was worked out, solid for a correction. For any shot, choose <strong>Crop here</strong> and slide the window (or click the still where it should go), or <strong>Whole frame</strong> to show the whole picture over a blurred copy. <strong>Make vertical preview</strong> renders a small 9:16 copy of the moment as it will come out &mdash; framing, corrections and captions &mdash; in a few seconds, without spending a full render. <strong>Use this framing</strong> keeps the corrections with that moment (marked <em>framing set</em>); a corrected shot is framed that way for its whole length, even where the plan had followed someone, cut between speakers or split the screen. The corrections belong to the shots, not to the in and out points: move those afterwards and each correction stays on the shot it was made for. <strong>Back to automatic</strong> drops them.</p>
       <p><strong>Captions&hellip;</strong> on a candidate opens the lines it will be captioned with, exactly as they will appear: change the wording, change when a line is on screen (times are from the start of the short, to a hundredth of a second), empty a line to drop it, or add one. <strong>Use these captions</strong> keeps them with that moment &mdash; it is marked <em>captions edited</em> &mdash; and they are what is burned in and written to its .srt. Moving the in or out point afterwards does not lose them: the lines still inside the new range stay, moved to where they now fall, and whatever the range gained at either end gets the automatic captions. <strong>Back to automatic</strong> drops the corrections. One caption is on screen at a time, so where two lines overlap the earlier one ends as the next begins.</p>
+      <p><strong>Your review is saved as you make it</strong> &mdash; ticks, titles, in and out points, corrected captions and framing, and moments added by hand. The analysis and the review are kept on the server (in <code>shorts_analyses</code> next to the library; <code>SHORTS_ANALYSES_DIR</code> to put them elsewhere) for 14 days after they were last opened (<code>SHORTS_ANALYSIS_DAYS</code>), so a restart or a day away does not mean analysing the episode again. <strong>Earlier cuts of this project</strong>, at the top of <strong>Create shorts</strong>, lists them with <strong>Open</strong>, which brings the cut back as it was left, and <strong>Delete</strong>, which removes the analysis and its review but never shorts made from it. You see your own; admins see everyone&rsquo;s.</p>
+      <p>The episode itself is a staged copy and is still cleared from the server after a while and on a restart. If it was picked from a network folder, the analysis remembers where: the review offers <strong>Fetch the episode again</strong>, which previews and framing need, and a render fetches it by itself. An episode uploaded from a computer cannot be fetched again; pick it again and re-analyse.</p>
       <h3>3. Render</h3>
       <ul style="line-height:1.8;padding-left:20px">
         <li><strong>Auto</strong> reframes shot by shot: it crops to the face or faces, follows a subject that really moves, and for a shot where two similar-sized faces are too far apart to fit a vertical frame it shows the whole picture over a blurred copy of itself rather than cut someone out. Who a shot is of is worked out from the whole shot, not frame by frame: a face counts as a person when it is found in the same place in at least 30% of the frames that show any face, and a person the detector loses for a moment (a turned head, hair, a passing hand) is taken to be where they were last seen. So the window is centred on the people in the shot and stays there. When the faces do not fit together but one is clearly nearer the camera (1.6 times the area of the next), the shot is of that person and the crop is centred on them. A shot with <strong>no face</strong> in it &mdash; someone seen from behind, side-on or looking down &mdash; is searched for head and shoulders instead; if the same figure, large enough to be who the shot is of, is found in at least 40% of its frames, the crop follows them. Failing that, the crop goes where the picture is in focus: drama keeps its subject sharp and the background soft, so the sharpest part of the frame is usually the person. That is used only when it is clear &mdash; the sharpest stretch at least 1.3 times as sharp as the average, in at least 40% of the shot&rsquo;s frames, and in much the same place each time. A picture sharp all over, as in a deep-focus wide shot, is centre-cropped. Anything worked out wrong can be corrected under <strong>Framing&hellip;</strong>.</li>

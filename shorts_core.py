@@ -706,7 +706,7 @@ def _nearest_cut(t, cuts, max_shift):
     return min(near, key=lambda c: abs(c - t)) if near else t
 
 
-def window_scores(start, end, story_score, visual, words, segments):
+def window_scores(start, end, story_score, visual, words, segments, sound=None):
     """Component scores for a finished window, plus the 0-100 total.
 
     Story carries the most weight because it is the only component that
@@ -715,7 +715,10 @@ def window_scores(start, end, story_score, visual, words, segments):
     and wall-to-wall talking. Missing components are left out of the
     weighted mean rather than counted as zero, so a fallback candidate
     with no story score is ranked on what IS known instead of sinking
-    below every scored one by default."""
+    below every scored one by default. `sound` (0-1, see sound_score),
+    when known, is how loud and lively it is against the rest of the
+    episode -- a raised voice, a laugh, a crash -- and counts for a little.
+    """
     dur = max(end - start, 1e-6)
     vis = sorted((v['score'] for v in visual or [] if start <= v['t'] <= end and v.get('score')),
                  reverse=True)
@@ -741,10 +744,165 @@ def window_scores(start, end, story_score, visual, words, segments):
     if visual_score is not None:
         parts.append((0.30, (visual_score - 1.0) / 4.0))
     parts.append((0.15, pace_fit))
+    if sound is not None:
+        parts.append((SOUND_WEIGHT, float(sound)))
     total = sum(w * p for w, p in parts) / sum(w for w, _ in parts)
     return {'story': story_score,
             'visual': round(visual_score, 1) if visual_score is not None else None,
             'pace': round(pace, 2), 'score': int(round(total * 100))}
+
+
+SOUND_WEIGHT = 0.10
+
+
+def rescore(c, visual, words, segments, sound=None):
+    """A built candidate's scores again, from (more) frame ratings and its
+    sound. Its story score stands: it is the story model's."""
+    r = window_scores(c['start'], c['end'], c.get('story_score'), visual, words, segments, sound=sound)
+    c['visual_score'], c['pace'], c['score'] = r['visual'], r['pace'], r['score']
+    c['sound_score'] = round(sound * 10.0, 1) if sound is not None else None
+    return c
+
+
+def inner_sample_times(cands, rated, budget, per_moment=4, min_gap=1.5):
+    """Where to look inside each moment, so a moment is judged on its own
+    frames and not the few the whole-episode sample happened to land in:
+    {candidate index: [times]}, evenly through each, skipping times within
+    `min_gap` of a frame already rated, `per_moment` at most each and
+    `budget` in all (best-placed moments first, as they are listed)."""
+    if not cands or budget <= 0:
+        return {}
+    k = max(1, min(int(per_moment), int(budget) // max(len(cands), 1)))
+    have = sorted(float(t) for t in rated)
+    out, used = {}, 0
+    for n, c in enumerate(cands):
+        if used >= budget:
+            break
+        a, b = float(c['start']), float(c['end'])
+        picked = []
+        for q in range(k):
+            t = a + (b - a) * (q + 0.5) / k
+            i = bisect.bisect_left(have, t)
+            if any(abs(have[j] - t) < min_gap for j in (i - 1, i) if 0 <= j < len(have)):
+                continue
+            picked.append(round(t, 2))
+        picked = picked[:max(0, int(budget) - used)]
+        if picked:
+            out[n] = picked
+            used += len(picked)
+    return out
+
+
+SOUND_SPAN = 12.0           # dB above (below) the episode's usual loud that counts as 1 (0)
+
+
+def sound_reference(db):
+    """The episode's usual loud: the 90th percentile of its level, read
+    over the whole file. None without sound."""
+    if db is None or len(db) < 100:
+        return None
+    return float(np.percentile(np.asarray(db, dtype=np.float64), 90))
+
+
+def sound_score(db, start, end, ref, hop=None):
+    """0-1: how loud a stretch gets against the episode as a whole -- the
+    90th percentile of its level, and how much of it rises clearly above
+    the episode's usual loud (shouting, laughter, a slam). 0.5 is an
+    ordinary stretch of this programme. None without sound to go by."""
+    hop = hop or ENVELOPE_HOP
+    if ref is None or db is None:
+        return None
+    a, b = int(max(0.0, start) / hop), int(max(0.0, end) / hop)
+    win = np.asarray(db[a:b], dtype=np.float64)
+    if len(win) < 50:
+        return None
+    level = float(np.percentile(win, 90))
+    burst = float((win > ref + 3.0).mean())
+    return round(min(1.0, max(0.0, 0.5 + (level - ref) / SOUND_SPAN + burst)), 3)
+
+
+EDGE = {'window': 3.0}      # seconds of sound read either side of an in or out point
+
+
+def _word_start(db, at, prev_speech, hop=None):
+    """word_end run backwards: where the sound under way at `at` began --
+    (seconds, kind) or None. The onset of the word an in point falls in,
+    not the line before it (`prev_speech`, where that ended)."""
+    hop = hop or ENVELOPE_HOP
+    n = len(db)
+    rev = np.asarray(db[::-1])
+    last = (n - 1) * hop
+    nxt = (last - prev_speech) if prev_speech is not None else None
+    got = word_end(rev, last - at, nxt, hop=hop)
+    if not got:
+        return None
+    t, kind = got
+    return round(max(0.0, last - t), 3), kind
+
+
+def refine_edges(cands, db, units, duration, min_dur, max_dur, fps, hop=None):
+    """Moves each moment's in and out points onto the sound: an out point
+    that falls inside a word is moved to where the word ends (its pause,
+    or -- where the speech runs straight on -- the gap between two words
+    nearest it); an in point inside a word goes back to where that word
+    starts. The transcript's times are the transcript service's guess at
+    the words; the sound is where they are. Moments are never taken past
+    the maximum length, under the minimum, or into the next (previous)
+    line's speech. Sets c['edges'] = {'in': kind, 'out': kind} for what
+    was found ('quiet' -- nothing to do; 'pause', 'dip'; None -- the sound
+    said nothing usable), and counts how many moved."""
+    hop = hop or ENVELOPE_HOP
+    moved = 0
+    if db is None or not len(db):
+        return moved
+    starts = sorted(u[0] for u in units)
+    ends = sorted(u[1] for u in units)
+    span = EDGE['window']
+    fps = float(fps) if fps and fps > 0 else 25.0
+    for c in cands:
+        start, end = float(c['start']), float(c['end'])
+        edges = {'in': None, 'out': None}
+        # Out point.
+        lo = max(0.0, end - span)
+        a, b = int(lo / hop), min(len(db), int((end + span) / hop))
+        if b - a > 20:
+            k = bisect.bisect_right(starts, end + 1e-3)
+            nxt = starts[k] if k < len(starts) else None
+            got = word_end(db[a:b], end - a * hop, (nxt - a * hop) if nxt is not None else None, hop=hop)
+            if got:
+                t, kind = got
+                edges['out'] = kind
+                t += a * hop
+                if kind in ('pause', 'dip'):
+                    t = min(t, start + max_dur, float(duration))
+                    if t - start >= min(min_dur, end - start) - 1e-6 and abs(t - end) > 0.5 / fps:
+                        end = t
+        # In point.
+        a, b = int(max(0.0, start - span) / hop), min(len(db), int((start + span) / hop))
+        if b - a > 20:
+            k = bisect.bisect_left(ends, start - 1e-3) - 1
+            prev = ends[k] if k >= 0 else None
+            if prev is not None and prev < a * hop:
+                prev = None
+            got = _word_start(db[a:b], start - a * hop, (prev - a * hop) if prev is not None else None, hop=hop)
+            if got:
+                t, kind = got
+                edges['in'] = kind
+                t += a * hop
+                if kind in ('pause', 'dip'):
+                    t = max(t, end - max_dur, 0.0)
+                    if end - t >= min(min_dur, end - start) - 1e-6 and abs(t - start) > 0.5 / fps:
+                        start = t
+        start = round(start * fps) / fps
+        end = min(float(duration), round(end * fps) / fps)
+        if end - start > max_dur + 1e-6:
+            end -= 1.0 / fps
+        if abs(start - c['start']) > 1e-3 or abs(end - c['end']) > 1e-3:
+            moved += 1
+            c['start'], c['end'] = round(start, 3), round(end, 3)
+            c['duration'] = round(end - start, 2)
+        c['edges'] = edges
+    return moved
 
 
 def dedupe_windows(cands, max_overlap=0.5):

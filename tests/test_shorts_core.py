@@ -1601,3 +1601,76 @@ def test_captions_over_a_split_shot_sit_on_the_join(tmp_path):
     assert lines[2].endswith(',,{\\an5\\pos(540,960)}in the split')
     assert all(c['seam'] is False for c in sc.place_cues(list(cues), segs[:1], 25.0))
 
+
+
+# --------------------------------------------------------------------------
+# Clean edges, sound, and frames inside the moments
+# --------------------------------------------------------------------------
+
+def _speech_db(words, total=60.0, loud=-18.0, quiet=-60.0):
+    hop = sc.ENVELOPE_HOP
+    db = np.full(int(total / hop), quiet, np.float32)
+    for a, b in words:
+        db[int(a / hop):int(b / hop)] = loud
+    return db
+
+
+def test_out_point_inside_a_word_moves_to_where_it_ends_and_in_point_to_where_it_starts():
+    # Words: ... 19.6-20.45 | (pause) | 22.0 ... ; and 9.7-10.4 straddling the in point.
+    spoken = [(8.0, 9.4), (9.7, 10.4), (10.6, 12.0), (18.0, 19.4), (19.6, 20.45), (22.0, 23.0)]
+    db = _speech_db(spoken)
+    units = [(8.0, 12.0), (18.0, 20.45), (22.0, 23.0)]
+    c = {'start': 10.0, 'end': 20.2, 'duration': 10.2}
+    assert sc.refine_edges([c], db, units, 60.0, min_dur=5, max_dur=15, fps=25.0) == 1
+    assert 20.45 <= c['end'] <= 20.55, c
+    assert 9.6 <= c['start'] <= 9.7, c
+    assert c['edges'] == {'in': 'pause', 'out': 'pause'}
+    assert abs(c['start'] * 25 - round(c['start'] * 25)) < 1e-6 and abs(c['duration'] - (c['end'] - c['start'])) < 0.01
+    # Already in quiet at both ends: left exactly as it was.
+    q = {'start': 13.0, 'end': 16.0, 'duration': 3.0}
+    assert sc.refine_edges([q], db, units, 60.0, 1, 15, 25.0) == 0 and (q['start'], q['end']) == (13.0, 16.0)
+    assert q['edges'] == {'in': 'quiet', 'out': 'quiet'}
+
+
+def test_edges_never_go_past_the_maximum_or_under_the_minimum():
+    db = _speech_db([(9.7, 10.4), (19.6, 20.45)])
+    c = {'start': 10.0, 'end': 20.2, 'duration': 10.2}
+    sc.refine_edges([c], db, [(9.7, 10.4), (19.6, 20.45)], 60.0, min_dur=5, max_dur=10.2, fps=25.0)
+    assert c['end'] - c['start'] <= 10.2 + 1e-6
+    # No sound to go by: nothing moves.
+    d = {'start': 10.0, 'end': 20.2, 'duration': 10.2}
+    assert sc.refine_edges([d], None, [], 60.0, 5, 15, 25.0) == 0 and d['end'] == 20.2
+    flat = np.full(6000, -30.0, np.float32)
+    assert sc.refine_edges([d], flat, [], 60.0, 5, 15, 25.0) == 0 and d['edges'] == {'in': None, 'out': None}
+
+
+def test_sound_score_rises_with_loud_bursts_against_the_episode():
+    hop = sc.ENVELOPE_HOP
+    db = np.full(int(120 / hop), -60.0, np.float32)
+    rng = np.random.default_rng(1)
+    for k in range(120):                                   # ordinary talk all through
+        db[k * 100:k * 100 + 60] = -24.0 + rng.normal(0, 1, 60)
+    db[int(60 / hop):int(70 / hop)] = -10.0                # someone shouting
+    ref = sc.sound_reference(db)
+    calm, loud = sc.sound_score(db, 10, 40, ref), sc.sound_score(db, 50, 80, ref)
+    assert 0.3 <= calm <= 0.65 and loud > calm + 0.3 and loud <= 1.0
+    assert sc.sound_score(None, 0, 10, ref) is None and sc.sound_reference(None) is None
+    # Counted, a little, in the total.
+    words = [{'start': i * 0.4, 'end': i * 0.4 + 0.3, 'word': 'x'} for i in range(150)]
+    quiet = sc.window_scores(0, 60, 7, [], words, [], sound=0.2)['score']
+    lively = sc.window_scores(0, 60, 7, [], words, [], sound=0.9)['score']
+    assert lively > quiet and lively - quiet < 15
+    c = {'start': 0, 'end': 60, 'story_score': 7}
+    sc.rescore(c, [{'t': 5.0, 'score': 5}], words, [], sound=0.9)
+    assert c['sound_score'] == 9.0 and c['visual_score'] == 5.0 and c['score'] > quiet
+
+
+def test_frames_inside_each_moment_are_spread_within_budget_and_skip_ones_already_rated():
+    cands = [{'start': 0.0, 'end': 40.0}, {'start': 100.0, 'end': 140.0}, {'start': 200.0, 'end': 210.0}]
+    got = sc.inner_sample_times(cands, rated=[5.0], budget=100, per_moment=4)
+    assert sorted(got) == [0, 1, 2] and len(got[1]) == 4 and [round(t) for t in got[1]] == [105, 115, 125, 135]
+    assert 5.0 not in got[0] and len(got[0]) == 3, 'the one at 5 s is already rated'
+    assert all(cands[n]['start'] <= t <= cands[n]['end'] for n, ts in got.items() for t in ts)
+    few = sc.inner_sample_times(cands, rated=[], budget=4, per_moment=4)
+    assert sum(len(v) for v in few.values()) <= 4 and 0 in few
+    assert sc.inner_sample_times(cands, [], budget=0) == {} and sc.inner_sample_times([], [], 50) == {}

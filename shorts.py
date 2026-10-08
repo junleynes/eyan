@@ -69,6 +69,12 @@ SHORTS_DIR = os.path.abspath(os.environ.get('SHORTS_DIR') or os.path.join(LIBRAR
 # Every batch is filed under one. Kept beside the batches, not among them.
 SHORTS_PROJECTS_DIR = os.path.abspath(os.environ.get('SHORTS_PROJECTS_DIR')
                                       or os.path.join(LIBRARY_DIR, 'shorts_projects'))
+# Analyses (the moments found in an episode, and the editor's review of
+# them) are kept on disk, so a restart or a long lunch does not mean
+# analysing a 45-minute episode again. Kept this many days after the last
+# time anyone opened them.
+SHORTS_ANALYSES_DIR = os.path.abspath(os.environ.get('SHORTS_ANALYSES_DIR')
+                                      or os.path.join(LIBRARY_DIR, 'shorts_analyses'))
 
 SHORTS_VISION_FRAMES = _env_num('SHORTS_VISION_FRAMES', 90, int)       # vision calls per analysis, whatever the source length
 SHORTS_STORY_CHUNK_SEC = _env_num('SHORTS_STORY_CHUNK_SEC', 300)       # transcript handed to the story model per call
@@ -91,10 +97,16 @@ SHORTS_FACE_MODEL = os.environ.get('SHORTS_FACE_MODEL', '')
 SHORTS_SPEAKER_CROP = os.environ.get('SHORTS_SPEAKER_CROP', '').strip().lower() in ('1', 'true', 'yes', 'on')
 
 SHORTS_MAX_ITEMS = 100     # moments per analysis, and shorts per render job
+SHORTS_ANALYSIS_DAYS = _env_num('SHORTS_ANALYSIS_DAYS', 14)
 # "Auto" in Moments to find: every distinct moment the story model scored at
 # least this, out of 10 -- as many as are worth making, not a number picked
 # in advance.
 SHORTS_AUTO_MIN_STORY = _env_num('SHORTS_AUTO_MIN_STORY', 6, int)
+# Once the moments are known, a few frames inside each are rated too (the
+# whole-episode sample lands in some moments and misses others): this many
+# in all, at most SHORTS_MOMENT_FRAMES_EACH per moment.
+SHORTS_MOMENT_FRAMES = _env_num('SHORTS_MOMENT_FRAMES', 160, int)
+SHORTS_MOMENT_FRAMES_EACH = _env_num('SHORTS_MOMENT_FRAMES_EACH', 4, int)
 # Delivery formats: the ones the rest of PRISM exports, minus AVC-Intra 100,
 # which is defined for a 1920x1080 picture -- a 1080x1920 file labelled as it
 # is not something the equipment that asks for AVC-Intra will take.
@@ -109,8 +121,8 @@ SHORTS_MIN_CLIP = 3.0      # seconds
 SHORTS_MAX_CLIP = 300.0
 
 ANALYZE_STAGES = [(2, 'Reading video'), (5, 'Detecting cuts'), (20, 'Rating frames'),
-                  (46, 'Transcribing dialogue'), (60, 'Finding story beats'),
-                  (88, 'Building candidates'), (100, 'Done')]
+                  (46, 'Transcribing dialogue'), (54, 'Reading the sound'), (60, 'Finding story beats'),
+                  (88, 'Building candidates'), (89, 'Rating frames inside the moments'), (100, 'Done')]
 RENDER_STAGES = [(2, 'Preparing'), (5, 'Rendering shorts'), (100, 'Done')]
 RECAPTION_STAGES = [(5, 'Preparing'), (10, 'Rendering with the new captions'), (100, 'Done')]
 # "Generate without preview" is the two jobs above run back to back as one:
@@ -123,31 +135,196 @@ STAGES_BY_KIND = {'analyze': ANALYZE_STAGES, 'render': RENDER_STAGES, 'auto': AU
                   'recaption': RECAPTION_STAGES}
 
 # ---- Analyses awaiting review ----
-# Same shape and lifetime as the promo generator's PREVIEWS: held in memory
-# between the analyse job and the render job, dropped after PREVIEW_TTL. An
-# analysis holds the whole transcript and cut list, which the render needs
-# for captions and shot boundaries and the browser has no use for.
+# An analysis holds the whole transcript, the cut list and the moments
+# found, which the render needs and the browser has no use for, and the
+# editor's review of those moments as it stands (see api_shorts_review).
+# Each is a folder in SHORTS_ANALYSES_DIR -- analysis.json and the moments'
+# stills -- so it outlives a restart; the recently used ones are also held
+# in memory. Keys starting with "_" are working state (a cache of framing
+# plans) and are never written.
 ANALYSES = {}
 ANALYSES_LOCK = threading.Lock()
+_ANALYSIS_FILE_LOCK = threading.Lock()
 _JOB_KINDS = {}
+_AID = re.compile(r'^[0-9a-f]{16}$')
+_IN_MEMORY = 24
+
+
+def _analysis_ttl():
+    return float(SHORTS_ANALYSIS_DAYS) * 86400.0
+
+
+def _analysis_dir(aid):
+    """The folder for an analysis id, or None if it is not one this module
+    made (the pattern check is the path-traversal guard)."""
+    if not aid or not _AID.match(str(aid)):
+        return None
+    return os.path.join(SHORTS_ANALYSES_DIR, str(aid))
+
+
+def _save_analysis(aid, data):
+    """Writes analysis.json for `aid`, replacing it whole."""
+    d = _analysis_dir(aid)
+    if not d:
+        return
+    os.makedirs(d, exist_ok=True)
+    body = {k: v for k, v in data.items() if not str(k).startswith('_')}
+    tmp = os.path.join(d, f'analysis.json.{secrets.token_hex(3)}.tmp')
+    with _ANALYSIS_FILE_LOCK:
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(body, f, ensure_ascii=False, separators=(',', ':'), default=float)
+        for attempt in range(6):
+            try:
+                os.replace(tmp, os.path.join(d, 'analysis.json'))
+                return
+            except PermissionError:
+                if attempt == 5:
+                    raise
+                time.sleep(0.25)
+
+
+def _load_analysis(aid):
+    d = _analysis_dir(aid)
+    if not d:
+        return None
+    try:
+        with open(os.path.join(d, 'analysis.json'), encoding='utf-8') as f:
+            a = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return a if isinstance(a, dict) else None
+
+
+def _expired(a, now=None):
+    return (now or time.time()) - float(a.get('opened') or a.get('created') or 0) > _analysis_ttl()
+
+
+def _sweep_analyses():
+    """Removes analyses no one has opened for SHORTS_ANALYSIS_DAYS."""
+    try:
+        names = os.listdir(SHORTS_ANALYSES_DIR)
+    except OSError:
+        return
+    now = time.time()
+    for name in names:
+        if not _AID.match(name):
+            continue
+        try:
+            age = now - os.path.getmtime(os.path.join(SHORTS_ANALYSES_DIR, name, 'analysis.json'))
+        except OSError:
+            age = None
+        if age is None or age > _analysis_ttl():
+            a = _load_analysis(name)
+            if a is None or _expired(a, now):
+                shutil.rmtree(os.path.join(SHORTS_ANALYSES_DIR, name), ignore_errors=True)
+                with ANALYSES_LOCK:
+                    ANALYSES.pop(name, None)
+
+
+def _remember(aid, data):
+    with ANALYSES_LOCK:
+        ANALYSES.pop(aid, None)
+        ANALYSES[aid] = data
+        while len(ANALYSES) > _IN_MEMORY:
+            ANALYSES.pop(next(iter(ANALYSES)))
 
 
 def analysis_store(aid, data):
-    with ANALYSES_LOCK:
-        now = time.time()
-        for k in [k for k, v in ANALYSES.items() if now - v.get('created', 0) > pipeline.PREVIEW_TTL]:
-            ANALYSES.pop(k, None)
-        data['created'] = now
-        ANALYSES[aid] = data
+    now = time.time()
+    data['created'] = now
+    data['opened'] = now
+    _save_analysis(aid, data)
+    _remember(aid, data)
+    _sweep_analyses()
+
+
+def analysis_save(aid, data):
+    """Writes an analysis that has changed (its review, a source fetched
+    again) back to disk."""
+    _save_analysis(aid, data)
 
 
 def analysis_get(aid):
+    """The analysis, from memory or from disk, or None if there is none (or
+    it has not been opened for SHORTS_ANALYSIS_DAYS)."""
     with ANALYSES_LOCK:
         a = ANALYSES.get(aid)
-        if a and time.time() - a.get('created', 0) > pipeline.PREVIEW_TTL:
-            ANALYSES.pop(aid, None)
+    if a is None:
+        a = _load_analysis(aid)
+        if a is None:
             return None
-        return a
+        _remember(aid, a)
+    if _expired(a):
+        with ANALYSES_LOCK:
+            ANALYSES.pop(aid, None)
+        d = _analysis_dir(aid)
+        if d:
+            shutil.rmtree(d, ignore_errors=True)
+        return None
+    # Opened: its days start again. Written at most once an hour for that alone.
+    now = time.time()
+    if now - float(a.get('opened') or 0) > 3600:
+        a['opened'] = now
+        try:
+            _save_analysis(aid, a)
+        except OSError:
+            pass
+    return a
+
+
+def analysis_summaries(project_id=None):
+    """Every analysis kept, newest first, as the list of earlier cuts shows
+    them -- read from disk without holding them all in memory."""
+    out = []
+    try:
+        names = os.listdir(SHORTS_ANALYSES_DIR)
+    except OSError:
+        return out
+    now = time.time()
+    for name in names:
+        if not _AID.match(name):
+            continue
+        with ANALYSES_LOCK:
+            a = ANALYSES.get(name)
+        a = a or _load_analysis(name)
+        if not a or _expired(a, now) or (project_id and a.get('project_id') != project_id):
+            continue
+        review = a.get('review') or []
+        out.append({'analysis_id': name, 'orig_name': a.get('orig_name'), 'created': a.get('created'),
+                    'opened': a.get('opened'), 'user_id': a.get('user_id'), 'username': a.get('username'),
+                    'project_id': a.get('project_id'), 'candidates': len(a.get('candidates') or []),
+                    'reviewed': bool(review), 'kept': sum(1 for c in review if c.get('keep'))
+                    if review else len(a.get('candidates') or []),
+                    'source_available': bool(a.get('path')) and os.path.exists(a['path']),
+                    'refetchable': bool(a.get('origin'))})
+    out.sort(key=lambda x: x['created'] or 0, reverse=True)
+    return out
+
+
+def _ensure_source(a, aid=None, report=None):
+    """The analysed episode on this server again, if it has gone: fetched
+    from where it was first fetched from. (path, None) or (None, why)."""
+    if a.get('path') and os.path.exists(a['path']):
+        return a['path'], None
+    origin = a.get('origin')
+    if not origin:
+        return None, ('The episode is no longer on the server (staged files are cleared after a while, and on a '
+                      'restart) and it was not taken from a network folder, so it cannot be fetched again. '
+                      'Pick it again and re-run the analysis.')
+    if report:
+        report(step='Fetching the episode from the network folder again')
+    try:
+        local = pipeline.fetch_network_file(origin['name'], origin.get('category') or 'shorts',
+                                            origin.get('subpath') or '')
+    except Exception as e:
+        return None, f"The episode could not be fetched again from the network folder ({e})."
+    a['path'] = os.path.join(app.config['UPLOAD_FOLDER'], local)
+    if aid:
+        try:
+            analysis_save(aid, a)
+        except OSError:
+            pass
+    return a['path'], None
 
 
 def _touch(path):
@@ -357,10 +534,12 @@ def _candidate_thumbs(path, cands, aid, fps):
             h, w = frame.shape[:2]
             small = cv2.resize(frame, (360, max(2, int(h * 360 / float(max(w, 1))))),
                                interpolation=cv2.INTER_AREA)
-            name = f"shc_{aid}_{c['id']}.jpg"
-            if cv2.imwrite(os.path.join(app.config['UPLOAD_FOLDER'], name), small,
-                           [cv2.IMWRITE_JPEG_QUALITY, 82]):
-                c['thumb'] = f'/uploads/{name}'
+            # Kept with the analysis, so they outlive the staged upload folder.
+            d = _analysis_dir(aid)
+            os.makedirs(d, exist_ok=True)
+            name = f"{c['id']}.jpg"
+            if cv2.imwrite(os.path.join(d, name), small, [cv2.IMWRITE_JPEG_QUALITY, 82]):
+                c['thumb'] = f'/api/shorts/analysis/{aid}/thumb/{name}'
     finally:
         cap.release()
 
@@ -479,12 +658,16 @@ def _run_analysis(jid, params):
         warnings.append(f"The dialogue was read from {heard['audio']} of this file's audio"
                         + ('; the shorts use the same audio.' if heard.get('take') else '.'))
     aligned = 0
+    # The episode's sound level, read once: lines are matched to it, the
+    # moments' in and out points are moved onto it, and how loud a moment
+    # gets is part of its score.
+    report(percent=54, step='Reading the sound')
+    db = sc.read_envelope(pipeline.FFMPEG, path, info, timeout=pipeline.FFMPEG_LONG_TIMEOUT)
     if segments and not words and sc.coarse_times(segments):
         # Timed only to the line, and rounded to the whole second: every line
         # is moved onto where its sound really starts and stops, which is what
         # captions, in and out points and the cliffhanger all go by.
         report(percent=55, step='Matching the dialogue to the sound')
-        db = sc.read_envelope(pipeline.FFMPEG, path, info, timeout=pipeline.FFMPEG_LONG_TIMEOUT)
         segments, aligned = sc.align_segments(segments, db)
         if aligned:
             warnings.append(f'The speech-to-text service gave times for whole lines only, rounded to the second, so '
@@ -553,9 +736,53 @@ def _run_analysis(jid, params):
         # go by: as many as would fit the programme end to end, at most.
         limit = max(3, min(SHORTS_MAX_ITEMS, int(duration // ((min_dur + max_dur) / 2.0))))
     lengths = {}
+    # Half as many again as wanted are built, so that a closer look -- at
+    # their own frames and their sound -- can change which make the list.
+    pool = min(SHORTS_MAX_ITEMS * 2, int(math.ceil(limit * 1.5)) + 2)
     cands = sc.build_candidates(beats, segments, words, cuts, visual, duration,
-                                min_dur=min_dur, max_dur=max_dur, limit=limit, fps=fps,
+                                min_dur=min_dur, max_dur=max_dur, limit=pool, fps=fps,
                                 min_story=SHORTS_AUTO_MIN_STORY if auto else None, report=lengths)
+    # In and out points onto the sound: not in the middle of a word.
+    edges_moved = sc.refine_edges(cands, db, sc.speech_units(words, segments), duration,
+                                  min_dur, max_dur, fps) if db is not None else 0
+    # A few frames inside each moment, rated like the first sample.
+    inner = sc.inner_sample_times(cands, [v['t'] for v in visual], SHORTS_MOMENT_FRAMES,
+                                  per_moment=SHORTS_MOMENT_FRAMES_EACH)
+    more = sorted({t for ts in inner.values() for t in ts})
+    inner_rated = 0
+    if more:
+        report(percent=89, step=f'Rating {len(more)} frames inside the moments (AI vision)')
+        got = [(t, b) for t, b in _grab_frames(path, more, fps) if b]
+        before = len(visual)
+        progress['done'] = 0
+
+        def _rate_inner(item):
+            t, b64 = item
+            try:
+                score, desc = sc.ask_vision(pipeline.OLLAMA_URL, vision_model, b64)
+                if score is not None:
+                    with lock:
+                        visual.append({'t': t, 'score': score, 'desc': desc})
+            except Exception as e:
+                print(f'Vertical Shorts: rating a frame inside a moment failed: {e}')
+            with lock:
+                progress['done'] += 1
+                report(percent=89 + int(6 * progress['done'] / max(len(got), 1)),
+                       step=f"AI-rating frames inside the moments {progress['done']}/{len(got)}")
+
+        if got:
+            with ThreadPoolExecutor(max_workers=max(1, min(pipeline.AI_SCORE_WORKERS, len(got)))) as ex:
+                list(ex.map(_rate_inner, got))
+        inner_rated = len(visual) - before
+        visual.sort(key=lambda v: v['t'])
+        if prod.get('unload_vision_after_scoring', True):
+            pipeline.unload_ollama_model(vision_model)
+    ref = sc.sound_reference(db)
+    for c in cands:
+        sc.rescore(c, visual, words, segments, sound=sc.sound_score(db, c['start'], c['end'], ref))
+    cands = sc.dedupe_windows(cands)[:max(1, int(limit))]
+    for n, c in enumerate(cands, 1):
+        c['id'] = f'c{n}'
     if lengths.get('too_short'):
         k = lengths['too_short']
         warnings.append(f"{k} moment{'' if k == 1 else 's'} the story model picked could not be brought up to the "
@@ -576,6 +803,7 @@ def _run_analysis(jid, params):
     aid = secrets.token_hex(8)
     _candidate_thumbs(path, cands, aid, fps)
     analysis_store(aid, {
+        'origin': pipeline.staged_origin(os.path.basename(path)),
         'user_id': params.get('user_id'), 'username': params.get('username'),
         'project_id': params.get('project_id'),
         'path': path, 'orig_name': params['orig_name'], 'info': info, 'cut_frames': cut_frames,
@@ -583,7 +811,7 @@ def _run_analysis(jid, params):
         'options': {'min_dur': min_dur, 'max_dur': max_dur, 'count': 'auto' if auto else count,
                     'focus': params.get('focus'), 'avoid': params.get('avoid')},
         'stats': {'shots': len(shots), 'frames_rated': len(visual), 'transcript_lines': len(segments),
-                  'lines_aligned': aligned,
+                  'lines_aligned': aligned, 'edges_moved': edges_moved, 'frames_inside': inner_rated,
                   'story_parts': len(chunks), 'vision_model': vision_model, 'story_model': story_model},
     })
     _touch(path)
@@ -769,9 +997,9 @@ def _run_render(jid, params):
     fmt = params.get('format') if params.get('format') in SHORTS_FORMATS else 'mp4_high'
     loudness = pipeline.resolve_loudness(params.get('loudness'), SHORTS_LOUDNESS)
     fps = info['fps']
-    if not os.path.exists(src):
-        report(error='The source video is no longer staged on the server (staged files are '
-                         'cleared after a while). Pick it again and re-run the analysis.')
+    src, why = _ensure_source(a, params.get('analysis_id'), report)
+    if not src:
+        report(error=why)
         return
     _touch(src)
     report(percent=2, step='Preparing')
@@ -972,7 +1200,7 @@ def _run_auto(jid, params):
     if a is None:
         pipeline.job_set(jid, error='The analysis finished but was no longer available to render from. Try again.')
         return
-    render = dict(params['render'], analysis=a, warnings=list(a.get('warnings') or []),
+    render = dict(params['render'], analysis=a, analysis_id=aid, warnings=list(a.get('warnings') or []),
                   items=[{'start': c['start'], 'end': c['end'], 'title': c['title']}
                          for c in a['candidates'][:SHORTS_MAX_ITEMS]],
                   user_id=params.get('user_id'), username=params.get('username'),
@@ -1251,8 +1479,132 @@ def api_shorts_analysis(aid):
     return jsonify(ok=True, analysis_id=aid, orig_name=a['orig_name'], duration=round(info['duration'], 2),
                    width=info['width'], height=info['height'], fps=round(info['fps'], 3),
                    candidates=a['candidates'], warnings=a['warnings'], stats=a['stats'], options=a['options'],
-                   project_id=a.get('project_id'),
-                   source_available=os.path.exists(a['path']))
+                   project_id=a.get('project_id'), created=a.get('created'),
+                   review=a.get('review'), reviewed_at=a.get('reviewed_at'),
+                   source_available=bool(a.get('path')) and os.path.exists(a['path']),
+                   refetchable=bool(a.get('origin')))
+
+
+def _source_gone(a):
+    """The answer to a request that needs the episode when it is no longer
+    on the server: 410, and whether it can be fetched again."""
+    if a.get('origin'):
+        msg = ('The episode is no longer on the server (staged files are cleared after a while, and on a '
+               'restart). Use "Fetch the episode again" above the list to bring it back from the network folder.')
+    else:
+        msg = 'The source video is no longer staged -- pick it again and re-analyse.'
+    return jsonify(ok=False, error=msg, refetchable=bool(a.get('origin'))), 410
+
+
+@app.route('/api/shorts/analysis/<aid>/thumb/<name>')
+@require_permission('vertical_shorts')
+def api_shorts_analysis_thumb(aid, name):
+    d = _analysis_dir(aid)
+    if not d or not re.match(r'^[A-Za-z0-9_-]{1,32}\.jpg$', name or ''):
+        return jsonify(ok=False, error='Not found.'), 404
+    a, err = _analysis_or_error(aid)
+    if err:
+        return err
+    resp = send_from_directory(d, name, max_age=86400)
+    return resp
+
+
+_REVIEW_KEEP = ('hook', 'why', 'source', 'flags', 'story_score', 'visual_score', 'sound_score', 'pace', 'score',
+                'text', 'lines', 'thumb', 'edges')
+
+
+@app.route('/api/shorts/analysis/<aid>/review', methods=['POST'])
+@require_permission('vertical_shorts')
+def api_shorts_review(aid):
+    """Saves the editor's review of an analysis as it stands -- which
+    moments are ticked, their titles, in and out points, corrected captions
+    and framing, and moments added by hand -- so it can be picked up again
+    later, after a restart, or by someone else on the project."""
+    a, err = _analysis_or_error(aid)
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    raw = data.get('items')
+    if not isinstance(raw, list) or len(raw) > SHORTS_MAX_ITEMS * 2:
+        return jsonify(ok=False, error='The review could not be read.'), 400
+    duration = float(a['info']['duration'])
+    found = {c['id']: c for c in a.get('candidates') or []}
+    out = []
+    for n, it in enumerate(raw, 1):
+        if not isinstance(it, dict):
+            return jsonify(ok=False, error=f'Moment {n} is not valid.'), 400
+        cid = str(it.get('id') or '')[:24]
+        title = ' '.join(str(it.get('title') or '').split())[:80]
+        label = title or f'Moment {n}'
+        try:
+            start, end = float(it.get('start')), float(it.get('end'))
+        except (TypeError, ValueError):
+            return jsonify(ok=False, error=f'"{label}": start and end must be numbers (seconds).'), 400
+        start, end = max(0.0, start), min(duration, end)
+        if not end > start:
+            return jsonify(ok=False, error=f'"{label}": out must be after in.'), 400
+        captions, bad = _parse_captions(it.get('captions'), label, duration)
+        if bad:
+            return jsonify(ok=False, error=bad), 400
+        framing, bad = _parse_framing(it.get('framing'), label, duration)
+        if bad:
+            return jsonify(ok=False, error=bad), 400
+        base = found.get(cid)
+        row = {k: base[k] for k in _REVIEW_KEEP if base and k in base} if base else \
+            {'source': 'manual', 'flags': [], 'score': None}
+        row.update({'id': cid or f'm{n}', 'title': title, 'start': round(start, 3), 'end': round(end, 3),
+                    'duration': round(end - start, 2), 'keep': bool(it.get('keep'))})
+        if captions:
+            row['captions'] = captions
+        if framing:
+            row['framing'] = framing
+        out.append(row)
+    a['review'] = out
+    a['reviewed_at'] = time.time()
+    a['reviewed_by'] = session.get('username')
+    try:
+        analysis_save(aid, a)
+    except OSError as e:
+        return jsonify(ok=False, error=f'The review could not be saved ({e}).'), 500
+    return jsonify(ok=True, saved=len(out), reviewed_at=a['reviewed_at'])
+
+
+@app.route('/api/shorts/analyses')
+@require_permission('vertical_shorts')
+def api_shorts_analyses():
+    """The analyses kept for a project (or every one this account can
+    see), newest first: earlier cuts that can be opened and reviewed again."""
+    pid = str(request.args.get('project_id') or '').strip() or None
+    items = [x for x in analysis_summaries(pid) if pipeline._owns_or_admin(x.get('user_id'))]
+    return jsonify(ok=True, items=items, keep_days=SHORTS_ANALYSIS_DAYS)
+
+
+@app.route('/api/shorts/analysis/<aid>', methods=['DELETE'])
+@require_permission('vertical_shorts')
+def api_shorts_analysis_delete(aid):
+    a, err = _analysis_or_error(aid)
+    if err:
+        return err
+    with ANALYSES_LOCK:
+        ANALYSES.pop(aid, None)
+    shutil.rmtree(_analysis_dir(aid), ignore_errors=True)
+    audit_log('shorts_analysis_delete', target=f"{a.get('orig_name')} ({aid})", user_id=session.get('user_id'),
+              username=session.get('username'), ip=_client_ip())
+    return jsonify(ok=True)
+
+
+@app.route('/api/shorts/analysis/<aid>/refetch', methods=['POST'])
+@require_permission('vertical_shorts')
+def api_shorts_refetch(aid):
+    """Brings the analysed episode back onto the server from the network
+    folder it was first fetched from, after it was cleared."""
+    a, err = _analysis_or_error(aid)
+    if err:
+        return err
+    path, why = _ensure_source(a, aid)
+    if not path:
+        return jsonify(ok=False, error=why), 409
+    return jsonify(ok=True, source_available=True)
 
 
 @app.route('/api/shorts/clip', methods=['POST'])
@@ -1268,7 +1620,7 @@ def api_shorts_clip():
     if err:
         return err
     if not os.path.exists(a['path']):
-        return jsonify(ok=False, error='The source video is no longer staged -- pick it again and re-analyse.'), 410
+        return _source_gone(a)
     try:
         start = max(0.0, float(data.get('start', 0)))
         end = min(float(a['info']['duration']), float(data.get('end', 0)))
@@ -1361,8 +1713,7 @@ def _moment_request(data):
     if err:
         return None, None, None, err
     if not os.path.exists(a['path']):
-        return None, None, None, (jsonify(ok=False, error='The source video is no longer staged -- pick it again '
-                                                          'and re-analyse.'), 410)
+        return None, None, None, _source_gone(a)
     info = a['info']
     try:
         start, end = max(0.0, float(data.get('start'))), min(float(info['duration']), float(data.get('end')))
@@ -1604,7 +1955,7 @@ def api_shorts_render():
     # Episode order (see _run_render), and an untitled one named for its place in it.
     items.sort(key=lambda it: (it['start'], it['end']))
     items = [dict(it, title=it['title'] or f'Short {k}') for k, it in enumerate(items, 1)]
-    params = dict(_render_options(data), analysis=a, items=items,
+    params = dict(_render_options(data), analysis=a, analysis_id=str(data.get('analysis_id')).strip(), items=items,
                   user_id=session.get('user_id'), username=session.get('username'))
     jid = _start_job('render', _run_render, params, f"{a['orig_name']} (vertical shorts: {len(items)} to render)",
                      after=_settle_batch)

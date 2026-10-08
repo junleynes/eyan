@@ -391,6 +391,7 @@ def env(tmp_path, monkeypatch, episode):
                                                             'air_date': None, 'description': ''},
                                user_id=7, username='ana')
     monkeypatch.setattr(shorts, 'ANALYSES', {})
+    monkeypatch.setattr(shorts, 'SHORTS_ANALYSES_DIR', str(tmp_path / 'analyses'))
     monkeypatch.setattr(shorts, '_spawn', lambda fn, *a, **k: fn(*a, **k))
     monkeypatch.setattr(shorts, '_job_submit_limiter', core._RateLimiter(1000, 300))
     monkeypatch.setattr(shorts, 'SHORTS_PRESET', 'ultrafast')
@@ -566,7 +567,8 @@ def test_analyze_produces_ranked_snapped_candidates(env, monkeypatch):
     assert a['warnings'] == []
 
     # Layer 1: a bounded number of vision calls, to the chosen model, with an image and a constrained reply.
-    assert 1 <= len(svc.vision_calls) <= 10 and a['stats']['frames_rated'] == len(svc.vision_calls)
+    assert 1 <= len(svc.vision_calls) <= 10 + 4 * 4 and a['stats']['frames_rated'] == len(svc.vision_calls)
+    assert a['stats']['frames_inside'] >= 1, 'frames inside the moments are rated too'
     assert all(c['model'] == 'test-vl' and c['images'] and c['format']['required'] == ['score', 'desc']
                for c in svc.vision_calls)
     # Layer 2: one story call (24 s fits one chunk), same model by default, big enough context, with
@@ -576,8 +578,8 @@ def test_analyze_produces_ranked_snapped_candidates(env, monkeypatch):
     assert p['model'] == 'test-vl' and p['options']['num_ctx'] >= 8192 and 'moments' in p['format']['properties']
     assert '[SCREEN ' in p['prompt'] and 'two people arguing' in p['prompt'] and 'ang lihim ni Ramon' in p['prompt']
     assert '5 to 12 seconds' in p['prompt']
-    # The GPU is handed back before whisper and again at the end.
-    assert svc.unloaded == ['test-vl', 'test-vl']
+    # The GPU is handed back before whisper, after the story, and after the frames inside the moments.
+    assert svc.unloaded == ['test-vl', 'test-vl', 'test-vl']
 
     cands = a['candidates']
     assert [c['title'] for c in cands] == ['Ang lihim ni Ramon', 'Huling babala']
@@ -588,7 +590,9 @@ def test_analyze_produces_ranked_snapped_candidates(env, monkeypatch):
         assert c['start'] <= segs[i]['start'] and c['end'] >= segs[j]['end'], 'the chosen lines are fully inside'
         cut_words = [w for w in words if w['start'] < c['start'] < w['end'] or w['start'] < c['end'] < w['end']]
         assert cut_words == [], 'no word straddles an in or out point'
-        assert c['thumb'] and os.path.exists(os.path.join(main.app.config['UPLOAD_FOLDER'], os.path.basename(c['thumb'])))
+        assert c['thumb'] and os.path.exists(os.path.join(shorts.SHORTS_ANALYSES_DIR, a['analysis_id'],
+                                                          os.path.basename(c['thumb'])))
+        assert client.get(c['thumb']).status_code == 200
         assert c['visual_score'] is not None and c['text'].startswith(f'Linya {i} ')
     # Line 4 ends at 10.5 s and line 5 starts at 11.0: no cut fits between them, so it ends on a short tail.
     assert 10.5 <= cands[0]['end'] < 11.0
@@ -602,7 +606,7 @@ def test_analyze_uses_a_separate_story_model_when_one_is_chosen(env, monkeypatch
     _analysis(client, _analyze(client, headers, env, vision_model='eyes', story_model='brain'))
     assert {c['model'] for c in svc.vision_calls} == {'eyes'}
     assert [p['model'] for p in svc.story_prompts] == ['brain']
-    assert svc.unloaded == ['eyes', 'brain']
+    assert svc.unloaded == ['eyes', 'brain', 'eyes']
 
 
 def test_vision_model_failing_on_every_frame_fails_the_job_with_the_reason(env, monkeypatch):
@@ -698,8 +702,8 @@ def test_generate_without_preview_analyses_then_renders_everything_as_one_job(en
                    subtitle_size='l')
     assert job['error'] is None and job['done'] and job['percent'] == 100
     assert [s['label'] for s in job['stages']] == [
-        'Reading video', 'Detecting cuts', 'Rating frames', 'Transcribing dialogue', 'Finding story beats',
-        'Building candidates', 'Rendering shorts', 'Done']
+        'Reading video', 'Detecting cuts', 'Rating frames', 'Transcribing dialogue', 'Reading the sound',
+        'Finding story beats', 'Building candidates', 'Rating frames inside the moments', 'Rendering shorts', 'Done']
     assert [s['percent'] for s in job['stages']] == sorted(s['percent'] for s in job['stages'])
 
     # One bar for both halves: it never runs backwards, and the job is only
@@ -847,7 +851,7 @@ def test_an_analysis_is_private_to_its_owner_and_expires(env, monkeypatch):
     admin, _ = _client(user_id=1, role='admin')
     assert admin.get(f'/api/shorts/analysis/{aid}').status_code == 200
     assert client.get('/api/shorts/analysis/ffffffffffffffff').status_code == 404
-    monkeypatch.setattr(pipeline, 'PREVIEW_TTL', -1)
+    monkeypatch.setattr(shorts, 'SHORTS_ANALYSIS_DAYS', -1)
     r = client.get(f'/api/shorts/analysis/{aid}')
     assert r.status_code == 404 and 'expired' in r.get_json()['error']
 
@@ -1617,6 +1621,7 @@ def test_burned_in_captions_of_a_saved_short_are_changed_by_rendering_it_again(e
     path = os.path.join(shorts.SHORTS_DIR, bid, s['file'])
     url = f'/api/shorts/batches/{bid}/captions/{s["index"]}'
     shorts.ANALYSES.clear()                     # long after the analysis has gone
+    shutil.rmtree(shorts.SHORTS_ANALYSES_DIR)
 
     r = client.get(url).get_json()
     assert r['ok'] and r['how'] == 'render' and r['burned'] and r['can_change'] and r['why'] is None
@@ -1883,19 +1888,20 @@ def test_line_times_are_moved_onto_the_sound_when_the_service_gives_lines_only(e
     an = shorts.analysis_get(a['analysis_id'])
     for (s0, e0), sg in zip(true, an['segments']):
         assert abs(sg['start'] - s0) < 0.06 and abs(sg['end'] - e0) < 0.06, sg
-    # Line times given finely, not rounded: left as they are, and the sound is not read.
+    # Line times given finely, not rounded: left as they are (the sound is read once all the same,
+    # for the in and out points and the score).
     asked.clear()
     fine = Services(monkeypatch, words=[], segs=[dict(sg, start=sg['start'] + 0.013 * k, end=sg['end'] - 0.037 * k)
                                                  for k, sg in enumerate(segs)])
     fine.story_reply = svc.story_reply
     c = _analysis(client, _analyze(client, headers, env))
-    assert asked == [] and c['stats']['lines_aligned'] == 0
+    assert asked == [env['path']] and c['stats']['lines_aligned'] == 0
     assert not sc.coarse_times(segs[:5]) and sc.coarse_times(segs), 'and it takes a few lines to tell'
-    # With word timings there is nothing to move, and the sound is not read.
+    # With word timings there is nothing to move.
     asked.clear()
     Services(monkeypatch)
     b = _analysis(client, _analyze(client, headers, env))
-    assert asked == [] and b['stats']['lines_aligned'] == 0 and not any('whole lines only' in w for w in b['warnings'])
+    assert asked == [env['path']] and b['stats']['lines_aligned'] == 0 and not any('whole lines only' in w for w in b['warnings'])
 
 
 def test_the_whole_files_sound_is_read_as_a_level_without_holding_it_in_memory(tmp_path):
@@ -2413,7 +2419,7 @@ def test_render_when_the_staged_source_has_been_cleaned_up(env, monkeypatch):
     aid = _analyze(client, headers, env)['result']['analysis_id']
     os.remove(env['path'])
     job = _render(client, headers, aid, [{'start': 0, 'end': 4, 'title': 'One'}])
-    assert job['done'] and 'no longer staged' in job['error'] and os.listdir(shorts.SHORTS_DIR) == []
+    assert job['done'] and 'no longer on the server' in job['error'] and os.listdir(shorts.SHORTS_DIR) == []
 
 
 def test_analysis_keeps_the_staged_source_alive_against_the_upload_sweeper(env, monkeypatch):
@@ -2651,3 +2657,123 @@ def test_a_cancel_or_timeout_does_not_strand_work_files(env, monkeypatch):
     assert job['done'] and 'took too long' in job['error']
     assert not [n for n in os.listdir(up) if n.startswith('shsub_')], 'caption file removed'
     assert os.listdir(shorts.SHORTS_DIR) == [], 'no batch folder and no partial MP4 left'
+
+
+# --------------------------------------------------------------------------
+# Analyses kept on disk: they survive a restart, keep the editor's review,
+# are listed with their project, and fetch their episode again
+# --------------------------------------------------------------------------
+
+def test_an_analysis_and_its_review_survive_a_restart(env, monkeypatch):
+    Services(monkeypatch)
+    client, headers = _client(user_id=7, role='user', username='ana')
+    a = _analysis(client, _analyze(client, headers, env))
+    aid = a['analysis_id']
+    assert a['review'] is None and a['created']
+    c0, c1 = a['candidates'][0], a['candidates'][1]
+    review = [dict(id=c0['id'], keep=True, title='Ang lihim', start=c0['start'] + 0.5, end=c0['end'],
+                   captions={'start': c0['start'] + 0.5, 'end': c0['end'],
+                             'cues': [{'start': 0.0, 'end': 1.5, 'text': 'Tama na.'}]}),
+              dict(id=c1['id'], keep=False, title=c1['title'], start=c1['start'], end=c1['end']),
+              dict(id='m123', keep=True, title='My moment', start=1.0, end=7.0, source='manual')]
+    r = client.post(f'/api/shorts/analysis/{aid}/review', json={'items': review}, headers=headers)
+    assert r.status_code == 200 and r.get_json()['saved'] == 3
+    # A bad edit is refused, and the saved review stands.
+    bad = client.post(f'/api/shorts/analysis/{aid}/review', json={'items': [dict(review[0], start='x')]},
+                      headers=headers)
+    assert bad.status_code == 400
+
+    shorts.ANALYSES.clear()                     # the server restarts
+    b = client.get(f'/api/shorts/analysis/{aid}').get_json()
+    assert b['ok'] and [c['id'] for c in b['candidates']] == [c['id'] for c in a['candidates']]
+    rv = b['review']
+    assert [x['id'] for x in rv] == [c0['id'], c1['id'], 'm123'] and [x['keep'] for x in rv] == [True, False, True]
+    assert rv[0]['title'] == 'Ang lihim' and abs(rv[0]['start'] - (c0['start'] + 0.5)) < 1e-6
+    assert rv[0]['captions']['cues'][0]['text'] == 'Tama na.' and rv[0]['story_score'] == c0['story_score']
+    assert rv[2]['source'] == 'manual' and rv[2]['score'] is None
+    assert client.get(rv[0]['thumb']).status_code == 200, 'the stills are kept with it'
+    # ...and it renders, from the analysis read back from disk.
+    job = _render(client, headers, aid, [{'start': rv[2]['start'], 'end': rv[2]['end'], 'title': 'Mine'}],
+                  reframe='fit')
+    assert job.get('error') is None and len(job['result']['batch']['shorts']) == 1
+
+    # Someone else's: not theirs to read or change. Path tricks go nowhere.
+    other, oh = _client(user_id=8, role='user', username='ben')
+    assert other.post(f'/api/shorts/analysis/{aid}/review', json={'items': []}, headers=oh).status_code == 403
+    assert other.get(rv[0]['thumb']).status_code == 403
+    assert client.get(f'/api/shorts/analysis/{aid}/thumb/..%2fanalysis.json').status_code == 404
+    assert client.get('/api/shorts/analysis/..%2f..%2fetc').status_code == 404
+
+
+def test_earlier_cuts_are_listed_with_their_project_and_can_be_deleted(env, monkeypatch):
+    Services(monkeypatch)
+    client, headers = _client(user_id=7, role='user', username='ana')
+    first = _analyze(client, headers, env)['result']['analysis_id']
+    second = _analyze(client, headers, env)['result']['analysis_id']
+    a = client.get(f'/api/shorts/analysis/{first}').get_json()
+    c = a['candidates'][0]
+    client.post(f'/api/shorts/analysis/{first}/review', headers=headers,
+                json={'items': [dict(id=c['id'], keep=True, title='x', start=c['start'], end=c['end'])]})
+    shorts.ANALYSES.clear()
+    items = client.get(f"/api/shorts/analyses?project_id={env['project']}").get_json()['items']
+    assert {x['analysis_id'] for x in items} == {first, second}
+    one = next(x for x in items if x['analysis_id'] == first)
+    assert one['reviewed'] and one['kept'] == 1 and one['source_available'] and not one['refetchable']
+    assert one['orig_name'] and one['username'] == 'ana'
+    assert client.get('/api/shorts/analyses?project_id=pnothere').get_json()['items'] == []
+    other, _ = _client(user_id=8, role='user', username='ben')
+    assert other.get(f"/api/shorts/analyses?project_id={env['project']}").get_json()['items'] == []
+
+    assert client.delete(f'/api/shorts/analysis/{second}', headers=headers).status_code == 200
+    assert client.get(f'/api/shorts/analysis/{second}').status_code == 404
+    assert not os.path.exists(os.path.join(shorts.SHORTS_ANALYSES_DIR, second))
+
+
+def test_an_analysis_unopened_for_its_days_is_swept(env, monkeypatch):
+    Services(monkeypatch)
+    client, headers = _client()
+    aid = _analyze(client, headers, env)['result']['analysis_id']
+    a = shorts._load_analysis(aid)
+    a['opened'] = a['created'] = time.time() - shorts.SHORTS_ANALYSIS_DAYS * 86400 - 60
+    shorts._save_analysis(aid, a)
+    old = time.time() - shorts.SHORTS_ANALYSIS_DAYS * 86400 - 60
+    os.utime(os.path.join(shorts.SHORTS_ANALYSES_DIR, aid, 'analysis.json'), (old, old))
+    shorts.ANALYSES.clear()
+    _analyze(client, headers, env)              # a new one sweeps the old
+    assert not os.path.exists(os.path.join(shorts.SHORTS_ANALYSES_DIR, aid))
+
+
+def test_an_episode_cleared_from_the_server_is_fetched_again_from_its_network_folder(env, monkeypatch):
+    Services(monkeypatch)
+    keep = os.path.join(shorts.SHORTS_DIR, '..', 'nas_copy.mp4')
+    shutil.copy(env['path'], keep)
+    fetched = []
+
+    def fetch(name, category, subpath):
+        fetched.append((name, category, subpath))
+        local = f'net_{int(time.time())}_again_{name}'
+        shutil.copy(keep, os.path.join(main.app.config['UPLOAD_FOLDER'], local))
+        return local
+
+    monkeypatch.setattr(pipeline, 'fetch_network_file', fetch)
+    pipeline.STAGED_ORIGINS[env['staged']] = {'category': 'shorts', 'subpath': 'Tadhana', 'name': 'episode.mp4'}
+    client, headers = _client()
+    aid = _analyze(client, headers, env)['result']['analysis_id']
+    os.remove(env['path'])
+    shorts.ANALYSES.clear()                     # and the server restarted, for good measure
+    a = client.get(f'/api/shorts/analysis/{aid}').get_json()
+    assert not a['source_available'] and a['refetchable']
+    r = client.post('/api/shorts/clip', json={'analysis_id': aid, 'start': 1, 'end': 6}, headers=headers)
+    assert r.status_code == 410 and r.get_json()['refetchable'] and 'Fetch the episode again' in r.get_json()['error']
+    r = client.post(f'/api/shorts/analysis/{aid}/refetch', headers=headers)
+    assert r.status_code == 200 and fetched == [('episode.mp4', 'shorts', 'Tadhana')]
+    assert client.get(f'/api/shorts/analysis/{aid}').get_json()['source_available']
+    # Gone again: the render fetches it itself.
+    os.remove(shorts.analysis_get(aid)['path'])
+    job = _render(client, headers, aid, [{'start': 1.0, 'end': 6.0, 'title': 'One'}], reframe='fit')
+    assert job.get('error') is None and len(fetched) == 2
+    pipeline.STAGED_ORIGINS.pop(env['staged'], None)
+
+
+def test_fetching_a_network_file_remembers_where_it_came_from():
+    assert pipeline.staged_origin('net_0_nothing.mp4') is None

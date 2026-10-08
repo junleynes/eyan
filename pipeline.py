@@ -673,6 +673,19 @@ def _safe_exception_text(e):
     except Exception:
         return type(e).__name__
 
+# Where each staged copy came from: {local name: {'category', 'subpath',
+# 'name'}}. A staged copy lives in UPLOAD_FOLDER, which is emptied by age
+# and starts empty after a restart; something that has to outlive it (a
+# Vertical Shorts analysis kept for review) records this, and fetches the
+# file again from the same place when it is next needed.
+STAGED_ORIGINS = {}
+
+
+def staged_origin(local_name):
+    """Where a staged copy (net_<ts>_<name>) was fetched from, or None."""
+    return dict(STAGED_ORIGINS[local_name]) if local_name in STAGED_ORIGINS else None
+
+
 def fetch_network_file(name, category=DEFAULT_NETWORK_CATEGORY, subpath=''):
     """Copies `name` from inside `subpath` of the network folder for `category`
     into UPLOAD_FOLDER and returns the local staged filename (prefixed
@@ -720,6 +733,10 @@ def fetch_network_file(name, category=DEFAULT_NETWORK_CATEGORY, subpath=''):
         try:
             with smbclient.open_file(remote_path, mode='rb') as rf, open(local_path, 'wb') as lf:
                 shutil.copyfileobj(rf, lf)
+            if len(STAGED_ORIGINS) > 2000:
+                for k in list(STAGED_ORIGINS)[:1000]:
+                    STAGED_ORIGINS.pop(k, None)
+            STAGED_ORIGINS[local_name] = {'category': category, 'subpath': sub, 'name': name}
             return local_name
         except SharingViolation as e:
             last_err = e
