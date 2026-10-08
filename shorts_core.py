@@ -376,7 +376,8 @@ STORY_FORMAT = {
 }
 
 
-def build_story_prompt(segments, lo, hi, visual, min_dur, max_dur, max_moments=3, focus=None, avoid=None):
+def build_story_prompt(segments, lo, hi, visual, min_dur, max_dur, max_moments=3, focus=None, avoid=None,
+                       breaks=None):
     """The story-model prompt for transcript lines [lo, hi).
 
     Line IDs are the GLOBAL segment indices, not renumbered per chunk, so
@@ -400,6 +401,10 @@ def build_story_prompt(segments, lo, hi, visual, min_dur, max_dur, max_moments=3
             desc = (v.get('desc') or '').strip() or 'no description'
             seen = f", looks like {v['kind']}" if v.get('kind') and v['kind'] != 'story' else ''
             rows.append((v['t'], 1, f"[SCREEN {fmt_ts(v['t'])}] {desc} (visual drama {v['score']}/5{seen})"))
+    # Where one part of a multi-part episode ends and the next begins.
+    near = [(t, label) for t, label in breaks or [] if t_lo <= t <= t_hi]
+    for t, label in near:
+        rows.append((t, -1, f'[PART BREAK] {label} begins here; time has passed and nothing runs across this line'))
     rows.sort(key=lambda r: (r[0], r[1]))
     body = '\n'.join(r[2] for r in rows)
     extra = ''
@@ -423,7 +428,9 @@ def build_story_prompt(segments, lo, hi, visual, min_dur, max_dur, max_moments=3
         'conflict, confrontation, revelation or emotional turn, and ends on a payoff, a reaction '
         'or a cliffhanger,\n'
         '- opens on a line that grabs attention within the first three seconds,\n'
-        '- does not start or end in the middle of a sentence or a thought.\n'
+        '- does not start or end in the middle of a sentence or a thought,\n'
+        + ('- never includes a [PART BREAK] line: this is a multi-part episode and a short stays inside one part,\n'
+           if near else '') +
         '- is the drama itself and nothing else (see below).\n'
         'Do not pick greetings or small talk. If nothing in this stretch qualifies, return an empty '
         'list -- an empty list is a good answer.\n'
@@ -832,7 +839,7 @@ def ask_story(base_url, model, prompt, num_ctx=8192, num_predict=900, timeout=30
 # From a proposed beat to an exact, safe window
 # --------------------------------------------------------------------------
 
-def fit_indices(segments, i, j, min_dur, max_dur, gap_limit=6.0, far_gap=10.0, blocked=None):
+def fit_indices(segments, i, j, min_dur, max_dur, gap_limit=6.0, far_gap=10.0, blocked=None, walls=None):
     """Grows or shrinks the line range [i, j] to respect the length limits.
 
     Too long: lines are dropped from the START. The model picked this
@@ -849,6 +856,12 @@ def fit_indices(segments, i, j, min_dur, max_dur, gap_limit=6.0, far_gap=10.0, b
     minimum is flagged 'short', and the caller leaves it out. Lines in
     `blocked` (indices: billboards, credits, narration...) are never added."""
     blocked = blocked or ()
+    walls = walls or ()
+
+    def wall(p, q):
+        # A part break between line p and the later line q.
+        return any(segments[p]['end'] <= w + 1e-6 and w <= segments[q]['start'] + 1e-6 for w in walls)
+
     n = len(segments)
     i, j = max(0, min(i, n - 1)), max(0, min(j, n - 1))
     if i > j:
@@ -864,10 +877,10 @@ def fit_indices(segments, i, j, min_dur, max_dur, gap_limit=6.0, far_gap=10.0, b
             flags.append('trimmed')
     back_first = True
     while dur(i, j) < min_dur:
-        can_back = (i > 0 and i - 1 not in blocked and segments[i]['start'] - segments[i - 1]['end'] <= gap_limit
-                    and dur(i - 1, j) <= max_dur)
-        can_fwd = (j < n - 1 and j + 1 not in blocked and segments[j + 1]['start'] - segments[j]['end'] <= gap_limit
-                   and dur(i, j + 1) <= max_dur)
+        can_back = (i > 0 and i - 1 not in blocked and not wall(i - 1, i)
+                    and segments[i]['start'] - segments[i - 1]['end'] <= gap_limit and dur(i - 1, j) <= max_dur)
+        can_fwd = (j < n - 1 and j + 1 not in blocked and not wall(j, j + 1)
+                   and segments[j + 1]['start'] - segments[j]['end'] <= gap_limit and dur(i, j + 1) <= max_dur)
         if can_back and (back_first or not can_fwd):
             i -= 1
         elif can_fwd:
@@ -880,9 +893,9 @@ def fit_indices(segments, i, j, min_dur, max_dur, gap_limit=6.0, far_gap=10.0, b
     while dur(i, j) < min_dur:
         # Across longer pauses, whichever side has the shorter one.
         back = (segments[i]['start'] - segments[i - 1]['end']
-                if i > 0 and i - 1 not in blocked and dur(i - 1, j) <= max_dur else None)
+                if i > 0 and i - 1 not in blocked and not wall(i - 1, i) and dur(i - 1, j) <= max_dur else None)
         fwd = (segments[j + 1]['start'] - segments[j]['end']
-               if j < n - 1 and j + 1 not in blocked and dur(i, j + 1) <= max_dur else None)
+               if j < n - 1 and j + 1 not in blocked and not wall(j, j + 1) and dur(i, j + 1) <= max_dur else None)
         sides = [(g, side) for g, side in ((back, 'back'), (fwd, 'fwd')) if g is not None and g <= far_gap]
         if not sides:
             flags.append('short')
@@ -1211,7 +1224,8 @@ PAD_QUIET = 6.0             # seconds of non-speech a moment may be given, each 
 
 
 def build_candidates(beats, segments, words, cuts, visual, duration,
-                     min_dur=30.0, max_dur=90.0, limit=8, fps=25.0, min_story=None, report=None, blocked=None):
+                     min_dur=30.0, max_dur=90.0, limit=8, fps=25.0, min_story=None, report=None, blocked=None,
+                     walls=None):
     """Beats (line ranges, or raw time windows from visual_windows) ->
     ranked, de-duplicated candidates with exact frame-aligned in/out points.
 
@@ -1238,6 +1252,14 @@ def build_candidates(beats, segments, words, cuts, visual, duration,
     units = speech_units(words, segments)
     blocked = list(blocked or [])
     bad_lines = blocked_lines(segments, blocked) if blocked else set()
+    # Where one part of a multi-part source ends and the next begins, on the
+    # joined timeline: nothing runs across it. Held as hairline blocked
+    # ranges as well, so lead-ins, tails and padding stop at it.
+    walls = sorted(float(w) for w in walls or [])
+    blocked = blocked + [(w - 0.001, w + 0.001, ['part break']) for w in walls]
+
+    def wall_between(p, q):
+        return any(segments[p]['end'] <= w + 1e-6 and w <= segments[q]['start'] + 1e-6 for w in walls)
     gone = 0
     cuts = sorted(set([0.0, float(duration)] + [float(c) for c in cuts or []]))
     fps = float(fps) if fps and fps > 0 else 25.0
@@ -1254,7 +1276,8 @@ def build_candidates(beats, segments, words, cuts, visual, duration,
         else:
             i0, j0 = max(0, min(b['start_id'], b['end_id'])), min(len(segments) - 1, max(b['start_id'], b['end_id']))
             cleaned = False
-            if bad_lines and any(k in bad_lines for k in range(i0, j0 + 1)):
+            if (bad_lines and any(k in bad_lines for k in range(i0, j0 + 1))) or \
+                    (walls and any(wall_between(k - 1, k) for k in range(i0 + 1, j0 + 1))):
                 # The longest clean run of the lines chosen (later on a tie:
                 # the end is what the moment was picked for).
                 runs, run = [], []
@@ -1264,6 +1287,9 @@ def build_candidates(beats, segments, words, cuts, visual, duration,
                             runs.append(run)
                         run = []
                     else:
+                        if run and wall_between(k - 1, k):
+                            runs.append(run)
+                            run = []
                         run.append(k)
                 if run:
                     runs.append(run)
@@ -1272,7 +1298,7 @@ def build_candidates(beats, segments, words, cuts, visual, duration,
                     continue
                 best = max(runs, key=lambda r: (segments[r[-1]]['end'] - segments[r[0]]['start'], r[0]))
                 i0, j0, cleaned = best[0], best[-1], True
-            i, j, flags = fit_indices(segments, i0, j0, min_dur, max_dur, blocked=bad_lines)
+            i, j, flags = fit_indices(segments, i0, j0, min_dur, max_dur, blocked=bad_lines, walls=walls)
             if cleaned:
                 flags.append('cleaned')
             t0, t1 = speech_bounds(segments[i]['start'], segments[j]['end'], words)
@@ -1314,8 +1340,9 @@ def build_candidates(beats, segments, words, cuts, visual, duration,
                 gone += 1
                 continue
             if part != (start, end):
+                lost = (part[0] - start) + (end - part[1])
                 start, end = part
-                if 'cleaned' not in flags:
+                if lost > 0.1 and 'cleaned' not in flags:
                     flags.append('cleaned')
         # Whole frames, so the render's frame maths starts from exact values.
         start = round(start * fps) / fps

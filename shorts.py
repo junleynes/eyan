@@ -42,6 +42,7 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 
 import cv2
+import numpy as np
 import requests
 from flask import request, jsonify, session, send_from_directory
 from werkzeug.utils import secure_filename
@@ -295,36 +296,127 @@ def analysis_summaries(project_id=None):
                     'project_id': a.get('project_id'), 'candidates': len(a.get('candidates') or []),
                     'reviewed': bool(review), 'kept': sum(1 for c in review if c.get('keep'))
                     if review else len(a.get('candidates') or []),
-                    'source_available': bool(a.get('path')) and os.path.exists(a['path']),
-                    'refetchable': bool(a.get('origin'))})
+                    'source_available': _sources_available(a), 'parts': len(_parts(a)),
+                    'refetchable': all(P.get('origin') for P in _parts(a))})
     out.sort(key=lambda x: x['created'] or 0, reverse=True)
     return out
 
 
+# ---- Parts ----
+# An analysis is of one video, or of several parts of one episode laid end
+# to end. A single video is stored the way it always was (path, info, cut
+# list, transcript at the top level); several are stored with a `parts` list
+# and the top level speaks for the whole episode (its info.duration is the
+# sum). Everything the editor sees and sends -- moments, captions, framing --
+# is on the joined timeline; each part's own time is that minus its offset.
+
+def _parts(a):
+    """The parts of an analysis, a one-file source being a single part."""
+    if a.get('parts'):
+        return a['parts']
+    return [{'path': a.get('path'), 'name': a.get('orig_name'), 'info': a['info'], 'offset': 0.0,
+             'duration': float(a['info']['duration']), 'cut_frames': a.get('cut_frames') or [],
+             'words': a.get('words') or [], 'segments': a.get('segments') or [], 'origin': a.get('origin')}]
+
+
+def _is_multi(a):
+    return len(a.get('parts') or []) > 1
+
+
+def _part_view(a, k):
+    """The analysis as it is for part `k`: that part's file, frame rate,
+    cuts and transcript, in the part's own time -- what everything that
+    cuts, previews or plans a moment works on. A one-file analysis is its
+    own view."""
+    if not _is_multi(a):
+        return a
+    P = a['parts'][k]
+    v = dict(a, path=P['path'], info=P['info'], cut_frames=P['cut_frames'], words=P['words'],
+             segments=P['segments'], origin=P.get('origin'))
+    v['_part'], v['_offset'] = k, P['offset']
+    v['_plans'] = a.setdefault('_plans', {})
+    return v
+
+
+def _part_label(a, k):
+    return f"Part {k + 1}" if _is_multi(a) else ''
+
+
+def _locate(a, start, end):
+    """(part index, error) for a moment from `start` to `end` on the
+    analysis's timeline: the part it starts in, and an error if it runs
+    across the break into the next."""
+    parts = _parts(a)
+    k = len(parts) - 1
+    for i, P in enumerate(parts):
+        if start < P['offset'] + P['duration'] - 1e-6:
+            k = i
+            break
+    P = parts[k]
+    if end > P['offset'] + P['duration'] + 0.05:
+        return k, (f"This moment runs across the break between Part {k + 1} and Part {k + 2}. A short stays inside "
+                   f"one part: end it before {fmt_clock(P['duration'])} in Part {k + 1}, or start it in Part {k + 2}.")
+    return k, None
+
+
+def fmt_clock(sec):
+    sec = max(0.0, float(sec))
+    h, m = int(sec // 3600), int(sec % 3600 // 60)
+    return f'{h}:{m:02d}:{sec % 60:04.1f}' if h else f'{m}:{sec % 60:04.1f}'
+
+
+def _localize_item(it, off):
+    """A moment as the request made it (joined timeline) in its part's own
+    time: its range, the range its edited captions were made for, and where
+    its framing corrections are."""
+    if not off:
+        return it
+    out = dict(it, start=max(0.0, it['start'] - off), end=max(0.0, it['end'] - off))
+    if it.get('captions'):
+        out['captions'] = dict(it['captions'], start=max(0.0, it['captions']['start'] - off),
+                               end=max(0.0, it['captions']['end'] - off))
+    if (it.get('framing') or {}).get('shots'):
+        out['framing'] = {'shots': [dict(s_, at=max(0.0, s_['at'] - off)) for s_ in it['framing']['shots']]}
+    return out
+
+
+def _sources_available(a):
+    return all(P.get('path') and os.path.exists(P['path']) for P in _parts(a))
+
+
 def _ensure_source(a, aid=None, report=None):
-    """The analysed episode on this server again, if it has gone: fetched
-    from where it was first fetched from. (path, None) or (None, why)."""
-    if a.get('path') and os.path.exists(a['path']):
-        return a['path'], None
-    origin = a.get('origin')
-    if not origin:
-        return None, ('The episode is no longer on the server (staged files are cleared after a while, and on a '
-                      'restart) and it was not taken from a network folder, so it cannot be fetched again. '
-                      'Pick it again and re-run the analysis.')
-    if report:
-        report(step='Fetching the episode from the network folder again')
-    try:
-        local = pipeline.fetch_network_file(origin['name'], origin.get('category') or 'shorts',
-                                            origin.get('subpath') or '')
-    except Exception as e:
-        return None, f"The episode could not be fetched again from the network folder ({e})."
-    a['path'] = os.path.join(app.config['UPLOAD_FOLDER'], local)
-    if aid:
+    """The analysed episode -- every part of it -- on this server again, if
+    it has gone: fetched from where it was first fetched from. (path of the
+    first part, None) or (None, why)."""
+    parts = _parts(a)
+    changed = False
+    for k, P in enumerate(parts):
+        if P.get('path') and os.path.exists(P['path']):
+            continue
+        what = 'The episode' if len(parts) == 1 else f'Part {k + 1} ({P.get("name")})'
+        origin = P.get('origin')
+        if not origin:
+            return None, (f'{what} is no longer on the server (staged files are cleared after a while, and on a '
+                          'restart) and it was not taken from a network folder, so it cannot be fetched again. '
+                          'Pick it again and re-run the analysis.')
+        if report:
+            report(step='Fetching the episode from the network folder again' if len(parts) == 1
+                   else f'Fetching part {k + 1} from the network folder again')
         try:
-            analysis_save(aid, a)
-        except OSError:
-            pass
-    return a['path'], None
+            local = pipeline.fetch_network_file(origin['name'], origin.get('category') or 'shorts',
+                                                origin.get('subpath') or '')
+        except Exception as e:
+            return None, f"{what} could not be fetched again from the network folder ({e})."
+        P['path'] = os.path.join(app.config['UPLOAD_FOLDER'], local)
+        changed = True
+    if changed:
+        a['path'] = parts[0]['path']
+        if aid:
+            try:
+                analysis_save(aid, a)
+            except OSError:
+                pass
+    return parts[0]['path'], None
 
 
 def _touch(path):
@@ -452,10 +544,13 @@ def _batch_public(m):
         d['delivery_size'] = s.get('delivery_size') or s.get('size')
         d['caption_lines'] = len(s['cues']) if isinstance(s.get('cues'), list) else None
         d['captions_edited'] = bool(s.get('captions_edited'))
+        for k in ('part', 'part_name', 'part_start', 'part_end'):
+            if s.get(k) is not None:
+                d[k] = s[k]
         shorts.append(d)
     proj = sp.load(SHORTS_PROJECTS_DIR, m.get('project_id')) if m.get('project_id') else None
     return {'batch_id': bid, 'orig_name': m.get('orig_name'), 'created': m.get('created'),
-            'source_duration': m.get('source_duration'),
+            'source_duration': m.get('source_duration'), 'parts': m.get('parts'),
             'username': m.get('username'), 'status': m.get('status'), 'options': m.get('options') or {},
             'shorts': shorts, 'errors': m.get('errors') or [], 'warnings': m.get('warnings') or [],
             'project_id': proj['project_id'] if proj else None,
@@ -522,12 +617,16 @@ def _grab_frames(path, times, fps, max_w=768):
     return out
 
 
-def _candidate_thumbs(path, cands, aid, fps):
+def _candidate_thumbs(path, cands, aid, fps, offset=0.0):
+    """A still for each moment, taken from `path`, whose own time zero is
+    `offset` on the analysis's timeline."""
+    if not cands:
+        return
     cap = cv2.VideoCapture(path)
     try:
         for c in cands:
             c['thumb'] = None
-            at = c['start'] + 0.35 * (c['end'] - c['start'])
+            at = c['start'] - offset + 0.35 * (c['end'] - c['start'])
             cap.set(cv2.CAP_PROP_POS_FRAMES, int(round(at * fps)))
             ok, frame = cap.read()
             if not ok:
@@ -545,11 +644,45 @@ def _candidate_thumbs(path, cands, aid, fps):
         cap.release()
 
 
+def _label(n, k, name):
+    """What to call a part in a message: nothing for a one-file source."""
+    return f'Part {k + 1} ({name}): ' if n > 1 else ''
+
+
+def _grab_by_part(parts, times, max_w=768):
+    """[(global time, JPEG b64 or None)] for global `times`, each taken from
+    the part it falls in."""
+    out = []
+    for k, P in enumerate(parts):
+        o, d = P['offset'], P['duration']
+        last = k == len(parts) - 1
+        mine = [t for t in times if o - 1e-6 <= t < o + d - 1e-6 or (last and t >= o + d - 1e-6)]
+        if mine:
+            out.extend((t + o, b) for t, b in _grab_frames(P['path'], [t - o for t in mine], P['fps'], max_w=max_w))
+    return sorted(out, key=lambda x: x[0])
+
+
+def _part_index(parts, t):
+    """The part a time on the joined timeline falls in."""
+    for k, P in enumerate(parts):
+        if t < P['offset'] + P['duration'] - 1e-6:
+            return k
+    return len(parts) - 1
+
+
 def _run_analysis(jid, params):
     """Finds the candidate moments. Returns the analysis id, or None when it
-    ended with an error (already reported)."""
+    ended with an error (already reported).
+
+    The source is one video or several parts of one episode. Parts are laid
+    end to end on a single timeline: each is probed, cut-detected,
+    transcribed and listened to on its own, and then one story pass reads
+    the whole episode. Every time in the analysis is on that joined
+    timeline; a part's own times are its time minus its offset. No moment
+    runs across the break between two parts."""
     report = params.get('_report') or functools.partial(pipeline.job_set, jid)
-    path = params['path']
+    srcs = params.get('parts') or [{'path': params['path'], 'name': params['orig_name']}]
+    n_parts = len(srcs)
     vision_model, story_model = params['vision_model'], params['story_model']
     min_dur, max_dur, count = params['min_dur'], params['max_dur'], params['count']
     # "Auto": no number chosen in advance. Every moment the story model rates
@@ -575,33 +708,53 @@ def _run_analysis(jid, params):
                          'said. Check Config > Services and try again once they are back.')
         return
 
-    report(percent=2, step='Reading video')
-    _touch(path)        # a long analysis must not be the reason its own source ages out
-    info = sc.probe_source(pipeline.FFPROBE, path)
-    if not info['fps'] or info['frames'] <= 0 or not info['width']:
-        report(error='This file could not be read as video. If it plays elsewhere, it may be in a '
-                         'codec this server cannot decode -- try an H.264/ProRes copy.')
-        return
-    fps, duration = info['fps'], info['duration']
+    def at(lo, hi, k, frac=0.0):
+        """Progress: [lo, hi] shared out between the parts, `frac` of the way through part k."""
+        return int(lo + (hi - lo) * (k + frac) / n_parts)
+
+    report(percent=2, step='Reading video' if n_parts == 1 else 'Reading the parts')
+    parts, offset = [], 0.0
+    for k, s in enumerate(srcs):
+        _touch(s['path'])       # a long analysis must not be the reason its own source ages out
+        info = sc.probe_source(pipeline.FFPROBE, s['path'])
+        if not info['fps'] or info['frames'] <= 0 or not info['width']:
+            report(error=_label(n_parts, k, s['name']) + 'This file could not be read as video. If it plays '
+                         'elsewhere, it may be in a codec this server cannot decode -- try an H.264/ProRes copy.')
+            return
+        parts.append({'path': s['path'], 'name': s['name'], 'info': info, 'fps': info['fps'],
+                      'duration': float(info['duration']), 'offset': offset,
+                      'origin': pipeline.staged_origin(os.path.basename(s['path']))})
+        offset += float(info['duration'])
+    duration = offset
+    fps = parts[0]['fps']
     if duration < min_dur + 5:
         report(error=f'This video is only {duration:.0f}s long -- too short to cut '
-                         f'{int(min_dur)}-{int(max_dur)}s shorts from. Lower the minimum length or use a longer source.')
+                         f'{int(min_dur)}-{int(max_dur)}s shorts from. Lower the minimum length or use a longer source.'
+                     if n_parts == 1 else
+                     f'These {n_parts} parts add up to only {duration:.0f}s -- too short to cut '
+                     f'{int(min_dur)}-{int(max_dur)}s shorts from. Lower the minimum length.')
         return
 
-    report(percent=5, step='Detecting cuts')
     prod = pipeline.load_production_defaults()
-    scene_list = pipeline.detect_scenes(path, threshold=float(prod['scene_threshold']),
-                                        min_scene_len_sec=float(prod['min_scene_len']),
-                                        detector=prod['detector'],
-                                        adaptive_threshold=float(prod['adaptive_threshold']))
-    cut_frames = sorted({int(pipeline.tc_frames(s)) for s, _ in scene_list} | {0})
-    shots = [(pipeline.tc_seconds(s), pipeline.tc_seconds(e)) for s, e in scene_list] or [(0.0, duration)]
-    cuts = [f / fps for f in cut_frames] + [duration]
+    shots, cuts = [], [0.0]
+    for k, P in enumerate(parts):
+        report(percent=at(5, 20, k), step='Detecting cuts' if n_parts == 1 else f'Detecting cuts (part {k + 1}/{n_parts})')
+        scene_list = pipeline.detect_scenes(P['path'], threshold=float(prod['scene_threshold']),
+                                            min_scene_len_sec=float(prod['min_scene_len']),
+                                            detector=prod['detector'],
+                                            adaptive_threshold=float(prod['adaptive_threshold']))
+        o = P['offset']
+        P['cut_frames'] = sorted({int(pipeline.tc_frames(s)) for s, _ in scene_list} | {0})
+        local = [(pipeline.tc_seconds(s), pipeline.tc_seconds(e)) for s, e in scene_list] or [(0.0, P['duration'])]
+        shots.extend((o + a, o + b) for a, b in local)
+        cuts.extend(o + f / P['fps'] for f in P['cut_frames'])
+        cuts.append(o + P['duration'])
+    cuts = sorted(set(cuts))
 
     # ---- Layer 1: how dramatic does it look ----
     times = sc.vision_sample_times(shots, duration, budget=params['vision_frames'])
     report(percent=20, step=f'Rating {len(times)} frames (AI vision)')
-    items = [(t, b) for t, b in _grab_frames(path, times, fps) if b]
+    items = [(t, b) for t, b in _grab_by_part(parts, times) if b]
     visual, errors = [], []
     progress = {'done': 0}
     lock = threading.Lock()
@@ -637,46 +790,59 @@ def _run_analysis(jid, params):
         pipeline.unload_ollama_model(vision_model)
 
     # ---- Layer 2: does it tell a story ----
-    report(percent=46, step='Transcribing dialogue')
-    words, segments, heard = pipeline.transcribe_video_detailed(path)
-    if not heard.get('ok'):
-        # A transcription that FAILED is not a programme without dialogue.
-        # Carrying on would pick moments on picture alone and present them
-        # like any others -- the outcome the up-front service check exists
-        # to prevent, arrived at by a different road.
-        report(error=f"Could not transcribe the dialogue: {heard.get('reason') or 'unknown error'}. "
-                     'Moments are chosen from what is said as well as what is seen, so nothing was picked. '
-                     'Fix the speech-to-text service (Config > Services) and try again.')
-        return
-    words, segments = sc.normalize_transcript(words, segments)
-
     warnings = []
-    if heard.get('take'):
-        # A master with its sound on separate tracks: the shorts take their
-        # audio from where the dialogue was found, not from the first track.
-        info['audio_take'] = heard['take']
-    if heard.get('audio'):
-        warnings.append(f"The dialogue was read from {heard['audio']} of this file's audio"
-                        + ('; the shorts use the same audio.' if heard.get('take') else '.'))
     aligned = 0
-    # The episode's sound level, read once: lines are matched to it, the
-    # moments' in and out points are moved onto it, and how loud a moment
-    # gets is part of its score.
-    report(percent=54, step='Reading the sound')
-    db = sc.read_envelope(pipeline.FFMPEG, path, info, timeout=pipeline.FFMPEG_LONG_TIMEOUT)
-    if segments and not words and sc.coarse_times(segments):
-        # Timed only to the line, and rounded to the whole second: every line
-        # is moved onto where its sound really starts and stops, which is what
-        # captions, in and out points and the cliffhanger all go by.
-        report(percent=55, step='Matching the dialogue to the sound')
-        segments, aligned = sc.align_segments(segments, db)
-        if aligned:
-            warnings.append(f'The speech-to-text service gave times for whole lines only, rounded to the second, so '
-                            f'{aligned} of {len(segments)} lines were moved onto where their sound starts and stops. '
-                            'Captions change a line at a time; a service that returns word timings would be closer still.')
+    heard_why = None
+    words, segments = [], []
+    for k, P in enumerate(parts):
+        lab = _label(n_parts, k, P['name'])
+        report(percent=at(46, 54, k), step='Transcribing dialogue' if n_parts == 1
+               else f'Transcribing dialogue (part {k + 1}/{n_parts})')
+        w, sg, heard = pipeline.transcribe_video_detailed(P['path'])
+        if not heard.get('ok'):
+            # A transcription that FAILED is not a programme without dialogue.
+            # Carrying on would pick moments on picture alone and present them
+            # like any others -- the outcome the up-front service check exists
+            # to prevent, arrived at by a different road.
+            report(error=f"{lab}Could not transcribe the dialogue: {heard.get('reason') or 'unknown error'}. "
+                         'Moments are chosen from what is said as well as what is seen, so nothing was picked. '
+                         'Fix the speech-to-text service (Config > Services) and try again.')
+            return
+        heard_why = heard_why or heard.get('reason')
+        w, sg = sc.normalize_transcript(w, sg)
+        if heard.get('take'):
+            # A master with its sound on separate tracks: the shorts take their
+            # audio from where the dialogue was found, not from the first track.
+            P['info']['audio_take'] = heard['take']
+        if heard.get('audio'):
+            warnings.append(f"{lab}The dialogue was read from {heard['audio']} of this file's audio"
+                            + ('; the shorts use the same audio.' if heard.get('take') else '.'))
+        # The episode's sound level, read once: lines are matched to it, the
+        # moments' in and out points are moved onto it, and how loud a moment
+        # gets is part of its score.
+        report(percent=at(54, 58, k), step='Reading the sound')
+        P['db'] = sc.read_envelope(pipeline.FFMPEG, P['path'], P['info'], timeout=pipeline.FFMPEG_LONG_TIMEOUT)
+        if sg and not w and sc.coarse_times(sg):
+            # Timed only to the line, and rounded to the whole second: every line
+            # is moved onto where its sound really starts and stops, which is what
+            # captions, in and out points and the cliffhanger all go by.
+            report(percent=at(55, 58, k), step='Matching the dialogue to the sound')
+            sg, moved = sc.align_segments(sg, P['db'])
+            aligned += moved
+            if moved:
+                warnings.append(f'{lab}The speech-to-text service gave times for whole lines only, rounded to the second, so '
+                                f'{moved} of {len(sg)} lines were moved onto where their sound starts and stops. '
+                                'Captions change a line at a time; a service that returns word timings would be closer still.')
+        P['words'], P['segments'] = w, sg
+        o = P['offset']
+        words.extend(dict(x, start=x['start'] + o, end=x['end'] + o) for x in w)
+        segments.extend(dict(x, start=x['start'] + o, end=x['end'] + o) for x in sg)
     if errors:
         warnings.append(f'{len(errors)} of {len(items)} frames could not be rated by the vision model '
                         f'({errors[0][:120]}); the rest were used.')
+    breaks = [(P['offset'], f'Part {k + 1}') for k, P in enumerate(parts) if k]
+    walls = [P['offset'] for P in parts[1:]]
+    wall_ranges = [(w - 0.001, w + 0.001, ['part break']) for w in walls]
     beats, chunks, skips = [], [], []
     if segments:
         chunks = sc.chunk_segments(segments, SHORTS_STORY_CHUNK_SEC, SHORTS_STORY_OVERLAP_SEC)
@@ -692,7 +858,7 @@ def _run_analysis(jid, params):
             report(percent=60 + int(26 * ci / len(chunks)),
                              step=f'Finding story beats (part {ci + 1}/{len(chunks)})')
             prompt = sc.build_story_prompt(segments, lo, hi, visual, min_dur, max_dur, per_chunk,
-                                           params.get('focus'), params.get('avoid'))
+                                           params.get('focus'), params.get('avoid'), breaks=breaks or None)
             try:
                 # Room for the reply to list them all: a cut-off reply loses the last ones.
                 reply = sc.ask_story(pipeline.OLLAMA_URL, story_model, prompt, num_ctx=SHORTS_STORY_NUM_CTX,
@@ -721,7 +887,7 @@ def _run_analysis(jid, params):
             pipeline.unload_ollama_model(story_model)
     else:
         beats = sc.visual_windows(visual, min_dur, max_dur, duration, count)
-        warnings.append(f"No dialogue was transcribed ({heard.get('reason') or 'nothing was heard'}), so these "
+        warnings.append(f"No dialogue was transcribed ({heard_why or 'nothing was heard'}), so these "
                         'were picked on visual intensity alone -- they are not checked for making sense as a '
                         'story.')
 
@@ -740,7 +906,11 @@ def _run_analysis(jid, params):
     # What is not the drama -- billboards, credits, narration, a host,
     # recaps, teasers, black between acts, and what the editor left out --
     # is kept out of every moment.
-    editor_out = [(a, min(b, duration)) for a, b in params.get('leave_out') or [] if a < duration]
+    if params.get('leave_out_parts'):
+        editor_out = [(parts[k]['offset'] + a, parts[k]['offset'] + min(b, parts[k]['duration']))
+                      for k, a, b in params['leave_out_parts'] if a < parts[k]['duration']]
+    else:
+        editor_out = [(a, min(b, duration)) for a, b in params.get('leave_out') or [] if a < duration]
     blocked = sc.not_story_ranges(skips, segments, visual, shots, editor_out)
     lengths = {}
     # Half as many again as wanted are built, so that a closer look -- at
@@ -749,10 +919,9 @@ def _run_analysis(jid, params):
     cands = sc.build_candidates(beats, segments, words, cuts, visual, duration,
                                 min_dur=min_dur, max_dur=max_dur, limit=pool, fps=fps,
                                 min_story=SHORTS_AUTO_MIN_STORY if auto else None, report=lengths,
-                                blocked=blocked)
+                                blocked=blocked, walls=walls)
     # In and out points onto the sound: not in the middle of a word.
-    edges_moved = sc.refine_edges(cands, db, sc.speech_units(words, segments), duration,
-                                  min_dur, max_dur, fps, blocked=blocked) if db is not None else 0
+    edges_moved = _refine_by_part(cands, parts, blocked + wall_ranges, min_dur, max_dur)
     # A few frames inside each moment, rated like the first sample.
     inner = sc.inner_sample_times(cands, [v['t'] for v in visual], SHORTS_MOMENT_FRAMES,
                                   per_moment=SHORTS_MOMENT_FRAMES_EACH)
@@ -760,7 +929,7 @@ def _run_analysis(jid, params):
     inner_rated = 0
     if more:
         report(percent=89, step=f'Rating {len(more)} frames inside the moments (AI vision)')
-        got = [(t, b) for t, b in _grab_frames(path, more, fps) if b]
+        got = [(t, b) for t, b in _grab_by_part(parts, more) if b]
         before = len(visual)
         progress['done'] = 0
 
@@ -787,16 +956,19 @@ def _run_analysis(jid, params):
             pipeline.unload_ollama_model(vision_model)
         # A frame inside a moment may show it reaching into credits or a billboard.
         blocked = sc.not_story_ranges(skips, segments, visual, shots, editor_out)
-        cands, gone = sc.clear_of(cands, blocked, min_dur, fps)
+        cands, gone = sc.clear_of(cands, blocked + wall_ranges, min_dur, fps)
         lengths['not_story'] = lengths.get('not_story', 0) + gone
     if blocked:
         warnings.append('Left out of every moment as not part of the drama: ' + sc.describe_ranges(blocked) + '. '
                         'Moments are cut short of these, or dropped when too little is left'
                         + (f" ({lengths['not_story']} dropped)" if lengths.get('not_story') else '') + '. '
                         'If something was left out by mistake, add it back with "Add your own moment".')
-    ref = sc.sound_reference(db)
+    dbs = [P['db'] for P in parts if P.get('db') is not None and len(P['db'])]
+    ref = sc.sound_reference(np.concatenate(dbs)) if dbs else None
     for c in cands:
-        sc.rescore(c, visual, words, segments, sound=sc.sound_score(db, c['start'], c['end'], ref))
+        P = parts[_part_index(parts, c['start'])]
+        o = P['offset']
+        sc.rescore(c, visual, words, segments, sound=sc.sound_score(P.get('db'), c['start'] - o, c['end'] - o, ref))
     cands = sc.dedupe_windows(cands)[:max(1, int(limit))]
     for n, c in enumerate(cands, 1):
         c['id'] = f'c{n}'
@@ -818,25 +990,64 @@ def _run_analysis(jid, params):
                          'or add your own ranges by hand after re-running with a different model.')
         return
     aid = secrets.token_hex(8)
-    _candidate_thumbs(path, cands, aid, fps)
-    analysis_store(aid, {
-        'origin': pipeline.staged_origin(os.path.basename(path)),
+    for k, P in enumerate(parts):
+        _candidate_thumbs(P['path'], [c for c in cands if _part_index(parts, c['start']) == k],
+                          aid, P['fps'], offset=P['offset'])
+    stored = {
         'excluded': [{'start': round(a, 2), 'end': round(b, 2), 'kinds': k} for a, b, k in blocked],
         'user_id': params.get('user_id'), 'username': params.get('username'),
         'project_id': params.get('project_id'),
-        'path': path, 'orig_name': params['orig_name'], 'info': info, 'cut_frames': cut_frames,
-        'words': words, 'segments': segments, 'candidates': cands, 'warnings': warnings,
+        'candidates': cands, 'warnings': warnings,
         'options': {'min_dur': min_dur, 'max_dur': max_dur, 'count': 'auto' if auto else count,
                     'focus': params.get('focus'), 'avoid': params.get('avoid'),
                     'leave_out': editor_out},
         'stats': {'shots': len(shots), 'frames_rated': len(visual), 'transcript_lines': len(segments),
                   'lines_aligned': aligned, 'edges_moved': edges_moved, 'frames_inside': inner_rated,
-                  'story_parts': len(chunks), 'vision_model': vision_model, 'story_model': story_model},
-    })
-    _touch(path)
+                  'story_parts': len(chunks), 'vision_model': vision_model, 'story_model': story_model,
+                  'parts': n_parts},
+    }
+    if n_parts == 1:
+        P = parts[0]
+        stored.update(origin=P['origin'], path=P['path'], orig_name=params['orig_name'], info=P['info'],
+                      cut_frames=P['cut_frames'], words=P['words'], segments=P['segments'])
+    else:
+        # One timeline: the top level speaks for the whole episode (its
+        # duration is the sum), and everything that needs a file, a frame
+        # rate or a transcript in the file's own time lives in the part.
+        stored.update(path=parts[0]['path'], orig_name=params['orig_name'],
+                      info=dict(parts[0]['info'], duration=duration), cut_frames=[], words=[], segments=[],
+                      parts=[{k: P[k] for k in ('path', 'name', 'info', 'duration', 'offset', 'cut_frames',
+                                                 'words', 'segments', 'origin')} for P in parts])
+    analysis_store(aid, stored)
+    for P in parts:
+        _touch(P['path'])
     report(percent=100, step='Done', done=True,
            result={'analysis_id': aid, 'candidates': len(cands)})
     return aid
+
+
+def _refine_by_part(cands, parts, blocked, min_dur, max_dur):
+    """sc.refine_edges, a part at a time: each moment's ends are moved onto
+    the sound of the part it is in, in that part's own time, and put back on
+    the joined timeline. How many moved."""
+    moved = 0
+    for P in parts:
+        if P.get('db') is None:
+            continue
+        o, d = P['offset'], P['duration']
+        mine = [c for c in cands if o - 1e-6 <= c['start'] < o + d - 1e-6]
+        if not mine:
+            continue
+        for c in mine:
+            c['start'] -= o
+            c['end'] -= o
+        local = [(a - o, b - o, k) for a, b, k in blocked if b > o and a < o + d]
+        moved += sc.refine_edges(mine, P['db'], sc.speech_units(P['words'], P['segments']), d, min_dur, max_dur,
+                                 P['fps'], blocked=local)
+        for c in mine:
+            c['start'] = round(c['start'] + o, 3)
+            c['end'] = round(c['end'] + o, 3)
+    return moved
 
 
 # --------------------------------------------------------------------------
@@ -1006,7 +1217,9 @@ def _encode_short(tag, src, info, plan, cues, opts, mp4_path, delivery_path, rep
 def _run_render(jid, params):
     report = params.get('_report') or functools.partial(pipeline.job_set, jid)
     a = params['analysis']
-    src, info = a['path'], a['info']
+    parts = _parts(a)
+    multi = len(parts) > 1
+    info = parts[0]['info']
     # In the order they happen in the episode, whatever order they were
     # ticked, ranked or listed in: the number in a short's filename is then
     # its place in the story, and a folder of them sorts into that order.
@@ -1015,12 +1228,12 @@ def _run_render(jid, params):
     reframe = params['reframe']
     fmt = params.get('format') if params.get('format') in SHORTS_FORMATS else 'mp4_high'
     loudness = pipeline.resolve_loudness(params.get('loudness'), SHORTS_LOUDNESS)
-    fps = info['fps']
     src, why = _ensure_source(a, params.get('analysis_id'), report)
     if not src:
         report(error=why)
         return
-    _touch(src)
+    for P in _parts(a):
+        _touch(P['path'])
     report(percent=2, step='Preparing')
 
     # A render nobody reviewed first carries the analysis's own warnings
@@ -1033,8 +1246,8 @@ def _run_render(jid, params):
         warnings.append("This server's ffmpeg build has no libass, so captions could not be burned in. "
                         'The .srt files are still written.')
     detector = None
-    crop_w, _ = sc.crop_geometry(info['disp_w'], info['disp_h'])
-    if reframe != 'fit' and info['disp_w'] > crop_w:
+    if reframe != 'fit' and any(P['info']['disp_w'] > sc.crop_geometry(P['info']['disp_w'], P['info']['disp_h'])[0]
+                                for P in parts):
         detector = sc.FaceDetector(_face_model_path())
         if not detector.available():
             detector = None
@@ -1043,7 +1256,7 @@ def _run_render(jid, params):
     # Following the speaker needs faces to compare and words to time them
     # against; without either it is simply not applied, and says so.
     speaker = bool(params.get('speaker')) and detector is not None
-    if speaker and not (a['words'] or a['segments']):
+    if speaker and not any(P['words'] or P['segments'] for P in parts):
         speaker = False
         warnings.append('No dialogue was transcribed for this video, so "Follow the speaker" had nothing to go on '
                         'and was not applied.')
@@ -1056,7 +1269,9 @@ def _run_render(jid, params):
     manifest = {'batch_id': bid, 'created': time.time(), 'user_id': params.get('user_id'),
                 'username': params.get('username'), 'orig_name': a['orig_name'], 'status': 'rendering',
                 'project_id': a.get('project_id'),
-                'source_duration': round(float(info.get('duration') or 0), 3) or None,
+                'source_duration': round(float(a['info'].get('duration') or 0), 3) or None,
+                'parts': ([{'name': P.get('name'), 'offset': round(P['offset'], 3),
+                            'duration': round(P['duration'], 3)} for P in parts] if multi else None),
                 'options': {'reframe': reframe, 'subtitles': want_captions,
                             'subtitle_size': params['subtitle_size'],
                             'face_detector': detector.kind if detector else None,
@@ -1076,11 +1291,23 @@ def _run_render(jid, params):
     opts = {'burn': burn, 'subtitle_size': params['subtitle_size'], 'ending': ending, 'format': fmt,
             'loudness': loudness}
     ext = pipeline.EXPORT_FORMATS[fmt]['ext']
-    units = sc.speech_units(a['words'], a['segments']) if ending else []
     total = len(items)
-    for n, it in enumerate(items, 1):
+    unit_cache = {}
+    for n, it_global in enumerate(items, 1):
         base = 5 + 93.0 * (n - 1) / total
         span = 93.0 / total
+        # The part this moment is in, and the moment in that part's own time.
+        k, bad = _locate(a, it_global['start'], it_global['end'])
+        if bad:
+            manifest['errors'].append({'index': n, 'title': it_global['title'], 'error': bad})
+            continue
+        v = _part_view(a, k)
+        src, info, off = v['path'], v['info'], v.get('_offset', 0.0)
+        fps = info['fps']
+        it = _localize_item(it_global, off)
+        if ending and k not in unit_cache:
+            unit_cache[k] = sc.speech_units(v['words'], v['segments'])
+        units = unit_cache.get(k, [])
         start_f = int(round(it['start'] * fps))
         end_f = min(info['frames'], int(round(it['end'] * fps)))
         n_frames = end_f - start_f
@@ -1090,7 +1317,7 @@ def _run_render(jid, params):
             continue
 
         report(percent=int(base), step=f'Short {n}/{total}: finding faces')
-        segs, shot_starts = _plan_moment(a, src, info, start_f, end_f, reframe, speaker, detector,
+        segs, shot_starts = _plan_moment(v, src, info, start_f, end_f, reframe, speaker, detector,
                                          framing=_framing_overrides(it, start_f, fps))
         # How long the clip's last shot has been on screen by its last frame:
         # the cliffhanger hold is made from the end of it, never across a cut.
@@ -1102,7 +1329,7 @@ def _run_render(jid, params):
             # that can be done -- the same shot carrying on, and still -- so
             # the moment plays to its last frame. One frame is left before
             # the next cut: a cut list can be a frame out.
-            nxt = min((c for c in a['cut_frames'] if c >= end_f), default=None)
+            nxt = min((c for c in v['cut_frames'] if c >= end_f), default=None)
             ahead = min(info['frames'] - end_f, nxt - end_f - 1 if nxt is not None else info['frames'])
             after = sc.still_frames_after(src, end_f, fps, ahead) if ahead > 0 else 0
             if not after:
@@ -1118,7 +1345,7 @@ def _run_render(jid, params):
             if heard == 'pause' and audio_out - n_frames / fps > 0.05:
                 print(f'Vertical Shorts: short {n}/{total}: last word runs '
                       f'{audio_out - n_frames / fps:.2f}s past the out point; the sound is let finish under the hold')
-        cues, edited = _item_cues(a, it, start_f / fps, end_f / fps, max_chars)
+        cues, edited = _item_cues(v, it, start_f / fps, end_f / fps, max_chars)
         cues = sc.place_cues(cues, segs, fps)
         plan = {'start_f': start_f, 'n_frames': n_frames, 'segs': segs, 'room': room,
                 'after': after, 'audio_out': audio_out, 'audio_fade': audio_fade}
@@ -1144,7 +1371,7 @@ def _run_render(jid, params):
             continue
 
         entry = {'index': n, 'title': it['title'], 'file': name + '.mp4', 'srt': None, 'thumb': None,
-                 'start': round(start_f / fps, 3), 'end': round(end_f / fps, 3),
+                 'start': round(start_f / fps + off, 3), 'end': round(end_f / fps + off, 3),
                  'duration': round((n_frames + (sc.cliffhanger_extra(n_frames, fps, room, after)
                                                if ending else 0)) / fps, 2),
                  'size': os.path.getsize(out_path),
@@ -1158,6 +1385,11 @@ def _run_render(jid, params):
                  # Kept so the captions can be changed afterwards: the lines
                  # themselves, and the plan a re-render needs.
                  'cues': cues, 'captions_edited': edited, 'plan': plan}
+        if multi:
+            # Which part it is from, where in it, and the file it was cut from
+            # (what rendering it again with new captions goes back to).
+            entry.update(part=k + 1, part_name=parts[k].get('name'), part_start=round(start_f / fps, 3),
+                         part_end=round(end_f / fps, 3), source={'path': src, 'info': info})
         if delivery:
             entry['delivery'] = delivery
             entry['delivery_size'] = os.path.getsize(os.path.join(bdir, delivery))
@@ -1305,11 +1537,14 @@ def _start_job(kind, body, params, label, after=None):
 # Routes
 # --------------------------------------------------------------------------
 
-def _resolve_source():
+MAX_PARTS = 3
+
+
+def _resolve_source(field='shorts_file'):
     """(path, display name, error). Same policy as the promo generator's
     load_video(): a direct upload only where the deployment allows it,
     otherwise a file already staged from a configured network share."""
-    f = request.files.get('shorts_file')
+    f = request.files.get(field)
     if f is not None and f.filename:
         if not pipeline.ALLOW_LOCAL_MEDIA_UPLOAD:
             return None, None, ('Direct file upload is disabled on this deployment. '
@@ -1330,7 +1565,7 @@ def _resolve_source():
                 pass
             return None, None, err
         return path, fn, None
-    staged = (request.form.get('shorts_file_network') or '').strip()
+    staged = (request.form.get(field + '_network') or '').strip()
     if staged:
         safe = os.path.basename(staged)
         path = os.path.join(app.config['UPLOAD_FOLDER'], safe)
@@ -1338,6 +1573,55 @@ def _resolve_source():
             return path, re.sub(r'^net_\d+_', '', safe), None
         return None, None, 'Selected network file is no longer available -- please re-select it'
     return None, None, 'No video provided'
+
+
+def _resolve_sources():
+    """([{path, name}], display name, error): the one source, or its parts
+    (fields shorts_file, shorts_file2, shorts_file3, in that order).
+    A gap -- part 3 given without part 2 -- is simply closed up."""
+    srcs = []
+    for field in ('shorts_file', 'shorts_file2', 'shorts_file3'):
+        has = ((request.files.get(field) is not None and request.files.get(field).filename)
+               or (request.form.get(field + '_network') or '').strip())
+        if not has:
+            continue
+        path, name, err = _resolve_source(field)
+        if not path:
+            return None, None, (err if len(srcs) == 0 and field == 'shorts_file' else f'Part {len(srcs) + 1}: {err}')
+        srcs.append({'path': path, 'name': name})
+    if not srcs:
+        return None, None, 'No video provided'
+    if len(srcs) == 1:
+        return srcs, srcs[0]['name'], None
+    stem = os.path.splitext(srcs[0]['name'])[0]
+    return srcs, f'{stem} ({len(srcs)} parts)', None
+
+
+_PART_PREFIX = re.compile(r'^\s*p(?:art)?\s*(\d)\s*[:\s]\s*', re.I)
+
+
+def _parse_leave_out(text, n_parts):
+    """(plain ranges, per-part ranges, error). With one source this is the
+    plain list. With several, each entry may start 'part 2' (or 'p2'); one
+    that does not is read as part 1. Per-part ranges are [(k, start, end)]
+    in that part's own time, 'end' meaning the part's end."""
+    text = (text or '')[:600]
+    if n_parts <= 1:
+        r, bad = sc.parse_ranges(text, 10 ** 7)
+        return r, None, bad
+    out = []
+    for piece in re.split(r'[,;\n]+', text):
+        if not piece.strip():
+            continue
+        m = _PART_PREFIX.match(piece)
+        k = int(m.group(1)) if m else 1
+        if not 1 <= k <= n_parts:
+            return None, None, f'"{piece.strip()}": there is no part {k} -- this episode has {n_parts} parts.'
+        r, bad = sc.parse_ranges(piece[m.end():] if m else piece, 10 ** 7)
+        if bad:
+            return None, None, bad
+        out.extend((k - 1, a, b) for a, b in r)
+    return [], out, None
 
 
 def _form_num(name, default, lo, hi, cast=float):
@@ -1420,12 +1704,13 @@ def api_shorts_analyze():
     project = sp.load(SHORTS_PROJECTS_DIR, (request.form.get('project_id') or '').strip())
     if not project:
         return jsonify(error='Choose the project these shorts are for first, or create one under Projects.'), 400
-    leave_out, bad = sc.parse_ranges((request.form.get('leave_out') or '')[:600], 10 ** 7)
+    srcs, orig_name, err = _resolve_sources()
+    if not srcs:
+        return jsonify(error=err), 400
+    leave_out, leave_parts, bad = _parse_leave_out(request.form.get('leave_out'), len(srcs))
     if bad:
         return jsonify(error='Leave out: ' + bad), 400
-    path, orig_name, err = _resolve_source()
-    if not path:
-        return jsonify(error=err), 400
+    path = srcs[0]['path']
     prod = pipeline.load_production_defaults()
     vision_model = (request.form.get('vision_model') or '').strip() or prod.get('vision_model') or 'qwen3-vl:8b'
     params = {
@@ -1437,7 +1722,8 @@ def api_shorts_analyze():
         'vision_frames': _form_num('vision_frames', SHORTS_VISION_FRAMES, 10, 300, int),
         'focus': ' '.join((request.form.get('focus') or '').split())[:300] or None,
         'avoid': ' '.join((request.form.get('avoid') or '').split())[:300] or None,
-        'leave_out': leave_out,
+        'leave_out': leave_out, 'leave_out_parts': leave_parts,
+        'parts': srcs if len(srcs) > 1 else None,
         'vision_model': vision_model,
         # One model for both layers unless told otherwise: a vision model
         # reads text perfectly well, and keeping a single model loaded
@@ -1505,19 +1791,23 @@ def api_shorts_analysis(aid):
                    candidates=a['candidates'], warnings=a['warnings'], stats=a['stats'], options=a['options'],
                    project_id=a.get('project_id'), created=a.get('created'),
                    review=a.get('review'), reviewed_at=a.get('reviewed_at'),
-                   source_available=bool(a.get('path')) and os.path.exists(a['path']),
-                   refetchable=bool(a.get('origin')))
+                   source_available=_sources_available(a),
+                   refetchable=all(P.get('origin') for P in _parts(a)),
+                   parts=[{'name': P.get('name'), 'offset': round(P['offset'], 3), 'duration': round(P['duration'], 3)}
+                          for P in _parts(a)])
 
 
 def _source_gone(a):
     """The answer to a request that needs the episode when it is no longer
     on the server: 410, and whether it can be fetched again."""
-    if a.get('origin'):
-        msg = ('The episode is no longer on the server (staged files are cleared after a while, and on a '
+    again = all(P.get('origin') for P in _parts(a))
+    what = 'The episode is' if not _is_multi(a) else 'Part of the episode is'
+    if again:
+        msg = (f'{what} no longer on the server (staged files are cleared after a while, and on a '
                'restart). Use "Fetch the episode again" above the list to bring it back from the network folder.')
     else:
         msg = 'The source video is no longer staged -- pick it again and re-analyse.'
-    return jsonify(ok=False, error=msg, refetchable=bool(a.get('origin'))), 410
+    return jsonify(ok=False, error=msg, refetchable=again), 410
 
 
 @app.route('/api/shorts/analysis/<aid>/thumb/<name>')
@@ -1643,8 +1933,6 @@ def api_shorts_clip():
     a, err = _analysis_or_error((data.get('analysis_id') or '').strip())
     if err:
         return err
-    if not os.path.exists(a['path']):
-        return _source_gone(a)
     try:
         start = max(0.0, float(data.get('start', 0)))
         end = min(float(a['info']['duration']), float(data.get('end', 0)))
@@ -1652,6 +1940,13 @@ def api_shorts_clip():
         return jsonify(ok=False, error='Invalid start/end time.'), 400
     if end - start < 0.5:
         return jsonify(ok=False, error='End time must be after start time.'), 400
+    k, bad = _locate(a, start, end)
+    if bad:
+        return jsonify(ok=False, error=bad), 400
+    a = _part_view(a, k)
+    if not os.path.exists(a['path']):
+        return _source_gone(a)
+    start, end = max(0.0, start - a.get('_offset', 0.0)), end - a.get('_offset', 0.0)
     dur = min(SHORTS_MAX_CLIP, end - start)
     _touch(a['path'])
     key = f"{os.path.basename(a['path'])}_{start:.2f}_{dur:.2f}"
@@ -1719,14 +2014,22 @@ def api_shorts_captions():
     if bad:
         return jsonify(ok=False, error=bad), 400
     size = data.get('subtitle_size') if data.get('subtitle_size') in sc.SUBTITLE_SIZES else 'm'
+    k, bad = _locate(a, start, end)
+    if bad:
+        return jsonify(ok=False, error=bad), 400
+    a = _part_view(a, k)
+    off = a.get('_offset', 0.0)
+    if captions:
+        captions = dict(captions, start=max(0.0, captions['start'] - off), end=max(0.0, captions['end'] - off))
     # On whole frames, as the render will cut it.
     fps = a['info']['fps']
-    t0, t1 = round(start * fps) / fps, min(duration, round(end * fps) / fps)
+    pdur = float(a['info']['duration'])
+    t0, t1 = round(max(0.0, start - off) * fps) / fps, min(pdur, round((end - off) * fps) / fps)
     try:
         cues, edited = _item_cues(a, {'captions': captions}, t0, t1, sc.SUBTITLE_SIZES[size][1])
     except ValueError as e:
         return jsonify(ok=False, error=str(e)), 400
-    return jsonify(ok=True, start=round(t0, 3), end=round(t1, 3), cues=cues, edited=edited,
+    return jsonify(ok=True, start=round(t0 + off, 3), end=round(t1 + off, 3), cues=cues, edited=edited,
                    spoken=bool(a['words'] or a['segments']))
 
 
@@ -1736,16 +2039,21 @@ def _moment_request(data):
     a, err = _analysis_or_error(str(data.get('analysis_id') or '').strip())
     if err:
         return None, None, None, err
-    if not os.path.exists(a['path']):
-        return None, None, None, _source_gone(a)
-    info = a['info']
     try:
-        start, end = max(0.0, float(data.get('start'))), min(float(info['duration']), float(data.get('end')))
+        start, end = max(0.0, float(data.get('start'))), min(float(a['info']['duration']), float(data.get('end')))
     except (TypeError, ValueError):
         return None, None, None, (jsonify(ok=False, error='Invalid start/end time.'), 400)
     if end - start < SHORTS_MIN_CLIP or end - start > SHORTS_MAX_CLIP + 0.05:
         return None, None, None, (jsonify(ok=False, error=f'Must be {int(SHORTS_MIN_CLIP)} to {int(SHORTS_MAX_CLIP)} '
                                                           'seconds long and inside the video.'), 400)
+    k, bad = _locate(a, start, end)
+    if bad:
+        return None, None, None, (jsonify(ok=False, error=bad), 400)
+    a = _part_view(a, k)
+    if not os.path.exists(a['path']):
+        return None, None, None, _source_gone(a)
+    info = a['info']
+    start, end = max(0.0, start - a.get('_offset', 0.0)), end - a.get('_offset', 0.0)
     fps = info['fps']
     start_f = int(round(start * fps))
     end_f = min(info['frames'], int(round(end * fps)))
@@ -1757,7 +2065,7 @@ def _cached_plan(a, start_f, end_f, reframe, speaker):
     """The automatic plan for a moment (no corrections), worked out once per
     analysis for each in/out and reframe setting: sampling the faces is the
     slow part, and the editor moves between the shot list and the preview."""
-    key = (start_f, end_f, reframe, bool(speaker))
+    key = (a.get('_part', 0), start_f, end_f, reframe, bool(speaker))
     plans = a.setdefault('_plans', {})
     if key not in plans:
         info = a['info']
@@ -1824,14 +2132,17 @@ def api_shorts_framing():
                     frame = cv2.resize(frame, (384, max(2, int(round(384 * info['disp_h'] / float(info['disp_w']))))),
                                        interpolation=cv2.INTER_AREA)
                     cv2.imwrite(path, frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-            shots.append({'index': k, 'start': round((start_f + sa) / fps, 3), 'end': round((start_f + sb + 1) / fps, 3),
-                          'at': round(mid / fps, 3), 'auto': how, 'x': None if x is None else round(x, 1),
+            off = a.get('_offset', 0.0)
+            shots.append({'index': k, 'start': round((start_f + sa) / fps + off, 3),
+                          'end': round((start_f + sb + 1) / fps + off, 3),
+                          'at': round(mid / fps + off, 3), 'auto': how, 'x': None if x is None else round(x, 1),
                           'thumb': f'/uploads/{name}' if os.path.exists(path) else None})
     finally:
         cap.release()
     return jsonify(ok=True, shots=shots, disp_w=info['disp_w'], disp_h=info['disp_h'], crop_w=crop_w,
                    max_x=max(0, info['disp_w'] - crop_w), detector=kind,
-                   start=round(start_f / fps, 3), end=round(end_f / fps, 3))
+                   start=round(start_f / fps + a.get('_offset', 0.0), 3),
+                   end=round(end_f / fps + a.get('_offset', 0.0), 3))
 
 
 @app.route('/api/shorts/vpreview', methods=['POST'])
@@ -1847,13 +2158,17 @@ def api_shorts_vpreview():
     opts = _render_options(data)
     info = a['info']
     fps = info['fps']
-    duration = float(info['duration'])
+    off = a.get('_offset', 0.0)
+    # What arrives is on the analysis's timeline; the part works in its own.
+    duration = float(info['duration']) + off
     framing, bad = _parse_framing(data.get('framing'), 'This moment', duration)
     if bad:
         return jsonify(ok=False, error=bad), 400
     captions, bad = _parse_captions(data.get('captions'), 'This moment', duration)
     if bad:
         return jsonify(ok=False, error=bad), 400
+    local = _localize_item({'start': 0.0, 'end': 0.0, 'framing': framing, 'captions': captions}, off)
+    framing, captions = local.get('framing'), local.get('captions')
     segs, shot_starts, _ = _cached_plan(a, start_f, end_f, opts['reframe'], opts['speaker'])
     crop_w, _ = sc.crop_geometry(info['disp_w'], info['disp_h'])
     n_frames = end_f - start_f
@@ -1969,6 +2284,9 @@ def api_shorts_render():
         if end - start > SHORTS_MAX_CLIP + 0.05:
             return jsonify(error=f'"{label}": is {end - start:.0f}s long; the limit is '
                                  f'{int(SHORTS_MAX_CLIP)}s per short.'), 400
+        _, bad = _locate(a, start, end)
+        if bad:
+            return jsonify(error=f'"{label}": {bad}'), 400
         captions, bad = _parse_captions(it.get('captions'), label, duration)
         if bad:
             return jsonify(error=bad), 400
@@ -2297,7 +2615,7 @@ def _recaption_state(m, s):
     'render' they are burned in and the short can be rendered again.
     'frozen' they are burned in and it cannot -- `why` says which of the two
              things a re-render needs is missing."""
-    src = m.get('source') or {}
+    src = dict(m.get('source') or {}, **(s.get('source') or {}))      # a multi-part short names its own part's file
     # In the picture: this short has captions burned in, or its batch was
     # rendered with burn-in on and this one simply had nothing said in it
     # (so lines added now belong in the picture too).
@@ -2435,7 +2753,7 @@ def _run_recaption(jid, params):
     if how != 'render':
         pipeline.job_set(jid, error=why or 'These captions are not burned in; nothing to render.')
         return
-    src, o = m['source'], m.get('options') or {}
+    src, o = dict(m['source'], **(s.get('source') or {})), m.get('options') or {}
     info, plan = src['info'], s['plan']
     _touch(src['path'])
     pipeline.job_set(jid, percent=5, step='Preparing')

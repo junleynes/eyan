@@ -7023,6 +7023,28 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 </div>
 <input type=hidden id=shorts_file_network name=shorts_file_network value="">
 <span class="net-file-chip" id=shorts_file_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('shorts_file')">&#10005;</span></span>
+<div id=sh-more-parts style="margin-top:6px">
+  <a href="#" id=sh-add-part-link onclick="shAddPart();return false" style="font-size:12px">+ This episode comes in more than one part</a>
+  <div id=sh-part2 style="display:none;margin-top:6px">
+    <label>Part 2:</label>
+    <div class="browse-row">
+      {% if allow_local_upload %}<input type=file id=sh-file2 name=shorts_file2 accept="video/*" style="max-width:320px">{% endif %}
+      <button type=button class="browse-btn" onclick="openNetworkBrowser('shorts_file2','shorts','Vertical Shorts video, part 2')">Browse library</button>
+    </div>
+    <input type=hidden id=shorts_file2_network name=shorts_file2_network value="">
+    <span class="net-file-chip" id=shorts_file2_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('shorts_file2')">&#10005;</span></span>
+  </div>
+  <div id=sh-part3 style="display:none;margin-top:6px">
+    <label>Part 3:</label>
+    <div class="browse-row">
+      {% if allow_local_upload %}<input type=file id=sh-file3 name=shorts_file3 accept="video/*" style="max-width:320px">{% endif %}
+      <button type=button class="browse-btn" onclick="openNetworkBrowser('shorts_file3','shorts','Vertical Shorts video, part 3')">Browse library</button>
+    </div>
+    <input type=hidden id=shorts_file3_network name=shorts_file3_network value="">
+    <span class="net-file-chip" id=shorts_file3_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('shorts_file3')">&#10005;</span></span>
+  </div>
+  <div id=sh-parts-note style="display:none;font-size:12px;opacity:.75;margin-top:4px">Parts are joined in this order and read as one episode, so the story can span them. A short never runs across the break between two parts.</div>
+</div>
 
 <div class="sh-row">
   <div>
@@ -7055,7 +7077,7 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <p class="sh-note" style="margin-top:6px">A moment that is mainly about this, or shows it, is left out even if it is strong. One that only mentions it in passing can still be picked.</p>
 
 <label for=sh-leave-out style="margin-top:12px">Leave out these parts of the video (optional)</label>
-<input type=text id=sh-leave-out class=input-box maxlength=600 placeholder="e.g. 0:00-1:45, 22:10-23:30, 44:05-end">
+<input type=text id=sh-leave-out class=input-box maxlength=600 placeholder="e.g. 0:00-1:45, 22:10-23:30, 44:05-end  (several parts: part 2 0:00-1:45)">
 <p class="sh-note" style="margin-top:6px">No moment will include any of it. Billboards (OBB/CBB), sponsor reads, opening and end credits, narration, a host, recaps and teasers are found and left out without this; use it for anything they miss.</p>
 
 <details style="margin-top:10px">
@@ -7155,6 +7177,7 @@ document.getElementById('vf').addEventListener('submit', async function(e){
   <div class="sh-bar" style="background:transparent">
     <span style="font-size:12px;opacity:.8">Add your own moment:</span>
     <span class="sh-times" style="margin:0">
+      <select id=sh-add-part style="display:none;margin:0;padding:4px 6px;font-size:13px" aria-label="Which part"></select>
       In <input type=text id=sh-add-in placeholder="12:31.0"> Out <input type=text id=sh-add-out placeholder="13:20.0">
     </span>
     <input type=text id=sh-add-title placeholder="Title" maxlength=80 style="width:220px;margin:0;padding:6px 8px;font-size:13px">
@@ -7436,6 +7459,15 @@ function shRenderOptions(){
 // auto=true:  "Generate without preview" -- one job that analyses and then
 // renders every moment found. It is one job on the server, not two started
 // from here, so closing the tab part-way doesn't strand it between the two.
+function shAddPart(){
+  var two = shEl('sh-part2'), three = shEl('sh-part3')
+  if(two.style.display === 'none') two.style.display = ''
+  else { three.style.display = ''; shEl('sh-add-part-link').style.display = 'none' }
+  shEl('sh-parts-note').style.display = ''
+  var link = shEl('sh-add-part-link')
+  if(three.style.display === '') link.style.display = 'none'; else link.textContent = '+ A third part'
+}
+
 async function shortsAnalyze(auto){
   if(SH.busy) return
   var f = shEl('sh-file'), net = shEl('shorts_file_network').value
@@ -7449,6 +7481,12 @@ async function shortsAnalyze(auto){
   }
   var fd = new FormData()
   if(hasLocal) fd.append('shorts_file', f.files[0]); else fd.append('shorts_file_network', net)
+  var n = 1
+  ;['2', '3'].forEach(function(k){
+    var lf = shEl('sh-file' + k), nn = shEl('shorts_file' + k + '_network').value
+    if(lf && lf.files && lf.files[0]){ fd.append('shorts_file' + k, lf.files[0]); n++ }
+    else if(nn){ fd.append('shorts_file' + k + '_network', nn); n++ }
+  })
   fd.append('project_id', project)
   fd.append('min_dur', minD); fd.append('max_dur', maxD)
   fd.append('count', shEl('sh-count').value)
@@ -7654,8 +7692,23 @@ function shRenderReview(alreadyRendered){
   shEl('sh-prompt').style.display = 'none'
 }
 
+// Parts of a multi-part episode. Times in the analysis are on the joined
+// timeline; what an editor reads and types is the time within the part.
+function shParts(){ var a = SH.analysis; return (a && a.parts && a.parts.length > 1) ? a.parts : null }
+function shPartIdx(c){
+  var P = shParts(); if(!P) return 0
+  var t = c.start + 0.01
+  for(var k = 0; k < P.length; k++) if(t < P[k].offset + P[k].duration) return k
+  return P.length - 1
+}
+function shPartOff(c){ var P = shParts(); return P ? P[shPartIdx(c)].offset : 0 }
+
 function shCandMeta(c){
   var chips = []
+  if(shParts()){
+    var pk = shPartIdx(c)
+    chips.push('<span class="score-chip face" title="' + escapeHtmlLite(shParts()[pk].name || '') + '">Part ' + (pk + 1) + '</span>')
+  }
   if(typeof c.score === 'number') chips.push('<span class="score-chip total" title="Overall: story, visual drama and pace combined (0-100)">' + c.score + '</span>')
   if(c.story_score != null) chips.push('<span class="score-chip" title="Story model: how well it stands alone as a dramatic short">Story ' + c.story_score + '/10</span>')
   if(c.visual_score != null) chips.push('<span class="score-chip" title="AI Vision: how dramatic the frames inside it look">Visual ' + c.visual_score + '/5</span>')
@@ -7701,6 +7754,12 @@ function shRenumber(){
 
 function shRenderCands(){
   var host = shEl('sh-cands')
+  var ps = shEl('sh-add-part'), P = shParts()
+  if(ps){
+    ps.style.display = P ? '' : 'none'
+    if(P && ps.options.length !== P.length)
+      ps.innerHTML = P.map(function(x, k){ return '<option value="' + k + '">Part ' + (k + 1) + '</option>' }).join('')
+  }
   host.innerHTML = ''
   SH.cands.forEach(function(c, i){
     var row = document.createElement('div')
@@ -7716,8 +7775,8 @@ function shRenderCands(){
           '<input type=checkbox data-act="keep" data-i="' + i + '"' + (c.keep ? ' checked' : '') + ' aria-label="Render this moment">' +
           '<input type=text data-act="title" data-i="' + i + '" maxlength=80 value="' + escapeHtmlLite(c.title || '') + '" aria-label="Title">' +
         '</div>' +
-        '<div class="sh-times">In <input type=text data-act="start" data-i="' + i + '" value="' + shFmt(c.start) + '" aria-label="In point">' +
-          ' Out <input type=text data-act="end" data-i="' + i + '" value="' + shFmt(c.end) + '" aria-label="Out point">' +
+        '<div class="sh-times">In <input type=text data-act="start" data-i="' + i + '" value="' + shFmt(c.start - shPartOff(c)) + '" aria-label="In point">' +
+          ' Out <input type=text data-act="end" data-i="' + i + '" value="' + shFmt(c.end - shPartOff(c)) + '" aria-label="Out point">' +
           ' <span data-dur="' + i + '">' + (c.end - c.start).toFixed(1) + ' s</span>' +
           ' <button type=button class="btn-sm" data-act="preview" data-i="' + i + '">Preview</button>' +
           ' <button type=button class="btn-sm" data-act="captions" data-i="' + i + '" title="Read and correct the captions this short will get">Captions&hellip;</button>' +
@@ -7790,13 +7849,16 @@ function shortsSelectAll(on){
       shReviewChanged()
     }else if(act === 'start' || act === 'end'){
       var v = shParse(t.value)
-      var dur = SH.analysis ? SH.analysis.duration : 0
+      var P = shParts(), pk = shPartIdx(c)
+      var off = P ? P[pk].offset : 0
+      var dur = P ? off + P[pk].duration : (SH.analysis ? SH.analysis.duration : 0)
+      if(v != null) v += off            // typed within the part; kept on the joined timeline
       var other = act === 'start' ? c.end : c.start
-      var ok = v != null && v >= 0 && v <= dur + 0.05 && (act === 'start' ? v < other : v > other)
+      var ok = v != null && v >= off && v <= dur + 0.05 && (act === 'start' ? v < other : v > other)
       t.classList.toggle('bad', !ok)
       if(!ok) return
       c[act] = Math.min(v, dur)
-      t.value = shFmt(c[act])
+      t.value = shFmt(c[act] - off)
       var d = host.querySelector('[data-dur="' + t.getAttribute('data-i') + '"]')
       if(d) d.textContent = (c.end - c.start).toFixed(1) + ' s'
       shRenumber()
@@ -7812,7 +7874,14 @@ function shortsAddCustom(){
   var s = shParse(shEl('sh-add-in').value), e = shParse(shEl('sh-add-out').value)
   var lim = SH.options || {min_clip: 3, max_clip: 300}
   if(s == null || e == null){ note.textContent = 'Enter in and out as m:ss (e.g. 12:31.0).'; return }
-  if(e > a.duration) e = a.duration
+  var P = shParts(), off = 0, end = a.duration
+  if(P){
+    var pk = parseInt(shEl('sh-add-part').value, 10) || 0
+    off = P[pk].offset; end = off + P[pk].duration
+    s += off; e += off
+  }
+  if(e > end) e = end
+  if(s >= end){ note.textContent = 'That is past the end of ' + (P ? 'this part' : 'the video') + '.'; return }
   if(e - s < lim.min_clip){ note.textContent = 'Out must be at least ' + lim.min_clip + ' s after in, inside the video (' + shFmt(a.duration) + ').'; return }
   if(e - s > lim.max_clip){ note.textContent = 'At most ' + lim.max_clip + ' s per short.'; return }
   SH.cands.unshift({id: 'm' + Date.now(), start: s, end: e, duration: e - s, keep: true, source: 'manual',
@@ -8316,7 +8385,7 @@ function shBatchCard(b, fresh){
           escapeHtmlLite(s.title || '') + '">' + escapeHtmlLite(s.title || ('Short ' + s.index)) + '</div>' +
         '<div style="opacity:.7">' + (s.duration || 0).toFixed(1) + ' s &middot; ' + shBytes(s.delivery_size || s.size || 0) +
           (s.captions_edited ? ' &middot; <span title="Its captions were corrected by hand">captions edited</span>' : '') + '</div>' +
-        '<div style="opacity:.6;font-size:11px" title="Where this is in the episode">' + shFmt(s.start) + ' → ' + shFmt(s.end) + '</div>' +
+        '<div style="opacity:.6;font-size:11px" title="Where this is in the episode">' + (s.part && s.part_start != null ? 'Part ' + s.part + ' &middot; ' + shFmt(s.part_start) + ' → ' + shFmt(s.part_end) : shFmt(s.start) + ' → ' + shFmt(s.end)) + '</div>' +
         '<div style="opacity:.6;font-size:11px">' + shLayoutNote(s.layouts) + '</div>' +
         '<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">' +
           '<a class="btn-sm" href="' + shDl(s.delivery_url || s.url) + '">' + escapeHtmlLite(shExt(s.delivery || s.file)) + '</a>' +
@@ -8605,6 +8674,15 @@ function shCreateReset(){
   var f = shEl('sh-file')
   if(f) f.value = ''
   if(typeof clearNetworkField === 'function' && shEl('shorts_file_network').value) clearNetworkField('shorts_file')
+  ;['2', '3'].forEach(function(k){
+    var lf = shEl('sh-file' + k)
+    if(lf) lf.value = ''
+    if(typeof clearNetworkField === 'function' && shEl('shorts_file' + k + '_network').value) clearNetworkField('shorts_file' + k)
+    shEl('sh-part' + k).style.display = 'none'
+  })
+  shEl('sh-parts-note').style.display = 'none'
+  shEl('sh-add-part-link').style.display = ''
+  shEl('sh-add-part-link').textContent = '+ This episode comes in more than one part'
   shEl('sh-review').style.display = 'none'
   shEl('sh-results').style.display = 'none'
   shEl('sh-results').innerHTML = ''
@@ -9810,7 +9888,9 @@ job. Configured via env vars:
         <li>Face tracking uses OpenCV's built-in Haar cascades unless a YuNet model file is supplied. The cascades miss many profile, tilted, lowered and small faces, and <strong>a shot with no detected face is centre-cropped</strong>, wherever the person in it is standing &mdash; this is the commonest reason for a crop that is not on anyone. <em>Advanced</em>, on the create form, says which detector this server is using; where it is the Haar cascades, an admin sees <strong>Download the YuNet face model</strong> there. That fetches <code>face_detection_yunet_2023mar.onnx</code> (about 230 KB, MIT licence) from the OpenCV model zoo on GitHub, checks it is exactly the published file, and puts it in a <code>models</code> folder next to the app, where it is used from the next render. A server with no internet access can be given the same file by hand, or <code>SHORTS_FACE_MODEL</code> pointed at it.</li>
         <li>Captions are only as well timed as the transcript. A service that returns word timings gives captions that change with the words; one that returns only lines (the subtitle fallback) gives captions that change a line at a time, and if its times are to the whole second they can be up to a second early or late.</li>
       </ul>
-      <pre>POST /api/shorts/analyze  + shorts_file_network, min_dur, max_dur, count, focus?, avoid?
+      <h3>Episodes in more than one part</h3>
+      <p>If the episode comes as two or three files, add them under <strong>This episode comes in more than one part</strong>. The parts are laid end to end and read as one episode: the story model sees the whole thing, so a setup in part 1 can pay off in part 2, and the sound and picture are rated against the whole programme. A short is always cut from one part &mdash; it never runs across the break &mdash; and each moment shows which part it is in, with its times read within that part. To leave something out, name the part: <code>part 2 0:00-1:45, part 3 18:10-end</code> (a range with no part means part 1). Shorts are numbered in episode order across all the parts, and the total running time counts every part.</p>
+      <pre>POST /api/shorts/analyze  + shorts_file_network, (shorts_file2_network, shorts_file3_network), min_dur, max_dur, count, focus?, avoid?
                           + auto_render=1, reframe, speaker, subtitles, subtitle_size  (render every moment found, no review)
 GET  /api/shorts/progress/&lt;job_id&gt;
 GET  /api/shorts/analysis/&lt;analysis_id&gt;

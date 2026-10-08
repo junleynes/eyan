@@ -2846,3 +2846,82 @@ def test_a_batch_records_the_running_time_of_its_source(env, monkeypatch):
     assert abs(batch['source_duration'] - float(_probe(env['path'])['video']['duration'])) < 0.2
     listed = client.get(f"/api/shorts/batches?project_id={env['project']}").get_json()['items']
     assert listed[0]['source_duration'] == batch['source_duration']
+
+
+# --------------------------------------------------------------------------
+# Multi-part sources
+# --------------------------------------------------------------------------
+
+@pytest.fixture
+def two_parts(env):
+    """The staged episode plus a second copy of it as 'part 2' (24 s each)."""
+    second = f'net_{int(time.time())}_episode_pt2.mp4'
+    dst = os.path.join(main.app.config['UPLOAD_FOLDER'], second)
+    shutil.copy(env['path'], dst)
+    yield dict(env, second=second)
+    try:
+        os.remove(dst)
+    except OSError:
+        pass
+
+
+def test_walls_keep_candidates_on_one_side_of_a_part_break():
+    segs = [{'start': 1.0 + 2.0 * i, 'end': 2.5 + 2.0 * i, 'text': f'Linya {i} ng usapan.'} for i in range(24)]
+    words = []
+    for s in segs:
+        words += [{'start': s['start'] + k * 0.3, 'end': s['start'] + k * 0.3 + 0.25, 'word': w}
+                  for k, w in enumerate(s['text'].split())]
+    beats = [{'start_id': 0, 'end_id': 23, 'title': 'T', 'score': 8}]
+    cands = sc.build_candidates(beats, segs, words, [0.0, 24.0], [], 48.0, 10, 30, walls=[24.0])
+    assert cands
+    for c in cands:
+        assert not (c['start'] < 24.0 - 0.01 and c['end'] > 24.0 + 0.01), c
+
+
+def test_a_two_part_source_is_analysed_on_one_timeline(two_parts, monkeypatch):
+    Services(monkeypatch)
+    client, headers = _client()
+    job = _analyze(client, headers, two_parts, shorts_file2_network=two_parts['second'], count='auto')
+    a = _analysis(client, job)
+    assert len(a['parts']) == 2
+    assert abs(a['duration'] - 48.0) < 0.5
+    assert [p['offset'] for p in a['parts']][0] == 0
+    assert 23 < a['parts'][1]['offset'] < 25
+    for c in a['candidates']:
+        assert int((c['start'] + 0.01) // a['parts'][1]['offset']) == int((c['end'] - 0.01) // a['parts'][1]['offset']), \
+            'a moment never runs across the break between parts'
+
+
+def test_a_short_from_part_two_is_cut_from_part_twos_file(two_parts, monkeypatch):
+    Services(monkeypatch)
+    client, headers = _client()
+    a = _analysis(client, _analyze(client, headers, two_parts, shorts_file2_network=two_parts['second']))
+    off = a['parts'][1]['offset']
+    batch = _render(client, headers, a['analysis_id'],
+                    [{'start': off + 3.0, 'end': off + 9.0, 'title': 'Second part'}], reframe='fit')['result']['batch']
+    s = batch['shorts'][0]
+    assert s['part'] == 2 and abs(s['start'] - (off + 3.0)) < 0.1
+    assert len(batch['parts']) == 2
+    out = os.path.join(shorts.SHORTS_DIR, batch['batch_id'], s['file'])
+    assert abs(float(_probe(out)['video']['duration']) - 6.0) < 0.3
+
+
+def test_leave_out_can_name_a_part(two_parts, monkeypatch):
+    Services(monkeypatch)
+    client, headers = _client()
+    a = _analysis(client, _analyze(client, headers, two_parts, shorts_file2_network=two_parts['second'],
+                                   leave_out='part 2 0:00-end', count='auto'))
+    off = a['parts'][1]['offset']
+    assert all(c['end'] <= off + 0.05 for c in a['candidates'])
+    r = client.post('/api/shorts/analyze', headers=headers, data={
+        'shorts_file_network': two_parts['staged'], 'shorts_file2_network': two_parts['second'],
+        'project_id': two_parts['project'], 'leave_out': 'part 3 0:00-1:00'})
+    assert r.status_code == 400 and 'no part 3' in r.get_json()['error']
+
+
+def test_a_missing_second_part_is_named(two_parts):
+    client, headers = _client()
+    r = client.post('/api/shorts/analyze', headers=headers, data={
+        'shorts_file_network': two_parts['staged'], 'shorts_file2_network': 'net_1_gone.mp4',
+        'project_id': two_parts['project']})
+    assert r.status_code == 400 and r.get_json()['error'].startswith('Part 2')
