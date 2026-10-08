@@ -7084,10 +7084,15 @@ document.getElementById('vf').addEventListener('submit', async function(e){
         <option value=mp4_high selected>MP4 (H.264 High Profile)</option>
       </select>
     </span>
+    <span style="display:inline-flex;gap:6px;align-items:center;font-size:12px">Audio level
+      <select id=sh-level title="How loud each short is, overall (integrated loudness). Online video is levelled to about &minus;14 LUFS; broadcast to &minus;23 or &minus;24.">
+        <option value="" selected>&minus;14 LUFS &mdash; online video</option>
+      </select>
+    </span>
     <span style="display:inline-flex;gap:6px;align-items:center;font-size:12px">Ending
       <select id=sh-ending title="How every short in this render finishes">
         <option value=none selected>Cut on the last frame</option>
-        <option value=cliffhanger>Cliffhanger &mdash; freeze, slow push-in, cut to black (+2.3 s)</option>
+        <option value=cliffhanger>Cliffhanger &mdash; freeze, slow push-in, cut to black (+2.4 s)</option>
       </select>
     </span>
   </div>
@@ -7200,6 +7205,20 @@ function shortsOnTabOpen(){
   }, 0)
 }
 
+// An Audio level menu from the server's list: the levels worth choosing,
+// the one this tab uses unless told otherwise marked and selected. Shared
+// with Schedule Plug.
+function shFillLevels(sel, levels){
+  if(!sel || !(levels || []).length) return
+  var had = sel.value
+  sel.innerHTML = levels.map(function(l){
+    return '<option value="' + l.value + '"' + (l['default'] ? ' data-default=1' : '') + '>' +
+      escapeHtmlLite(l.label) + (l['default'] ? ' (default)' : '') + '</option>' }).join('')
+  var dflt = sel.querySelector('[data-default]')
+  sel.value = had
+  if(!had || sel.selectedIndex < 0) sel.value = dflt ? dflt.value : sel.options[0].value
+}
+
 // What the less obvious choices cost or mean, said under the control.
 function shFormatNote(){
   var note = shEl('sh-format-note'), sel = shEl('sh-format')
@@ -7260,6 +7279,7 @@ async function shortsLoadOptions(){
       fsel.value = had
       if(!fsel.value) fsel.selectedIndex = 0
     }
+    shFillLevels(shEl('sh-level'), d.levels)
     shFormatNote(); shCountNote()
     shEl('sh-speaker').checked = !!d.speaker_default
     shSyncSpeaker()
@@ -7376,7 +7396,8 @@ function shRenderOptions(){
           subtitles: shEl('sh-captions').checked,
           subtitle_size: shEl('sh-caption-size').value,
           ending: shEl('sh-ending').value,
-          format: shEl('sh-format').value}
+          format: shEl('sh-format').value,
+          loudness: shEl('sh-level').value}
 }
 
 // auto=false: "Preview the cut" -- analyse, then stop at the review list.
@@ -7931,6 +7952,7 @@ function shBatchCard(b, fresh){
       (o.speaker ? ' &middot; follows speaker' : '') +
       (o.subtitles ? ' &middot; captions' : '') + (o.ending === 'cliffhanger' ? ' &middot; cliffhanger ending' : '') +
       (o.format && o.format !== 'mp4_high' ? ' &middot; ' + escapeHtmlLite(o.format_label || o.format) : '') +
+      (typeof o.loudness === 'number' ? ' &middot; ' + String(o.loudness).replace('-', '&minus;') + ' LUFS' : '') +
       (when ? ' &middot; ' + when : '') +
       (IS_ADMIN && b.username && b.username !== CURRENT_USERNAME ? ' &middot; by ' + escapeHtmlLite(b.username) : '') +
       (b.status === 'partial' ? ' &middot; <span style="color:var(--amber)">incomplete</span>' : '') + '</span></div>' +
@@ -8432,7 +8454,13 @@ document.addEventListener('DOMContentLoaded', function(){
 </div>
 <input type=hidden id=schedule_music_network name=schedule_music_network value="">
 <span class="net-file-chip" id=schedule_music_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('schedule_music')">&#10005;</span></span>
-<p class="sh-note" style="margin-top:6px">Trimmed to the length with a fade out, looped if it is shorter, and levelled to the loudness target under Config &gt; Production. Without music the plug is silent.</p>
+<div class="sh-row" style="margin-top:8px">
+  <div>
+    <label for=sp-level>Audio level:</label>
+    <select id=sp-level style="width:360px" title="How loud the music is, overall (integrated loudness)"><option value="" selected>Config &gt; Production default</option></select>
+  </div>
+</div>
+<p class="sh-note" style="margin-top:6px">Trimmed to the length with a fade out, looped if it is shorter, and levelled to the <b>Audio level</b> chosen here: it starts on the loudness target under Config &gt; Production. Without music the plug is silent, and the level has nothing to act on.</p>
 
 <div class="sh-row" style="margin-top:12px">
   <div>
@@ -8503,6 +8531,7 @@ async function scheduleOnTabOpen(){
       var o = document.createElement('option'); o.value = f.key; o.textContent = f.label; sel.appendChild(o)
     })
     if(keep) sel.value = keep
+    shFillLevels(spEl('sp-level'), d.levels)
     var st = spEl('sp-style'), was = st.value
     if(d.styles && d.styles.length){
       st.innerHTML = ''
@@ -8597,6 +8626,7 @@ async function scheduleRender(){
   else if(musNet) fd.append('schedule_music_network', musNet)
   fd.append('duration', spEl('sp-duration').value)
   fd.append('delivery_format', spEl('sp-format').value)
+  fd.append('loudness', spEl('sp-level').value)
   fd.append('style', spEl('sp-style').value)
   fd.append('text_motion', spEl('sp-text').value)
   fd.append('prompt', spEl('sp-prompt').value)
@@ -8660,7 +8690,9 @@ function spCard(p, fresh){
     '<p class="sh-note">' + (p.style_label ? '<b>Style:</b> ' + escapeHtmlLite(p.style_label) + ' &middot; ' : '') +
       '<b>Animation:</b> ' + escapeHtmlLite(p.animation || 'fade') +
       (p.layered ? ' &middot; ' + (p.layers || []).length + ' layers' : ' &middot; one flat picture') +
-      (p.music ? ' &middot; music: ' + escapeHtmlLite(p.music) : ' &middot; no music') +
+      (p.music ? ' &middot; music: ' + escapeHtmlLite(p.music) +
+                 (typeof p.loudness === 'number' ? ' at ' + String(p.loudness).replace('-', '&minus;') + ' LUFS' : '')
+               : ' &middot; no music') +
       (p.read_by ? ' &middot; prompt read by ' + escapeHtmlLite(p.read_by) : '') + '</p>' + groups +
     (fresh ? '<p class="sh-note">Saved under <b>Saved plugs</b>. Not what you meant? Pick another style or reword the direction and generate again &mdash; it takes under a minute.</p>' : '')
   card.addEventListener('click', function(e){
@@ -9358,7 +9390,7 @@ job. Configured via env vars:
 
     <div class="docs-pane" id="docs-shorts">
       <h3 style="margin-top:0">Vertical Shorts</h3>
-      <p>Cuts a long-form programme into stand-alone 9:16 shorts (1080&times;1920 H.264, AAC, &minus;14 LUFS). It is separate from the promo generator and does not change how a plug is built; it shares the same services, job queue and network folders.</p>
+      <p>Cuts a long-form programme into stand-alone 9:16 shorts (1080&times;1920 H.264, AAC, &minus;14 LUFS unless another <strong>Audio level</strong> is chosen). It is separate from the promo generator and does not change how a plug is built; it shares the same services, job queue and network folders.</p>
       <h3>1. Find moments</h3>
       <p>Open the episode&rsquo;s project (see <em>Projects</em> below), go to <strong>Create shorts</strong>, pick the full episode and choose <strong>Preview the cut</strong>. Nothing is rendered in this step. <strong>Generate without preview</strong> runs the same analysis and then renders every moment it found, with the Output settings, as one job; the moments are still listed afterwards so any can be re-timed and rendered again.</p>
       <p><strong>Length of each short</strong> starts at 60 to 120 seconds. <strong>Moments to find</strong> is a ceiling &mdash; up to 5, 8, 12, 20, 50 or 100 &mdash; or <strong>Auto</strong>. A number keeps the best that many, weak ones included if there is room. Auto has no number: it keeps every distinct moment the story model rates {{ shorts_auto_min_story }}/10 or better (100 at most), and if none reaches that it lists everything it found and says so. An episode only holds so many: two moments may share up to half their length, so 45 minutes at 60&ndash;120 s yields a few dozen at most whatever is asked for. Each five-minute stretch of dialogue is asked for as many moments as it can hold end to end, eight at the very most. One render takes up to 100 shorts.</p>
@@ -9380,7 +9412,12 @@ job. Configured via env vars:
         <li><strong>Follow the speaker</strong> (off unless ticked) changes only those wide two-shots: it cuts between close framings of whoever is talking, holding each for at least a second or so and changing just before the next line. It decides from how much each mouth moves while the transcript says words are being spoken. Where it cannot tell &mdash; nobody speaking, a face turned away, two mouths moving alike &mdash; the shot is reframed exactly as it would be with the option off. With <strong>Split screen</strong> it works the other way round: the screen is split while both people talk, and a shot where only one of them talks is framed on that one.</li>
         <li><strong>Captions</strong> are burned in from the transcript a few words at a time, and an <code>.srt</code> is saved next to each MP4.</li>
         <li><strong>Format</strong> is the file each short is delivered as: <em>MP4 (H.264 High Profile)</em>, or <em>Apple ProRes 422 HQ</em> at 29.97 or 23.976 fps. A ProRes short is rendered to H.264 first, at higher quality than an ordinary MP4 short, and the <code>.mov</code> is made from that by the same export step the other tabs use; the MP4 is kept as the copy that plays here. <strong>Download</strong>, <strong>Download all</strong> and <strong>Send</strong> hand over the <code>.mov</code>. ProRes 422 HQ is roughly 1.3&ndash;1.7 GB per minute at 1080&times;1920, so a large batch needs the disk for it. AVC-Intra 100 is not offered here: it is a 1920&times;1080 format.</li>
-        <li><strong>Ending</strong> is how every short in the render finishes. <em>Cut on the last frame</em> stops where the moment stops. <em>Cliffhanger</em> stops the action dead on the moment&rsquo;s last beat and holds it for 2 seconds while the picture pushes in by 3%, takes on a cooler, higher-contrast grade and darkens slightly at the corners; then it cuts straight to black. The sound is cut off with the action, so the hold and the black are silent. That adds about 2.3 s to each short, and no caption is drawn over the hold. The held picture is not a single still when it can help it: if the last moments of the shot are already nearly motionless (someone standing in a close-up), the last few frames &mdash; up to 0.16 s &mdash; are played forwards and back in extreme slow motion, which keeps the breathing, hair and cloth barely alive while the pose and expression stay locked. If anything is really moving in those frames (a gesture, a camera move), or the shot is cut just before the end, it holds one frame instead, because looping real movement would show as a wobble. Nothing is generated: every held frame comes from the footage.</li>
+        <li><strong>Audio level</strong> is how loud each short is overall (integrated loudness): &minus;14 LUFS unless you choose otherwise, which is what online video is levelled to; &minus;23 (EBU R128) and &minus;24 (ATSC A/85) are there for shorts going to air. The true peak stays under &minus;1.5 dBTP. A short rendered again for new captions keeps the level it had.</li>
+        <li><strong>Ending</strong> is how every short in the render finishes. <em>Cut on the last frame</em> stops where the moment stops. <em>Cliffhanger</em> stops the action dead on the moment&rsquo;s last beat and holds it for 2 seconds while the picture pushes in by 3%, takes on a cooler, higher-contrast grade and darkens slightly at the corners; then it cuts straight to black. That adds 2.4 s to each short, and no caption is drawn over the hold.
+          <ul style="line-height:1.7;padding-left:20px;margin-top:4px">
+            <li><strong>The picture.</strong> The moment plays to its last frame; the hold is made from what comes just after the out point. It is not a single still when it can help it: if those next frames are nearly motionless (someone standing in a close-up), up to 0.16 s of them is played forwards and back in extreme slow motion, which keeps the breathing, hair and cloth barely alive while the pose and expression stay locked. If anything is really moving in them (a gesture, a camera move) it holds one frame, because looping real movement would show as a wobble. Only when the out point is on a cut, or at the very end of the file, is the hold made from the moment&rsquo;s own last frames instead. Nothing is generated: every held frame comes from the footage.</li>
+            <li><strong>The sound</strong> is not cut where the transcript says the last word ends &mdash; that time is early as a rule, and with per-line timings only approximate. The sound around the out point is measured instead. If a word is still being spoken there, it is let finish under the held picture, up to 0.8 s, and stops in the pause that follows. If speech runs straight on into the next line, the sound stops in the gap between the two words nearest the out point, with a very short fade. If the out point is already in a pause, it stops there. Where the level cannot tell a word from a gap (a wall of music, a crowd), it stops at the out point. Whatever happens, the last half second of the hold and the black are silent.</li>
+          </ul></li>
       </ul>
       <p>Batches are kept in their <strong>project</strong> until deleted: play, download one or all (.zip), or send to a video network destination.</p>
       <h3>Changing captions on a saved short</h3>
@@ -9450,7 +9487,7 @@ POST /api/shorts/analyze now also needs project_id</pre>
       <p>The <strong>Animation style</strong> dropdown picks the combination: how the logo and text appear + how the other layers move &mdash; <strong>Wipe reveal + grow, rotate left, rotate right (mixed)</strong>, where the moving layers take those three motions in turn (the default), <strong>Fade in + light sweep</strong>, <strong>Wipe reveal + light sweep</strong>, <strong>Slide up + gentle float</strong>, <strong>Pop in + pulse one by one</strong>, <strong>Stop motion wipe + wobble</strong>, <strong>Pop in + dancing</strong> (a hop on every beat with a lean and a swell), <strong>Pop in + grow and shrink</strong>, <strong>Fade in + rotate left</strong>, <strong>Fade in + rotate right</strong>, or <strong>Fade in + hold still</strong> for no motion at all after the build. A rotating layer tilts up to twelve degrees and comes back; long layers turn less so their ends do not swing into their neighbours. A flat picture arrives whole from black; only the light sweep can run on it, because the other motions would move its background.</p>
       <p><strong>Extra direction</strong> is optional and changes whatever it names on top of the style: <strong>wipe</strong>, <strong>slide</strong>, <strong>fade</strong>, <strong>pop</strong> or <strong>cut</strong>, from a direction; <strong>stop motion</strong>; a <strong>slow push in</strong> (this one moves the whole frame, background included); <strong>fast</strong> or <strong>slow</strong>; <strong>light sweep</strong>, <strong>float</strong>, <strong>pulse</strong>, <strong>wobble</strong>, <strong>dance</strong>, <strong>grow and shrink</strong>, <strong>rotate left</strong>, <strong>rotate right</strong>, <strong>sway</strong>, <strong>mixed</strong> or <strong>hold still</strong> for the moving layers. Name a layer to give it its own arrival or its own motion, whatever group it is in (&ldquo;stars dance, logo breathes, ribbon holds still, burst pops in&rdquo;). The words are matched directly and, when Ollama is reachable, also read by the AI model so it can tell which named layer an instruction is about. Each result states the style and how the direction was understood.</p>
       <h3>Music</h3>
-      <p>Optional, from the Music network folder. Trimmed to the length with a fade out, looped if shorter, and levelled to the loudness target under Config &gt; Production.</p>
+      <p>Optional, from the Music network folder. Trimmed to the length with a fade out, looped if shorter, and levelled to the <strong>Audio level</strong> chosen for the plug. That menu starts on the loudness target under Config &gt; Production and offers the usual ones: &minus;14 LUFS for online video, &minus;23 (EBU R128) or &minus;24 (ATSC A/85) for broadcast. The level is the loudness of the whole plug measured over its length, not a peak; the true-peak ceiling stays the one under Config &gt; Production. A saved plug says what it was levelled to.</p>
       <h3>Setup</h3>
       <p>Set the artwork folder under <strong>Config &gt; Network &gt; Schedule plug artwork</strong>. Photoshop files need the <code>psd-tools</code> package on the server.</p>
       <pre>POST /api/schedule/render   + schedule_image_network, duration (10|15|20|30), delivery_format, style?, text_motion? (hold|breathe), prompt?, schedule_music_network?

@@ -717,7 +717,8 @@ def test_generate_without_preview_analyses_then_renders_everything_as_one_job(en
         [(round(c['start'] * 25) / 25, round(c['end'] * 25) / 25) for c in a['candidates']]
     assert batch['options'] == {'reframe': 'fit', 'subtitles': False, 'subtitle_size': 'l', 'face_detector': None,
                                 'speaker': False, 'ending': 'none', 'format': 'mp4_high',
-                                'format_label': 'MP4 (H.264 High Profile)'}, 'the Output settings sent with the request'
+                                'format_label': 'MP4 (H.264 High Profile)', 'loudness': -14.0}, \
+        'the Output settings sent with the request'
     assert all(s['layouts']['fit'] >= 1 and s['layouts']['crop'] == 0 for s in batch['shorts'])
     assert batch['username'] == 'ana'
     for s in batch['shorts']:
@@ -968,14 +969,15 @@ def test_the_cliffhanger_ending_stops_dead_holds_and_cuts_to_black(env, monkeypa
                   ending='freeze')['result']['batch']
     assert plain['options']['ending'] == 'none' and ended['options']['ending'] == 'cliffhanger'
     assert old['options']['ending'] == 'none', 'an ending this version does not have is no ending'
-    assert client.get('/api/shorts/options').get_json()['ending_seconds'] == 2.2
+    assert client.get('/api/shorts/options').get_json()['ending_seconds'] == 2.4
     p, e = plain['shorts'][0], ended['shorts'][0]
     assert abs(p['duration'] - 4.0) < 0.05 and abs(e['duration'] - 6.24) < 0.05
     plain_path = os.path.join(shorts.SHORTS_DIR, plain['batch_id'], p['file'])
     end_path = os.path.join(shorts.SHORTS_DIR, ended['batch_id'], e['file'])
     fr_p, fr = _frames(plain_path), _frames(end_path)
-    # The shot is motionless, so the hold is made from its last 4 frames:
-    # 96 of the moment, 50 of hold, 10 of black.
+    # The out point is on a cut, so there is nothing after it to make the
+    # hold from: it is made from the moment's own last 4 frames (the shot is
+    # motionless). 96 of the moment, 50 of hold, 10 of black.
     assert len(fr_p) == 100 and len(fr) == 156
 
     def caption(frame):                                   # white lettering on a blue picture
@@ -1002,9 +1004,228 @@ def test_the_cliffhanger_ending_stops_dead_holds_and_cuts_to_black(env, monkeypa
     def level(t0, t1):
         seg = x[int(t0 * 8000):int(t1 * 8000)]
         return 20 * np.log10(max(1e-9, float(np.sqrt(np.mean(seg ** 2)))))
-    assert level(1.0, 3.7) > -40, 'the moment is heard right up to the stop (3.84 s)'
-    assert level(3.95, 4.05) < level(1.0, 3.7) - 20, 'and is all but gone a tenth of a second after it'
-    assert float(np.abs(x[int(4.2 * 8000):]).max()) == 0.0, 'then nothing at all, through the hold and the black'
+    # The sound is not tied to where the picture stops (3.84 s): it runs to
+    # the out point (4.0 s), under the first frames of the hold. This is a
+    # steady tone -- no word to find the end of -- so that is where it stops.
+    assert level(1.0, 3.7) > -40 and level(3.84, 3.98) > level(1.0, 3.7) - 6, 'heard right up to the out point'
+    assert level(4.14, 4.3) < level(1.0, 3.7) - 30, 'and gone just after it'
+    assert float(np.abs(x[int(4.4 * 8000):]).max()) == 0.0, 'then nothing at all, through the hold and the black'
+
+
+def _talking_source(path, words, seconds=8, fps=25, cut_at=None, bed=None):
+    """A picture that barely moves, with 'words' under it: bursts of a tone
+    at the given (start, end) times, silence (or a quiet bed) between. With
+    `cut_at`, the picture changes colour at that frame."""
+    n = seconds * fps
+    frames = []
+    for i in range(n):
+        f = np.full((180, 320, 3), 70 if cut_at is None or i < cut_at else 150, np.uint8)
+        cv2.rectangle(f, (140, 70), (180, 110), (100 + (i % 3), 160, 200), -1)       # a face-coloured patch, breathing
+        frames.append(f)
+    rate = 48000
+    t = np.arange(seconds * rate) / rate
+    x = np.zeros(len(t)) if bed is None else 10 ** (bed / 20.0) * np.sin(2 * np.pi * 90 * t)
+    for a, b in words:
+        m = (t >= a) & (t < b)
+        env = np.minimum(1.0, np.minimum((t[m] - a) / 0.02, (b - t[m]) / 0.05))
+        x[m] += env * 0.25 * np.sin(2 * np.pi * 220 * t[m]) * (0.7 + 0.3 * np.sin(2 * np.pi * 6 * t[m]))
+    wav = str(path) + '.wav'
+    import wave
+    w = wave.open(wav, 'wb')
+    w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate)
+    w.writeframes((np.clip(x, -1, 1) * 32767).astype('<i2').tobytes())
+    w.close()
+    proc = subprocess.Popen(FF + ['-f', 'rawvideo', '-pix_fmt', 'bgr24', '-s', '320x180', '-r', str(fps), '-i', '-',
+                                  '-i', wav, '-c:v', 'libx264', '-crf', '10', '-pix_fmt', 'yuv420p', '-g', '1',
+                                  '-c:a', 'aac', '-b:a', '192k', '-shortest', str(path)], stdin=subprocess.PIPE)
+    proc.communicate(b''.join(f.tobytes() for f in frames))
+    assert proc.returncode == 0
+    os.remove(wav)
+    return str(path)
+
+
+def _heard(path, rate=8000):
+    """(samples, level(t0, t1) in dB) of a file's sound."""
+    x = _sound(path)
+
+    def level(t0, t1):
+        seg = x[int(t0 * rate):int(t1 * rate)]
+        return 20 * np.log10(max(1e-9, float(np.sqrt(np.mean(seg ** 2)))))
+    return x, level
+
+
+def test_the_cliffhanger_lets_the_last_word_finish_and_gives_up_none_of_the_moment(tmp_path):
+    """Reported: the sound was being cut mid-word. Two causes. The hold was
+    made from the moment's own last frames, and the sound stopped where the
+    picture did -- 0.16 s short of the out point. And the out point itself
+    comes from a transcript, whose idea of where a word ends is early."""
+    # The last word really runs 3.60-4.45 s. The transcript had it ending at
+    # 4.0, so that is where the out point is: 0.45 s short of the truth.
+    src = _talking_source(tmp_path / 'talk.mp4', [(0.5, 1.2), (1.5, 2.4), (2.7, 3.3), (3.60, 4.45), (6.5, 7.2)])
+    info = sc.probe_source('ffprobe', src)
+    fps, start_f, n = info['fps'], 25, 75                 # the short is 1.0-4.0 s of the source
+    segs = [{'a': 0, 'b': n - 1, 'layout': 'fit', 'x': None, 'keys': None}]
+
+    # 1. The hold comes from the frames after the out point: the shot carries on and is still.
+    after = sc.still_frames_after(src, start_f + n, fps, 50)
+    assert after == 4 and sc.cliffhanger_stop(n, fps, None, after) == n and sc.cliffhanger_extra(n, fps, None, after) == 60
+    # 2. The sound is measured: the word under way at the out point ends 0.45 s later.
+    out, fade, how = sc.measure_audio_out('ffmpeg', src, info, start_f, n, next_speech=5.5)
+    assert how == 'pause' and abs(out - 3.45) < 0.06 and fade == sc.AUDIO_FADE['pause'], (out, fade, how)
+
+    new = str(tmp_path / 'new.mp4')
+    ok, err = sc.render_short('ffmpeg', src, new, start_f, n, info, segs, work_dir=str(tmp_path), preset='ultrafast',
+                              ending=True, ending_after=after, audio_out=out, audio_fade=fade)
+    assert ok, err
+    old = str(tmp_path / 'old.mp4')                       # as it was: hold from the clip's own end, sound stops with the picture
+    ok, err = sc.render_short('ffmpeg', src, old, start_f, n, info, segs, work_dir=str(tmp_path), preset='ultrafast',
+                              ending=True, ending_room=4)
+    assert ok, err
+    fr_new, fr_old = _frames(new), _frames(old)
+    assert len(fr_new) == 75 + 50 + 10 and len(fr_old) == 71 + 50 + 10
+
+    def tone(frames, k):                                  # the hold is graded: its balance of blue and red is not the action's
+        b, g, r = frames[k][900:1000, 100:400].reshape(-1, 3).mean(axis=0)
+        return float(b - r)
+    live = tone(fr_new, 10)
+    assert abs(tone(fr_new, 74) - live) < 2 and abs(tone(fr_new, 75) - live) > 4, 'the action runs to its last frame'
+    assert abs(tone(fr_old, 70) - live) < 2 and abs(tone(fr_old, 71) - live) > 4, '(it used to stop four frames short)'
+
+    # 3. The sound outlasts the picture: the word finishes under the hold, then silence.
+    x, level = _heard(new)
+    word = level(2.7, 2.95)
+    assert level(3.0, 3.35) > word - 4, 'the rest of the word, after the picture has stopped at 3.0 s'
+    assert level(3.75, 4.0) < word - 40 and float(np.abs(x[int(4.0 * 8000):]).max()) == 0.0
+    assert abs(len(x) / 8000.0 - 135 / 25.0) < 0.15
+    # Before: gone by the out point, a third of a second into a word that had 0.45 s to run.
+    _, level_old = _heard(old)
+    assert level_old(3.1, 3.35) < word - 35
+
+    # The same short, when the next shot starts right at the out point: the
+    # hold has to come from the moment's own frames, but the sound still finishes.
+    cut = _talking_source(tmp_path / 'cut.mp4', [(0.5, 1.2), (1.5, 2.4), (2.7, 3.3), (3.60, 4.45)], cut_at=100)
+    assert sc.still_frames_after(cut, start_f + n, fps, 0) == 0
+    room = sc.still_frames(cut, start_f + n - 1, fps, n)
+    out, fade, how = sc.measure_audio_out('ffmpeg', cut, info, start_f, n)
+    assert room == 4 and how == 'pause' and abs(out - 3.45) < 0.06
+    onb = str(tmp_path / 'oncut.mp4')
+    ok, err = sc.render_short('ffmpeg', cut, onb, start_f, n, info, segs, work_dir=str(tmp_path), preset='ultrafast',
+                              ending=True, ending_room=room, ending_after=0, audio_out=out, audio_fade=fade)
+    assert ok, err
+    fr = _frames(onb)
+    assert len(fr) == 71 + 50 + 10 and max(float(f[900:1000, 100:400].mean()) for f in fr[60:121]) < 110, \
+        'none of the next shot (the lighter one) in the hold'
+    _, level = _heard(onb)
+    assert level(3.0, 3.35) > level(2.7, 2.95) - 4 and level(3.75, 4.0) < level(2.7, 2.95) - 40
+
+
+def test_where_the_sound_of_a_cliffhanger_stops_is_measured_case_by_case(tmp_path):
+    words = [(0.5, 1.2), (1.5, 2.4), (2.7, 3.3), (3.60, 4.45), (4.50, 5.4), (6.5, 7.2)]
+    src = _talking_source(tmp_path / 'talk.mp4', words)
+    info = sc.probe_source('ffprobe', src)
+    start_f = 25
+
+    def out_at(source_t, next_speech=None, s=src):
+        n = int(round(source_t * 25)) - start_f
+        o, fade, how = sc.measure_audio_out('ffmpeg', s, info, start_f, n,
+                                            None if next_speech is None else next_speech - 1.0)
+        return round(o + 1.0, 2), fade, how               # back on the source's clock
+    # Already in a pause: it stops there.
+    assert out_at(3.44) == (3.44, sc.AUDIO_FADE['quiet'], 'quiet')
+    # Speech runs straight on (the next word 50 ms after this one): the gap between the two, fast.
+    o, fade, how = out_at(4.40, next_speech=4.50)
+    assert how in ('dip', 'pause', 'quiet') and 4.43 <= o <= 4.52 and fade <= sc.AUDIO_FADE['quiet'], (o, fade, how)
+    # ...also when the out point has strayed into the start of that next word.
+    o, fade, how = out_at(4.56, next_speech=4.50)
+    assert how == 'dip' and 4.44 <= o <= 4.52 and fade == sc.AUDIO_FADE['dip'], (o, fade, how)
+    # A word that would run on past the reach is not chased: the out point stands.
+    long_word = _talking_source(tmp_path / 'long.mp4', [(0.5, 1.2), (1.5, 2.4), (3.0, 6.0)])
+    assert out_at(4.0, s=long_word) == (4.0, sc.AUDIO_FADE[None], None)
+    # Dialogue over a music bed never goes silent; it drops to the music, and that is the pause.
+    bed = _talking_source(tmp_path / 'bed.mp4', words[:4] + words[5:], bed=-34.0)       # without the run-on word
+    o, fade, how = out_at(4.0, s=bed)
+    assert how == 'pause' and abs(o - 4.45) < 0.08, (o, how)
+    # Nothing to tell a word from a gap by: a file with no sound at all, and one that is all one level.
+    assert sc.measure_audio_out('ffmpeg', src, dict(info, audio_index=None), start_f, 75) == (3.0, 0.12, None)
+    flat = _talking_source(tmp_path / 'flat.mp4', [(0.0, 8.0)])
+    assert out_at(4.0, s=flat)[2] is None
+
+
+def test_shorts_can_be_levelled_for_where_they_are_going(env, monkeypatch):
+    Services(monkeypatch)
+    client, headers = _client()
+    opts = client.get('/api/shorts/options').get_json()
+    assert opts['loudness'] == -14.0
+    assert [(l['value'], l['default']) for l in opts['levels']] == [
+        (-12.0, False), (-14.0, True), (-16.0, False), (-18.0, False), (-23.0, False), (-24.0, False)]
+    assert 'EBU R128' in opts['levels'][4]['label'] and opts['levels'][1]['label'].startswith('\u221214 LUFS')
+    a = _analysis(client, _analyze(client, headers, env))
+    item = [{'start': 2.0, 'end': 8.0, 'title': 'Moment'}]
+
+    def loudness(batch):
+        path = os.path.join(shorts.SHORTS_DIR, batch['batch_id'], batch['shorts'][0]['file'])
+        r = subprocess.run(['ffmpeg', '-hide_banner', '-nostats', '-i', path, '-af', 'ebur128', '-f', 'null', '-'],
+                           capture_output=True, text=True, timeout=120)
+        return float(re.findall(r'I:\s*(-?[\d.]+) LUFS', r.stderr)[-1])
+    usual = _render(client, headers, a['analysis_id'], item, reframe='fit', subtitles=False)['result']['batch']
+    air = _render(client, headers, a['analysis_id'], item, reframe='fit', subtitles=False, loudness='-23')['result']['batch']
+    assert usual['options']['loudness'] == -14.0 and air['options']['loudness'] == -23.0
+    lu, la = loudness(usual), loudness(air)
+    assert abs(lu - -14.0) < 1.5 and abs(la - -23.0) < 1.5 and 7.5 < lu - la < 10.5, (lu, la)
+    # Anything that is not a level is the usual one, not an error and not a silent file.
+    started = []
+    monkeypatch.setattr(shorts, '_spawn', lambda fn, *a, **k: started.append(a[1]))
+    for asked in ('loud', '', None, 3, -80, 'nan'):
+        client.post('/api/shorts/render', headers=headers,
+                    json={'analysis_id': a['analysis_id'], 'items': item, 'loudness': asked})
+    assert [p['loudness'] for p in started] == [-14.0] * 6
+    client.post('/api/shorts/render', headers=headers, json={'analysis_id': a['analysis_id'], 'items': item, 'loudness': -16.04})
+    assert started[-1]['loudness'] == -16.0
+    # A short rendered again for new captions keeps the level it was made at.
+    seen = []
+    real = sc.render_short
+    monkeypatch.setattr(sc, 'render_short', lambda *x, **k: (seen.append(k['loudness']), real(*x, **k))[1])
+    monkeypatch.setattr(shorts, '_spawn', lambda fn, *a, **k: fn(*a, **k))
+    air2 = _render(client, headers, a['analysis_id'], item, reframe='fit', subtitles=True, loudness=-23)['result']['batch']
+    url = f"/api/shorts/batches/{air2['batch_id']}/captions/{air2['shorts'][0]['index']}"
+    job = client.get(f"/api/shorts/progress/{client.post(url, headers=headers, json={'cues': [{'start': 1, 'end': 2, 'text': 'Bago'}]}).get_json()['job_id']}").get_json()
+    assert job.get('error') is None and seen == [-23.0, -23.0], (job, seen)
+
+
+def test_the_cliffhanger_plan_a_short_was_rendered_with_is_kept_for_rendering_it_again(env, monkeypatch):
+    """A short between cuts: the hold comes from after its out point and its
+    sound stops where it was measured to. Rendered again for new captions,
+    it must come out the same length, from the same plan."""
+    Services(monkeypatch)
+    client, headers = _client()
+    a = _analysis(client, _analyze(client, headers, env))
+    batch = _render(client, headers, a['analysis_id'], [{'start': 3.4, 'end': 7.4, 'title': 'Mid shot'}],
+                    reframe='fit', ending='cliffhanger')['result']['batch']
+    s = batch['shorts'][0]
+    bdir = os.path.join(shorts.SHORTS_DIR, batch['batch_id'])
+    plan = shorts._read_manifest(bdir)['shorts'][0]['plan']
+    assert plan['after'] == 4 and plan['audio_out'] == 4.0 and plan['audio_fade'] == 0.12, plan
+    assert abs(s['duration'] - 6.4) < 0.01 and len(_frames(os.path.join(bdir, s['file']))) == 100 + 50 + 10
+    seen = []
+    real = sc.render_short
+    monkeypatch.setattr(sc, 'render_short', lambda *x, **k: (seen.append(k), real(*x, **k))[1])
+    url = f"/api/shorts/batches/{batch['batch_id']}/captions/{s['index']}"
+    job = client.get(f"/api/shorts/progress/{client.post(url, headers=headers, json={'cues': [{'start': 1, 'end': 2, 'text': 'Bago'}]}).get_json()['job_id']}").get_json()
+    assert job.get('error') is None, job
+    assert (seen[0]['ending_after'], seen[0]['audio_out'], seen[0]['audio_fade']) == (4, 4.0, 0.12)
+    assert len(_frames(os.path.join(bdir, s['file']))) == 160 and job['result']['batch']['shorts'][0]['duration'] == s['duration']
+
+    # One made before any of this (its plan says nothing about it) is rendered again the way it was made.
+    m = shorts._read_manifest(bdir)
+    for k in ('after', 'audio_out', 'audio_fade'):
+        m['shorts'][0]['plan'].pop(k)
+    m['options'].pop('loudness')
+    shorts._write_manifest(bdir, m)
+    seen.clear()
+    job = client.get(f"/api/shorts/progress/{client.post(url, headers=headers, json={'cues': []}).get_json()['job_id']}").get_json()
+    assert job.get('error') is None, job
+    assert (seen[0]['ending_after'], seen[0]['audio_out'], seen[0]['loudness']) == (0, None, -14.0)
+    assert len(_frames(os.path.join(bdir, s['file']))) == 96 + 50 + 10
 
 
 def _source(path, frames, fps='25'):

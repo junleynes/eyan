@@ -726,6 +726,141 @@ def test_the_hold_is_made_only_from_frames_in_which_nothing_is_really_moving(tmp
     assert sc.still_frames(str(tmp_path / 'missing.avi'), 39, 25.0) == 1, 'unreadable is not an error here'
 
 
+# ---- the cliffhanger: where its hold comes from, and where its sound stops ----
+
+def test_the_hold_is_made_from_the_frames_after_the_out_point_when_there_are_some():
+    # With frames to use after the clip, it gives up none of its own: it stops ON its last frame.
+    assert sc.cliffhanger_plan(250, 25.0, after=4) == (4, 50, 10) and sc.cliffhanger_stop(250, 25.0, after=4) == 250
+    assert sc.cliffhanger_extra(250, 25.0, after=4) == 60
+    assert sc.cliffhanger_plan(250, 25.0, room=1, after=2) == (2, 50, 10), 'what is behind the clip no longer matters'
+    assert sc.cliffhanger_plan(250, 25.0, after=1) == (1, 50, 10) and sc.cliffhanger_plan(250, 30000 / 1001.0, after=9) == (5, 60, 12)
+    # With none, as before: from its own end.
+    assert sc.cliffhanger_stop(250, 25.0) == 246 and sc.cliffhanger_stop(250, 25.0, room=1, after=0) == 249
+    assert sc.cliffhanger_extra(250, 25.0) == 56
+
+    g = sc.cliffhanger_graph(250, 25.0, None, ass_name='c.ass', after=4)
+    assert '[em]trim=end_frame=250,setpts=PTS-STARTPTS,ass=c.ass,' in g and '[et]trim=start_frame=250:end_frame=254,' in g
+    assert 'setpts=N*6.250000/(25)/TB' in g and "enable='gte(n,50)'" in g and 'stop=60,' in g
+    assert g.replace('end_frame=250,', 'end_frame=246,').replace('start_frame=250:end_frame=254', 'start_frame=246:end_frame=250') \
+        == sc.cliffhanger_graph(250, 25.0, None, ass_name='c.ass'), 'the same ending, four frames later'
+
+    # The reframing plan is carried over those frames: the last shot's framing, held.
+    still = [{'a': 0, 'b': 99, 'layout': 'fit', 'x': None, 'keys': None},
+             {'a': 100, 'b': 249, 'layout': 'crop', 'x': 656.0, 'keys': None}]
+    on = sc.run_on(still, 4)
+    assert (on[1]['b'], on[0]['b'], still[1]['b']) == (253, 99, 249), 'a copy; the plan itself is not changed'
+    assert 'between(n,100,253)*656' in sc.crop_x_expr(on)
+    pan = [{'a': 0, 'b': 249, 'layout': 'crop', 'x': None, 'keys': [(0, 100.0), (249, 600.0)]}]
+    expr = sc.crop_x_expr(sc.run_on(pan, 4))
+    assert 'between(n,0,248)*(100.0+(500.0)*(n-0)/249)' in expr and 'between(n,249,253)*(600.0+(0.0)*(n-249)/4)' in expr, expr
+    assert sc.run_on(pan, 0) is pan and sc.run_on([], 4) == []
+    split = [{'a': 0, 'b': 249, 'layout': 'split', 'x': None, 'keys': None, 'size': (1214, 1080), 'panes': [(0, 0), (700, 0)]}]
+    assert sc.split_exprs(sc.run_on(split, 4))[1][0] == 'between(n,0,253)*700'
+
+    info = {'width': 1920, 'height': 1080, 'disp_w': 1920, 'disp_h': 1080, 'sar': 1.0, 'sd_matrix': False,
+            'fps': 25.0, 'audio_index': 1, 'tag_709': True, 'v_offset': 0.0}
+    full = sc.build_filtergraph(info, still, ending=(250, None, 4))
+    assert "between(n,100,253)*656" in full and "overlay=0:0:enable='between(n,0,99)'" in full
+    assert 'trim=start_frame=250:end_frame=254' in full
+    assert sc.build_filtergraph(info, still, ending=(250, 3)) == sc.build_filtergraph(info, still, ending=(250, 3, 0)), \
+        'a plan from before this says nothing about what follows: nothing does'
+
+    cmd = sc.build_render_cmd('ffmpeg', '/in.mp4', '/out.mp4', 0, 250, info, still, ending=True, ending_after=4)
+    assert cmd[cmd.index('-frames:v') + 1] == '310' and abs(float(cmd[cmd.index('-t') + 1]) - 12.4) < 1e-6
+
+
+def test_the_sound_of_the_ending_stops_where_it_is_told_not_where_the_picture_does():
+    info = {'width': 1920, 'height': 1080, 'disp_w': 1920, 'disp_h': 1080, 'sar': 1.0, 'sd_matrix': False,
+            'fps': 25.0, 'audio_index': 1, 'tag_709': True, 'v_offset': 0.0}
+    segs = [{'a': 0, 'b': 249, 'layout': 'crop', 'x': 656.0, 'keys': None}]
+
+    def af(**kw):
+        cmd = sc.build_render_cmd('ffmpeg', '/in.mp4', '/out.mp4', 0, 250, info, segs, ending=True, **kw)
+        return cmd[cmd.index('-af') + 1]
+    # A word that finishes 0.45 s after the out point: let run on under the hold, then rung out.
+    assert af(ending_after=4, audio_out=10.45, audio_fade=0.2) == (
+        'afade=t=in:st=0:d=0.04,atrim=end=10.650,afade=t=out:st=10.450:d=0.200:curve=cub,'
+        'loudnorm=I=-14.0:TP=-1.5:LRA=11,apad=whole_dur=12.400')
+    # Speech running on: stopped a little BEFORE the out point, fast.
+    assert 'atrim=end=9.990,afade=t=out:st=9.940:d=0.050:curve=cub' in af(ending_after=4, audio_out=9.94, audio_fade=0.05)
+    # Told nothing (a short made before the sound was measured): where the picture stops, as then.
+    assert 'afade=t=out:st=9.840:d=0.200:curve=cub' in af() and 'afade=t=out:st=10.000:d=0.200' in af(ending_after=4)
+    # The picture's own frames, but the sound still to the out point and beyond.
+    assert 'afade=t=out:st=10.300:d=0.200' in af(ending_room=4, audio_out=10.3, audio_fade=0.2)
+    # Never to the end of the hold: the last half second of it is silent whatever is asked.
+    late = af(ending_after=4, audio_out=30.0, audio_fade=0.2)
+    assert 'afade=t=out:st=11.300:d=0.200' in late and 'atrim=end=11.500' in late
+    assert sc.AUDIO_FADE == {'pause': 0.2, 'quiet': 0.12, 'dip': 0.05, None: 0.12}
+    assert sc.WORD_END['reach'] < sc.CLIFFHANGER['hold'] - 0.5 - sc.AUDIO_FADE['pause'], 'a word let finish always fits'
+
+
+def _speech(spans, seconds=4.0, bed=-55.0, rate=16000, seed=3):
+    """Mono samples: bursts ('words') at the given times over a quiet bed."""
+    rng = np.random.default_rng(seed)
+    t = np.arange(int(seconds * rate)) / rate
+    x = rng.normal(0, 10 ** (bed / 20.0), len(t))
+    for a, b in spans:
+        m = (t >= a) & (t < b)
+        env = np.minimum(1.0, np.minimum((t[m] - a) / 0.02, (b - t[m]) / 0.06))
+        x[m] += env * 0.12 * np.sin(2 * np.pi * 180 * t[m]) * (0.6 + 0.4 * np.sin(2 * np.pi * 7 * t[m]))
+    return x
+
+
+def test_where_a_word_really_ends_is_read_off_the_sound():
+    words = [(0.2, 0.6), (0.7, 1.1), (1.2, 1.7), (1.8, 2.75)]
+
+    def end(spans, at, nxt=None, **kw):
+        return sc.word_end(sc.audio_envelope(_speech(spans, **kw), 16000), at, nxt)
+    env = sc.audio_envelope(_speech(words), 16000)
+    assert len(env) == 400 and env[40] > env[65] + 20, 'one reading every 10 ms; a word is far above a gap'
+    # In the pause after the word: it stops there.
+    assert end(words, 2.9) == (2.9, 'quiet')
+    # Inside the last word -- the transcript ended it early: on to where it gives way to quiet.
+    at, kind = end(words, 2.5)
+    assert kind == 'pause' and 2.72 <= at <= 2.80
+    # The same, whatever the transcript believes comes next, when a pause is what is there.
+    assert end(words + [(3.5, 3.9)], 2.5, 2.7)[1] == 'pause'
+    # Speech running on with a 50 ms gap. Out just inside it, or 60 ms into the next word: the gap.
+    run = words + [(2.80, 3.6)]
+    for out in (2.78, 2.86):
+        at, kind = end(run, out, 2.80)
+        assert kind in ('quiet', 'dip') and 2.74 <= at <= 2.81, (out, at, kind)
+    # ...and not a deeper gap a word away.
+    at, kind = end(words[:3] + [(1.75, 2.30), (2.34, 3.6)], 2.36, 2.34)
+    assert kind == 'dip' and 2.28 <= at <= 2.36, (at, kind)
+    # Over a music bed it never goes silent; it drops to the bed, and that is the pause.
+    at, kind = end(words, 2.5, bed=-34.0)
+    assert kind == 'pause' and 2.70 <= at <= 2.80
+    # Nothing to go on: one level throughout, silence, a sound that is not about to stop, the edge of what was read.
+    assert end([(0.0, 4.0)], 2.5) is None and end([], 2.5) is None
+    assert end(words[:3] + [(1.8, 4.0)], 2.5) is None, 'not chased past the reach'
+    assert end(words, 0.0) is None and end(words, 3.99) is None and sc.word_end(np.zeros(5), 0.02) is None
+    assert len(sc.audio_envelope(np.zeros(100), 16000)) == 0
+
+
+def test_stillness_is_judged_forwards_as_well_as_back(tmp_path):
+    x = np.arange(640)
+    scene = np.repeat((110 + 70 * np.sin(x / 23.0) + 30 * np.sin(x / 5.0))[None, :, None], 360, axis=0)
+    scene = np.repeat(scene, 3, axis=2).astype(np.uint8)
+
+    def frame(shift=0, breath=0.0):
+        f = np.roll(scene, shift, axis=1).copy()
+        cv2.ellipse(f, (320, 300), (110, int(round(40 + breath))), 0, 0, 360, (90, 60, 50), -1)
+        return f
+    # Still to frame 23, then the camera moves; a different picture from frame 30.
+    frames = [frame(breath=1.5 * np.sin(i / 6.0)) for i in range(24)] + [frame(shift=12 * (i - 23)) for i in range(24, 30)] \
+        + [np.full((360, 640, 3), 200, np.uint8)] * 10
+    clip = _clip(tmp_path / 'c.avi', frames)
+    assert sc.still_frames_after(clip, 10, 25.0, 30) == 4, 'the whole 0.16 s'
+    assert sc.still_frames_after(clip, 10, 25.0, 2) == 2 and sc.still_frames_after(clip, 10, 25.0, 1) == 1
+    assert sc.still_frames_after(clip, 10, 25.0, 0) == 0 == sc.still_frames_after(clip, 10, 25.0, None)
+    assert sc.still_frames_after(clip, 22, 25.0, 30) == 2, 'only as far as it stays still'
+    assert sc.still_frames_after(clip, 25, 25.0, 30) == 1, 'moving on from there: one frame, held'
+    assert sc.still_frames_after(clip, 29, 25.0, 30) == 1, 'a cut the cut list missed is not blended across'
+    assert sc.still_frames_after(clip, 400, 25.0, 30) == 0 and sc.still_frames_after(str(tmp_path / 'no.avi'), 0, 25.0, 9) == 0
+    assert sc.still_frames(clip, 23, 25.0) == 4, 'and backwards as it was'
+
+
 # ---- captions an editor has corrected ----
 
 def test_corrected_captions_are_tidied_into_something_that_can_be_burned_in():

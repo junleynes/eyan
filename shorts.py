@@ -621,8 +621,9 @@ def _encode_short(tag, src, info, plan, cues, opts, mp4_path, delivery_path, rep
     MP4, makes `delivery_path` from it. (ok, error).
 
     `plan` is where it is in the source and how it is reframed ({'start_f',
-    'n_frames', 'segs', 'room'}); `opts` how it is finished ({'burn',
-    'subtitle_size', 'ending', 'format'}). Everything a render needs and
+    'n_frames', 'segs', 'room', and for the cliffhanger ending 'after',
+    'audio_out', 'audio_fade'}); `opts` how it is finished ({'burn',
+    'subtitle_size', 'ending', 'format', 'loudness'}). Everything a render needs and
     nothing an analysis holds, so a saved short can be rendered again with
     different captions long after its analysis has gone."""
     work = app.config['UPLOAD_FOLDER']
@@ -635,9 +636,12 @@ def _encode_short(tag, src, info, plan, cues, opts, mp4_path, delivery_path, rep
         ok, err = sc.render_short(pipeline.FFMPEG, src, mp4_path, plan['start_f'], plan['n_frames'], info,
                                   plan['segs'], ass_name=ass_name, work_dir=work,
                                   crf=SHORTS_CRF if fmt == 'mp4_high' else min(SHORTS_CRF, SHORTS_MASTER_CRF),
-                                  preset=SHORTS_PRESET, loudness=SHORTS_LOUDNESS, true_peak=SHORTS_TRUE_PEAK,
+                                  preset=SHORTS_PRESET,
+                                  loudness=pipeline.resolve_loudness(opts.get('loudness'), SHORTS_LOUDNESS),
+                                  true_peak=SHORTS_TRUE_PEAK,
                                   timeout=pipeline.FFMPEG_LONG_TIMEOUT, ending=bool(opts.get('ending')),
-                                  ending_room=plan.get('room'))
+                                  ending_room=plan.get('room'), ending_after=plan.get('after') or 0,
+                                  audio_out=plan.get('audio_out'), audio_fade=plan.get('audio_fade'))
     except sc.ToolTimeout as e:
         ok, err = False, f'Encoding took too long and was stopped ({e}).'
     finally:
@@ -673,6 +677,7 @@ def _run_render(jid, params):
     items = [dict(it, title=it.get('title') or f'Short {n}') for n, it in enumerate(items, 1)]
     reframe = params['reframe']
     fmt = params.get('format') if params.get('format') in SHORTS_FORMATS else 'mp4_high'
+    loudness = pipeline.resolve_loudness(params.get('loudness'), SHORTS_LOUDNESS)
     fps = info['fps']
     if not os.path.exists(src):
         report(error='The source video is no longer staged on the server (staged files are '
@@ -718,7 +723,8 @@ def _run_render(jid, params):
                             'subtitle_size': params['subtitle_size'],
                             'face_detector': detector.kind if detector else None,
                             'speaker': speaker, 'ending': params.get('ending') or 'none',
-                            'format': fmt, 'format_label': pipeline.EXPORT_FORMATS[fmt]['label']},
+                            'format': fmt, 'format_label': pipeline.EXPORT_FORMATS[fmt]['label'],
+                            'loudness': loudness},
                 'numbering': 'episode',       # short N is the Nth of these moments in the episode
                 # What rendering one of these again takes (new captions on a
                 # saved short): the file it was cut from and how it reads.
@@ -729,8 +735,10 @@ def _run_render(jid, params):
 
     ending = params.get('ending') == 'cliffhanger'
     max_chars = sc.SUBTITLE_SIZES[params['subtitle_size']][1]
-    opts = {'burn': burn, 'subtitle_size': params['subtitle_size'], 'ending': ending, 'format': fmt}
+    opts = {'burn': burn, 'subtitle_size': params['subtitle_size'], 'ending': ending, 'format': fmt,
+            'loudness': loudness}
     ext = pipeline.EXPORT_FORMATS[fmt]['ext']
+    units = sc.speech_units(a['words'], a['segments']) if ending else []
     total = len(items)
     for n, it in enumerate(items, 1):
         base = 5 + 93.0 * (n - 1) / total
@@ -750,17 +758,37 @@ def _run_render(jid, params):
         # How long the clip's last shot has been on screen by its last frame:
         # the cliffhanger hold is made from the end of it, never across a cut.
         room = n_frames - max(shot_starts) if shot_starts else n_frames
-        if ending:
-            # ...and never from frames in which the pose is still changing.
-            room = sc.still_frames(src, end_f - 1, fps, room)
         t0, t1 = start_f / fps, end_f / fps
+        after, audio_out, audio_fade = 0, None, None
+        if ending:
+            # The hold is made from the frames just AFTER the out point where
+            # that can be done -- the same shot carrying on, and still -- so
+            # the moment plays to its last frame. One frame is left before
+            # the next cut: a cut list can be a frame out.
+            nxt = min((c for c in a['cut_frames'] if c >= end_f), default=None)
+            ahead = min(info['frames'] - end_f, nxt - end_f - 1 if nxt is not None else info['frames'])
+            after = sc.still_frames_after(src, end_f, fps, ahead) if ahead > 0 else 0
+            if not after:
+                # Out is on a cut, or at the end of the file: from the
+                # moment's own last frames, and never ones in which the pose
+                # is still changing.
+                room = sc.still_frames(src, end_f - 1, fps, room)
+            # The sound is not cut where the transcript says the last word
+            # ends: it is listened to, and stops where the word does.
+            nxt_word = next((s - t0 for s, _ in units if s >= t1 - 0.05), None)
+            audio_out, audio_fade, heard = sc.measure_audio_out(pipeline.FFMPEG, src, info, start_f, n_frames,
+                                                                nxt_word)
+            if heard == 'pause' and audio_out - n_frames / fps > 0.05:
+                print(f'Vertical Shorts: short {n}/{total}: last word runs '
+                      f'{audio_out - n_frames / fps:.2f}s past the out point; the sound is let finish under the hold')
         speech = ([(s - t0, e - t0) for s, e in sc.speech_units(a['words'], a['segments']) if e > t0 and s < t1]
                   if speaker else None)
         segs = sc.plan_reframe(samples, shot_starts, n_frames, info['disp_w'], info['disp_h'], crop_w,
                                mode=reframe, fps=fps, speaker=speaker, speech=speech)
         cues, edited = _item_cues(a, it, start_f / fps, end_f / fps, max_chars)
         cues = sc.place_cues(cues, segs, fps)
-        plan = {'start_f': start_f, 'n_frames': n_frames, 'segs': segs, 'room': room}
+        plan = {'start_f': start_f, 'n_frames': n_frames, 'segs': segs, 'room': room,
+                'after': after, 'audio_out': audio_out, 'audio_fade': audio_fade}
 
         name = f"{stem}_short_{n:02d}_{sc.slugify(it['title'], 40) or 'clip'}"
         out_path = os.path.join(bdir, name + '.mp4')
@@ -784,7 +812,8 @@ def _run_render(jid, params):
 
         entry = {'index': n, 'title': it['title'], 'file': name + '.mp4', 'srt': None, 'thumb': None,
                  'start': round(start_f / fps, 3), 'end': round(end_f / fps, 3),
-                 'duration': round((n_frames + (sc.cliffhanger_extra(n_frames, fps, room) if ending else 0)) / fps, 2),
+                 'duration': round((n_frames + (sc.cliffhanger_extra(n_frames, fps, room, after)
+                                               if ending else 0)) / fps, 2),
                  'size': os.path.getsize(out_path),
                  'layouts': {'crop': sum(1 for s in segs if s['layout'] == 'crop'),
                              'fit': sum(1 for s in segs if s['layout'] == 'fit'),
@@ -986,7 +1015,7 @@ def _form_num(name, default, lo, hi, cast=float):
 
 
 def _render_options(data):
-    """reframe / speaker / subtitles / subtitle_size / ending / format from a request body --
+    """reframe / speaker / subtitles / subtitle_size / ending / format / loudness from a request body --
     JSON for /render, form fields for /analyze's one-button path -- with
     anything unrecognised falling back to the default rather than failing."""
     reframe = data.get('reframe') if data.get('reframe') in ('auto', 'split', 'crop', 'fit') else 'auto'
@@ -1001,7 +1030,9 @@ def _render_options(data):
             # dead on its last beat, held, and cut to black ('cliffhanger').
             'ending': data.get('ending') if data.get('ending') in ('none', 'cliffhanger') else 'none',
             # What is handed over: MP4 unless one of the other formats is named.
-            'format': data.get('format') if data.get('format') in SHORTS_FORMATS else 'mp4_high'}
+            'format': data.get('format') if data.get('format') in SHORTS_FORMATS else 'mp4_high',
+            # How loud: this tab's usual level unless another is asked for.
+            'loudness': pipeline.resolve_loudness(data.get('loudness'), SHORTS_LOUDNESS)}
 
 
 @app.route('/api/shorts/options')
@@ -1031,8 +1062,9 @@ def api_shorts_options():
                    auto_min_story=SHORTS_AUTO_MIN_STORY,
                    formats=[{'key': k, 'label': pipeline.EXPORT_FORMATS[k]['label'],
                              'ext': pipeline.EXPORT_FORMATS[k]['ext']} for k in SHORTS_FORMATS],
+                   loudness=SHORTS_LOUDNESS, levels=pipeline.loudness_choices(SHORTS_LOUDNESS),
                    min_clip=SHORTS_MIN_CLIP, max_clip=SHORTS_MAX_CLIP,
-                   ending_seconds=round(sc.CLIFFHANGER['hold'] + sc.CLIFFHANGER['black'] - sc.CLIFFHANGER['loop'], 1))
+                   ending_seconds=round(sc.CLIFFHANGER['hold'] + sc.CLIFFHANGER['black'], 1))
 
 
 @app.route('/api/shorts/analyze', methods=['POST'])
@@ -1736,7 +1768,8 @@ def _run_recaption(jid, params):
     cues = sc.place_cues([dict(c) for c in params['cues']], plan['segs'], info['fps'])
     fmt = o.get('format') if o.get('format') in SHORTS_FORMATS else 'mp4_high'
     opts = {'burn': True, 'subtitle_size': o.get('subtitle_size') if o.get('subtitle_size') in sc.SUBTITLE_SIZES else 'm',
-            'ending': o.get('ending') == 'cliffhanger', 'format': fmt}
+            'ending': o.get('ending') == 'cliffhanger', 'format': fmt,
+            'loudness': pipeline.resolve_loudness(o.get('loudness'), SHORTS_LOUDNESS)}
     stem = os.path.splitext(s['file'])[0]
     new_mp4 = os.path.join(bdir, f'.new_{jid}_{stem}.mp4')
     delivery = s.get('delivery') if fmt != 'mp4_high' else None

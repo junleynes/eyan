@@ -1617,56 +1617,274 @@ def still_frames(src, last_frame, fps, room=None):
     want = max(1, min(want, int(room) if room else want, int(last_frame) + 1))
     if want < 2:
         return 1
+    small = _small_frames(src, int(last_frame) - want + 1, want)
+    if len(small) < 2:
+        return 1
+    return _still_run(small[-1], reversed(small[:-1]))       # walking back from the last frame
+
+
+def still_frames_after(src, first_frame, fps, room):
+    """The same question asked forwards: how many frames starting AT
+    `first_frame` are near enough the same picture as it. 0 when there are
+    none to be had (`room` is how many exist before the next cut or the end
+    of the file), 1 when the picture is moving on from there.
+
+    These are the frames just after a short's out point. Making the hold
+    from them, where they will do, means the short gives up nothing of its
+    own last moments to its ending."""
+    want = min(max(1, int(round(CLIFFHANGER['loop'] * float(fps)))), max(0, int(room or 0)))
+    if want < 1:
+        return 0
+    small = _small_frames(src, int(first_frame), want)
+    if not small:
+        return 0
+    return _still_run(small[0], small[1:])
+
+
+def _small_frames(src, first, count):
+    """`count` frames from `first`, each as a 160x90 grey picture: small
+    enough that grain and a breath all but vanish, large enough that a
+    change of pose does not."""
+    out = []
     cap = cv2.VideoCapture(src)
     try:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, int(last_frame) - want + 1)
-        small = []
-        for _ in range(want):
+        cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, int(first)))
+        for _ in range(int(count)):
             ok, frame = cap.read()
             if not ok:
                 break
-            small.append(cv2.cvtColor(cv2.resize(frame, (160, 90), interpolation=cv2.INTER_AREA),
-                                      cv2.COLOR_BGR2GRAY).astype(np.float32))
+            out.append(cv2.cvtColor(cv2.resize(frame, (160, 90), interpolation=cv2.INTER_AREA),
+                                    cv2.COLOR_BGR2GRAY).astype(np.float32))
     finally:
         cap.release()
-    if len(small) < 2:
-        return 1
+    return out
+
+
+def _still_run(anchor, others):
+    """1 for `anchor` itself, plus how many of `others` -- taken in order,
+    stopping at the first that is not -- are still the same picture."""
     keep = 1
-    for earlier in reversed(small[:-1]):                # walking back from the last frame
+    for frame in others:
         # 144 regions of 10 x 10; the three that changed most.
-        regions = np.abs(earlier - small[-1]).reshape(9, 10, 16, 10).mean(axis=(1, 3))
+        regions = np.abs(frame - anchor).reshape(9, 10, 16, 10).mean(axis=(1, 3))
         if float(np.sort(regions, axis=None)[-3:].mean()) > CLIFFHANGER['still']:
             break
         keep += 1
     return keep
 
 
-def cliffhanger_plan(n_frames, fps, room=None):
+# ---- Where the sound really ends ----
+# The out point of a moment is placed from the transcript: after its last
+# word. But a transcript's idea of where a word ends is early as a rule --
+# the tail of a vowel, a final consonant, the breath after it are all past
+# the time it gives -- and where the timings are per line rather than per
+# word it is only roughly right. Cut there and the last word is clipped. So
+# for the cliffhanger ending, which goes from sound to dead silence with
+# nothing to hide a clipped word behind, the sound itself is measured.
+ENVELOPE_HOP = 0.01         # seconds between level readings
+WORD_END = {'reach': 0.8,   # how far past the out point a word may run on and still be let finish
+            'pause': 0.08,  # seconds of quiet that count as the word being over
+            'near': 0.6,    # the next word starting within this of the out point: speech is running on
+            'back': 0.12,   # running on: how far before the out point the gap between words may be
+            'ahead': 0.3,   # ...and how far after it
+            'contrast': 9.0,    # dB between loud and quiet there must be for any of this to mean anything
+            'dip': 6.0}     # dB below the loud a gap between words must be to be taken for one
+
+
+def audio_envelope(pcm, rate, hop=ENVELOPE_HOP):
+    """Level in dB, one reading every `hop` seconds, of mono samples in
+    -1..1: RMS over a window two hops long, lightly smoothed, so a single
+    glottal pulse or the zero crossing of a low note is not a pause."""
+    x = np.asarray(pcm, dtype=np.float64)
+    step = max(1, int(round(rate * hop)))
+    n = len(x) // step
+    if n < 3:
+        return np.zeros(0)
+    power = (x[:n * step] ** 2).reshape(n, step).mean(axis=1)
+    power = np.convolve(power, np.ones(2) / 2.0, mode='same')
+    db = 10.0 * np.log10(np.maximum(power, 1e-10))
+    return np.convolve(np.pad(db, 1, mode='edge'), np.ones(3) / 3.0, mode='valid')
+
+
+def word_end(db, at, next_speech=None, hop=ENVELOPE_HOP):
+    """Where the sound under way at `at` seconds into the envelope `db`
+    comes to an end: (seconds into the envelope, kind), or None when the
+    level says nothing useful and the transcript's time has to stand.
+
+    'quiet'  nothing is sounding at `at`: it is already in a pause.
+    'pause'  a word is, and this is where it gives way to quiet. Up to
+             WORD_END['reach'] later -- the sound is let run on that far.
+    'dip'    speech is running straight on into the next line
+             (`next_speech`, seconds into the envelope, is close): there is
+             no pause to end in, so this is the gap between two words that
+             is nearest `at` -- which may be a little before it as well as
+             after. Nearest, not deepest: `at` was put where the transcript
+             has one word ending and the next beginning, and the gap wanted
+             is that one, not a deeper one a word away. (Gaps that reach
+             quiet are preferred to ones that only dip.)
+
+    Loud and quiet are judged against this stretch of sound itself, not a
+    fixed level: dialogue over a music bed never goes silent, it only drops
+    to the music. Where the two are not far enough apart to tell a word
+    from a gap (a wall of music, a crowd, nothing at all) the answer is
+    None."""
+    db = np.asarray(db, dtype=np.float64)
+    if len(db) < 20:
+        return None
+    floor, top = float(np.percentile(db, 10)), float(np.percentile(db, 95))
+    if top - floor < WORD_END['contrast']:
+        return None
+    quiet = db < floor + max(4.0, 0.3 * (top - floor))
+    i = int(round(at / hop))
+    if not 2 <= i < len(db) - 2:
+        return None
+    if quiet[i - 2:i + 3].mean() >= 0.6:
+        return at, 'quiet'
+    running = next_speech is not None and next_speech - at < WORD_END['near']
+    need = max(2, int(round(WORD_END['pause'] / hop)))
+    reach = WORD_END['reach'] if not running else min(WORD_END['reach'], max(0.15, next_speech - at + 0.1))
+    last = min(len(db) - need, i + int(round(reach / hop)))
+    for j in range(i, last + 1):
+        if quiet[j:j + need].all():
+            return round(j * hop + 0.02, 3), 'pause'
+    if not running:
+        return None                 # whatever is sounding, it is not a word that is about to finish
+    lo = max(1, i - int(round(WORD_END['back'] / hop)))
+    hi = min(len(db) - 1, i + int(round(WORD_END['ahead'] / hop)) + 1)
+    gaps = [j for j in range(lo, hi)
+            if db[j] <= db[j - 1] and db[j] <= db[j + 1] and db[j] <= top - WORD_END['dip']]
+    if not gaps:
+        return None
+    # A gap that drops right down to quiet, however briefly, is a gap
+    # between words; one that only dips may be a syllable inside one. So the
+    # quiet ones are chosen from first. Then the nearest; of two as near,
+    # the later (it keeps the whole of the word).
+    gaps = [j for j in gaps if quiet[j]] or gaps
+    j = min(gaps, key=lambda j: (abs(j - i), -j))
+    return round(j * hop, 3), 'dip'
+
+
+def read_pcm(ffmpeg, src, info, start, dur, rate=16000, timeout=60):
+    """`dur` seconds of the source's sound from `start` (seconds on the
+    clock build_render_cmd seeks by, so the two agree), as mono float
+    samples at `rate` -- the same sound a short gets: the channels the
+    dialogue was found on where that was worked out (info['audio_take']),
+    the chosen audio stream otherwise. None when there is none to read."""
+    take = info.get('audio_take')
+    if take:
+        pick = ['-filter_complex', take_to_stereo(take) + '[a]', '-map', '[a]']
+    elif info.get('audio_index') is not None:
+        pick = ['-map', f"0:a:{info['audio_index']}"]
+    else:
+        return None
+    cmd = [ffmpeg, '-hide_banner', '-nostats', '-loglevel', 'error', '-ss', f'{max(0.0, start):.6f}', '-i', src,
+           '-t', f'{dur:.3f}', '-vn'] + pick + ['-ac', '1', '-ar', str(int(rate)), '-f', 's16le', '-']
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if r.returncode != 0 or len(r.stdout) < 2:
+        return None
+    return np.frombuffer(r.stdout[:len(r.stdout) // 2 * 2], dtype='<i2').astype(np.float32) / 32768.0
+
+
+# How the sound goes once it is known where: let ring out after a word that
+# finished, taken out fast where the next word is already on its way.
+AUDIO_FADE = {'pause': 0.2, 'quiet': 0.12, 'dip': 0.05, None: 0.12}
+
+
+def measure_audio_out(ffmpeg, src, info, start_f, n_frames, next_speech=None, before=2.5):
+    """(where the sound of a short should stop, how long its fade is, how it
+    was decided) for a short of `n_frames` from `start_f`: seconds from the
+    start of the short.
+
+    Listens to the source from `before` seconds ahead of the out point to
+    past the furthest a word may run on, and asks word_end. `next_speech`
+    is when the transcript has the next word starting, in seconds from the
+    start of the short, if it has one. With nothing to go on -- no sound, a
+    read that failed, a level that says nothing -- the answer is the out
+    point itself."""
+    fps = info['fps']
+    out = n_frames / fps
+    plain = (round(out, 3), AUDIO_FADE[None], None)
+    lead = min(float(before), out)
+    clock = max(0.0, info.get('v_offset', 0.0) + (start_f - 0.25) / fps)     # as build_render_cmd seeks
+    rate = 16000
+    pcm = read_pcm(ffmpeg, src, info, clock + out - lead, lead + WORD_END['reach'] + 0.5, rate)
+    if pcm is None or len(pcm) < rate // 2:
+        return plain
+    found = word_end(audio_envelope(pcm, rate), lead,
+                     None if next_speech is None else lead + (float(next_speech) - out))
+    if not found:
+        return plain
+    at, kind = found
+    return round(out + (at - lead), 3), AUDIO_FADE[kind], kind
+
+
+def cliffhanger_plan(n_frames, fps, room=None, after=0):
     """(loop, hold, black) in whole frames for a clip of `n_frames`.
 
-    `room` is how many frames ending at the clip's last frame may be used
-    for the loop: no more than the clip's last shot has run for (frames from
-    before a cut are another picture, and blending across one would flash it
-    through the hold), and no more than are still enough (see still_frames).
-    With a single frame of room the hold is a true freeze."""
+    The hold is made from `loop` frames of footage. Where they come from is
+    the caller's choice, by what it found:
+
+    `after` > 0: that many frames just past the clip's out point are usable
+    (same shot, still enough: see still_frames_after). The hold is made from
+    them and the clip plays to its last frame first, giving up nothing.
+
+    Otherwise they are the clip's own last frames, and `room` is how many of
+    those may be used: no more than the clip's last shot has run for (frames
+    from before a cut are another picture, and blending across one would
+    flash it through the hold), and no more than are still enough (see
+    still_frames). With a single frame of room the hold is a true freeze."""
     loop = max(1, int(round(CLIFFHANGER['loop'] * float(fps))))
-    loop = max(1, min(loop, int(n_frames) - 1, int(room) if room else loop))
+    if after and int(after) > 0:
+        loop = max(1, min(loop, int(after)))
+    else:
+        loop = max(1, min(loop, int(n_frames) - 1, int(room) if room else loop))
     return loop, max(2, int(round(CLIFFHANGER['hold'] * float(fps)))), max(1, int(round(CLIFFHANGER['black'] * float(fps))))
 
 
-def cliffhanger_extra(n_frames, fps, room=None):
+def cliffhanger_stop(n_frames, fps, room=None, after=0):
+    """The frame the picture stops on: the first frame of the hold, counted
+    from the clip's first. The clip's own length when the hold is made from
+    what follows it, `loop` frames short of that when it is made from the
+    clip's own end."""
+    if after and int(after) > 0:
+        return int(n_frames)
+    return int(n_frames) - cliffhanger_plan(n_frames, fps, room)[0]
+
+
+def cliffhanger_extra(n_frames, fps, room=None, after=0):
     """How many frames longer the short is for its ending."""
-    loop, hold, black = cliffhanger_plan(n_frames, fps, room)
-    return hold + black - loop
+    _, hold, black = cliffhanger_plan(n_frames, fps, room, after)
+    return cliffhanger_stop(n_frames, fps, room, after) + hold + black - int(n_frames)
 
 
-def cliffhanger_graph(n_frames, fps, room=None, out_w=OUT_W, out_h=OUT_H, ass_name=None):
+def run_on(segs, extra):
+    """The reframing plan carried `extra` frames past its end: the last
+    shot's framing held where it finished. For the frames just after the
+    out point that the cliffhanger hold is made from, which the plan --
+    made for the clip -- says nothing about. Without it they would be
+    cropped from the left edge of the picture."""
+    if not segs or extra <= 0:
+        return segs
+    last = dict(segs[-1])
+    if last.get('keys'):
+        keys = [tuple(k) for k in last['keys']]
+        last['keys'] = keys + [(last['b'] + int(extra), keys[-1][1])]
+    last['b'] = last['b'] + int(extra)
+    return list(segs[:-1]) + [last]
+
+
+def cliffhanger_graph(n_frames, fps, room=None, out_w=OUT_W, out_h=OUT_H, ass_name=None, after=0):
     """The filters that put the ending on the finished picture of a clip of
     `n_frames`: fed the clip, they give the clip up to where the action
     stops, then the hold, then black.
 
     Counted in frames throughout. The clip is split in two at the frame the
-    action stops on. The last `loop` frames become the hold: reversed and
+    action stops on (cliffhanger_stop). The `loop` frames from there -- the
+    clip's own last ones, or with `after` the ones that follow it in the
+    source, which the graph is then fed as well -- become the hold: reversed and
     joined to themselves (forward, then back), re-timed so they span it,
     and brought back to the clip's frame rate by `framerate`, which blends
     neighbouring frames in proportion (not motion estimation, which bends
@@ -1684,14 +1902,15 @@ def cliffhanger_graph(n_frames, fps, room=None, out_w=OUT_W, out_h=OUT_H, ass_na
     and graded with the picture; after the join, it would sit ungraded over
     the first frames of the hold and then drop off a moment into it."""
     n = int(n_frames)
-    loop, hold, black = cliffhanger_plan(n, fps, room)
+    loop, hold, black = cliffhanger_plan(n, fps, room, after)
+    stop = cliffhanger_stop(n, fps, room, after)
     rate = frame_rate_arg(fps)
     spread = hold / float(2 * loop)                    # output frames per frame of the loop
     zoom = CLIFFHANGER['zoom']
     caption = f'ass={ass_name},' if ass_name else ''
     return (f"split=2[em][et];"
-            f"[em]trim=end_frame={n - loop},setpts=PTS-STARTPTS,{caption}format=yuv420p,setsar=1[ea];"
-            f"[et]trim=start_frame={n - loop}:end_frame={n},setpts=PTS-STARTPTS,split=2[ef][eq];"
+            f"[em]trim=end_frame={stop},setpts=PTS-STARTPTS,{caption}format=yuv420p,setsar=1[ea];"
+            f"[et]trim=start_frame={stop}:end_frame={stop + loop},setpts=PTS-STARTPTS,split=2[ef][eq];"
             f"[eq]reverse[er];[ef][er]concat=n=2:v=1:a=0,"
             f"setpts=N*{spread:.6f}/({rate})/TB,"
             f"framerate=fps={rate}:interp_start=0:interp_end=255:scene=100,"
@@ -1719,8 +1938,13 @@ def build_filtergraph(info, segs, out_w=OUT_W, out_h=OUT_H, ass_name=None, endin
     number of shots and whose switches are frame-exact.
 
     `ending` is (the clip's length in frames, how many frames its last shot
-    has run for by then) when it is to finish on the cliffhanger hold (see
-    cliffhanger_graph), or None."""
+    has run for by then, how many usable frames follow it) when it is to
+    finish on the cliffhanger hold (see cliffhanger_plan), or None. The
+    third may be left off: none follow."""
+    if ending:
+        ending = tuple(ending) + (0,) * (3 - len(ending))
+        if ending[2]:
+            segs = run_on(segs, cliffhanger_plan(ending[0], info['fps'], ending[1], ending[2])[0])
     disp_w, disp_h = info['disp_w'], info['disp_h']
     crop_w, crop_h = crop_geometry(disp_w, disp_h, out_w, out_h)
     pre = ['yadif=mode=send_frame:parity=auto:deint=interlaced']
@@ -1788,7 +2012,7 @@ def build_filtergraph(info, segs, out_w=OUT_W, out_h=OUT_H, ass_name=None, endin
     # clip start) and the encoder's frame slots both line up with `n`.
     # With the ending, the captions go on inside it: see cliffhanger_graph.
     if ending:
-        tail = (cliffhanger_graph(ending[0], info['fps'], ending[1], out_w, out_h, ass_name)
+        tail = (cliffhanger_graph(ending[0], info['fps'], ending[1], out_w, out_h, ass_name, ending[2])
                 + 'setpts=PTS-STARTPTS,format=yuv420p,setsar=1')
     else:
         tail = 'setpts=PTS-STARTPTS,' + (f'ass={ass_name},' if ass_name else '') + 'format=yuv420p,setsar=1'
@@ -2117,10 +2341,20 @@ def frame_rate_arg(fps):
 
 
 def build_render_cmd(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=None,
-                     crf=18, preset='medium', loudness=-14.0, true_peak=-1.5, ending=False, ending_room=None):
-    """`ending` adds the cliffhanger ending (see cliffhanger_graph);
+                     crf=18, preset='medium', loudness=-14.0, true_peak=-1.5, ending=False, ending_room=None,
+                     ending_after=0, audio_out=None, audio_fade=None):
+    """`ending` adds the cliffhanger ending (see cliffhanger_graph).
     `ending_room` is how many frames the clip's last shot has run for by
-    its last frame, when the caller knows where the cuts are."""
+    its last frame, when the caller knows where the cuts are, and
+    `ending_after` how many usable frames follow the clip (see
+    cliffhanger_plan).
+
+    `audio_out` is where, in seconds from the start of the clip, the sound
+    of that ending stops, and `audio_fade` how long it takes to go. The
+    sound is not tied to the picture: it may run on under the hold until
+    the word being spoken is finished (see word_end). Left as None it stops
+    where the picture does, which is how shorts were made before the sound
+    was measured, and how one of those is made again."""
     fps = info['fps']
     dur = n_frames / fps
     # A quarter of a frame early, so accurate seek lands on exactly start_f
@@ -2130,16 +2364,21 @@ def build_render_cmd(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_n
     # encoder then sometimes rounds it up and pads slot 0 with a duplicate
     # (measured -- which also pushes the last frame off the end).
     ss = max(0.0, info.get('v_offset', 0.0) + (start_f - 0.25) / fps)
-    graph = build_filtergraph(info, segs, ass_name=ass_name, ending=(n_frames, ending_room) if ending else None)
-    extra = cliffhanger_extra(n_frames, fps, ending_room) if ending else 0
+    graph = build_filtergraph(info, segs, ass_name=ass_name,
+                              ending=(n_frames, ending_room, ending_after) if ending else None)
+    extra = cliffhanger_extra(n_frames, fps, ending_room, ending_after) if ending else 0
     if ending:
-        # The sound stops with the action: taken out over a fifth of a second
-        # from the frame the picture stops on (cubic, so it is all but gone
-        # in half that and there is no click), and nothing after. The nothing
+        # The sound is taken out with a cubic fade (all but gone in half its
+        # length, and no click), and there is nothing after it. The nothing
         # is padding added AFTER the loudness stage, so it is digital silence
-        # and not a levelled-up noise floor.
-        stops = (n_frames - cliffhanger_plan(n_frames, fps, ending_room)[0]) / fps
-        out = CLIFFHANGER['sound']
+        # and not a levelled-up noise floor. Wherever it was asked to stop,
+        # it is silent for the last half second of the hold at least: the
+        # cut to black is a cut in the picture, not the end of a sentence.
+        _, hold, _ = cliffhanger_plan(n_frames, fps, ending_room, ending_after)
+        stop = cliffhanger_stop(n_frames, fps, ending_room, ending_after)
+        out = CLIFFHANGER['sound'] if audio_fade is None else max(0.02, float(audio_fade))
+        stops = stop / fps if audio_out is None else max(0.1, float(audio_out))
+        stops = min(stops, (stop + hold) / fps - 0.5 - out)
         polish = (f'afade=t=in:st=0:d=0.04,atrim=end={stops + out:.3f},'
                   f'afade=t=out:st={stops:.3f}:d={out:.3f}:curve=cub,'
                   f'loudnorm=I={loudness}:TP={true_peak}:LRA=11,apad=whole_dur={dur + extra / fps:.3f}')
@@ -2202,7 +2441,7 @@ def ffmpeg_error(stderr, limit=600):
 
 def render_short(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=None, work_dir=None,
                  crf=18, preset='medium', loudness=-14.0, true_peak=-1.5, timeout=900, ending=False,
-                 ending_room=None):
+                 ending_room=None, ending_after=0, audio_out=None, audio_fade=None):
     """Renders one short. Returns (ok, error_text).
 
     Runs ffmpeg with `work_dir` as its working directory and refers to the
@@ -2214,7 +2453,8 @@ def render_short(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=
     src, out_path = os.path.abspath(src), os.path.abspath(out_path)
     cmd = build_render_cmd(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=ass_name,
                            crf=crf, preset=preset, loudness=loudness, true_peak=true_peak, ending=ending,
-                           ending_room=ending_room)
+                           ending_room=ending_room, ending_after=ending_after, audio_out=audio_out,
+                           audio_fade=audio_fade)
     try:
         r = run_tool(cmd, timeout, cwd=work_dir, label='shorts render')
     except ToolTimeout:

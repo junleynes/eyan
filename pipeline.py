@@ -1856,6 +1856,40 @@ EXPORT_FORMATS = {
     'avci100i':        {'ext': 'mov', 'label': 'AVC-Intra 100i (H.264 Intra approximation)'},
 }
 
+# ---- Audio level (integrated loudness of the finished file) ----
+# Config > Production's target is the house default for promos. A schedule
+# plug and a set of shorts are each for somewhere in particular -- a feed, a
+# channel, a playout server -- so those two tabs let it be chosen per render.
+LOUDNESS_RANGE = (-30.0, -8.0)      # LUFS; outside this is a typo, not a target
+LOUDNESS_PRESETS = [(-12.0, 'loud'), (-14.0, 'online video: YouTube, TikTok, Reels'),
+                    (-16.0, 'mobile and podcasts'), (-18.0, 'quiet online'),
+                    (-23.0, 'broadcast, EBU R128'), (-24.0, 'broadcast, ATSC A/85')]
+
+
+def resolve_loudness(requested, default):
+    """A requested loudness target in LUFS, or `default` for anything that
+    is not a number in LOUDNESS_RANGE -- a stale form, a typo, nothing sent.
+    Like resolve_delivery_format: an odd value should render at the usual
+    level, not fail the render or produce something unlistenable."""
+    try:
+        v = float(requested)
+    except (TypeError, ValueError):
+        return float(default)
+    if not (math.isfinite(v) and LOUDNESS_RANGE[0] <= v <= LOUDNESS_RANGE[1]):
+        return float(default)
+    return round(v, 1)
+
+
+def loudness_choices(default):
+    """[{'value', 'label', 'default'}] for a tab's Audio level menu: the
+    presets, with `default` marked -- and added, if it is not one of them."""
+    default = round(float(default), 1)
+    rows = dict(LOUDNESS_PRESETS)
+    rows.setdefault(default, 'this server\'s setting')
+    return [{'value': v, 'label': f"{v:g} LUFS \u2014 {rows[v]}".replace('-', '\u2212', 1), 'default': v == default}
+            for v in sorted(rows, reverse=True)]
+
+
 def resolve_delivery_format(requested):
     """Validates a requested delivery-format key against EXPORT_FORMATS,
     falling back to the MP4 master rather than raising -- an unrecognised

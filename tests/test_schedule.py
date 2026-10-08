@@ -17,6 +17,7 @@ What has to hold from an editor's side:
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -196,6 +197,22 @@ def test_render_refuses_bad_requests_before_starting_a_job(env, monkeypatch):
     p = started[0][1]
     assert (p['duration'], p['format'], p['orig_name'], p['music']) == (20, 'mp4_high', 'Primetime_Week_42.psd', None)
     assert p['prompt'].startswith('wipe in x') and len(p['prompt']) == 600
+    # Levelled to Config > Production's target unless another level is chosen for this plug.
+    assert p['loudness'] == -14.0
+    for asked, got in (('-23', -23.0), ('-24.0', -24.0), ('-16.04', -16.0), ('loud', -14.0), ('', -14.0), ('3', -14.0), ('-99', -14.0)):
+        post(duration='20', schedule_image_network=env['psd'], loudness=asked)
+        assert started[-1][1]['loudness'] == got, asked
+    monkeypatch.setattr(pipeline, 'load_production_defaults',
+                        lambda real=pipeline.load_production_defaults: dict(real(), target_loudness=-24.0))
+    post(duration='20', schedule_image_network=env['psd'])
+    post(duration='20', schedule_image_network=env['psd'], loudness='-14')
+    assert [a[1]['loudness'] for a in started[-2:]] == [-24.0, -14.0], 'the house target is only where it starts'
+    levels = client.get('/api/schedule/options').get_json()['levels']
+    assert [l['value'] for l in levels if l['default']] == [-24.0] and len(levels) == 6
+    monkeypatch.setattr(pipeline, 'load_production_defaults',
+                        lambda real=pipeline.load_production_defaults: dict(real(), target_loudness=-20.5))
+    levels = client.get('/api/schedule/options').get_json()['levels']
+    assert [(l['value'], 'this server' in l['label']) for l in levels if l['default']] == [(-20.5, True)] and len(levels) == 7
     # Filed as a schedule plug job: not one of the episodic plug tab's.
     jid = r.get_json()['job_id']
     assert pipeline.job_get(jid)['kind'] == 'schedule'
@@ -225,6 +242,7 @@ def test_layered_psd_with_music_and_the_example_prompt_end_to_end(env, artwork):
         'wipe_mix', 'Wipe reveal + grow, rotate left, rotate right (mixed)'), 'the default style'
     assert plug['roles'] == ['background', 'decor', 'content', 'content', 'content'] and plug['text_motion'] == 'hold'
     assert plug['read_by'] == 'built-in' and plug['music'] == 'bed.wav' and plug['notes'] == []
+    assert plug['loudness'] == -14.0, 'what its music was levelled to: the house target, nothing else having been asked for'
     assert plug['preview_url'] is None, 'an MP4 plays in the browser as it is'
 
     pdir = os.path.join(schedule.SCHEDULE_DIR, plug['plug_id'])
@@ -266,6 +284,29 @@ def test_layered_psd_with_music_and_the_example_prompt_end_to_end(env, artwork):
     assert len(admin.get('/api/schedule/items').get_json()['items']) == 1, 'an admin sees everyone\'s'
     assert client.delete(f"/api/schedule/items/{plug['plug_id']}", headers=headers).get_json() == {'ok': True}
     assert os.listdir(schedule.SCHEDULE_DIR) == [] and client.get(plug['url']).status_code == 404
+
+
+def _lufs(path):
+    r = subprocess.run(['ffmpeg', '-hide_banner', '-nostats', '-i', str(path), '-af', 'ebur128', '-f', 'null', '-'],
+                       capture_output=True, text=True, timeout=120)
+    return float(re.findall(r'I:\s*(-?[\d.]+) LUFS', r.stderr)[-1])
+
+
+def test_a_plug_can_be_levelled_for_where_it_is_going(env, artwork):
+    client, headers = _client()
+    quiet = _render(client, headers, schedule_image_network=env['png'], schedule_music_network=env['music'],
+                    duration='10', loudness='-23')['result']['plug']
+    usual = _render(client, headers, schedule_image_network=env['png'], schedule_music_network=env['music'],
+                    duration='10')['result']['plug']
+    assert quiet['loudness'] == -23.0 and usual['loudness'] == -14.0
+    lq = _lufs(os.path.join(schedule.SCHEDULE_DIR, quiet['plug_id'], quiet['file']))
+    lu = _lufs(os.path.join(schedule.SCHEDULE_DIR, usual['plug_id'], usual['file']))
+    assert abs(lq - -23.0) < 1.5 and abs(lu - -14.0) < 1.5 and 7.5 < lu - lq < 10.5, (lq, lu)
+    # With no music there is nothing to level, and the plug does not claim a level.
+    silent = _render(client, headers, schedule_image_network=env['png'], duration='10', loudness='-23')['result']['plug']
+    assert silent['loudness'] is None and silent['music'] is None
+    saved = client.get('/api/schedule/items').get_json()['items']
+    assert sorted(str(p['loudness']) for p in saved) == ['-14.0', '-23.0', 'None']
 
 
 def test_flat_image_no_music_prores_at_its_own_frame_rate_with_a_browser_preview(env, artwork):

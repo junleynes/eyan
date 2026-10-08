@@ -78,6 +78,7 @@ def _public(m):
     pid = m['plug_id']
     return {'plug_id': pid, 'title': m.get('title'), 'created': m.get('created'), 'username': m.get('username'),
             'duration': m.get('duration'), 'format': m.get('format'), 'format_label': m.get('format_label'),
+            'loudness': m.get('loudness'),
             'size': m.get('size'), 'file': m.get('file'), 'layers': m.get('layers'), 'layered': m.get('layered'),
             'prompt': m.get('prompt'), 'animation': m.get('animation'), 'read_by': m.get('read_by'),
             'style': m.get('style'), 'style_label': m.get('style_label'),
@@ -157,6 +158,7 @@ def _run(jid, params):
     work = app.config['UPLOAD_FOLDER']
     master = os.path.join(work, f'schedmaster_{jid}.mov')
     prod = pipeline.load_production_defaults()
+    loudness = pipeline.resolve_loudness(params.get('loudness'), prod.get('target_loudness', -14.0))
     fps = sk.fps_for(fmt)
 
     def drawing(done, total):
@@ -166,7 +168,7 @@ def _run(jid, params):
         animator = sk.Animator(art, timeline, recipe, duration)
         try:
             sk.encode(animator, master, fps, duration, ffmpeg=pipeline.FFMPEG, music_path=params.get('music'),
-                      loudness=float(prod.get('target_loudness', -14.0)), true_peak=float(prod.get('true_peak', -1.5)),
+                      loudness=loudness, true_peak=float(prod.get('true_peak', -1.5)),
                       progress=drawing, timeout=pipeline.FFMPEG_LONG_TIMEOUT)
         except sk.EncodeError as e:
             report(error=f'The plug could not be encoded: {e}')
@@ -213,6 +215,7 @@ def _run(jid, params):
                     'roles': roles, 'text_motion': recipe.get('content'),
                     'page_of': pages, 'pages': art['pages'],
                     'animation': animation, 'read_by': read_by, 'music': params.get('music_name'),
+                    'loudness': loudness if params.get('music') else None,
                     'fps': f'{fps[0]}/{fps[1]}', 'notes': notes}
         _write_manifest(pdir, manifest)
         report(percent=100, step='Done', done=True, result={'plug': _public(manifest)})
@@ -264,6 +267,12 @@ def _spawn(fn, *args, **kwargs):
 # Routes
 # --------------------------------------------------------------------------
 
+def _house_loudness():
+    """Config > Production's loudness target: what a plug's music is
+    levelled to unless another level is chosen for that plug."""
+    return float(pipeline.load_production_defaults().get('target_loudness', -14.0))
+
+
 @app.route('/api/schedule/options')
 @require_permission('schedule_plug')
 def api_schedule_options():
@@ -274,6 +283,7 @@ def api_schedule_options():
         psd = False
     return jsonify(ok=True, durations=list(sk.DURATIONS),
                    formats=[{'key': k, 'label': v['label']} for k, v in pipeline.EXPORT_FORMATS.items()],
+                   loudness=_house_loudness(), levels=pipeline.loudness_choices(_house_loudness()),
                    styles=[{'key': k, 'label': label} for k, label, _ in sk.STYLES], default_style=sk.DEFAULT_STYLE,
                    text_motions=[{'key': k, 'label': label} for k, label in sk.CONTENT_MODES],
                    default_text_motion=sk.DEFAULT_CONTENT,
@@ -320,6 +330,7 @@ def api_schedule_render():
     params = {'image': image, 'orig_name': orig, 'music': music,
               'music_name': (original('schedule_music', music) if music else None),
               'duration': duration, 'format': fmt, 'style': style, 'content': content,
+              'loudness': pipeline.resolve_loudness(request.form.get('loudness'), _house_loudness()),
               'prompt': ' '.join((request.form.get('prompt') or '').split())[:600],
               'user_id': session.get('user_id'), 'username': session.get('username')}
     jid = pipeline.job_new(user_id=session.get('user_id'), username=session.get('username'), kind='schedule')
