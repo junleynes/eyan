@@ -88,6 +88,9 @@ SHORTS_PRESET = os.environ.get('SHORTS_PRESET', 'medium')
 # to a broadcast target plays noticeably quiet next to everything else in a
 # social feed, where -14 LUFS is the norm.
 SHORTS_LOUDNESS = _env_num('SHORTS_LOUDNESS', -14.0)
+# How long the cliffhanger ending holds on its last picture before the cut to
+# black, in seconds: the form's starting value, which an editor can change per render.
+SHORTS_CLIFF_HOLD = sc.clamp_hold(_env_num('SHORTS_CLIFF_HOLD', sc.CLIFFHANGER['hold'])) or sc.CLIFFHANGER['hold']
 SHORTS_TRUE_PEAK = _env_num('SHORTS_TRUE_PEAK', -1.5)
 SHORTS_SUB_FONT = os.environ.get('SHORTS_SUB_FONT', 'Arial')
 SHORTS_FACE_MODEL = os.environ.get('SHORTS_FACE_MODEL', '')
@@ -1167,6 +1170,13 @@ def _parse_captions(raw, label, duration):
     return {'start': start, 'end': end, 'cues': cues}, None
 
 
+def _kept_sfx(bdir, options):
+    """A batch's ending sound effect, as kept beside its shorts, for rendering one of them again."""
+    fx = (options or {}).get('ending_sfx') or {}
+    path = os.path.join(bdir, os.path.basename(fx.get('file') or '')) if fx.get('file') else None
+    return {'path': path, 'gain': fx.get('gain') or 0.0} if path and os.path.isfile(path) else None
+
+
 def _encode_short(tag, src, info, plan, cues, opts, mp4_path, delivery_path, report=None):
     """Renders one short to `mp4_path` and, for a delivery format other than
     MP4, makes `delivery_path` from it. (ok, error).
@@ -1192,7 +1202,8 @@ def _encode_short(tag, src, info, plan, cues, opts, mp4_path, delivery_path, rep
                                   true_peak=SHORTS_TRUE_PEAK,
                                   timeout=pipeline.FFMPEG_LONG_TIMEOUT, ending=bool(opts.get('ending')),
                                   ending_room=plan.get('room'), ending_after=plan.get('after') or 0,
-                                  audio_out=plan.get('audio_out'), audio_fade=plan.get('audio_fade'))
+                                  audio_out=plan.get('audio_out'), audio_fade=plan.get('audio_fade'),
+                                  ending_hold=opts.get('ending_hold'), ending_sfx=opts.get('ending_sfx'))
     except sc.ToolTimeout as e:
         ok, err = False, f'Encoding took too long and was stopped ({e}).'
     finally:
@@ -1268,6 +1279,16 @@ def _run_render(jid, params):
     bdir = os.path.join(SHORTS_DIR, bid)
     os.makedirs(bdir, exist_ok=True)
     params['_batch_dir'] = bdir
+    # The ending's sound effect is kept with the batch: a short can be rendered again (new
+    # captions) long after the staged copy it was picked as has been cleared away.
+    sfx_kept = None
+    if params.get('ending') == 'cliffhanger' and params.get('ending_sfx'):
+        sfx_kept = 'ending_sfx' + os.path.splitext(params['ending_sfx']['path'])[1].lower()
+        try:
+            shutil.copy(params['ending_sfx']['path'], os.path.join(bdir, sfx_kept))
+        except OSError as e:
+            sfx_kept = None
+            warnings.append(f'The ending sound effect could not be used ({e}); the shorts have no sound on their ending.')
     stem = sc.slugify(os.path.splitext(a['orig_name'] or '')[0], 40) or 'video'
     manifest = {'batch_id': bid, 'created': time.time(), 'user_id': params.get('user_id'),
                 'username': params.get('username'), 'orig_name': a['orig_name'], 'status': 'rendering',
@@ -1279,6 +1300,9 @@ def _run_render(jid, params):
                             'subtitle_size': params['subtitle_size'],
                             'face_detector': detector.kind if detector else None,
                             'speaker': speaker, 'ending': params.get('ending') or 'none',
+                            'ending_hold': params.get('ending_hold') if params.get('ending') == 'cliffhanger' else None,
+                            'ending_sfx': ({'file': sfx_kept, 'name': params['ending_sfx']['name'],
+                                            'gain': params['ending_sfx']['gain']} if sfx_kept else None),
                             'format': fmt, 'format_label': pipeline.EXPORT_FORMATS[fmt]['label'],
                             'loudness': loudness},
                 'numbering': 'episode',       # short N is the Nth of these moments in the episode
@@ -1292,7 +1316,9 @@ def _run_render(jid, params):
     ending = params.get('ending') == 'cliffhanger'
     max_chars = sc.SUBTITLE_SIZES[params['subtitle_size']][1]
     opts = {'burn': burn, 'subtitle_size': params['subtitle_size'], 'ending': ending, 'format': fmt,
-            'loudness': loudness}
+            'loudness': loudness, 'ending_hold': params.get('ending_hold') if ending else None,
+            'ending_sfx': ({'path': os.path.join(bdir, sfx_kept), 'gain': params['ending_sfx']['gain']}
+                           if sfx_kept else None)}
     ext = pipeline.EXPORT_FORMATS[fmt]['ext']
     total = len(items)
     unit_cache = {}
@@ -1375,7 +1401,7 @@ def _run_render(jid, params):
 
         entry = {'index': n, 'title': it['title'], 'file': name + '.mp4', 'srt': None, 'thumb': None,
                  'start': round(start_f / fps + off, 3), 'end': round(end_f / fps + off, 3),
-                 'duration': round((n_frames + (sc.cliffhanger_extra(n_frames, fps, room, after)
+                 'duration': round((n_frames + (sc.cliffhanger_extra(n_frames, fps, room, after, params.get('ending_hold'))
                                                if ending else 0)) / fps, 2),
                  'size': os.path.getsize(out_path),
                  'layouts': {'crop': sum(1 for s in segs if s['layout'] == 'crop'),
@@ -1635,6 +1661,28 @@ def _form_num(name, default, lo, hi, cast=float):
     return max(lo, min(hi, v))
 
 
+def _num_or(v, default):
+    try:
+        v = float(v)
+        return v if v == v else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _resolve_ending_sfx(opts):
+    """The ending's sound effect as {'path', 'name', 'gain'} (or None), or an error to show.
+    It is a file picked from the SFX folder with Browse library: only a name that this
+    server staged itself is accepted, never a path."""
+    name = opts.get('ending_sfx_name')
+    if opts.get('ending') != 'cliffhanger' or not name:
+        return None, None
+    path = pipeline.staged_path(name)
+    ext = os.path.splitext(name)[1].lower().lstrip('.')
+    if not name.startswith('net_') or ext not in pipeline.AUDIO_EXTENSIONS or not os.path.isfile(path):
+        return None, 'The ending sound effect is no longer available -- pick it again.'
+    return {'path': path, 'name': re.sub(r'^net_\d+_', '', name), 'gain': opts.get('ending_sfx_gain') or 0.0}, None
+
+
 def _render_options(data):
     """reframe / speaker / subtitles / subtitle_size / ending / format / loudness from a request body --
     JSON for /render, form fields for /analyze's one-button path -- with
@@ -1650,6 +1698,11 @@ def _render_options(data):
             # How each short finishes: on its last frame ('none'), or stopped
             # dead on its last beat, held, and cut to black ('cliffhanger').
             'ending': data.get('ending') if data.get('ending') in ('none', 'cliffhanger') else 'none',
+            # ...for this long (seconds), and with this sound effect (a file picked from the
+            # SFX folder, by its staged name) coming in as the action stops, this many dB up or down.
+            'ending_hold': sc.clamp_hold(data.get('ending_hold')) or SHORTS_CLIFF_HOLD,
+            'ending_sfx_name': os.path.basename(str(data.get('ending_sfx') or '').strip()),
+            'ending_sfx_gain': max(-30.0, min(6.0, _num_or(data.get('ending_sfx_gain'), 0.0))),
             # What is handed over: MP4 unless one of the other formats is named.
             'format': data.get('format') if data.get('format') in SHORTS_FORMATS else 'mp4_high',
             # How loud: this tab's usual level unless another is asked for.
@@ -1687,7 +1740,9 @@ def api_shorts_options():
                              'ext': pipeline.EXPORT_FORMATS[k]['ext']} for k in SHORTS_FORMATS],
                    loudness=SHORTS_LOUDNESS, levels=pipeline.loudness_choices(SHORTS_LOUDNESS),
                    min_clip=SHORTS_MIN_CLIP, max_clip=SHORTS_MAX_CLIP,
-                   ending_seconds=round(sc.CLIFFHANGER['hold'] + sc.CLIFFHANGER['black'], 1))
+                   ending_seconds=round(SHORTS_CLIFF_HOLD + sc.CLIFFHANGER['black'], 1),
+                   ending_hold=SHORTS_CLIFF_HOLD, ending_hold_range=list(sc.CLIFF_HOLD_RANGE),
+                   ending_black=sc.CLIFFHANGER['black'])
 
 
 @app.route('/api/shorts/analyze', methods=['POST'])
@@ -1737,6 +1792,9 @@ def api_shorts_analyze():
         # "Generate without preview": the render options travel with the
         # request, since there is no review step to choose them at.
         params['render'] = _render_options(request.form)
+        params['render']['ending_sfx'], sfx_err = _resolve_ending_sfx(params['render'])
+        if sfx_err:
+            return jsonify(error=sfx_err), 400
         jid = _start_job('auto', _run_auto, params, f'{orig_name} (vertical shorts: analysis + render)',
                          after=_settle_auto)
     else:
@@ -2302,6 +2360,9 @@ def api_shorts_render():
     items = [dict(it, title=it['title'] or f'Short {k}') for k, it in enumerate(items, 1)]
     params = dict(_render_options(data), analysis=a, analysis_id=str(data.get('analysis_id')).strip(), items=items,
                   user_id=session.get('user_id'), username=session.get('username'))
+    params['ending_sfx'], sfx_err = _resolve_ending_sfx(params)
+    if sfx_err:
+        return jsonify(error=sfx_err), 400
     jid = _start_job('render', _run_render, params, f"{a['orig_name']} (vertical shorts: {len(items)} to render)",
                      after=_settle_batch)
     return jsonify(job_id=jid)
@@ -2764,6 +2825,8 @@ def _run_recaption(jid, params):
     fmt = o.get('format') if o.get('format') in SHORTS_FORMATS else 'mp4_high'
     opts = {'burn': True, 'subtitle_size': o.get('subtitle_size') if o.get('subtitle_size') in sc.SUBTITLE_SIZES else 'm',
             'ending': o.get('ending') == 'cliffhanger', 'format': fmt,
+            'ending_hold': o.get('ending_hold'),
+            'ending_sfx': _kept_sfx(bdir, o),
             'loudness': pipeline.resolve_loudness(o.get('loudness'), SHORTS_LOUDNESS)}
     stem = os.path.splitext(s['file'])[0]
     new_mp4 = os.path.join(bdir, f'.new_{jid}_{stem}.mp4')

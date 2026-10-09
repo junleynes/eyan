@@ -2457,6 +2457,21 @@ def fitted_crop_x_expr(segs):
 CLIFFHANGER = {'loop': 0.16, 'hold': 2.0, 'zoom': 0.03, 'black': 0.4, 'sound': 0.2, 'still': 4.0}
 # The look of the hold: contrast up, colour pulled back, shadows toward teal
 # and highlights toward amber, the corners a little darker.
+# How long the hold may be asked to last, in seconds.
+CLIFF_HOLD_RANGE = (0.5, 8.0)
+
+
+def clamp_hold(seconds):
+    """A hold length asked for, kept within CLIFF_HOLD_RANGE; None (or nonsense) means the default."""
+    try:
+        v = float(seconds)
+    except (TypeError, ValueError):
+        return None
+    if v != v:
+        return None
+    return max(CLIFF_HOLD_RANGE[0], min(CLIFF_HOLD_RANGE[1], v))
+
+
 CLIFFHANGER_GRADE = ('eq=contrast=1.12:saturation=0.82:brightness=0.02,'
                      'colorbalance=rs=-0.07:bs=0.09:rm=0.02:bm=-0.02:rh=0.08:bh=-0.09,'
                      'vignette=angle=PI/10')
@@ -2842,7 +2857,7 @@ def measure_audio_out(ffmpeg, src, info, start_f, n_frames, next_speech=None, be
     return round(out + (at - lead), 3), AUDIO_FADE[kind], kind
 
 
-def cliffhanger_plan(n_frames, fps, room=None, after=0):
+def cliffhanger_plan(n_frames, fps, room=None, after=0, hold_s=None):
     """(loop, hold, black) in whole frames for a clip of `n_frames`.
 
     The hold is made from `loop` frames of footage. Where they come from is
@@ -2856,13 +2871,19 @@ def cliffhanger_plan(n_frames, fps, room=None, after=0):
     those may be used: no more than the clip's last shot has run for (frames
     from before a cut are another picture, and blending across one would
     flash it through the hold), and no more than are still enough (see
-    still_frames). With a single frame of room the hold is a true freeze."""
+    still_frames). With a single frame of room the hold is a true freeze.
+
+    `hold_s` is how long the hold lasts in seconds, where the editor chose
+    one; otherwise CLIFFHANGER['hold']."""
+    hold_s = clamp_hold(hold_s)
+    if hold_s is None:
+        hold_s = CLIFFHANGER['hold']
     loop = max(1, int(round(CLIFFHANGER['loop'] * float(fps))))
     if after and int(after) > 0:
         loop = max(1, min(loop, int(after)))
     else:
         loop = max(1, min(loop, int(n_frames) - 1, int(room) if room else loop))
-    return loop, max(2, int(round(CLIFFHANGER['hold'] * float(fps)))), max(1, int(round(CLIFFHANGER['black'] * float(fps))))
+    return loop, max(2, int(round(hold_s * float(fps)))), max(1, int(round(CLIFFHANGER['black'] * float(fps))))
 
 
 def cliffhanger_stop(n_frames, fps, room=None, after=0):
@@ -2875,9 +2896,9 @@ def cliffhanger_stop(n_frames, fps, room=None, after=0):
     return int(n_frames) - cliffhanger_plan(n_frames, fps, room)[0]
 
 
-def cliffhanger_extra(n_frames, fps, room=None, after=0):
+def cliffhanger_extra(n_frames, fps, room=None, after=0, hold_s=None):
     """How many frames longer the short is for its ending."""
-    _, hold, black = cliffhanger_plan(n_frames, fps, room, after)
+    _, hold, black = cliffhanger_plan(n_frames, fps, room, after, hold_s)
     return cliffhanger_stop(n_frames, fps, room, after) + hold + black - int(n_frames)
 
 
@@ -2897,7 +2918,7 @@ def run_on(segs, extra):
     return list(segs[:-1]) + [last]
 
 
-def cliffhanger_graph(n_frames, fps, room=None, out_w=OUT_W, out_h=OUT_H, ass_name=None, after=0):
+def cliffhanger_graph(n_frames, fps, room=None, out_w=OUT_W, out_h=OUT_H, ass_name=None, after=0, hold_s=None):
     """The filters that put the ending on the finished picture of a clip of
     `n_frames`: fed the clip, they give the clip up to where the action
     stops, then the hold, then black.
@@ -2923,7 +2944,7 @@ def cliffhanger_graph(n_frames, fps, room=None, out_w=OUT_W, out_h=OUT_H, ass_na
     and graded with the picture; after the join, it would sit ungraded over
     the first frames of the hold and then drop off a moment into it."""
     n = int(n_frames)
-    loop, hold, black = cliffhanger_plan(n, fps, room, after)
+    loop, hold, black = cliffhanger_plan(n, fps, room, after, hold_s)
     stop = cliffhanger_stop(n, fps, room, after)
     rate = frame_rate_arg(fps)
     spread = hold / float(2 * loop)                    # output frames per frame of the loop
@@ -2963,7 +2984,7 @@ def build_filtergraph(info, segs, out_w=OUT_W, out_h=OUT_H, ass_name=None, endin
     finish on the cliffhanger hold (see cliffhanger_plan), or None. The
     third may be left off: none follow."""
     if ending:
-        ending = tuple(ending) + (0,) * (3 - len(ending))
+        ending = tuple(ending) + (0,) * (3 - len(ending)) + (None,) * max(0, 4 - max(3, len(ending)))
         if ending[2]:
             segs = run_on(segs, cliffhanger_plan(ending[0], info['fps'], ending[1], ending[2])[0])
     disp_w, disp_h = info['disp_w'], info['disp_h']
@@ -3033,7 +3054,7 @@ def build_filtergraph(info, segs, out_w=OUT_W, out_h=OUT_H, ass_name=None, endin
     # clip start) and the encoder's frame slots both line up with `n`.
     # With the ending, the captions go on inside it: see cliffhanger_graph.
     if ending:
-        tail = (cliffhanger_graph(ending[0], info['fps'], ending[1], out_w, out_h, ass_name, ending[2])
+        tail = (cliffhanger_graph(ending[0], info['fps'], ending[1], out_w, out_h, ass_name, ending[2], ending[3])
                 + 'setpts=PTS-STARTPTS,format=yuv420p,setsar=1')
     else:
         tail = 'setpts=PTS-STARTPTS,' + (f'ass={ass_name},' if ass_name else '') + 'format=yuv420p,setsar=1'
@@ -3363,8 +3384,13 @@ def frame_rate_arg(fps):
 
 def build_render_cmd(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=None,
                      crf=18, preset='medium', loudness=-14.0, true_peak=-1.5, ending=False, ending_room=None,
-                     ending_after=0, audio_out=None, audio_fade=None, out_w=OUT_W, out_h=OUT_H):
+                     ending_after=0, audio_out=None, audio_fade=None, out_w=OUT_W, out_h=OUT_H,
+                     ending_hold=None, ending_sfx=None):
     """`ending` adds the cliffhanger ending (see cliffhanger_graph).
+    `ending_hold` is how many seconds the hold lasts (default CLIFFHANGER['hold']).
+    `ending_sfx` is {'path', 'gain'} -- a sound effect that comes in at the
+    moment the action stops, `gain` dB up or down, and goes out with the
+    black; it is mixed in after the dialogue has been levelled, then limited."
     `out_w` x `out_h` is the picture size: the full 1080x1920 unless a
     small preview of the framing is wanted.
     `ending_room` is how many frames the clip's last shot has run for by
@@ -3388,8 +3414,9 @@ def build_render_cmd(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_n
     # (measured -- which also pushes the last frame off the end).
     ss = max(0.0, info.get('v_offset', 0.0) + (start_f - 0.25) / fps)
     graph = build_filtergraph(info, segs, out_w, out_h, ass_name=ass_name,
-                              ending=(n_frames, ending_room, ending_after) if ending else None)
-    extra = cliffhanger_extra(n_frames, fps, ending_room, ending_after) if ending else 0
+                              ending=(n_frames, ending_room, ending_after, ending_hold) if ending else None)
+    extra = cliffhanger_extra(n_frames, fps, ending_room, ending_after, ending_hold) if ending else 0
+    sfx_chain = None
     if ending:
         # The sound is taken out with a cubic fade (all but gone in half its
         # length, and no click), and there is nothing after it. The nothing
@@ -3397,7 +3424,7 @@ def build_render_cmd(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_n
         # and not a levelled-up noise floor. Wherever it was asked to stop,
         # it is silent for the last half second of the hold at least: the
         # cut to black is a cut in the picture, not the end of a sentence.
-        _, hold, _ = cliffhanger_plan(n_frames, fps, ending_room, ending_after)
+        _, hold, _ = cliffhanger_plan(n_frames, fps, ending_room, ending_after, ending_hold)
         stop = cliffhanger_stop(n_frames, fps, ending_room, ending_after)
         out = CLIFFHANGER['sound'] if audio_fade is None else max(0.02, float(audio_fade))
         stops = stop / fps if audio_out is None else max(0.1, float(audio_out))
@@ -3405,19 +3432,41 @@ def build_render_cmd(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_n
         polish = (f'afade=t=in:st=0:d=0.04,atrim=end={stops + out:.3f},'
                   f'afade=t=out:st={stops:.3f}:d={out:.3f}:curve=cub,'
                   f'loudnorm=I={loudness}:TP={true_peak}:LRA=11,apad=whole_dur={dur + extra / fps:.3f}')
+        if ending_sfx and ending_sfx.get('path'):
+            total = dur + extra / fps
+            begins = stop / fps                         # the instant the action stops
+            room_s = max(0.2, total - begins)
+            ramp = min(0.25, room_s / 2)
+            ms = int(round(begins * 1000))
+            gain = max(-40.0, min(12.0, float(ending_sfx.get('gain') or 0.0)))
+            sfx_chain = (f'[1:a]aresample=48000,aformat=channel_layouts=stereo,volume={gain:.1f}dB,'
+                         f'atrim=end={room_s:.3f},afade=t=out:st={max(0.0, room_s - ramp):.3f}:d={ramp:.3f},'
+                         f'adelay={ms}|{ms},apad=whole_dur={total:.3f}')
     else:
         fade_out = max(0.0, dur - 0.12)
         polish = (f'afade=t=in:st=0:d=0.04,afade=t=out:st={fade_out:.3f}:d=0.12,'
                   f'loudnorm=I={loudness}:TP={true_peak}:LRA=11')
     take = info.get('audio_take')
+    mix = ('[am][sfx]amix=inputs=2:normalize=0:duration=first:dropout_transition=0,alimiter=limit=0.95[aout]')
     if take:
         # The channels the dialogue was found on (see take_to_stereo), not
         # whichever stream ffmpeg would pick.
-        graph += f';{take_to_stereo(take)},{polish}[aout]'
+        if sfx_chain:
+            graph += f';{take_to_stereo(take)},{polish}[am];{sfx_chain}[sfx];{mix}'
+        else:
+            graph += f';{take_to_stereo(take)},{polish}[aout]'
+    elif sfx_chain:
+        if info.get('audio_index') is not None:
+            graph += f";[0:a:{info['audio_index']}]{polish}[am];{sfx_chain}[sfx];{mix}"
+        else:
+            graph += f';{sfx_chain}[aout]'            # a silent source: the effect alone
     cmd = [ffmpeg, '-y', '-hide_banner', '-nostats', '-loglevel', 'error',
-           '-ss', f'{ss:.6f}', '-i', src, '-t', f'{dur + extra / fps:.6f}', '-frames:v', str(int(n_frames) + extra),
-           '-filter_complex', graph, '-map', '[vout]']
-    if take:
+           '-ss', f'{ss:.6f}', '-i', src]
+    if sfx_chain:
+        cmd += ['-i', ending_sfx['path']]
+    cmd += ['-t', f'{dur + extra / fps:.6f}', '-frames:v', str(int(n_frames) + extra),
+            '-filter_complex', graph, '-map', '[vout]']
+    if take or sfx_chain:
         cmd += ['-map', '[aout]', '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2']
     elif info.get('audio_index') is not None:
         cmd += ['-map', f"0:a:{info['audio_index']}", '-af', polish,
@@ -3464,7 +3513,8 @@ def ffmpeg_error(stderr, limit=600):
 
 def render_short(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=None, work_dir=None,
                  crf=18, preset='medium', loudness=-14.0, true_peak=-1.5, timeout=900, ending=False,
-                 ending_room=None, ending_after=0, audio_out=None, audio_fade=None, out_w=OUT_W, out_h=OUT_H):
+                 ending_room=None, ending_after=0, audio_out=None, audio_fade=None, out_w=OUT_W, out_h=OUT_H,
+                 ending_hold=None, ending_sfx=None):
     """Renders one short. Returns (ok, error_text).
 
     Runs ffmpeg with `work_dir` as its working directory and refers to the
@@ -3477,7 +3527,8 @@ def render_short(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=
     cmd = build_render_cmd(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=ass_name,
                            crf=crf, preset=preset, loudness=loudness, true_peak=true_peak, ending=ending,
                            ending_room=ending_room, ending_after=ending_after, audio_out=audio_out,
-                           audio_fade=audio_fade, out_w=out_w, out_h=out_h)
+                           audio_fade=audio_fade, out_w=out_w, out_h=out_h, ending_hold=ending_hold,
+                           ending_sfx=ending_sfx)
     try:
         r = run_tool(cmd, timeout, cwd=work_dir, label='shorts render')
     except ToolTimeout:

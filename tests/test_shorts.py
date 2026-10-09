@@ -721,7 +721,7 @@ def test_generate_without_preview_analyses_then_renders_everything_as_one_job(en
     assert [(s['start'], s['end']) for s in batch['shorts']] == \
         [(round(c['start'] * 25) / 25, round(c['end'] * 25) / 25) for c in a['candidates']]
     assert batch['options'] == {'reframe': 'fit', 'subtitles': False, 'subtitle_size': 'l', 'face_detector': None,
-                                'speaker': False, 'ending': 'none', 'format': 'mp4_high',
+                                'speaker': False, 'ending': 'none', 'ending_hold': None, 'ending_sfx': None, 'format': 'mp4_high',
                                 'format_label': 'MP4 (H.264 High Profile)', 'loudness': -14.0}, \
         'the Output settings sent with the request'
     assert all(s['layouts']['fit'] >= 1 and s['layouts']['crop'] == 0 for s in batch['shorts'])
@@ -2950,3 +2950,105 @@ def test_an_episode_read_in_place_is_analysed_and_rendered_where_it_is_and_never
     assert os.path.exists(src) and int(os.path.getmtime(src)) == 1_600_000_000, 'the share file is never touched'
     pipeline.INPLACE.pop(staged, None)
     pipeline.INPLACE_ORIGINS.pop(src, None)
+
+
+# --------------------------------------------------------------------------
+# The cliffhanger: how long it holds, and a sound effect on it
+# --------------------------------------------------------------------------
+
+def test_the_cliffhanger_hold_can_be_any_length_asked_for():
+    fps, n = 25.0, 75
+    assert sc.cliffhanger_plan(n, fps)[1] == 50 and sc.cliffhanger_plan(n, fps, hold_s=None)[1] == 50
+    assert sc.cliffhanger_plan(n, fps, hold_s=3.0)[1] == 75
+    assert sc.cliffhanger_extra(n, fps, None, 4, 3.0) - sc.cliffhanger_extra(n, fps, None, 4) == 25
+    # Kept within what looks like a hold, and nonsense means the default.
+    assert sc.cliffhanger_plan(n, fps, hold_s=0.01)[1] == 12 and sc.cliffhanger_plan(n, fps, hold_s=99)[1] == 200
+    assert sc.cliffhanger_plan(n, fps, hold_s='x')[1] == 50 and sc.cliffhanger_plan(n, fps, hold_s=float('nan'))[1] == 50
+
+
+def test_a_short_holds_for_as_long_as_it_was_asked_to_and_a_sound_effect_comes_in_as_the_action_stops(tmp_path):
+    src = _talking_source(tmp_path / 'talk.mp4', [(0.5, 1.2), (1.5, 2.4), (2.7, 3.3)])
+    info = sc.probe_source('ffprobe', src)
+    fps, start_f, n = info['fps'], 25, 75
+    segs = [{'a': 0, 'b': n - 1, 'layout': 'fit', 'x': None, 'keys': None}]
+    sfx = str(tmp_path / 'boom.wav')
+    subprocess.run(FF + ['-f', 'lavfi', '-i', 'sine=frequency=100:sample_rate=48000:duration=1.0',
+                         '-af', 'volume=0.8', sfx], check=True, timeout=30)
+    plain, with_sfx = str(tmp_path / 'plain.mp4'), str(tmp_path / 'sfx.mp4')
+    for out, fx in ((plain, None), (with_sfx, {'path': sfx, 'gain': 0.0})):
+        ok, err = sc.render_short('ffmpeg', src, out, start_f, n, info, segs, work_dir=str(tmp_path), preset='ultrafast',
+                                  ending=True, ending_room=4, ending_hold=3.0, ending_sfx=fx)
+        assert ok, err
+    # 3 s hold: 71 frames of action + 75 held + 10 black.
+    assert len(_frames(plain)) == 71 + 75 + 10 == len(_frames(with_sfx))
+    x0, level0 = _heard(plain)
+    x1, level1 = _heard(with_sfx)
+    stop = 71 / 25.0
+    assert level0(stop + 0.3, stop + 0.9) < -60, 'without it the hold is silent'
+    assert level1(stop + 0.05, stop + 0.5) > level0(stop + 0.05, stop + 0.5) + 30, 'the effect is heard from the stop'
+    assert level1(0.5, 1.2) == pytest.approx(level0(0.5, 1.2), abs=1.0), 'and the dialogue before it is untouched'
+    assert abs(len(x1) / 8000.0 - 156 / 25.0) < 0.15
+    # Quieter by its gain.
+    soft = str(tmp_path / 'soft.mp4')
+    ok, err = sc.render_short('ffmpeg', src, soft, start_f, n, info, segs, work_dir=str(tmp_path), preset='ultrafast',
+                              ending=True, ending_room=4, ending_hold=3.0, ending_sfx={'path': sfx, 'gain': -12.0})
+    assert ok, err
+    _, level2 = _heard(soft)
+    assert level1(stop + 0.05, stop + 0.5) - level2(stop + 0.05, stop + 0.5) == pytest.approx(12.0, abs=2.0)
+
+
+def _stage_sfx(tmp_path, name='boom.wav'):
+    p = tmp_path / name
+    subprocess.run(FF + ['-f', 'lavfi', '-i', 'sine=frequency=100:sample_rate=48000:duration=1.0', str(p)],
+                   check=True, timeout=30)
+    staged = f'net_{int(time.time())}_{name}'
+    shutil.copy(str(p), os.path.join(main.app.config['UPLOAD_FOLDER'], staged))
+    return staged
+
+
+def test_a_render_takes_the_cliffhanger_hold_and_sound_effect_and_keeps_the_effect_with_the_batch(env, monkeypatch, tmp_path):
+    Services(monkeypatch)
+    client, headers = _client()
+    opts = client.get('/api/shorts/options').get_json()
+    assert opts['ending_hold'] == 2.0 and opts['ending_hold_range'] == [0.5, 8.0] and opts['ending_black'] == 0.4
+    a = _analysis(client, _analyze(client, headers, env))
+    item = [{'start': 2.0, 'end': 6.0, 'title': 'Moment'}]
+    staged = _stage_sfx(tmp_path)
+    b = _render(client, headers, a['analysis_id'], item, reframe='fit', subtitles=False, ending='cliffhanger',
+                ending_hold=3.5, ending_sfx=staged, ending_sfx_gain=-6)['result']['batch']
+    assert b['options']['ending_hold'] == 3.5
+    assert b['options']['ending_sfx'] == {'file': 'ending_sfx.wav', 'name': 'boom.wav', 'gain': -6.0}
+    s = b['shorts'][0]
+    assert abs(s['duration'] - (4.0 + 3.5 + 0.4 - 0.16)) < 0.1, s['duration']      # 4.0 s moment, a 3.5 s hold, 0.4 s black
+    bdir = os.path.join(shorts.SHORTS_DIR, b['batch_id'])
+    assert os.path.isfile(os.path.join(bdir, 'ending_sfx.wav')), 'kept beside the shorts'
+    os.remove(os.path.join(main.app.config['UPLOAD_FOLDER'], staged))
+    # Without the cliffhanger the effect is ignored; a missing one is refused up front.
+    plain = _render(client, headers, a['analysis_id'], item, reframe='fit', subtitles=False, ending_sfx=staged)['result']['batch']
+    assert plain['options']['ending_sfx'] is None and plain['options']['ending_hold'] is None
+    r = client.post('/api/shorts/render', json={'analysis_id': a['analysis_id'], 'items': item, 'ending': 'cliffhanger',
+                                                 'ending_sfx': staged}, headers=headers)
+    assert r.status_code == 400 and 'pick it again' in r.get_json()['error']
+    r = client.post('/api/shorts/render', json={'analysis_id': a['analysis_id'], 'items': item, 'ending': 'cliffhanger',
+                                                 'ending_sfx': 'not_ours.wav'}, headers=headers)
+    assert r.status_code == 400
+    # A hold out of range is brought back into it.
+    c = _render(client, headers, a['analysis_id'], item, reframe='fit', subtitles=False, ending='cliffhanger',
+                ending_hold=99)['result']['batch']
+    assert c['options']['ending_hold'] == 8.0
+
+
+def test_a_recaptioned_short_keeps_its_hold_and_sound_effect(env, monkeypatch, tmp_path):
+    Services(monkeypatch)
+    client, headers = _client()
+    a = _analysis(client, _analyze(client, headers, env))
+    staged = _stage_sfx(tmp_path)
+    b = _render(client, headers, a['analysis_id'], [{'start': 2.0, 'end': 6.0, 'title': 'Moment'}], reframe='fit',
+                subtitles=True, ending='cliffhanger', ending_hold=3.0, ending_sfx=staged)['result']['batch']
+    bdir = os.path.join(shorts.SHORTS_DIR, b['batch_id'])
+    m = shorts._read_manifest(bdir)
+    got = shorts._kept_sfx(bdir, m['options'])
+    assert got == {'path': os.path.join(bdir, 'ending_sfx.wav'), 'gain': 0.0}
+    assert shorts._kept_sfx(bdir, {'ending_sfx': None}) is None
+    os.remove(os.path.join(bdir, 'ending_sfx.wav'))
+    assert shorts._kept_sfx(bdir, m['options']) is None, 'gone: the short is rendered without it rather than failing'
