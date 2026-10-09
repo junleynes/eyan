@@ -42,8 +42,20 @@ def test_non_shared_job_temp_file_is_removed(tmp_path):
     # anything else, so it should still be cleaned up normally.
     local = tmp_path / 'vo_upload_1000_abcdef.mp3'
     local.write_bytes(b'fake audio')
-    pipeline._remove_job_intermediate(str(local))
+    with mock.patch.dict(pipeline.app.config, {'UPLOAD_FOLDER': str(tmp_path)}):   # it is in the upload folder
+        pipeline._remove_job_intermediate(str(local))
     assert not local.exists()
+
+
+def test_a_file_outside_the_upload_folder_is_never_removed(tmp_path):
+    # A source read in place from the network share: not ours to delete.
+    elsewhere = tmp_path / 'share'
+    elsewhere.mkdir()
+    f = elsewhere / 'master.mp4'
+    f.write_bytes(b'x')
+    with mock.patch.dict(pipeline.app.config, {'UPLOAD_FOLDER': str(tmp_path / 'uploads')}):
+        pipeline._remove_job_intermediate(str(f))
+    assert f.exists()
 
 
 def test_missing_path_is_a_silent_noop(tmp_path):

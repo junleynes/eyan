@@ -694,7 +694,7 @@ def staged_origin(local_name):
 # for browsing and copying is a library inside this process, not something
 # ffmpeg or OpenCV can read through); when it cannot, the pick falls back to
 # a copy, so the setting can never make a file unusable.
-INPLACE_CATEGORIES = ('shorts',)
+INPLACE_CATEGORIES = ('shorts', 'hires')
 INPLACE = {}            # staged name -> {'path', 'category', 'subpath', 'name'}
 INPLACE_ORIGINS = {}    # path on the share -> {'category', 'subpath', 'name'}
 
@@ -712,6 +712,12 @@ def _readable_in_place(path):
         return True
     except OSError:
         return False
+
+
+def inside_uploads(path):
+    """Whether `path` is a file in UPLOAD_FOLDER -- ours to clean up. A source read in
+    place is on the network share, and nothing here may ever delete or alter it."""
+    return bool(path) and os.path.dirname(os.path.abspath(path)) == os.path.abspath(app.config['UPLOAD_FOLDER'])
 
 
 def staged_path(local_name):
@@ -2287,7 +2293,7 @@ def load_video(req):
         # Must be a name we generated ourselves in fetch_network_video() (net_<ts>_<name>)
         # and that still exists in UPLOAD_FOLDER -- never trust an arbitrary path here.
         safe = os.path.basename(staged)
-        path = os.path.join(app.config['UPLOAD_FOLDER'], safe)
+        path = staged_path(safe)          # the copy here, or the file where it was left on the share
         if safe.startswith('net_') and os.path.exists(path):
             return path, safe
         return None, 'Selected network file is no longer available -- please re-select it'
@@ -2331,7 +2337,7 @@ def _resolve_upload(field_name, exts=None):
         # Must be a name we generated ourselves in fetch_network_file() (net_<ts>_<name>)
         # and that still exists in UPLOAD_FOLDER -- never trust an arbitrary path here.
         safe = os.path.basename(staged)
-        path = os.path.join(app.config['UPLOAD_FOLDER'], safe)
+        path = staged_path(safe)
         if safe.startswith('net_') and os.path.exists(path):
             return path
     return None
@@ -4656,7 +4662,8 @@ def _ensure_readable(path):
         ret, _ = cap.read()
         cap.release()
         if not ret:
-            mp4_path = os.path.splitext(path)[0] + '_converted.mp4'
+            # In UPLOAD_FOLDER, whatever the source is: one read in place sits on the share, which gets nothing written to it.
+            mp4_path = os.path.join(app.config['UPLOAD_FOLDER'], os.path.splitext(os.path.basename(path))[0] + '_converted.mp4')
             r = run_ffmpeg([FFMPEG, '-y', '-i', path, '-c:v', 'libx264', '-preset', 'ultrafast',
                                 '-crf', '28', '-pix_fmt', 'yuv420p', '-an', mp4_path],
                            timeout=FFMPEG_LONG_TIMEOUT, label='preview transcode')
@@ -4679,7 +4686,7 @@ def api_media_playable():
     name = secure_filename(request.form.get('filename', ''))
     if not name or name != request.form.get('filename', ''):
         return jsonify(ok=False, error='Invalid filename.'), 400
-    src = os.path.join(app.config['UPLOAD_FOLDER'], name)
+    src = staged_path(name)
     if not os.path.isfile(src):
         return jsonify(ok=False, error='That file is no longer staged -- pick it again.'), 404
 
@@ -4726,7 +4733,7 @@ def api_scene_clip():
     name = secure_filename(request.form.get('filename', ''))
     if not name or name != request.form.get('filename', ''):
         return jsonify(ok=False, error='Invalid filename.'), 400
-    src = os.path.join(app.config['UPLOAD_FOLDER'], name)
+    src = staged_path(name)
     if not os.path.isfile(src):
         return jsonify(ok=False, error='That file is no longer staged -- pick it again.'), 404
     try:
@@ -4785,7 +4792,7 @@ def api_media_probe():
     name = secure_filename(request.form.get('filename', ''))
     if not name or name != request.form.get('filename', ''):
         return jsonify(ok=False, error='Invalid filename.'), 400
-    src = os.path.join(app.config['UPLOAD_FOLDER'], name)
+    src = staged_path(name)
     if not os.path.isfile(src):
         return jsonify(ok=False, error='That file is no longer staged -- pick it again.'), 404
 
@@ -5634,7 +5641,7 @@ def api_trailer():
                 safe = secure_filename(str(name or ''))
                 if not safe or not safe.startswith('net_'):
                     continue
-                p = os.path.join(app.config['UPLOAD_FOLDER'], safe)
+                p = staged_path(safe)
                 if os.path.isfile(p):
                     materials_paths.append(p)
     except (ValueError, TypeError):
@@ -8628,7 +8635,7 @@ def api_network_fetch():
         # file left in place); callers that stage a file for the generate form use
         # `filename`.
         return jsonify(ok=True, filename=staged['local_name'], orig_name=name, category=category,
-                        url=None if staged['in_place'] else f"/uploads/{staged['local_name']}",
+                        url=f"/uploads/{staged['local_name']}",      # served from the share for a file left in place
                         size=staged['size'], in_place=staged['in_place'], note=staged['note'])
     except ValueError as e:
         return jsonify(ok=False, error=str(e)), 400
@@ -8664,7 +8671,7 @@ def api_network_combine():
         safe = os.path.basename(str(n))
         if not safe.startswith('net_'):
             return jsonify(ok=False, error='Invalid file reference -- please re-select from the browser.'), 400
-        p = os.path.join(app.config['UPLOAD_FOLDER'], safe)
+        p = staged_path(safe)
         if not os.path.exists(p):
             return jsonify(ok=False, error=f'{safe} is no longer available -- please re-select it.'), 400
         exts.add(os.path.splitext(safe)[1].lower())
@@ -9202,7 +9209,7 @@ def api_stt_transcribe():
     try:
         words, segments, outcome = transcribe_video_detailed(src)
     finally:
-        if os.path.exists(src) and not os.path.basename(src).startswith('net_'):
+        if os.path.exists(src) and inside_uploads(src) and not os.path.basename(src).startswith('net_'):
             try:
                 os.remove(src)
             except OSError:
@@ -9409,7 +9416,7 @@ def _remove_job_intermediate(path):
     Silently no-ops if the path is falsy or already gone."""
     if not path or not os.path.exists(path):
         return
-    if os.path.basename(path).startswith('net_'):
+    if os.path.basename(path).startswith('net_') or not inside_uploads(path):
         return
     try:
         os.remove(path)
@@ -9452,7 +9459,7 @@ def _cleanup_job_temp(jid, params, keep_basename=None):
         # same staged file can legitimately be attached to two concurrent jobs,
         # so deleting it here could pull the source out from under the other one.
         # The age-based sweeper below reclaims those instead.
-        if os.path.basename(p).startswith('net_'):
+        if os.path.basename(p).startswith('net_') or not inside_uploads(p):
             continue
         victims.append(p)
     freed = 0

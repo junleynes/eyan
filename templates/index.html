@@ -9889,6 +9889,7 @@ job. Configured via env vars:
         <li>Captions are only as well timed as the transcript. A service that returns word timings gives captions that change with the words; one that returns only lines (the subtitle fallback) gives captions that change a line at a time, and if its times are to the whole second they can be up to a second early or late.</li>
       </ul>
       <h3>Reading the episode where it is</h3>
+      <p>(Episodic Plug and the Player have the same switch on the <strong>Video (HIRES)</strong> folder.)</p>
       <p>By default, picking an episode from <strong>Browse library</strong> copies it to the server first. Under <strong>Config &gt; Network</strong>, switch on <strong>Read files in place</strong> for the Vertical Shorts folder and nothing is copied: the episode is analysed and rendered straight from the share, so there is no wait and no extra disk use. The account PRISM runs under must be able to open the share path itself (the login in Config is only used for browsing and copying); when it cannot, that pick is copied as before and says so on its chip. PRISM only reads the file &mdash; it never changes or deletes it &mdash; but the share has to stay reachable while you work on the project, and analyses and renders go at the speed of the share.</p>
       <h3>Episodes in more than one part</h3>
       <p>If the episode comes as two or three files, add them under <strong>This episode comes in more than one part</strong>. The parts are laid end to end and read as one episode: the story model sees the whole thing, so a setup in part 1 can pay off in part 2, and the sound and picture are rated against the whole programme. A short is always cut from one part &mdash; it never runs across the break &mdash; and each moment shows which part it is in, with its times read within that part. To leave something out, name the part: <code>part 2 0:00-1:45, part 3 18:10-end</code> (a range with no part means part 1). Shorts are numbered in episode order across all the parts, and the total running time counts every part.</p>
@@ -10663,7 +10664,7 @@ async function loadNetworkFolders(){
           (row.has_password ? '<div style="font-size:11px;opacity:.65;margin-top:-4px">A password is already saved for this share — leave the field above blank to keep it.</div>' : '') +
           (row.can_in_place ? '<label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;font-weight:400;margin:0;cursor:pointer">' +
             '<input type=checkbox id="net-inplace-' + cat + '"' + (row.in_place ? ' checked' : '') + ' style="margin-top:2px">' +
-            '<span><b>Read files in place</b> &mdash; do not copy the episode to the server. It is analysed and rendered straight from the share. ' +
+            '<span><b>Read files in place</b> &mdash; do not copy ' + (cat === 'hires' ? 'the video' : 'the episode') + ' to the server. It is read straight from the share. ' +
             'Needs the account PRISM runs under to be able to open this path itself (the login above is only used for browsing); ' +
             'when it cannot, the file is copied as before. The share must stay reachable while a project is being worked on.</span></label>' : '') +
           '<div><button type=button class=btn style="padding:6px 12px;font-size:11px" onclick="saveNetworkFolder(\'' + cat + '\')">Save</button> ' +

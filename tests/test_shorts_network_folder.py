@@ -123,7 +123,7 @@ def test_config_api_shows_saves_and_validates_it(folders):
     cats = client.get('/api/network/shares').get_json()['categories']
     assert cats['shorts'] == {'path': '', 'username': '', 'has_password': False, 'fallback': 'hires',
                               'in_place': False, 'can_in_place': True}
-    assert cats['hires']['can_in_place'] is False
+    assert cats['hires']['can_in_place'] is True and cats['music']['can_in_place'] is False
     assert cats['hires']['fallback'] is None and cats['hires']['path'] == HIRES['path']
     r = client.post('/api/network/shares', json=dict(SHORTS, category='shorts'), headers=headers)
     assert r.status_code == 200 and r.get_json()['ok']
@@ -151,8 +151,8 @@ def test_read_in_place_is_saved_for_the_shorts_folder_only(folders):
     cats = client.get('/api/network/shares').get_json()['categories']
     assert cats['shorts']['in_place'] is True
     # Not offered where nothing can use it: the request is ignored, not stored.
-    client.post('/api/network/shares', json={'category': 'hires', 'in_place': True}, headers=headers)
-    assert client.get('/api/network/shares').get_json()['categories']['hires']['in_place'] is False
+    client.post('/api/network/shares', json={'category': 'music', 'in_place': True}, headers=headers)
+    assert client.get('/api/network/shares').get_json()['categories']['music']['in_place'] is False
     # A save that does not mention it leaves it alone.
     client.post('/api/network/shares', json={'category': 'shorts', 'username': 'someone'}, headers=headers)
     assert client.get('/api/network/shares').get_json()['categories']['shorts']['in_place'] is True
@@ -187,8 +187,10 @@ def test_a_pick_falls_back_to_a_copy_when_the_share_cannot_be_opened_directly(fo
 def test_off_by_default_and_never_for_other_folders(folders, monkeypatch):
     monkeypatch.setattr(pipeline, '_readable_in_place', lambda p: True)
     assert not pipeline.network_in_place('shorts') and not pipeline.network_in_place('hires')
+    library_db.save_network_folder('music', dict(HIRES, in_place=True))
+    assert not pipeline.network_in_place('music'), 'only the video folders can be read in place'
     library_db.save_network_folder('hires', dict(HIRES, in_place=True))
-    assert not pipeline.network_in_place('hires'), 'only the Vertical Shorts folder can be read in place'
+    assert pipeline.network_in_place('hires')
 
 
 def test_the_size_limit_still_applies_in_place(folders, monkeypatch):
@@ -199,3 +201,43 @@ def test_the_size_limit_still_applies_in_place(folders, monkeypatch):
     with mock.patch.object(pipeline.smbclient, 'register_session'):
         with pytest.raises(ValueError, match='too big'):
             pipeline.stage_network_file('x.mp4', 'shorts', '')
+
+
+def test_a_file_left_in_place_is_served_probed_and_never_deleted(tmp_path, monkeypatch):
+    """Episodic Plug / Player side: /uploads serves it from the share, the helpers resolve it,
+    and the job cleanup refuses to delete anything outside the upload folder."""
+    share = tmp_path / 'share'
+    share.mkdir()
+    f = share / 'master.mp4'
+    f.write_bytes(b'0123456789')
+    staged = 'net_1_master.mp4'
+    pipeline.INPLACE[staged] = {'path': str(f), 'category': 'hires', 'subpath': '', 'name': 'master.mp4'}
+    try:
+        client, _ = _admin()
+        r = client.get(f'/uploads/{staged}', headers={'Range': 'bytes=2-5'})
+        assert r.status_code == 206 and r.data == b'2345'
+        assert pipeline.staged_path(staged) == str(f)
+        assert not pipeline.inside_uploads(str(f))
+        # The cleanup after a job: the source is among its inputs, and survives.
+        pipeline._cleanup_job_temp('999', {'path': str(f)})
+        pipeline._remove_job_intermediate(str(f))
+        assert f.exists()
+    finally:
+        pipeline.INPLACE.pop(staged, None)
+
+
+def test_load_video_and_materials_resolve_a_file_left_in_place(tmp_path):
+    share = tmp_path / 'share'
+    share.mkdir()
+    f = share / 'master.mp4'
+    f.write_bytes(b'x' * 10)
+    staged = 'net_2_master.mp4'
+    pipeline.INPLACE[staged] = {'path': str(f), 'category': 'hires', 'subpath': '', 'name': 'master.mp4'}
+    try:
+        with main.app.test_request_context('/', method='POST', data={'network_file': staged}):
+            path, name = pipeline.load_video(pipeline.request)
+        assert path == str(f) and name == staged
+        with main.app.test_request_context('/', method='POST', data={'x_network': staged}):
+            assert pipeline._resolve_upload('x') == str(f)
+    finally:
+        pipeline.INPLACE.pop(staged, None)

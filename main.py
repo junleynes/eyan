@@ -5,7 +5,7 @@ shell, upload/download passthroughs), and starts the server.
 Run this file instead of any of the individual modules: `python3 main.py`.
 """
 import os, subprocess, threading
-from flask import request, jsonify, session, send_from_directory, render_template
+from flask import request, jsonify, session, send_from_directory, send_file, render_template
 
 from core import app, ensure_csrf_token
 import library_db      # noqa: F401
@@ -74,6 +74,10 @@ def index():
 
 @app.route('/uploads/<filename>')
 def uploaded(filename):
+    if filename in pipeline.INPLACE:           # a file left where it is on the network share
+        resp = send_file(pipeline.INPLACE[filename]['path'], conditional=True)
+        resp.headers['Cache-Control'] = 'private, max-age=3600'
+        return resp
     resp = send_from_directory(app.config['UPLOAD_FOLDER'], filename, conditional=True)
     resp.headers['Cache-Control'] = 'private, max-age=86400, immutable'
     return resp
