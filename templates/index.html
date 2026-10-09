@@ -11814,7 +11814,9 @@ document.addEventListener('DOMContentLoaded', function(){
   // once.
   function pickNetworkFile(name, subpath, size){
     if(!active) return
-    listEl.innerHTML = '<div class="net-modal-empty">Getting ' + name + '&hellip; <span style="opacity:.7">(this is a copy to the server unless &ldquo;Read files in place&rdquo; is on for this folder and the share opens directly)</span></div>'
+    listEl.innerHTML = '<div class="net-modal-empty">' + (active.inPlace
+      ? 'Opening ' + name + ' on the share&hellip; <span style="opacity:.7">(read in place &mdash; copied only if the server cannot open the share directly)</span>'
+      : 'Copying ' + name + ' to the server&hellip;') + '</div>'
     fetch('/api/network/fetch', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({name: name, category: active.category, subpath: subpath || ''})
@@ -12103,6 +12105,7 @@ document.addEventListener('DOMContentLoaded', function(){
       .then(function(r){ return r.json() }).then(function(d){
         if(!d.ok){ listEl.innerHTML = '<div class="net-modal-empty" style="color:var(--tally)">' + d.error + '</div>'; return }
         buildNetworkBreadcrumb(pathEl, d.root, d.subpath || active.subpath, loadFolder)
+        active.inPlace = !!d.in_place
         active.loadedFolders = d.folders || []
         active.loadedFiles = d.files || []
         renderList(d.folders, d.files, d.subpath)

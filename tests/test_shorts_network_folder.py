@@ -248,3 +248,11 @@ def test_the_box_ticked_on_a_folder_that_borrows_another_still_counts(folders):
     library_db.save_network_folder('shorts', {'in_place': True})
     assert pipeline._network_share_root('shorts') == HIRES['path']
     assert pipeline.network_in_place('shorts')
+
+
+def test_the_folder_listing_says_whether_picks_are_read_in_place(folders):
+    client, _ = _admin()
+    with mock.patch.object(pipeline, 'list_network_files', return_value=('r', '', [], [])):
+        assert client.get('/api/network/list?category=shorts').get_json()['in_place'] is False
+        library_db.save_network_folder('shorts', {'in_place': True})
+        assert client.get('/api/network/list?category=shorts').get_json()['in_place'] is True

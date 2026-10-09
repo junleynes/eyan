@@ -8566,7 +8566,7 @@ def api_network_list():
     try:
         full, sub, folders, files = list_network_files(category, subpath)
         return jsonify(ok=True, root=full, category=category, subpath=sub,
-                        folders=folders, files=files)
+                        folders=folders, files=files, in_place=network_in_place(category))
     except ValueError as e:
         return jsonify(ok=False, error=str(e)), 400
     except Exception as e:
