@@ -11814,7 +11814,7 @@ document.addEventListener('DOMContentLoaded', function(){
   // once.
   function pickNetworkFile(name, subpath, size){
     if(!active) return
-    listEl.innerHTML = '<div class="net-modal-empty">Fetching ' + name + '&hellip;</div>'
+    listEl.innerHTML = '<div class="net-modal-empty">Getting ' + name + '&hellip; <span style="opacity:.7">(this is a copy to the server unless &ldquo;Read files in place&rdquo; is on for this folder and the share opens directly)</span></div>'
     fetch('/api/network/fetch', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({name: name, category: active.category, subpath: subpath || ''})

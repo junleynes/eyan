@@ -701,7 +701,13 @@ INPLACE_ORIGINS = {}    # path on the share -> {'category', 'subpath', 'name'}
 
 def network_in_place(category):
     """Whether picks from `category` are read where they are."""
-    return category in INPLACE_CATEGORIES and bool(_network_folder_row(category).get('in_place'))
+    if category not in INPLACE_CATEGORIES:
+        return False
+    # The box on the folder's own row counts even while its path is blank and it is
+    # borrowing another folder (Vertical Shorts reading the HIRES one) -- that is where
+    # the person ticked it.
+    return bool(load_network_folders().get(category, {}).get('in_place')
+                or _network_folder_row(category).get('in_place'))
 
 
 def _readable_in_place(path):

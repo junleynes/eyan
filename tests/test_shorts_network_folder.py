@@ -241,3 +241,10 @@ def test_load_video_and_materials_resolve_a_file_left_in_place(tmp_path):
             assert pipeline._resolve_upload('x') == str(f)
     finally:
         pipeline.INPLACE.pop(staged, None)
+
+
+def test_the_box_ticked_on_a_folder_that_borrows_another_still_counts(folders):
+    # Vertical Shorts has no path of its own yet (it reads the HIRES folder); the box was ticked on its row.
+    library_db.save_network_folder('shorts', {'in_place': True})
+    assert pipeline._network_share_root('shorts') == HIRES['path']
+    assert pipeline.network_in_place('shorts')
