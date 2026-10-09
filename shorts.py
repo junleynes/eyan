@@ -90,6 +90,7 @@ SHORTS_PRESET = os.environ.get('SHORTS_PRESET', 'medium')
 SHORTS_LOUDNESS = _env_num('SHORTS_LOUDNESS', -14.0)
 # How long the cliffhanger ending holds on its last picture before the cut to
 # black, in seconds: the form's starting value, which an editor can change per render.
+SHORTS_FADE = sc.clamp_fade(_env_num('SHORTS_FADE', 1.0)) or 1.0      # the fade-to-black ending's length, seconds
 SHORTS_CLIFF_HOLD = sc.clamp_hold(_env_num('SHORTS_CLIFF_HOLD', sc.CLIFFHANGER['hold'])) or sc.CLIFFHANGER['hold']
 SHORTS_TRUE_PEAK = _env_num('SHORTS_TRUE_PEAK', -1.5)
 SHORTS_SUB_FONT = os.environ.get('SHORTS_SUB_FONT', 'Arial')
@@ -1203,7 +1204,8 @@ def _encode_short(tag, src, info, plan, cues, opts, mp4_path, delivery_path, rep
                                   timeout=pipeline.FFMPEG_LONG_TIMEOUT, ending=bool(opts.get('ending')),
                                   ending_room=plan.get('room'), ending_after=plan.get('after') or 0,
                                   audio_out=plan.get('audio_out'), audio_fade=plan.get('audio_fade'),
-                                  ending_hold=opts.get('ending_hold'), ending_sfx=opts.get('ending_sfx'))
+                                  ending_hold=opts.get('ending_hold'), ending_sfx=opts.get('ending_sfx'),
+                                  ending_fade=opts.get('ending_fade'))
     except sc.ToolTimeout as e:
         ok, err = False, f'Encoding took too long and was stopped ({e}).'
     finally:
@@ -1301,6 +1303,7 @@ def _run_render(jid, params):
                             'face_detector': detector.kind if detector else None,
                             'speaker': speaker, 'ending': params.get('ending') or 'none',
                             'ending_hold': params.get('ending_hold') if params.get('ending') == 'cliffhanger' else None,
+                            'ending_fade': params.get('ending_fade') if params.get('ending') == 'fade' else None,
                             'ending_sfx': ({'file': sfx_kept, 'name': params['ending_sfx']['name'],
                                             'gain': params['ending_sfx']['gain']} if sfx_kept else None),
                             'format': fmt, 'format_label': pipeline.EXPORT_FORMATS[fmt]['label'],
@@ -1317,6 +1320,7 @@ def _run_render(jid, params):
     max_chars = sc.SUBTITLE_SIZES[params['subtitle_size']][1]
     opts = {'burn': burn, 'subtitle_size': params['subtitle_size'], 'ending': ending, 'format': fmt,
             'loudness': loudness, 'ending_hold': params.get('ending_hold') if ending else None,
+            'ending_fade': params.get('ending_fade') if params.get('ending') == 'fade' else None,
             'ending_sfx': ({'path': os.path.join(bdir, sfx_kept), 'gain': params['ending_sfx']['gain']}
                            if sfx_kept else None)}
     ext = pipeline.EXPORT_FORMATS[fmt]['ext']
@@ -1697,7 +1701,8 @@ def _render_options(data):
             'subtitle_size': data.get('subtitle_size') if data.get('subtitle_size') in sc.SUBTITLE_SIZES else 'm',
             # How each short finishes: on its last frame ('none'), or stopped
             # dead on its last beat, held, and cut to black ('cliffhanger').
-            'ending': data.get('ending') if data.get('ending') in ('none', 'cliffhanger') else 'none',
+            'ending': data.get('ending') if data.get('ending') in ('none', 'cliffhanger', 'fade') else 'none',
+            'ending_fade': sc.clamp_fade(data.get('ending_fade')) or SHORTS_FADE,
             # ...for this long (seconds), and with this sound effect (a file picked from the
             # SFX folder, by its staged name) coming in as the action stops, this many dB up or down.
             'ending_hold': sc.clamp_hold(data.get('ending_hold')) or SHORTS_CLIFF_HOLD,
@@ -1742,7 +1747,8 @@ def api_shorts_options():
                    min_clip=SHORTS_MIN_CLIP, max_clip=SHORTS_MAX_CLIP,
                    ending_seconds=round(SHORTS_CLIFF_HOLD + sc.CLIFFHANGER['black'], 1),
                    ending_hold=SHORTS_CLIFF_HOLD, ending_hold_range=list(sc.CLIFF_HOLD_RANGE),
-                   ending_black=sc.CLIFFHANGER['black'])
+                   ending_black=sc.CLIFFHANGER['black'], ending_fade=SHORTS_FADE,
+                   ending_fade_range=list(sc.FADE_RANGE))
 
 
 @app.route('/api/shorts/analyze', methods=['POST'])
@@ -2826,6 +2832,7 @@ def _run_recaption(jid, params):
     opts = {'burn': True, 'subtitle_size': o.get('subtitle_size') if o.get('subtitle_size') in sc.SUBTITLE_SIZES else 'm',
             'ending': o.get('ending') == 'cliffhanger', 'format': fmt,
             'ending_hold': o.get('ending_hold'),
+            'ending_fade': o.get('ending_fade') if o.get('ending') == 'fade' else None,
             'ending_sfx': _kept_sfx(bdir, o),
             'loudness': pipeline.resolve_loudness(o.get('loudness'), SHORTS_LOUDNESS)}
     stem = os.path.splitext(s['file'])[0]

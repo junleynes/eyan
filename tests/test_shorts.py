@@ -721,7 +721,7 @@ def test_generate_without_preview_analyses_then_renders_everything_as_one_job(en
     assert [(s['start'], s['end']) for s in batch['shorts']] == \
         [(round(c['start'] * 25) / 25, round(c['end'] * 25) / 25) for c in a['candidates']]
     assert batch['options'] == {'reframe': 'fit', 'subtitles': False, 'subtitle_size': 'l', 'face_detector': None,
-                                'speaker': False, 'ending': 'none', 'ending_hold': None, 'ending_sfx': None, 'format': 'mp4_high',
+                                'speaker': False, 'ending': 'none', 'ending_hold': None, 'ending_fade': None, 'ending_sfx': None, 'format': 'mp4_high',
                                 'format_label': 'MP4 (H.264 High Profile)', 'loudness': -14.0}, \
         'the Output settings sent with the request'
     assert all(s['layouts']['fit'] >= 1 and s['layouts']['crop'] == 0 for s in batch['shorts'])
@@ -3052,3 +3052,41 @@ def test_a_recaptioned_short_keeps_its_hold_and_sound_effect(env, monkeypatch, t
     assert shorts._kept_sfx(bdir, {'ending_sfx': None}) is None
     os.remove(os.path.join(bdir, 'ending_sfx.wav'))
     assert shorts._kept_sfx(bdir, m['options']) is None, 'gone: the short is rendered without it rather than failing'
+
+
+def test_the_fade_to_black_ending_takes_the_end_of_the_clip_to_black_and_adds_no_time(tmp_path):
+    src = _talking_source(tmp_path / 'talk.mp4', [(0.5, 1.2), (1.5, 2.4), (2.7, 3.3)])
+    info = sc.probe_source('ffprobe', src)
+    fps, start_f, n = info['fps'], 25, 75
+    segs = [{'a': 0, 'b': n - 1, 'layout': 'fit', 'x': None, 'keys': None}]
+    plain, faded = str(tmp_path / 'plain.mp4'), str(tmp_path / 'fade.mp4')
+    ok, err = sc.render_short('ffmpeg', src, plain, start_f, n, info, segs, work_dir=str(tmp_path), preset='ultrafast')
+    assert ok, err
+    ok, err = sc.render_short('ffmpeg', src, faded, start_f, n, info, segs, work_dir=str(tmp_path), preset='ultrafast',
+                              ending_fade=2.0)
+    assert ok, err
+    fp, ff = _frames(plain), _frames(faded)
+    assert len(fp) == len(ff) == 75, 'no time added'
+    assert float(np.abs(fp[10].astype(int) - ff[10].astype(int)).mean()) < 2.0, 'untouched before the fade'
+    lum = lambda f: float(f.mean())
+    assert lum(ff[-1]) < 0.1 * lum(fp[-1]) + 2 and lum(fp[-1]) > 20, 'black on the last frame'
+    assert lum(ff[-13]) < lum(fp[-13]) * 0.75 and lum(ff[-13]) > lum(ff[-1]), 'a fade, not a cut'
+    _, lp = _heard(plain)
+    _, lf = _heard(faded)
+    assert lf(1.7, 2.2) < lp(1.7, 2.2) - 5 and lf(0.5, 0.95) == pytest.approx(lp(0.5, 0.95), abs=1.0)
+    assert sc.clamp_fade(None) is None and sc.clamp_fade(0.01) == 0.3 and sc.clamp_fade(99) == 3.0
+
+
+def test_a_render_can_end_in_a_fade_and_keeps_that_for_re_captioning(env, monkeypatch):
+    Services(monkeypatch)
+    client, headers = _client()
+    o = client.get('/api/shorts/options').get_json()
+    assert o['ending_fade'] == 1.0 and o['ending_fade_range'] == [0.3, 3.0]
+    a = _analysis(client, _analyze(client, headers, env))
+    item = [{'start': 2.0, 'end': 6.0, 'title': 'Moment'}]
+    b = _render(client, headers, a['analysis_id'], item, reframe='fit', subtitles=False, ending='fade',
+                ending_fade=1.5)['result']['batch']
+    assert b['options']['ending'] == 'fade' and b['options']['ending_fade'] == 1.5 and b['options']['ending_hold'] is None
+    assert abs(b['shorts'][0]['duration'] - 4.0) < 0.05
+    frames = _frames(os.path.join(shorts.SHORTS_DIR, b['batch_id'], b['shorts'][0]['file']))
+    assert float(frames[-1].mean()) < 5 and float(frames[0].mean()) > 20

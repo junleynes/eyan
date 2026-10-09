@@ -2461,6 +2461,21 @@ CLIFFHANGER = {'loop': 0.16, 'hold': 2.0, 'zoom': 0.03, 'black': 0.4, 'sound': 0
 CLIFF_HOLD_RANGE = (0.5, 8.0)
 
 
+# The fade-to-black ending: how long the picture and sound take to go, in seconds.
+FADE_RANGE = (0.3, 3.0)
+
+
+def clamp_fade(seconds):
+    """A fade length asked for, kept within FADE_RANGE; None (or nonsense) means the default."""
+    try:
+        v = float(seconds)
+    except (TypeError, ValueError):
+        return None
+    if v != v:
+        return None
+    return max(FADE_RANGE[0], min(FADE_RANGE[1], v))
+
+
 def clamp_hold(seconds):
     """A hold length asked for, kept within CLIFF_HOLD_RANGE; None (or nonsense) means the default."""
     try:
@@ -2965,7 +2980,7 @@ def cliffhanger_graph(n_frames, fps, room=None, out_w=OUT_W, out_h=OUT_H, ass_na
             f"[ea][eb]concat=n=2:v=1:a=0,")
 
 
-def build_filtergraph(info, segs, out_w=OUT_W, out_h=OUT_H, ass_name=None, ending=None):
+def build_filtergraph(info, segs, out_w=OUT_W, out_h=OUT_H, ass_name=None, ending=None, fade=None):
     """The -filter_complex string for one short. Video in on [0:v], out on
     [vout].
 
@@ -3057,7 +3072,10 @@ def build_filtergraph(info, segs, out_w=OUT_W, out_h=OUT_H, ass_name=None, endin
         tail = (cliffhanger_graph(ending[0], info['fps'], ending[1], out_w, out_h, ass_name, ending[2], ending[3])
                 + 'setpts=PTS-STARTPTS,format=yuv420p,setsar=1')
     else:
-        tail = 'setpts=PTS-STARTPTS,' + (f'ass={ass_name},' if ass_name else '') + 'format=yuv420p,setsar=1'
+        # `fade` is (the clip's length in frames, how many of its last frames
+        # go to black): captions fade with the picture, being part of it.
+        goes = (f'fade=t=out:s={max(0, int(fade[0]) - int(fade[1]))}:n={int(fade[1])}:color=black,' if fade else '')
+        tail = 'setpts=PTS-STARTPTS,' + (f'ass={ass_name},' if ass_name else '') + goes + 'format=yuv420p,setsar=1'
     return f'{g};[v1]{tail}[vout]'
 
 
@@ -3385,8 +3403,11 @@ def frame_rate_arg(fps):
 def build_render_cmd(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=None,
                      crf=18, preset='medium', loudness=-14.0, true_peak=-1.5, ending=False, ending_room=None,
                      ending_after=0, audio_out=None, audio_fade=None, out_w=OUT_W, out_h=OUT_H,
-                     ending_hold=None, ending_sfx=None):
-    """`ending` adds the cliffhanger ending (see cliffhanger_graph).
+                     ending_hold=None, ending_sfx=None, ending_fade=None):
+    """`ending_fade` (seconds) is the fade-to-black ending instead: the last
+    seconds of the clip itself go to black, picture and sound together, and
+    the short is no longer for it.
+    `ending` adds the cliffhanger ending (see cliffhanger_graph).
     `ending_hold` is how many seconds the hold lasts (default CLIFFHANGER['hold']).
     `ending_sfx` is {'path', 'gain'} -- a sound effect that comes in at the
     moment the action stops, `gain` dB up or down, and goes out with the
@@ -3413,8 +3434,12 @@ def build_render_cmd(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_n
     # encoder then sometimes rounds it up and pads slot 0 with a duplicate
     # (measured -- which also pushes the last frame off the end).
     ss = max(0.0, info.get('v_offset', 0.0) + (start_f - 0.25) / fps)
+    fade_s = None
+    if not ending and ending_fade:
+        fade_s = min(clamp_fade(ending_fade) or FADE_RANGE[0], max(0.1, dur - 0.1))
     graph = build_filtergraph(info, segs, out_w, out_h, ass_name=ass_name,
-                              ending=(n_frames, ending_room, ending_after, ending_hold) if ending else None)
+                              ending=(n_frames, ending_room, ending_after, ending_hold) if ending else None,
+                              fade=(n_frames, max(1, int(round(fade_s * fps)))) if fade_s else None)
     extra = cliffhanger_extra(n_frames, fps, ending_room, ending_after, ending_hold) if ending else 0
     sfx_chain = None
     if ending:
@@ -3443,9 +3468,16 @@ def build_render_cmd(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_n
                          f'atrim=end={room_s:.3f},afade=t=out:st={max(0.0, room_s - ramp):.3f}:d={ramp:.3f},'
                          f'adelay={ms}|{ms},apad=whole_dur={total:.3f}')
     else:
-        fade_out = max(0.0, dur - 0.12)
-        polish = (f'afade=t=in:st=0:d=0.04,afade=t=out:st={fade_out:.3f}:d=0.12,'
-                  f'loudnorm=I={loudness}:TP={true_peak}:LRA=11')
+        fade_len = fade_s if fade_s else 0.12
+        fade_out = max(0.0, dur - fade_len)
+        if fade_s:
+            # A long fade goes on AFTER the levelling: measured with it in, the quiet tail
+            # would be counted and the whole short turned up to make up for it.
+            polish = (f'afade=t=in:st=0:d=0.04,loudnorm=I={loudness}:TP={true_peak}:LRA=11,'
+                      f'afade=t=out:st={fade_out:.3f}:d={fade_len:.3f}')
+        else:
+            polish = (f'afade=t=in:st=0:d=0.04,afade=t=out:st={fade_out:.3f}:d={fade_len:.3f},'
+                      f'loudnorm=I={loudness}:TP={true_peak}:LRA=11')
     take = info.get('audio_take')
     mix = ('[am][sfx]amix=inputs=2:normalize=0:duration=first:dropout_transition=0,alimiter=limit=0.95[aout]')
     if take:
@@ -3514,7 +3546,7 @@ def ffmpeg_error(stderr, limit=600):
 def render_short(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=None, work_dir=None,
                  crf=18, preset='medium', loudness=-14.0, true_peak=-1.5, timeout=900, ending=False,
                  ending_room=None, ending_after=0, audio_out=None, audio_fade=None, out_w=OUT_W, out_h=OUT_H,
-                 ending_hold=None, ending_sfx=None):
+                 ending_hold=None, ending_sfx=None, ending_fade=None):
     """Renders one short. Returns (ok, error_text).
 
     Runs ffmpeg with `work_dir` as its working directory and refers to the
@@ -3528,7 +3560,7 @@ def render_short(ffmpeg, src, out_path, start_f, n_frames, info, segs, ass_name=
                            crf=crf, preset=preset, loudness=loudness, true_peak=true_peak, ending=ending,
                            ending_room=ending_room, ending_after=ending_after, audio_out=audio_out,
                            audio_fade=audio_fade, out_w=out_w, out_h=out_h, ending_hold=ending_hold,
-                           ending_sfx=ending_sfx)
+                           ending_sfx=ending_sfx, ending_fade=ending_fade)
     try:
         r = run_tool(cmd, timeout, cwd=work_dir, label='shorts render')
     except ToolTimeout:
