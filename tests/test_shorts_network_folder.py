@@ -121,7 +121,9 @@ def test_the_maximum_video_size_applies_to_it(folders, monkeypatch):
 def test_config_api_shows_saves_and_validates_it(folders):
     client, headers = _admin()
     cats = client.get('/api/network/shares').get_json()['categories']
-    assert cats['shorts'] == {'path': '', 'username': '', 'has_password': False, 'fallback': 'hires'}
+    assert cats['shorts'] == {'path': '', 'username': '', 'has_password': False, 'fallback': 'hires',
+                              'in_place': False, 'can_in_place': True}
+    assert cats['hires']['can_in_place'] is False
     assert cats['hires']['fallback'] is None and cats['hires']['path'] == HIRES['path']
     r = client.post('/api/network/shares', json=dict(SHORTS, category='shorts'), headers=headers)
     assert r.status_code == 200 and r.get_json()['ok']
@@ -136,3 +138,64 @@ def test_the_shorts_tab_browses_its_own_category():
     html = client.get('/').get_data(as_text=True)
     assert "openNetworkBrowser('shorts_file','shorts'," in html
     assert "openNetworkBrowser('shorts_file','hires'," not in html
+
+
+# --------------------------------------------------------------------------
+# Read in place: no copy to this server
+# --------------------------------------------------------------------------
+
+def test_read_in_place_is_saved_for_the_shorts_folder_only(folders):
+    client, headers = _admin()
+    r = client.post('/api/network/shares', json=dict(SHORTS, category='shorts', in_place=True), headers=headers)
+    assert r.status_code == 200
+    cats = client.get('/api/network/shares').get_json()['categories']
+    assert cats['shorts']['in_place'] is True
+    # Not offered where nothing can use it: the request is ignored, not stored.
+    client.post('/api/network/shares', json={'category': 'hires', 'in_place': True}, headers=headers)
+    assert client.get('/api/network/shares').get_json()['categories']['hires']['in_place'] is False
+    # A save that does not mention it leaves it alone.
+    client.post('/api/network/shares', json={'category': 'shorts', 'username': 'someone'}, headers=headers)
+    assert client.get('/api/network/shares').get_json()['categories']['shorts']['in_place'] is True
+    client.post('/api/network/shares', json={'category': 'shorts', 'in_place': False}, headers=headers)
+    assert client.get('/api/network/shares').get_json()['categories']['shorts']['in_place'] is False
+
+
+def test_a_pick_is_not_copied_when_read_in_place_is_on_and_the_share_opens(folders, tmp_path, monkeypatch):
+    library_db.save_network_folder('shorts', dict(SHORTS, in_place=True))
+    seen = []
+    monkeypatch.setattr(pipeline, '_readable_in_place', lambda p: (seen.append(p), True)[1])
+    monkeypatch.setattr(pipeline.os.path, 'getsize', lambda p: 123)
+    copied = []
+    monkeypatch.setattr(pipeline, 'fetch_network_file', lambda *a, **k: copied.append(a))
+    with mock.patch.object(pipeline.smbclient, 'register_session'):
+        got = pipeline.stage_network_file('episode_101.mp4', 'shorts', 'Season 1')
+    assert got['in_place'] and not copied and got['note'] is None
+    assert got['path'] == r'\\10.0.1.140\archive\Episodes\Season 1\episode_101.mp4' == seen[0]
+    assert pipeline.staged_path(got['local_name']) == got['path']
+    assert pipeline.origin_of_path(got['path']) == {'category': 'shorts', 'subpath': 'Season 1', 'name': 'episode_101.mp4'}
+
+
+def test_a_pick_falls_back_to_a_copy_when_the_share_cannot_be_opened_directly(folders, monkeypatch):
+    library_db.save_network_folder('shorts', dict(SHORTS, in_place=True))
+    monkeypatch.setattr(pipeline, '_readable_in_place', lambda p: False)
+    monkeypatch.setattr(pipeline, 'fetch_network_file', lambda n, c, s: 'net_1_x.mp4')
+    monkeypatch.setattr(pipeline.os.path, 'getsize', lambda p: 5)
+    got = pipeline.stage_network_file('x.mp4', 'shorts', '')
+    assert not got['in_place'] and got['local_name'] == 'net_1_x.mp4' and 'copied instead' in got['note']
+
+
+def test_off_by_default_and_never_for_other_folders(folders, monkeypatch):
+    monkeypatch.setattr(pipeline, '_readable_in_place', lambda p: True)
+    assert not pipeline.network_in_place('shorts') and not pipeline.network_in_place('hires')
+    library_db.save_network_folder('hires', dict(HIRES, in_place=True))
+    assert not pipeline.network_in_place('hires'), 'only the Vertical Shorts folder can be read in place'
+
+
+def test_the_size_limit_still_applies_in_place(folders, monkeypatch):
+    library_db.save_network_folder('shorts', dict(SHORTS, in_place=True))
+    monkeypatch.setattr(pipeline, '_readable_in_place', lambda p: True)
+    monkeypatch.setattr(pipeline.os.path, 'getsize', lambda p: 10 ** 12)
+    monkeypatch.setattr(pipeline, 'check_video_size', lambda size, label=None: (False, 'too big'))
+    with mock.patch.object(pipeline.smbclient, 'register_session'):
+        with pytest.raises(ValueError, match='too big'):
+            pipeline.stage_network_file('x.mp4', 'shorts', '')

@@ -2925,3 +2925,28 @@ def test_a_missing_second_part_is_named(two_parts):
         'shorts_file_network': two_parts['staged'], 'shorts_file2_network': 'net_1_gone.mp4',
         'project_id': two_parts['project']})
     assert r.status_code == 400 and r.get_json()['error'].startswith('Part 2')
+
+
+def test_an_episode_read_in_place_is_analysed_and_rendered_where_it_is_and_never_touched(env, monkeypatch, tmp_path):
+    """The file stays on 'the share' (a folder outside the upload folder): nothing is copied, its
+    modified time is not refreshed, and it is not deleted by the job."""
+    Services(monkeypatch)
+    share = tmp_path / 'share'
+    share.mkdir()
+    src = str(share / 'episode.mp4')
+    shutil.copy(env['path'], src)
+    os.utime(src, (1_600_000_000, 1_600_000_000))
+    staged = f'net_{int(time.time())}_inplace_episode.mp4'
+    pipeline.INPLACE[staged] = {'path': src, 'category': 'shorts', 'subpath': '', 'name': 'episode.mp4'}
+    pipeline.INPLACE_ORIGINS[src] = {'category': 'shorts', 'subpath': '', 'name': 'episode.mp4'}
+    client, headers = _client()
+    a = _analysis(client, _analyze(client, headers, dict(env, staged=staged)))
+    stored = shorts.analysis_get(a['analysis_id'])
+    assert stored['path'] == src and a['source_available'] and a['refetchable']
+    assert not [f for f in os.listdir(main.app.config['UPLOAD_FOLDER']) if f.endswith('inplace_episode.mp4')]
+    batch = _render(client, headers, a['analysis_id'], [{'start': 1.0, 'end': 6.0, 'title': 'One'}],
+                    reframe='fit')['result']['batch']
+    assert batch['shorts'][0]['file']
+    assert os.path.exists(src) and int(os.path.getmtime(src)) == 1_600_000_000, 'the share file is never touched'
+    pipeline.INPLACE.pop(staged, None)
+    pipeline.INPLACE_ORIGINS.pop(src, None)

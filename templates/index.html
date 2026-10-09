@@ -9888,6 +9888,8 @@ job. Configured via env vars:
         <li>Face tracking uses OpenCV's built-in Haar cascades unless a YuNet model file is supplied. The cascades miss many profile, tilted, lowered and small faces, and <strong>a shot with no detected face is centre-cropped</strong>, wherever the person in it is standing &mdash; this is the commonest reason for a crop that is not on anyone. <em>Advanced</em>, on the create form, says which detector this server is using; where it is the Haar cascades, an admin sees <strong>Download the YuNet face model</strong> there. That fetches <code>face_detection_yunet_2023mar.onnx</code> (about 230 KB, MIT licence) from the OpenCV model zoo on GitHub, checks it is exactly the published file, and puts it in a <code>models</code> folder next to the app, where it is used from the next render. A server with no internet access can be given the same file by hand, or <code>SHORTS_FACE_MODEL</code> pointed at it.</li>
         <li>Captions are only as well timed as the transcript. A service that returns word timings gives captions that change with the words; one that returns only lines (the subtitle fallback) gives captions that change a line at a time, and if its times are to the whole second they can be up to a second early or late.</li>
       </ul>
+      <h3>Reading the episode where it is</h3>
+      <p>By default, picking an episode from <strong>Browse library</strong> copies it to the server first. Under <strong>Config &gt; Network</strong>, switch on <strong>Read files in place</strong> for the Vertical Shorts folder and nothing is copied: the episode is analysed and rendered straight from the share, so there is no wait and no extra disk use. The account PRISM runs under must be able to open the share path itself (the login in Config is only used for browsing and copying); when it cannot, that pick is copied as before and says so on its chip. PRISM only reads the file &mdash; it never changes or deletes it &mdash; but the share has to stay reachable while you work on the project, and analyses and renders go at the speed of the share.</p>
       <h3>Episodes in more than one part</h3>
       <p>If the episode comes as two or three files, add them under <strong>This episode comes in more than one part</strong>. The parts are laid end to end and read as one episode: the story model sees the whole thing, so a setup in part 1 can pay off in part 2, and the sound and picture are rated against the whole programme. A short is always cut from one part &mdash; it never runs across the break &mdash; and each moment shows which part it is in, with its times read within that part. To leave something out, name the part: <code>part 2 0:00-1:45, part 3 18:10-end</code> (a range with no part means part 1). Shorts are numbered in episode order across all the parts, and the total running time counts every part.</p>
       <pre>POST /api/shorts/analyze  + shorts_file_network, (shorts_file2_network, shorts_file3_network), min_dur, max_dur, count, focus?, avoid?
@@ -10659,6 +10661,11 @@ async function loadNetworkFolders(){
             '<input type=password id="net-pass-' + cat + '" placeholder="Password" style="' + fieldStyle + ';flex:1;min-width:130px">' +
           '</div>' +
           (row.has_password ? '<div style="font-size:11px;opacity:.65;margin-top:-4px">A password is already saved for this share — leave the field above blank to keep it.</div>' : '') +
+          (row.can_in_place ? '<label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;font-weight:400;margin:0;cursor:pointer">' +
+            '<input type=checkbox id="net-inplace-' + cat + '"' + (row.in_place ? ' checked' : '') + ' style="margin-top:2px">' +
+            '<span><b>Read files in place</b> &mdash; do not copy the episode to the server. It is analysed and rendered straight from the share. ' +
+            'Needs the account PRISM runs under to be able to open this path itself (the login above is only used for browsing); ' +
+            'when it cannot, the file is copied as before. The share must stay reachable while a project is being worked on.</span></label>' : '') +
           '<div><button type=button class=btn style="padding:6px 12px;font-size:11px" onclick="saveNetworkFolder(\'' + cat + '\')">Save</button> ' +
           '<span id="net-status-' + cat + '" style="font-size:11px;margin-left:8px"></span></div>' +
         '</div>'
@@ -10674,6 +10681,8 @@ async function saveNetworkFolder(cat){
   var payload = {category: cat}
   payload.path = document.getElementById('net-path-' + cat).value.trim()
   payload.username = document.getElementById('net-user-' + cat).value.trim()
+  var ip = document.getElementById('net-inplace-' + cat)
+  if(ip) payload.in_place = ip.checked
   var pw = document.getElementById('net-pass-' + cat).value
   if(pw) payload.password = pw   // omitted entirely when blank -- leaves the saved password untouched, see the route's docstring
   if(status){ status.textContent = 'Saving\u2026'; status.style.color = 'var(--ink-dim)' }
@@ -11874,6 +11883,14 @@ document.addEventListener('DOMContentLoaded', function(){
       if(hidden) hidden.value = d.filename
       if(fileInput) fileInput.value = '' // network selection and local file are mutually exclusive
       setChip(active.fieldName, d.orig_name, d.size)
+      // Read where it is, or copied because the server could not open the share directly.
+      var pickChip = document.getElementById(active.fieldName + '_chip')
+      if(pickChip){
+        var nm = pickChip.querySelector('.chip-name')
+        if(d.in_place){ nm.textContent += ' \u2014 read on the share, not copied'; pickChip.title = 'Opened directly from the network share' }
+        else if(d.note){ nm.textContent += ' \u2014 copied (the share could not be opened directly)'; pickChip.title = d.note }
+        else pickChip.title = ''
+      }
       // Card-VO fields (title_card_vo / end_card_vo) have their own preview
       // player + set-in/set-out controls, normally fed by cardVoFileChosen()
       // from a local File object. A network fetch has no File object, but

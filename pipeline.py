@@ -686,6 +686,85 @@ def staged_origin(local_name):
     return dict(STAGED_ORIGINS[local_name]) if local_name in STAGED_ORIGINS else None
 
 
+# ---- Reading a network file where it is, instead of copying it here ----
+# For the categories in INPLACE_CATEGORIES an admin can switch "read in place"
+# on (Config > Network). A pick then does not copy anything: it records where
+# the file is, and the job opens that path directly. That needs this server's
+# own operating system to be able to open the share path (the SMB client used
+# for browsing and copying is a library inside this process, not something
+# ffmpeg or OpenCV can read through); when it cannot, the pick falls back to
+# a copy, so the setting can never make a file unusable.
+INPLACE_CATEGORIES = ('shorts',)
+INPLACE = {}            # staged name -> {'path', 'category', 'subpath', 'name'}
+INPLACE_ORIGINS = {}    # path on the share -> {'category', 'subpath', 'name'}
+
+
+def network_in_place(category):
+    """Whether picks from `category` are read where they are."""
+    return category in INPLACE_CATEGORIES and bool(_network_folder_row(category).get('in_place'))
+
+
+def _readable_in_place(path):
+    """Whether this server's operating system can open `path` (a test seam as much as a check)."""
+    try:
+        with open(path, 'rb') as f:
+            f.read(1)
+        return True
+    except OSError:
+        return False
+
+
+def staged_path(local_name):
+    """The path of a staged name: where it was left in place, or its copy in UPLOAD_FOLDER."""
+    if local_name in INPLACE:
+        return INPLACE[local_name]['path']
+    return os.path.join(app.config['UPLOAD_FOLDER'], local_name)
+
+
+def origin_of_path(path):
+    """Where a source path came from -- a share path read in place, or a staged copy -- or None."""
+    return dict(INPLACE_ORIGINS[path]) if path in INPLACE_ORIGINS else staged_origin(os.path.basename(path or ''))
+
+
+def stage_network_file(name, category=DEFAULT_NETWORK_CATEGORY, subpath=''):
+    """What fetch_network_file() does, or -- where read-in-place is on and
+    the share can be opened directly -- nothing but note where the file is.
+    {'local_name', 'path', 'in_place', 'note'}."""
+    if network_in_place(category):
+        cat = _network_category(category)
+        if os.path.basename(name) != name or not allowed_file(name, cat['exts']):
+            raise ValueError('Invalid filename')
+        root = _network_share_root(category)
+        if not root:
+            raise ValueError(f'No network path configured for {cat["label"]} yet -- set it in Config > Network.')
+        sub = _sanitize_subpath(subpath)
+        remote_path = root + ('\\' + sub if sub else '') + '\\' + name
+        if _readable_in_place(remote_path):
+            try:
+                size = os.path.getsize(remote_path)
+            except OSError:
+                size = None
+            if size is not None and category in VIDEO_SOURCE_CATEGORIES:
+                ok, err = check_video_size(size, label=name)
+                if not ok:
+                    raise ValueError(err)
+            local_name = f'net_{int(time.time())}_{secure_filename(name)}'
+            origin = {'category': category, 'subpath': sub, 'name': name}
+            if len(INPLACE) > 2000:
+                for k in list(INPLACE)[:1000]:
+                    INPLACE.pop(k, None)
+            INPLACE[local_name] = dict(origin, path=remote_path)
+            INPLACE_ORIGINS[remote_path] = origin
+            return {'local_name': local_name, 'path': remote_path, 'in_place': True, 'note': None, 'size': size}
+        note = ('This server could not open the share path directly, so the file was copied instead. '
+                'Check that the account PRISM runs under can read it, or switch "read in place" off.')
+    else:
+        note = None
+    local_name = fetch_network_file(name, category, subpath)
+    path = os.path.join(app.config['UPLOAD_FOLDER'], local_name)
+    return {'local_name': local_name, 'path': path, 'in_place': False, 'note': note, 'size': os.path.getsize(path)}
+
+
 def fetch_network_file(name, category=DEFAULT_NETWORK_CATEGORY, subpath=''):
     """Copies `name` from inside `subpath` of the network folder for `category`
     into UPLOAD_FOLDER and returns the local staged filename (prefixed
@@ -8544,13 +8623,13 @@ def api_network_fetch():
     if not name:
         return jsonify(ok=False, error='No filename given'), 400
     try:
-        local_name = fetch_network_file(name, category, subpath)
-        local_path = os.path.join(app.config['UPLOAD_FOLDER'], local_name)
-        # `url` lets the Player play the staged copy directly; callers that stage
-        # a file for the generate form use `filename`.
-        return jsonify(ok=True, filename=local_name, orig_name=name, category=category,
-                        url=f'/uploads/{local_name}',
-                        size=os.path.getsize(local_path))
+        staged = stage_network_file(name, category, subpath)
+        # `url` lets the Player play the staged copy directly (there is none for a
+        # file left in place); callers that stage a file for the generate form use
+        # `filename`.
+        return jsonify(ok=True, filename=staged['local_name'], orig_name=name, category=category,
+                        url=None if staged['in_place'] else f"/uploads/{staged['local_name']}",
+                        size=staged['size'], in_place=staged['in_place'], note=staged['note'])
     except ValueError as e:
         return jsonify(ok=False, error=str(e)), 400
     except Exception as e:
@@ -8860,6 +8939,8 @@ def api_network_shares_get():
         out[cat] = {
             'path': row.get('path', ''), 'username': row.get('username', ''),
             'has_password': bool(row.get('password')),
+            'in_place': bool(row.get('in_place')),
+            'can_in_place': cat in INPLACE_CATEGORIES,
             # Which category this one reads while its own path is blank, if any.
             'fallback': _network_categories().get(cat, {}).get('fallback'),
         }
@@ -8883,6 +8964,8 @@ def api_network_shares_post():
     if category not in NETWORK_CATEGORY_KEYS:
         return jsonify(ok=False, error=f'Unknown category "{category}".'), 400
     fields = {k: data[k] for k in ('path', 'username', 'password') if k in data}
+    if 'in_place' in data and category in INPLACE_CATEGORIES:
+        fields['in_place'] = bool(data['in_place'])
     ok, err = save_network_folder(category, fields)
     if not ok:
         return jsonify(ok=False, error=err), 400
@@ -8891,7 +8974,8 @@ def api_network_shares_post():
     # changed and WHO changed it, not a place credentials should ever sit in
     # plaintext a second time.
     audit_log('network_folder_change', target=category,
-               detail=f"path={fields.get('path', '(unchanged)')}" if 'path' in fields else None,
+               detail=(f"path={fields.get('path', '(unchanged)')}" if 'path' in fields else '')
+                      + (f" in_place={fields['in_place']}" if 'in_place' in fields else '') or None,
                user_id=session.get('user_id'), username=session.get('username'), ip=_client_ip())
     return jsonify(ok=True, category=category)
 

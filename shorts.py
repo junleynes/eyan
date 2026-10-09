@@ -403,11 +403,11 @@ def _ensure_source(a, aid=None, report=None):
             report(step='Fetching the episode from the network folder again' if len(parts) == 1
                    else f'Fetching part {k + 1} from the network folder again')
         try:
-            local = pipeline.fetch_network_file(origin['name'], origin.get('category') or 'shorts',
-                                                origin.get('subpath') or '')
+            staged = pipeline.stage_network_file(origin['name'], origin.get('category') or 'shorts',
+                                                 origin.get('subpath') or '')
         except Exception as e:
             return None, f"{what} could not be fetched again from the network folder ({e})."
-        P['path'] = os.path.join(app.config['UPLOAD_FOLDER'], local)
+        P['path'] = staged['path']
         changed = True
     if changed:
         a['path'] = parts[0]['path']
@@ -422,8 +422,11 @@ def _ensure_source(a, aid=None, report=None):
 def _touch(path):
     """Resets a staged source's age so the upload sweeper (which reclaims
     by mtime) doesn't delete it out from under a review that is still in
-    progress. Best-effort."""
+    progress. Best-effort. Only a staged copy: a file read where it lives
+    on the network share is never ours to touch."""
     try:
+        if os.path.dirname(os.path.abspath(path)) != os.path.abspath(app.config['UPLOAD_FOLDER']):
+            return
         os.utime(path, None)
     except OSError:
         pass
@@ -723,7 +726,7 @@ def _run_analysis(jid, params):
             return
         parts.append({'path': s['path'], 'name': s['name'], 'info': info, 'fps': info['fps'],
                       'duration': float(info['duration']), 'offset': offset,
-                      'origin': pipeline.staged_origin(os.path.basename(s['path']))})
+                      'origin': pipeline.origin_of_path(s['path'])})
         offset += float(info['duration'])
     duration = offset
     fps = parts[0]['fps']
@@ -1568,7 +1571,7 @@ def _resolve_source(field='shorts_file'):
     staged = (request.form.get(field + '_network') or '').strip()
     if staged:
         safe = os.path.basename(staged)
-        path = os.path.join(app.config['UPLOAD_FOLDER'], safe)
+        path = pipeline.staged_path(safe)          # the copy here, or the file where it was left on the share
         if safe.startswith('net_') and os.path.exists(path):
             return path, re.sub(r'^net_\d+_', '', safe), None
         return None, None, 'Selected network file is no longer available -- please re-select it'

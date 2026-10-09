@@ -690,8 +690,12 @@ def load_network_folders():
     try:
         with open(NETWORK_FOLDERS_FILE) as f:
             data = json.load(f)
-        return {cat: {k: v.get(k, '') for k in _NETWORK_FOLDER_FIELDS}
-                for cat, v in data.items() if cat in NETWORK_CATEGORY_KEYS and isinstance(v, dict)}
+        out = {cat: {k: v.get(k, '') for k in _NETWORK_FOLDER_FIELDS}
+               for cat, v in data.items() if cat in NETWORK_CATEGORY_KEYS and isinstance(v, dict)}
+        for cat in out:
+            if data[cat].get('in_place'):
+                out[cat]['in_place'] = True
+        return out
     except Exception as e:
         print(f'Network folder config load error ({NETWORK_FOLDERS_FILE}): {e}')
         return {}
@@ -710,7 +714,13 @@ def save_network_folder(category, fields):
     for k in _NETWORK_FOLDER_FIELDS:
         if k in fields:
             row[k] = fields[k] or ''
+    if 'in_place' in fields:
+        # "Read the files where they are" rather than copy them to this server first.
+        row['in_place'] = bool(fields['in_place'])
     current[category] = row
+    for r in current.values():
+        if not r.get('in_place'):
+            r.pop('in_place', None)             # kept in the file only where it is on
     with open(NETWORK_FOLDERS_FILE, 'w') as f:
         json.dump(current, f, indent=2)
     return True, None
