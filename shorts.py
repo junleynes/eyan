@@ -1303,7 +1303,8 @@ def _run_render(jid, params):
                             'face_detector': detector.kind if detector else None,
                             'speaker': speaker, 'ending': params.get('ending') or 'none',
                             'ending_hold': params.get('ending_hold') if params.get('ending') == 'cliffhanger' else None,
-                            'ending_fade': params.get('ending_fade') if params.get('ending') == 'fade' else None,
+                            'fade_last': bool(params.get('fade_last')),
+                            'ending_fade': params.get('ending_fade') if params.get('fade_last') else None,
                             'ending_sfx': ({'file': sfx_kept, 'name': params['ending_sfx']['name'],
                                             'gain': params['ending_sfx']['gain']} if sfx_kept else None),
                             'format': fmt, 'format_label': pipeline.EXPORT_FORMATS[fmt]['label'],
@@ -1320,7 +1321,6 @@ def _run_render(jid, params):
     max_chars = sc.SUBTITLE_SIZES[params['subtitle_size']][1]
     opts = {'burn': burn, 'subtitle_size': params['subtitle_size'], 'ending': ending, 'format': fmt,
             'loudness': loudness, 'ending_hold': params.get('ending_hold') if ending else None,
-            'ending_fade': params.get('ending_fade') if params.get('ending') == 'fade' else None,
             'ending_sfx': ({'path': os.path.join(bdir, sfx_kept), 'gain': params['ending_sfx']['gain']}
                            if sfx_kept else None)}
     ext = pipeline.EXPORT_FORMATS[fmt]['ext']
@@ -1338,7 +1338,10 @@ def _run_render(jid, params):
         src, info, off = v['path'], v['info'], v.get('_offset', 0.0)
         fps = info['fps']
         it = _localize_item(it_global, off)
-        if ending and k not in unit_cache:
+        # The last short of the render may finish on a fade to black instead of the ending chosen.
+        fades = bool(params.get('fade_last')) and n == total
+        ending_k = ending and not fades
+        if ending_k and k not in unit_cache:
             unit_cache[k] = sc.speech_units(v['words'], v['segments'])
         units = unit_cache.get(k, [])
         start_f = int(round(it['start'] * fps))
@@ -1357,7 +1360,7 @@ def _run_render(jid, params):
         room = n_frames - max(shot_starts) if shot_starts else n_frames
         t0, t1 = start_f / fps, end_f / fps
         after, audio_out, audio_fade = 0, None, None
-        if ending:
+        if ending_k:
             # The hold is made from the frames just AFTER the out point where
             # that can be done -- the same shot carrying on, and still -- so
             # the moment plays to its last frame. One frame is left before
@@ -1387,7 +1390,10 @@ def _run_render(jid, params):
         out_path = os.path.join(bdir, name + '.mp4')
         delivery = None if fmt == 'mp4_high' else f'{name}.{ext}'
         report(percent=int(base + span * 0.25), step=f'Short {n}/{total}: encoding')
-        ok, err = _encode_short(f'{jid}_{n}', src, info, plan, cues, opts, out_path,
+        sopts = dict(opts, ending=ending_k, ending_hold=opts['ending_hold'] if ending_k else None,
+                     ending_sfx=opts['ending_sfx'] if ending_k else None,
+                     ending_fade=params.get('ending_fade') if fades else None)
+        ok, err = _encode_short(f'{jid}_{n}', src, info, plan, cues, sopts, out_path,
                                 os.path.join(bdir, delivery) if delivery else None,
                                 report=lambda: report(percent=int(base + span * 0.8),
                                                       step=f'Short {n}/{total}: making the delivery file'))
@@ -1406,7 +1412,9 @@ def _run_render(jid, params):
         entry = {'index': n, 'title': it['title'], 'file': name + '.mp4', 'srt': None, 'thumb': None,
                  'start': round(start_f / fps + off, 3), 'end': round(end_f / fps + off, 3),
                  'duration': round((n_frames + (sc.cliffhanger_extra(n_frames, fps, room, after, params.get('ending_hold'))
-                                               if ending else 0)) / fps, 2),
+                                               if ending_k else 0)) / fps, 2),
+                 'ending': 'fade' if fades else ('cliffhanger' if ending_k else 'none'),
+                 'ending_fade': params.get('ending_fade') if fades else None,
                  'size': os.path.getsize(out_path),
                  'layouts': {'crop': sum(1 for s in segs if s['layout'] == 'crop'),
                              'fit': sum(1 for s in segs if s['layout'] == 'fit'),
@@ -1701,7 +1709,10 @@ def _render_options(data):
             'subtitle_size': data.get('subtitle_size') if data.get('subtitle_size') in sc.SUBTITLE_SIZES else 'm',
             # How each short finishes: on its last frame ('none'), or stopped
             # dead on its last beat, held, and cut to black ('cliffhanger').
-            'ending': data.get('ending') if data.get('ending') in ('none', 'cliffhanger', 'fade') else 'none',
+            'ending': data.get('ending') if data.get('ending') in ('none', 'cliffhanger') else 'none',
+            # The LAST short of the render finishes on a fade to black instead of that ending
+            # (for the final episode of a series), over this many seconds.
+            'fade_last': data.get('fade_last') in (True, 1, '1', 'true', 'on', 'yes'),
             'ending_fade': sc.clamp_fade(data.get('ending_fade')) or SHORTS_FADE,
             # ...for this long (seconds), and with this sound effect (a file picked from the
             # SFX folder, by its staged name) coming in as the action stops, this many dB up or down.
@@ -2829,10 +2840,12 @@ def _run_recaption(jid, params):
     pipeline.job_set(jid, percent=5, step='Preparing')
     cues = sc.place_cues([dict(c) for c in params['cues']], plan['segs'], info['fps'])
     fmt = o.get('format') if o.get('format') in SHORTS_FORMATS else 'mp4_high'
+    # How THIS short ends: the last of a batch may have faded where the others held or cut.
+    kind = s.get('ending') or o.get('ending') or 'none'
     opts = {'burn': True, 'subtitle_size': o.get('subtitle_size') if o.get('subtitle_size') in sc.SUBTITLE_SIZES else 'm',
-            'ending': o.get('ending') == 'cliffhanger', 'format': fmt,
+            'ending': kind == 'cliffhanger', 'format': fmt,
             'ending_hold': o.get('ending_hold'),
-            'ending_fade': o.get('ending_fade') if o.get('ending') == 'fade' else None,
+            'ending_fade': (s.get('ending_fade') or o.get('ending_fade')) if kind == 'fade' else None,
             'ending_sfx': _kept_sfx(bdir, o),
             'loudness': pipeline.resolve_loudness(o.get('loudness'), SHORTS_LOUDNESS)}
     stem = os.path.splitext(s['file'])[0]

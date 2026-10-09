@@ -7132,17 +7132,20 @@ document.getElementById('vf').addEventListener('submit', async function(e){
     <span style="display:inline-flex;gap:6px;align-items:center;font-size:12px">Ending
       <select id=sh-ending title="How every short in this render finishes" onchange="shEndingChanged()">
         <option value=none selected>Cut on the last frame</option>
-        <option value=fade>Fade to black &mdash; picture and sound fade out (no added time)</option>
         <option value=cliffhanger id=sh-ending-cliff>Cliffhanger &mdash; freeze, slow push-in, cut to black (+2.4 s)</option>
       </select>
     </span>
   </div>
-  <div id=sh-fade-more style="display:none;margin-top:8px;font-size:12px">
-    <span style="display:inline-flex;gap:6px;align-items:center">Fade over
+  <div style="margin-top:8px;font-size:12px">
+    <label style="display:inline-flex;gap:6px;align-items:center;font-weight:400;margin:0;cursor:pointer"
+           title="For the last episode of a series: only the last short of this render fades out; every other short keeps the Ending above">
+      <input type=checkbox id=sh-fade-last> Fade the last short to black
+    </label>
+    <span style="display:inline-flex;gap:6px;align-items:center;margin-left:8px">over
       <input type=number id=sh-ending-fade min=0.3 max=3 step=0.1 value=1 style="width:64px;margin:0;padding:5px 7px;font-size:12px"
-             title="How long the last part of each short takes to go to black, picture and sound together, in seconds"> s
+             title="How long the last short takes to go to black, picture and sound together, in seconds"> s
     </span>
-    <span class="sh-note" style="margin:0 0 0 12px">Takes the last seconds of the moment itself, so each short is no longer; the final words are faded with the picture.</span>
+    <span class="sh-note" style="margin:0 0 0 12px">The last short of the episode (picture, captions and sound) fades out instead of cutting or holding; the others keep the Ending above. It adds no time, so its final words fade with the picture.</span>
   </div>
   <div id=sh-ending-more style="display:none;margin-top:8px;font-size:12px">
     <span style="display:inline-flex;gap:6px;align-items:center">Hold for
@@ -7474,7 +7477,6 @@ function shStart(fd){
 function shEndingChanged(){
   var on = shEl('sh-ending').value === 'cliffhanger'
   shEl('sh-ending-more').style.display = on ? '' : 'none'
-  shEl('sh-fade-more').style.display = shEl('sh-ending').value === 'fade' ? '' : 'none'
   var rng = (SH.options && SH.options.ending_hold_range) || [0.5, 8]
   var h = parseFloat(shEl('sh-ending-hold').value)
   if(!(h >= rng[0])) h = rng[0]
@@ -7491,6 +7493,7 @@ function shRenderOptions(){
           subtitle_size: shEl('sh-caption-size').value,
           ending: shEl('sh-ending').value,
           ending_hold: shEl('sh-ending-hold').value,
+          fade_last: shEl('sh-fade-last').checked,
           ending_fade: shEl('sh-ending-fade').value,
           ending_sfx: shEl('shorts_sfx_network').value,
           ending_sfx_gain: shEl('sh-ending-sfx-gain').value,
@@ -8398,7 +8401,7 @@ function shBatchCard(b, fresh){
     '<div><b>' + escapeHtmlLite(b.orig_name || 'Untitled') + '</b> <span style="font-size:12px;opacity:.7">' +
       b.shorts.length + ' short' + (b.shorts.length === 1 ? '' : 's') + (reframe ? ' &middot; ' + reframe : '') +
       (o.speaker ? ' &middot; follows speaker' : '') +
-      (o.subtitles ? ' &middot; captions' : '') + (o.ending === 'cliffhanger' ? ' &middot; cliffhanger ending' : o.ending === 'fade' ? ' &middot; fade to black' : '') +
+      (o.subtitles ? ' &middot; captions' : '') + (o.ending === 'cliffhanger' ? ' &middot; cliffhanger ending' : '') + (o.fade_last ? ' &middot; last short fades to black' : '') +
       (o.format && o.format !== 'mp4_high' ? ' &middot; ' + escapeHtmlLite(o.format_label || o.format) : '') +
       (typeof o.loudness === 'number' ? ' &middot; ' + String(o.loudness).replace('-', '&minus;') + ' LUFS' : '') +
       (when ? ' &middot; ' + when : '') +
@@ -9904,7 +9907,7 @@ job. Configured via env vars:
         <li><strong>Captions</strong> are burned in from the transcript a few words at a time, and an <code>.srt</code> is saved next to each MP4.</li>
         <li><strong>Format</strong> is the file each short is delivered as: <em>MP4 (H.264 High Profile)</em>, or <em>Apple ProRes 422 HQ</em> at 29.97 or 23.976 fps. A ProRes short is rendered to H.264 first, at higher quality than an ordinary MP4 short, and the <code>.mov</code> is made from that by the same export step the other tabs use; the MP4 is kept as the copy that plays here. <strong>Download</strong>, <strong>Download all</strong> and <strong>Send</strong> hand over the <code>.mov</code>. ProRes 422 HQ is roughly 1.3&ndash;1.7 GB per minute at 1080&times;1920, so a large batch needs the disk for it. AVC-Intra 100 is not offered here: it is a 1920&times;1080 format.</li>
         <li><strong>Audio level</strong> is how loud each short is overall (integrated loudness): &minus;14 LUFS unless you choose otherwise, which is what online video is levelled to; &minus;23 (EBU R128) and &minus;24 (ATSC A/85) are there for shorts going to air. The true peak stays under &minus;1.5 dBTP. A short rendered again for new captions keeps the level it had.</li>
-        <li><strong>Ending</strong> is how every short in the render finishes. <em>Cut on the last frame</em> stops where the moment stops. <em>Fade to black</em> takes the last second (or the length you set, 0.3&ndash;3 s) of each moment to black, picture and sound together, adding no time &mdash; the closing beat for a finale, where a cliffhanger would promise more. <em>Cliffhanger</em> stops the action dead on the moment&rsquo;s last beat and holds it for 2 seconds (the <em>Hold for</em> box sets any length from 0.5 to 8 s; the server default is <code>SHORTS_CLIFF_HOLD</code>) while the picture pushes in by 3%, takes on a cooler, higher-contrast grade and darkens slightly at the corners; then it cuts straight to black. That adds the hold plus 0.4 s of black to each short (2.4 s by default), and no caption is drawn over the hold. A <em>Sound effect</em> picked from the SFX folder with Browse library comes in the instant the picture stops and goes out with the black; <em>Level</em> raises or lowers it in dB. It is mixed in after the dialogue has been levelled and limited so it cannot clip, and a copy is kept with the batch so a short can be re-captioned later.
+        <li><strong>Ending</strong> is how every short in the render finishes. <em>Cut on the last frame</em> stops where the moment stops. <em>Cliffhanger</em> stops the action dead on the moment&rsquo;s last beat and holds it for 2 seconds (the <em>Hold for</em> box sets any length from 0.5 to 8 s; the server default is <code>SHORTS_CLIFF_HOLD</code>) while the picture pushes in by 3%, takes on a cooler, higher-contrast grade and darkens slightly at the corners; then it cuts straight to black. That adds the hold plus 0.4 s of black to each short (2.4 s by default), and no caption is drawn over the hold. A <em>Sound effect</em> picked from the SFX folder with Browse library comes in the instant the picture stops and goes out with the black; <em>Level</em> raises or lowers it in dB. It is mixed in after the dialogue has been levelled and limited so it cannot clip, and a copy is kept with the batch so a short can be re-captioned later. <em>Fade the last short to black</em> is for the last episode of a series: the final short of the render (the last moment in the episode) fades out &mdash; picture, captions and sound, over 0.3&ndash;3 s &mdash; instead of cutting or holding, while every other short keeps the Ending chosen. It adds no time, so its last words fade with the picture; trim its Out point a little earlier if that matters.
           <ul style="line-height:1.7;padding-left:20px;margin-top:4px">
             <li><strong>The picture.</strong> The moment plays to its last frame; the hold is made from what comes just after the out point. It is not a single still when it can help it: if those next frames are nearly motionless (someone standing in a close-up), up to 0.16 s of them is played forwards and back in extreme slow motion, which keeps the breathing, hair and cloth barely alive while the pose and expression stay locked. If anything is really moving in them (a gesture, a camera move) it holds one frame, because looping real movement would show as a wobble. Only when the out point is on a cut, or at the very end of the file, is the hold made from the moment&rsquo;s own last frames instead. Nothing is generated: every held frame comes from the footage.</li>
             <li><strong>The sound</strong> is not cut where the transcript says the last word ends &mdash; that time is early as a rule, and with per-line timings only approximate. The sound around the out point is measured instead. If a word is still being spoken there, it is let finish under the held picture, up to 0.8 s, and stops in the pause that follows. If speech runs straight on into the next line, the sound stops in the gap between the two words nearest the out point, with a very short fade. If the out point is already in a pause, it stops there. Where the level cannot tell a word from a gap (a wall of music, a crowd), it stops at the out point. Whatever happens, the last half second of the hold and the black are silent.</li>

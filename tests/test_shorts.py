@@ -721,7 +721,7 @@ def test_generate_without_preview_analyses_then_renders_everything_as_one_job(en
     assert [(s['start'], s['end']) for s in batch['shorts']] == \
         [(round(c['start'] * 25) / 25, round(c['end'] * 25) / 25) for c in a['candidates']]
     assert batch['options'] == {'reframe': 'fit', 'subtitles': False, 'subtitle_size': 'l', 'face_detector': None,
-                                'speaker': False, 'ending': 'none', 'ending_hold': None, 'ending_fade': None, 'ending_sfx': None, 'format': 'mp4_high',
+                                'speaker': False, 'ending': 'none', 'ending_hold': None, 'fade_last': False, 'ending_fade': None, 'ending_sfx': None, 'format': 'mp4_high',
                                 'format_label': 'MP4 (H.264 High Profile)', 'loudness': -14.0}, \
         'the Output settings sent with the request'
     assert all(s['layouts']['fit'] >= 1 and s['layouts']['crop'] == 0 for s in batch['shorts'])
@@ -3077,16 +3077,57 @@ def test_the_fade_to_black_ending_takes_the_end_of_the_clip_to_black_and_adds_no
     assert sc.clamp_fade(None) is None and sc.clamp_fade(0.01) == 0.3 and sc.clamp_fade(99) == 3.0
 
 
-def test_a_render_can_end_in_a_fade_and_keeps_that_for_re_captioning(env, monkeypatch):
+def test_only_the_last_short_can_fade_to_black_and_the_others_keep_the_ending_chosen(env, monkeypatch):
     Services(monkeypatch)
     client, headers = _client()
     o = client.get('/api/shorts/options').get_json()
     assert o['ending_fade'] == 1.0 and o['ending_fade_range'] == [0.3, 3.0]
     a = _analysis(client, _analyze(client, headers, env))
-    item = [{'start': 2.0, 'end': 6.0, 'title': 'Moment'}]
-    b = _render(client, headers, a['analysis_id'], item, reframe='fit', subtitles=False, ending='fade',
-                ending_fade=1.5)['result']['batch']
-    assert b['options']['ending'] == 'fade' and b['options']['ending_fade'] == 1.5 and b['options']['ending_hold'] is None
-    assert abs(b['shorts'][0]['duration'] - 4.0) < 0.05
-    frames = _frames(os.path.join(shorts.SHORTS_DIR, b['batch_id'], b['shorts'][0]['file']))
-    assert float(frames[-1].mean()) < 5 and float(frames[0].mean()) > 20
+    items = [{'start': 2.0, 'end': 6.0, 'title': 'First'}, {'start': 12.0, 'end': 16.0, 'title': 'Last'}]
+    # Cut on the last frame, the last one fading.
+    b = _render(client, headers, a['analysis_id'], items, reframe='fit', subtitles=False,
+                fade_last=True, ending_fade=1.5)['result']['batch']
+    assert b['options']['fade_last'] is True and b['options']['ending_fade'] == 1.5 and b['options']['ending'] == 'none'
+    first, last = b['shorts']
+    assert abs(first['duration'] - 4.0) < 0.05 and abs(last['duration'] - 4.0) < 0.05
+    path = lambda s: os.path.join(shorts.SHORTS_DIR, b['batch_id'], s['file'])
+    f1, f2 = _frames(path(first)), _frames(path(last))
+    assert float(f1[-1].mean()) > 20, 'the first short ends as it always did'
+    assert float(f2[-1].mean()) < 5 and float(f2[0].mean()) > 20, 'the last one fades out'
+    m = shorts._read_manifest(os.path.join(shorts.SHORTS_DIR, b['batch_id']))
+    assert [s['ending'] for s in m['shorts']] == ['none', 'fade'] and m['shorts'][1]['ending_fade'] == 1.5
+    # With the cliffhanger: the first holds, the last fades instead and is not longer for it.
+    c = _render(client, headers, a['analysis_id'], items, reframe='fit', subtitles=False, ending='cliffhanger',
+                fade_last=True)['result']['batch']
+    one, two = c['shorts']
+    assert abs(one['duration'] - 6.24) < 0.1 and abs(two['duration'] - 4.0) < 0.05
+    assert [s['ending'] for s in shorts._read_manifest(os.path.join(shorts.SHORTS_DIR, c['batch_id']))['shorts']] == \
+        ['cliffhanger', 'fade']
+    # Off: nothing fades.
+    d = _render(client, headers, a['analysis_id'], items, reframe='fit', subtitles=False)['result']['batch']
+    assert d['options']['fade_last'] is False and d['options']['ending_fade'] is None
+    # "fade" is no longer an Ending of its own.
+    e = _render(client, headers, a['analysis_id'], items[:1], reframe='fit', subtitles=False, ending='fade')['result']['batch']
+    assert e['options']['ending'] == 'none'
+
+
+def test_re_captioning_the_faded_last_short_fades_it_again_and_the_others_keep_their_hold(env, monkeypatch):
+    Services(monkeypatch)
+    client, headers = _client()
+    a = _analysis(client, _analyze(client, headers, env))
+    items = [{'start': 2.0, 'end': 6.0, 'title': 'First'}, {'start': 12.0, 'end': 16.0, 'title': 'Last'}]
+    b = _render(client, headers, a['analysis_id'], items, reframe='fit', subtitles=True, ending='cliffhanger',
+                fade_last=True, ending_fade=1.0)['result']['batch']
+    bdir = os.path.join(shorts.SHORTS_DIR, b['batch_id'])
+    seen = []
+    real = sc.render_short
+    monkeypatch.setattr(sc, 'render_short', lambda *x, **k: (seen.append(k), real(*x, **k))[1])
+    for s in b['shorts']:
+        url = f"/api/shorts/batches/{b['batch_id']}/captions/{s['index']}"
+        job = client.get(f"/api/shorts/progress/{client.post(url, headers=headers, json={'cues': [{'start': 1, 'end': 2, 'text': 'Bago'}]}).get_json()['job_id']}").get_json()
+        assert job.get('error') is None, job
+    first, last = seen
+    assert first['ending'] is True and first.get('ending_fade') is None
+    assert last['ending'] is False and last['ending_fade'] == 1.0
+    f = _frames(os.path.join(bdir, b['shorts'][1]['file']))
+    assert len(f) == 100 and float(f[-1].mean()) < 5
