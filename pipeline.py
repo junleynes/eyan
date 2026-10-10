@@ -3122,11 +3122,44 @@ _WHISPER_FORMAT = {}
 WHISPER_FORMATS = ('verbose_json', 'srt', 'vtt')
 
 
-def _whisper_request(audio_path, upload_name, fmt='verbose_json'):
+# Languages Whisper is asked for by name, (ISO 639-1 code, name). Telling it
+# the language skips its own guess from the first 30 seconds -- which is
+# what goes wrong on a programme that opens on music, or on Tagalog read as
+# Malay or Indonesian -- and its accuracy is better for it.
+WHISPER_LANGUAGES = (
+    ('en', 'English'), ('tl', 'Filipino / Tagalog'), ('id', 'Indonesian'), ('ms', 'Malay'),
+    ('th', 'Thai'), ('vi', 'Vietnamese'), ('zh', 'Chinese'), ('ja', 'Japanese'), ('ko', 'Korean'),
+    ('hi', 'Hindi'), ('ar', 'Arabic'), ('es', 'Spanish'), ('pt', 'Portuguese'), ('fr', 'French'),
+    ('de', 'German'), ('it', 'Italian'), ('ru', 'Russian'), ('tr', 'Turkish'),
+)
+WHISPER_PROMPT_MAX = 400
+
+
+def normalize_language(value):
+    """The language code to send, or None for "let Whisper decide". Anything
+    that is not a code in WHISPER_LANGUAGES is left to Whisper rather than
+    sent: a server answers an unknown code with an error for the whole file."""
+    v = str(value or '').strip().lower()
+    return v if v in dict(WHISPER_LANGUAGES) else None
+
+
+def normalize_stt_prompt(value):
+    """Names and terms to hand Whisper as context, tidied, or None."""
+    v = ' '.join(str(value or '').split())[:WHISPER_PROMPT_MAX]
+    return v or None
+
+
+def _whisper_request(audio_path, upload_name, fmt='verbose_json', language=None, prompt=None):
     """One transcription request. For verbose_json both granularities are
     asked for by name: asked for 'word' alone, some servers leave `segments`
-    out or send it as null, which is not the same as there being no speech."""
+    out or send it as null, which is not the same as there being no speech.
+    `language` (a code) and `prompt` (names and terms that are spoken) are
+    sent only when given."""
     data = {'model': WHISPER_MODEL, 'response_format': fmt}
+    if language:
+        data['language'] = language
+    if prompt:
+        data['prompt'] = prompt
     if fmt == 'verbose_json':
         data['timestamp_granularities[]'] = ['word', 'segment']
     with open(audio_path, 'rb') as f:
@@ -3255,7 +3288,7 @@ def _subtitle_segments(body):
     return segments
 
 
-def _whisper_transcribe(audio_path, upload_name):
+def _whisper_transcribe(audio_path, upload_name, language=None, prompt=None):
     """(words, segments) for one audio file, asking the service in whichever
     way gets timings out of it.
 
@@ -3273,7 +3306,8 @@ def _whisper_transcribe(audio_path, upload_name):
     order = ([known] if known else []) + [f for f in WHISPER_FORMATS if f != known]
     untimed, refused = None, None
     for fmt in order:
-        r = _whisper_request(audio_path, upload_name, fmt)
+        extra = {k: v for k, v in (('language', language), ('prompt', prompt)) if v}
+        r = _whisper_request(audio_path, upload_name, fmt, **extra)
         try:
             r.raise_for_status()
         except requests.exceptions.HTTPError as e:
@@ -3505,7 +3539,7 @@ def _take_filter(streams, take, level_db):
     return g + '[m]'
 
 
-def transcribe_video_detailed(path):
+def transcribe_video_detailed(path, language=None, prompt=None):
     """Transcribe the source's dialogue via the local whisper service
     (WHISPER_URL, an OpenAI-compatible /v1/audio/transcriptions endpoint), with
     word-level timestamps. Returns (words, segments, outcome):
@@ -3534,7 +3568,12 @@ def transcribe_video_detailed(path):
     container -- for a 45-minute episode that meant pushing several GB over
     HTTP so the service could demux and discard the video track anyway.
     Whisper resamples to 16 kHz mono internally regardless, so doing it here
-    costs one cheap ffmpeg pass and cuts the upload by ~100x."""
+    costs one cheap ffmpeg pass and cuts the upload by ~100x.
+
+    `language` is a code from WHISPER_LANGUAGES, for a programme whose
+    language is known (None: Whisper decides); `prompt` is names and terms
+    to spell the way they are meant."""
+    language, prompt = normalize_language(language), normalize_stt_prompt(prompt)
     audio_path = None
     try:
         audio_path = os.path.join(app.config['UPLOAD_FOLDER'], f'stt_{uuid.uuid4().hex}.wav')
@@ -3587,7 +3626,7 @@ def transcribe_video_detailed(path):
                 return [], [], {'ok': False,
                                 'reason': 'ffmpeg could not read the audio track' + (f' ({why})' if why else '')}
             try:
-                words, segments = _whisper_transcribe(audio_path, upload_name)
+                words, segments = _whisper_transcribe(audio_path, upload_name, language, prompt)
             except Exception as e:
                 print(f'Whisper transcription error (service at {WHISPER_URL}): {e}')
                 return [], [], {'ok': False, 'reason': _whisper_problem(e)}

@@ -193,7 +193,7 @@ def test_the_page_asks_for_the_right_jobs_in_each_place():
     # The Dashboard's count: everything this account has running.
     assert html.count("fetch('/api/monitor?kind=all')") == 1
     # The other tabs no longer refresh a list their jobs are not in.
-    for mark in ('SH.jobId = start.job_id', 'SP.jobId = start.job_id'):
+    for mark in ('e.jobId = jobId', 'SP.jobId = start.job_id'):  # shorts follows each queued job in shQRun
         at = [m.end() for m in re.finditer(re.escape(mark), html)]
         assert at and all('refreshMonitor' not in html[a:a + 80] for a in at), mark
     # File names are shown as text in that list, not as markup.

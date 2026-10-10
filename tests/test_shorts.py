@@ -413,14 +413,14 @@ class Services:
         w, s = _transcript()
         self.words = w if words is None else words
         self.segs = s if segs is None else segs
-        self.vision_calls, self.story_prompts, self.unloaded = [], [], []
+        self.vision_calls, self.story_prompts, self.unloaded, self.stt = [], [], [], []
         self.vision_reply = lambda n: {'response': json.dumps({'score': 4 if n % 2 else 2, 'desc': 'two people arguing'})}
         self.story_reply = self._default_story
         monkeypatch.setattr(sc.requests, 'post', self._post)
         self.heard = {'ok': True, 'reason': None if (self.words or self.segs)
                       else 'the speech-to-text service found no speech in the audio'}
         monkeypatch.setattr(pipeline, 'transcribe_video_detailed',
-                            lambda path: (self.words, self.segs, self.heard))
+                            lambda path, **kw: (self.stt.append(kw) or (self.words, self.segs, self.heard)))
         monkeypatch.setattr(pipeline, 'unload_ollama_model', lambda m: self.unloaded.append(m))
 
     @staticmethod
@@ -3131,3 +3131,63 @@ def test_re_captioning_the_faded_last_short_fades_it_again_and_the_others_keep_t
     assert last['ending'] is False and last['ending_fade'] == 1.0
     f = _frames(os.path.join(bdir, b['shorts'][1]['file']))
     assert len(f) == 100 and float(f[-1].mean()) < 5
+
+
+# ---- spoken language, and the caption editor's backdrop ----
+
+def test_the_chosen_language_and_names_reach_whisper_and_are_kept_with_the_analysis(env, monkeypatch):
+    svc = Services(monkeypatch)
+    client, headers = _client()
+    a = _analysis(client, _analyze(client, headers, env, language='tl', stt_prompt='  Ramon,   Aling Dolor '))
+    assert svc.stt == [{'language': 'tl', 'prompt': 'Ramon, Aling Dolor'}]
+    assert a['options']['language'] == 'tl' and a['options']['stt_prompt'] == 'Ramon, Aling Dolor'
+
+
+def test_without_a_language_whisper_is_left_to_decide(env, monkeypatch):
+    svc = Services(monkeypatch)
+    client, headers = _client()
+    _analysis(client, _analyze(client, headers, env))
+    assert svc.stt == [{}]
+
+
+def test_a_language_whisper_was_not_offered_is_not_sent(env, monkeypatch):
+    svc = Services(monkeypatch)
+    client, headers = _client()
+    _analysis(client, _analyze(client, headers, env, language='klingon'))
+    assert svc.stt == [{}], 'an unknown code makes a server refuse the whole file'
+
+
+def test_the_options_list_the_languages_and_the_default(env, monkeypatch):
+    monkeypatch.setattr(shorts, 'SHORTS_LANGUAGE', 'tl')
+    client, headers = _client()
+    d = client.get('/api/shorts/options').get_json()
+    assert {'code': 'en', 'name': 'English'} in d['languages'] and d['language'] == 'tl'
+
+
+def test_the_service_is_asked_for_the_language_and_names_only_when_they_are_given(tmp_path, monkeypatch):
+    sent = []
+
+    class R:
+        def raise_for_status(self): pass
+        text = '{}'
+        def json(self): return {'segments': [{'start': 0, 'end': 1, 'text': 'hi'}]}
+    monkeypatch.setattr(pipeline.requests, 'post', lambda url, **kw: sent.append(kw['data']) or R())
+    wav = tmp_path / 'a.wav'
+    wav.write_bytes(b'RIFF')
+    pipeline._whisper_request(str(wav), 'a.wav')
+    pipeline._whisper_request(str(wav), 'a.wav', language='tl', prompt='Ramon')
+    assert 'language' not in sent[0] and 'prompt' not in sent[0]
+    assert sent[1]['language'] == 'tl' and sent[1]['prompt'] == 'Ramon'
+
+
+def test_the_caption_editor_can_fetch_a_still_from_the_episode(env, monkeypatch):
+    Services(monkeypatch)
+    client, headers = _client()
+    a = _analysis(client, _analyze(client, headers, env))
+    r = client.post('/api/shorts/frame', json={'analysis_id': a['analysis_id'], 't': 2.0}, headers=headers)
+    d = r.get_json()
+    assert r.status_code == 200 and d['ok'] and d['image'].startswith('data:image/jpeg;base64,')
+    bad = client.post('/api/shorts/frame', json={'analysis_id': a['analysis_id'], 't': 'x'}, headers=headers)
+    assert bad.status_code == 400
+    gone = client.post('/api/shorts/frame', json={'analysis_id': 'nope', 't': 1}, headers=headers)
+    assert gone.status_code == 404

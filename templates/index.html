@@ -772,13 +772,31 @@ input.sh-num[type=number]{width:92px}
 @media (max-width:640px){.sh-frame-body,.sh-shot{grid-template-columns:1fr}}
 .sh-cap{margin-top:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
 .sh-cap-rows{max-height:340px;overflow-y:auto;margin:8px 0;padding-right:4px}
-.sh-cap-row{display:grid;grid-template-columns:74px 74px minmax(0,1fr) 28px;gap:6px;align-items:center;margin:4px 0}
+.sh-cap-row{display:grid;grid-template-columns:74px 74px minmax(0,1fr) 40px 40px 28px;gap:6px;align-items:center;margin:4px 0}
+.sh-cap-row button{font-size:11px}
+.sh-cap-row input[data-cap-t].over{border-color:var(--amber)}
+.sh-cap-wrap{display:grid;grid-template-columns:minmax(0,1fr) 190px;gap:16px;align-items:start}
+.sh-cp-side{position:sticky;top:8px}
+.sh-cp{position:relative;width:100%;aspect-ratio:9/16;background:#0b0d10;border-radius:10px;overflow:hidden;border:1px solid var(--line);container-type:inline-size}
+.sh-cp img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.sh-cp-line{position:absolute;left:7.4%;right:7.4%;bottom:23%;text-align:center;color:#fff;font-weight:700;font-family:Arial,Helvetica,sans-serif;line-height:1.15;
+  font-size:calc(var(--cp-px,64) * 100cqw / 1080);-webkit-text-stroke:calc(var(--cp-px,64) / 15 * 100cqw / 1080) #000;paint-order:stroke fill;overflow-wrap:anywhere}
+.sh-cp input[type=range],.sh-cp-side input[type=range]{width:100%;margin:8px 0 4px}
+.sh-cp-ctl{display:flex;gap:8px;align-items:center;font-size:11px;font-family:'JetBrains Mono',monospace}
+@media (max-width:760px){.sh-cap-wrap{grid-template-columns:minmax(0,1fr)}.sh-cp-side{position:static;max-width:220px}}
+.sh-q{margin-top:14px;display:none}
+.sh-q-row{border:1px solid var(--line);border-radius:8px;padding:9px 12px;margin-top:6px;background:var(--panel)}
+.sh-q-top{display:flex;justify-content:space-between;gap:10px;font-size:13px}
+.sh-q-bar{background:var(--panel-2,#1f232b);border-radius:5px;overflow:hidden;height:6px;margin:6px 0 4px}
+.sh-q-bar div{background:var(--accent,#4f8cff);height:100%;width:0%;transition:width .3s ease}
+.sh-q-step{font-size:12px;color:var(--ink-dim);overflow-wrap:anywhere}
+.sh-q-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
 .sh-cap-row input[type=text]{margin:0;padding:5px 8px;font-size:13px}
 .sh-cap-row input[data-cap-s],.sh-cap-row input[data-cap-e]{font-family:'JetBrains Mono',monospace;font-size:12px}
 .sh-cap-row input.bad{border-color:var(--tally)}
 .sh-cap-row button{padding:3px 0;line-height:1.2}
 .sh-cap-head{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-dim)}
-@media (max-width:640px){.sh-cap-row{grid-template-columns:62px 62px minmax(0,1fr) 26px}}
+@media (max-width:640px){.sh-cap-row{grid-template-columns:58px 58px minmax(0,1fr) 36px 36px 26px}}
 .sh-trt{font-size:12px;opacity:.85;margin-top:10px;padding-top:8px;border-top:1px solid var(--line)}
 .sh-trt-sum{margin-top:14px;line-height:1.7}
 .sh-warn{font-size:12px;line-height:1.5;padding:8px 10px;border-radius:6px;border:1px solid color-mix(in srgb,var(--amber) 45%,transparent);color:var(--amber);margin:8px 0}
@@ -7076,6 +7094,13 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <input type=text id=sh-avoid class=input-box maxlength=300 placeholder="e.g. anything that gives away the ending, the hospital scenes, scenes with the children">
 <p class="sh-note" style="margin-top:6px">A moment that is mainly about this, or shows it, is left out even if it is strong. One that only mentions it in passing can still be picked.</p>
 
+<label for=sh-language style="margin-top:12px">Spoken language</label>
+<select id=sh-language style="width:260px" title="Tells the speech-to-text which language to listen for"><option value="">Auto-detect</option></select>
+<p class="sh-note" style="margin-top:6px">Say what is spoken and the captions and the choice of moments are more accurate than when Whisper guesses from the first seconds, which goes wrong on a programme that opens on music or mixes Filipino and English. Leave it on Auto-detect for a mix of languages.</p>
+<label for=sh-stt-prompt style="margin-top:8px">Names and terms in the dialogue (optional)</label>
+<input type=text id=sh-stt-prompt class=input-box maxlength=400 placeholder="e.g. Ramon, Aling Dolor, Barangay Maligaya, Kapuso">
+<p class="sh-note" style="margin-top:6px">Names of characters and places, as they should be spelled. Whisper uses them as context, so they come out right in the captions.</p>
+
 <label for=sh-leave-out style="margin-top:12px">Leave out these parts of the video (optional)</label>
 <input type=text id=sh-leave-out class=input-box maxlength=600 placeholder="e.g. 0:00-1:45, 22:10-23:30, 44:05-end  (several parts: part 2 0:00-1:45)">
 <p class="sh-note" style="margin-top:6px">No moment will include any of it. Billboards (OBB/CBB), sponsor reads, opening and end credits, narration, a host, recaps and teasers are found and left out without this; use it for anything they miss.</p>
@@ -7168,19 +7193,12 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <div class="promo-actions" style="margin-top:14px">
   <button class="btn btn-primary-promo" type=button id=sh-analyze-btn onclick="shortsAnalyze(false)" title="Find the moments, then review, re-time and pick before anything is rendered">Preview the cut</button>
   <button class="btn btn-secondary-promo" type=button id=sh-auto-btn onclick="shortsAnalyze(true)" title="Find the moments and render all of them straight away with the Output settings above">Generate without preview</button>
-  <button class=btn type=button id=sh-cancel-btn style="display:none;color:var(--tally);border-color:var(--tally)" onclick="shortsCancel()">Cancel</button>
+
 </div>
 <p class="sh-note" style="margin-top:8px"><b>Preview the cut</b> lists the moments it found for you to play, re-time and untick before rendering. <b>Generate without preview</b> renders every moment it finds in one go; the moments stay listed below afterwards, so you can still adjust any and render again.</p>
 
-<div id=sh-progress class=no-data style="display:none;text-align:left;padding:20px 24px">
-  <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;color:var(--ink)">
-    <span id=sh-progress-step>Working&hellip;</span>
-    <span><span id=sh-progress-elapsed style="opacity:.6;margin-right:8px"></span><span id=sh-progress-pct>0%</span></span>
-  </div>
-  <div style="background:var(--panel-2,#1f232b);border-radius:6px;overflow:hidden;height:10px">
-    <div id=sh-progress-bar style="background:var(--accent,#4f8cff);height:100%;width:0%;transition:width .3s ease"></div>
-  </div>
-  <div id=sh-stage-list style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px"></div>
+<div id=sh-queue class=sh-q aria-live="polite">
+  <div style="font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-dim)">Queue</div>
 </div>
 
 <div id=sh-review style="display:none;margin-top:18px">
@@ -7341,6 +7359,15 @@ async function shortsLoadOptions(){
       o.value = m; o.textContent = m
       story.appendChild(o)
     })
+    var lang = shEl('sh-language')
+    if(lang && lang.options.length < 2){
+      ;(d.languages || []).forEach(function(l){
+        var o = document.createElement('option')
+        o.value = l.code; o.textContent = l.name
+        lang.appendChild(o)
+      })
+      if(d.language) lang.value = d.language
+    }
     shEl('sh-frames').value = d.vision_frames || 90
     var fsel = shEl('sh-format'), had = fsel.value
     if((d.formats || []).length){
@@ -7384,87 +7411,149 @@ async function shortsLoadOptions(){
   }
 }
 
-function shProgress(j){
-  var pct = j.percent || 0
-  shEl('sh-progress-bar').style.width = pct + '%'
-  shEl('sh-progress-pct').textContent = pct + '%'
-  shEl('sh-progress-step').textContent = j.step || 'Working...'
-  shEl('sh-progress-elapsed').textContent = (typeof fmtElapsed === 'function') ? fmtElapsed(j.elapsed) : ''
-  var host = shEl('sh-stage-list'), stages = j.stages || []
-  host.innerHTML = ''
-  var activeIdx = 0
-  stages.forEach(function(s, i){ if(pct >= s.percent) activeIdx = i })
-  stages.forEach(function(s, i){
-    var done = i < activeIdx || pct >= 100, cur = i === activeIdx && pct < 100
-    var el = document.createElement('span')
-    el.style.cssText = 'font-size:11px;padding:3px 9px;border-radius:11px;border:1px solid ' +
-      (cur ? 'var(--accent,#4f8cff)' : 'var(--line)') + ';' +
-      (cur ? 'color:var(--accent,#4f8cff);font-weight:600' : (done ? 'opacity:.55' : 'opacity:.32'))
-    el.textContent = (done ? '✓ ' : '') + s.label
-    host.appendChild(el)
-  })
+// ---- The queue: every job started from this page is followed on its own ----
+// The server runs as many at once as it is set to and queues the rest, so
+// nothing here waits: a second cut can be started while the first is still
+// being made, and each shows its own progress below the buttons.
+SH.queue = []; SH.qSeq = 0
+var SH_Q_LIVE = {uploading: 1, waiting: 1, running: 1}
+var SH_Q_KIND = {analyze: 'Preview', auto: 'Generate', render: 'Render'}
+
+function shQAdd(kind, label, project, extra){
+  var e = Object.assign({n: ++SH.qSeq, kind: kind, label: label, project: project, state: 'uploading',
+                         percent: 0, step: 'Starting…', shown: false}, extra || {})
+  SH.queue.push(e)
+  shQRender()
+  return e
 }
 
-function shPoll(jobId){
-  return new Promise(function(resolve){
-    var misses = 0
-    var tick = async function(){
-      var j
-      try{ j = await (await fetch('/api/shorts/progress/' + jobId)).json() }
-      catch(err){
-        // A dropped connection or a non-JSON answer (a proxy error page, a
-        // server restart) is retried for about a minute, then reported --
-        // never left as a promise that can't settle, which would keep both
-        // buttons disabled until the page was reloaded.
-        if(++misses > 40){ resolve({error: 'Lost contact with the server while waiting for this job. It may still be running: check the Jobs tab, then try again.'}); return }
-        setTimeout(tick, 1500); return
-      }
-      misses = 0
-      if(j.error){ resolve({error: j.error}); return }
-      shProgress(j)
-      if(j.done){ resolve(j.result || {error: 'Job finished with no result.'}); return }
-      setTimeout(tick, 900)
+function shQRender(){
+  SH.busy = SH.queue.some(function(e){ return SH_Q_LIVE[e.state] })
+  var host = shEl('sh-queue')
+  if(!host) return
+  host.style.display = SH.queue.length ? 'block' : 'none'
+  var want = {}
+  SH.queue.forEach(function(e){
+    want[e.n] = true
+    var row = host.querySelector('[data-q="' + e.n + '"]')
+    if(!row){
+      row = document.createElement('div')
+      row.className = 'sh-q-row'
+      row.setAttribute('data-q', e.n)
+      row.innerHTML = '<div class=sh-q-top><b data-q-title></b><span data-q-state></span></div>' +
+        '<div class=sh-q-bar><div data-q-fill></div></div><div class=sh-q-step data-q-step></div><div class=sh-q-btns></div>'
+      host.appendChild(row)
     }
-    tick()
+    var live = !!SH_Q_LIVE[e.state]
+    row.querySelector('[data-q-title]').textContent = (SH_Q_KIND[e.kind] || '') + ' — ' + e.label
+    row.querySelector('[data-q-state]').textContent = {uploading: 'Uploading', waiting: 'Waiting', running: (e.percent || 0) + '%',
+      done: 'Done', failed: 'Stopped', cancelled: 'Cancelled'}[e.state] || ''
+    row.querySelector('[data-q-fill]').style.width = (e.state === 'done' ? 100 : (e.percent || 0)) + '%'
+    var step = row.querySelector('[data-q-step]')
+    step.textContent = e.step || ''
+    step.style.color = e.state === 'failed' ? 'var(--tally)' : ''
+    var key = e.state + '|' + e.shown
+    var btns = row.querySelector('.sh-q-btns')
+    if(btns.getAttribute('data-key') !== key){
+      btns.setAttribute('data-key', key)
+      btns.innerHTML = ''
+      var add = function(text, cls, fn){
+        var b = document.createElement('button')
+        b.type = 'button'; b.className = cls; b.textContent = text
+        b.addEventListener('click', fn)
+        btns.appendChild(b)
+      }
+      if(live) add('Cancel', 'btn-sm', function(){ shQCancel(e) })
+      if(e.state === 'done' && !e.shown) add(e.kind === 'analyze' ? 'Open the review' : 'Show the shorts', 'btn', function(){ shQOpen(e) })
+      if(!live) add('Dismiss', 'btn-sm', function(){ SH.queue = SH.queue.filter(function(x){ return x !== e }); shQRender() })
+    }
+  })
+  Array.prototype.slice.call(host.querySelectorAll('[data-q]')).forEach(function(r){
+    if(!want[r.getAttribute('data-q')]) r.remove()
   })
 }
 
-function shBusy(on, label){
-  SH.busy = on
-  shEl('sh-analyze-btn').disabled = on
-  shEl('sh-auto-btn').disabled = on
-  shEl('sh-render-btn').disabled = on
-  shEl('sh-cancel-btn').style.display = on ? 'inline-block' : 'none'
-  shEl('sh-cancel-btn').disabled = false
-  shEl('sh-progress').style.display = on ? 'block' : 'none'
-  if(on){
-    shProgress({percent: 0, step: label || 'Starting...', stages: []})
-    shEl('sh-prompt').style.display = 'none'
-  }
+async function shQCancel(e){
+  e.cancelled = true
+  if(e.state === 'uploading' && e.xhr){ e.xhr.abort(); e.state = 'cancelled'; e.step = 'Cancelled.'; shQRender(); return }
+  if(e.jobId){ try{ await fetch('/api/shorts/cancel/' + e.jobId, {method: 'POST'}) }catch(err){} }
 }
 
-async function shortsCancel(){
-  if(!SH.jobId) return
-  shEl('sh-cancel-btn').disabled = true
-  try{ await fetch('/api/shorts/cancel/' + SH.jobId, {method: 'POST'}) }catch(e){}
+// Follows one job to its end.
+async function shQRun(e, jobId){
+  e.jobId = jobId
+  var res = await shJobWait(jobId, function(j){
+    e.percent = j.percent || 0
+    var queued = j.status === 'queued'
+    e.state = queued ? 'waiting' : 'running'
+    e.step = queued ? 'Waiting for a free slot — other jobs are running first.' : (j.step || 'Working…')
+    shQRender()
+  })
+  await shQFinish(e, res)
+}
+
+async function shQFinish(e, res){
+  if(res.error){
+    e.state = e.cancelled ? 'cancelled' : 'failed'
+    e.step = e.cancelled ? 'Cancelled.' : res.error
+    shQRender(); shCreateSync(); return
+  }
+  e.state = 'done'; e.percent = 100; e.result = res
+  e.step = e.kind === 'analyze' ? 'Ready to review.' : 'Finished.'
+  shQRender()
+  // Opened for them only when nothing else is open for that project: a cut
+  // that is being reviewed is never swapped for one that has just finished.
+  var here = SH.openProject === e.project
+  if(e.kind === 'render'){
+    if(here && SH.analysis && SH.analysis.analysis_id === e.analysisId && res.batch){
+      var host = shEl('sh-results')
+      host.innerHTML = ''
+      host.appendChild(shBatchCard(res.batch, true))
+      host.style.display = 'block'
+      e.shown = true; shQRender()
+    }
+  }else if(here && !SH.analysis && !SH.settling){
+    await shQOpen(e)
+  }
+  shCreateSync()
+}
+
+// Puts a finished job's cut, or its shorts, on the page, going to its project first.
+async function shQOpen(e){
+  if(!e.result) return
+  if(SH.openProject !== e.project){
+    await shProjectOpen(e.project, true)
+    shInnerTab('p-shorts-create')
+    shCreateReset()
+  }
+  SH.formProject = e.project
+  SH.settling = true
+  e.shown = true; shQRender()
+  try{
+    if(e.kind === 'render') await shShowAnalysis({analysis_id: e.analysisId, batch: e.result.batch}, true)
+    else await shShowAnalysis(e.result, e.kind === 'auto')
+  }finally{ SH.settling = false; shCreateSync() }
 }
 
 // XMLHttpRequest rather than fetch for this one request: a local upload can
 // be gigabytes, and fetch has no upload-progress event. The CSRF header is
 // set by hand because the page-wide fetch wrapper never sees an XHR.
-function shStart(fd){
+function shStart(fd, e){
   return new Promise(function(resolve, reject){
     var xhr = new XMLHttpRequest()
+    e.xhr = xhr
     xhr.open('POST', '/api/shorts/analyze')
     var meta = document.querySelector('meta[name="csrf-token"]')
     if(meta) xhr.setRequestHeader('X-CSRF-Token', meta.getAttribute('content'))
     xhr.upload.onprogress = function(ev){
       if(!ev.lengthComputable || ev.total < 5 * 1024 * 1024) return
       var pct = Math.round(ev.loaded / ev.total * 100)
-      shProgress({percent: pct, stages: [], step: pct < 100
-        ? 'Uploading video… (' + shBytes(ev.loaded) + ' / ' + shBytes(ev.total) + ')'
-        : 'Upload complete — starting…'})
+      e.percent = pct
+      e.step = pct < 100 ? 'Uploading video… (' + shBytes(ev.loaded) + ' / ' + shBytes(ev.total) + ')'
+                         : 'Upload complete — starting…'
+      shQRender()
     }
+    xhr.onabort = function(){ reject(new Error('cancelled')) }
     xhr.onload = function(){
       try{ resolve(JSON.parse(xhr.responseText)) }catch(e){ reject(new Error('Bad response from server')) }
     }
@@ -7515,7 +7604,6 @@ function shAddPart(){
 }
 
 async function shortsAnalyze(auto){
-  if(SH.busy) return
   var f = shEl('sh-file'), net = shEl('shorts_file_network').value
   var hasLocal = f && f.files && f.files[0]
   var project = SH.openProject
@@ -7539,6 +7627,8 @@ async function shortsAnalyze(auto){
   fd.append('focus', shEl('sh-focus').value)
   fd.append('avoid', shEl('sh-avoid').value)
   fd.append('leave_out', shEl('sh-leave-out').value)
+  fd.append('language', shEl('sh-language').value)
+  fd.append('stt_prompt', shEl('sh-stt-prompt').value)
   if(auto){
     fd.append('auto_render', '1')
     var opts = shRenderOptions()
@@ -7548,35 +7638,20 @@ async function shortsAnalyze(auto){
   fd.append('story_model', shEl('sh-story-model').value)
   fd.append('vision_frames', shEl('sh-frames').value)
 
-  shEl('sh-review').style.display = 'none'
-  shEl('sh-results').style.display = 'none'
-  SH.analysis = null; SH.cands = []
-  SH.formProject = project; SH.formNote = null
-  shBusy(true, 'Starting...')
+  SH.formProject = project
+  var label = hasLocal ? f.files[0].name : String(net).split(/[\\/]/).pop()
+  if(n > 1) label += ' + ' + (n - 1) + ' more part' + (n > 2 ? 's' : '')
+  var e = shQAdd(auto ? 'auto' : 'analyze', label, project)
+  shEl('sh-prompt').style.display = 'none'
   var start
-  try{ start = await shStart(fd) }
-  catch(err){ shJobFailed('Could not start: ' + escapeHtmlLite(String(err))); return }
-  if(start.error){ shJobFailed(escapeHtmlLite(start.error)); return }
-  SH.jobId = start.job_id
-  var res = await shPoll(start.job_id)
-  SH.jobId = null
-  if(res.error){ shJobFailed(escapeHtmlLite(res.error)); return }
-  // Until the cut is on the form it still counts as this project's, so
-  // opening another project meanwhile cannot take the form over.
-  SH.settling = true
-  shBusy(false)
-  try{ await shShowAnalysis(res, auto) }
-  finally{ SH.settling = false; shCreateSync() }
-}
-
-// The job stopped. Said on the form, and remembered so that a project the
-// user has wandered into meanwhile can say so too.
-function shJobFailed(html){
-  SH.jobId = null
-  shBusy(false)
-  shNote(html, true)
-  SH.formNote = html
-  shCreateSync()
+  try{ start = await shStart(fd, e) }
+  catch(err){
+    if(!e.cancelled){ e.state = 'failed'; e.step = 'Could not start: ' + String(err) }
+    shQRender(); return
+  }
+  if(start.error){ e.state = 'failed'; e.step = start.error; shQRender(); shNote(escapeHtmlLite(start.error), true); return }
+  e.state = 'waiting'; e.step = 'Starting\u2026'; shQRender()
+  shQRun(e, start.job_id)
 }
 
 async function shShowAnalysis(res, auto){
@@ -7703,7 +7778,6 @@ async function shLoadEarlier(pid){
 }
 
 async function shOpenAnalysis(aid){
-  if(SH.busy) return
   try{
     var a = await (await fetch('/api/shorts/analysis/' + aid)).json()
     if(!a.ok){ shNote(escapeHtmlLite(a.error || 'Could not open that analysis.'), true); return }
@@ -7856,7 +7930,7 @@ function shUpdateRenderBtn(){
   var n = SH.cands.filter(function(c){ return c.keep }).length
   var b = shEl('sh-render-btn')
   b.textContent = n ? 'Render ' + n + ' short' + (n === 1 ? '' : 's') : 'Render selected'
-  b.disabled = SH.busy || !n
+  b.disabled = !n
 }
 
 function shortsSelectAll(on){
@@ -7973,7 +8047,7 @@ function shortsPlay(url, title){
 }
 
 async function shortsRenderSelected(){
-  if(SH.busy || !SH.analysis) return
+  if(!SH.analysis) return
   if(document.querySelector('#sh-cands input.bad')){
     alert('Fix the in/out points marked in red first.'); return
   }
@@ -7985,25 +8059,18 @@ async function shortsRenderSelected(){
     return it
   })
   if(!items.length) return
-  shBusy(true, 'Starting render...')
-  shEl('sh-progress').scrollIntoView({behavior: 'smooth', block: 'nearest'})
+  var aid = SH.analysis.analysis_id
+  var e = shQAdd('render', (SH.analysis.orig_name || 'the selected moments') + ' · ' + items.length + ' short' + (items.length === 1 ? '' : 's'),
+                 SH.formProject || SH.openProject, {analysisId: aid})
+  e.state = 'waiting'; e.step = 'Starting the render…'; shQRender()
+  shEl('sh-queue').scrollIntoView({behavior: 'smooth', block: 'nearest'})
   var start
   try{
     start = await (await fetch('/api/shorts/render', {method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(Object.assign({analysis_id: SH.analysis.analysis_id, items: items}, shRenderOptions()))})).json()
-  }catch(err){ shBusy(false); shUpdateRenderBtn(); alert('Could not start the render: ' + err); return }
-  if(start.error){ shBusy(false); shUpdateRenderBtn(); shShowResultError(start.error); return }
-  SH.jobId = start.job_id
-  var res = await shPoll(start.job_id)
-  SH.jobId = null
-  shBusy(false); shUpdateRenderBtn()
-  shCreateSync()
-  if(res.error){ shShowResultError(res.error); return }
-  var host = shEl('sh-results')
-  host.innerHTML = ''
-  host.appendChild(shBatchCard(res.batch, true))
-  host.style.display = 'block'
-  host.scrollIntoView({behavior: 'smooth', block: 'start'})
+      body: JSON.stringify(Object.assign({analysis_id: aid, items: items}, shRenderOptions()))})).json()
+  }catch(err){ e.state = 'failed'; e.step = 'Could not start the render: ' + err; shQRender(); return }
+  if(start.error){ e.state = 'failed'; e.step = start.error; shQRender(); shShowResultError(start.error); return }
+  shQRun(e, start.job_id)
 }
 
 function shShowResultError(msg){
@@ -8039,20 +8106,90 @@ function shCapFmt(t){
 function shCapEditor(host, cues, opts){
   opts = opts || {}
   var rows = cues.map(function(c){ return {start: c.start, end: c.end, text: c.text} })
+  var PX = {s: 52, m: 64, l: 78}, CH = {s: 32, m: 26, l: 21}
+  var size = PX[opts.size] ? opts.size : 'm', maxc = CH[size]
+  var dur = opts.dur != null ? opts.dur : Math.max.apply(null, [5].concat(rows.map(function(r){ return r.end })))
   host.style.display = 'block'
   host.innerHTML = '<div class="sh-cap">' +
     (opts.note ? '<div class="sh-note" style="margin-top:0">' + opts.note + '</div>' : '') +
-    '<div class="sh-cap-row sh-cap-head" style="margin-top:8px"><span>In</span><span>Out</span><span>Caption</span><span></span></div>' +
+    '<div class="sh-cap-wrap"><div>' +
+    '<div class="sh-cap-row sh-cap-head" style="margin-top:8px"><span>In</span><span>Out</span><span>Caption</span><span></span><span></span><span></span></div>' +
     '<div class="sh-cap-rows" data-cap-rows></div>' +
     '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
       (opts.readOnly ? '' : '<button type=button class="btn-sm" data-cap-add>+ Add a line</button>' +
         '<button type=button class=btn data-cap-save>' + (opts.saveLabel || 'Save captions') + '</button>') +
       (opts.onReset && !opts.readOnly ? '<button type=button class="btn-sm" data-cap-reset title="Drop your corrections and go back to the automatic captions">Back to automatic</button>' : '') +
       '<button type=button class="btn-sm" data-cap-close style="opacity:.75">Close</button>' +
-      '<span data-cap-out style="font-size:12px;overflow-wrap:anywhere"></span></div></div>'
+      '<span data-cap-out style="font-size:12px;overflow-wrap:anywhere"></span></div>' +
+    (opts.readOnly ? '' : '<div class="sh-note">In a time box, the up and down keys move it by 0.05 s (hold Shift for 0.5 s). <b>Split</b> cuts a line at the text cursor; <b>Join</b> runs it into the next.</div>') +
+    '</div><div class="sh-cp-side">' +
+      '<div class="sh-cp" data-cp style="--cp-px:' + PX[size] + '"><img data-cp-img alt="" style="display:none"><div class="sh-cp-line" data-cp-line></div></div>' +
+      '<input type=range data-cp-t min=0 max=' + dur + ' step=0.05 value=0 aria-label="Position in the short">' +
+      '<div class="sh-cp-ctl"><button type=button class="btn-sm" data-cp-play>&#9654; Play</button><span data-cp-clock></span></div>' +
+      '<div class="sh-note" data-cp-info></div>' +
+      '<div class="sh-note">Shown as it will be burned in. ' + (opts.frame ? 'The picture behind is the middle of the source frame; the real framing may differ.' : '') + '</div>' +
+    '</div></div></div>'
   var list = host.querySelector('[data-cap-rows]'), out = host.querySelector('[data-cap-out]')
   var ro = opts.readOnly ? ' readonly' : ''
+  var img = host.querySelector('[data-cp-img]'), line = host.querySelector('[data-cp-line]')
+  var range = host.querySelector('[data-cp-t]'), clock = host.querySelector('[data-cp-clock]')
+  var info = host.querySelector('[data-cp-info]'), playBtn = host.querySelector('[data-cp-play]')
 
+  // ---- the preview: where we are in the short, and which line is on screen ----
+  var t = 0, pinned = null, timer = null, shots = {}, asked = {}, bt = null
+  function pinTime(r){ return Math.max(0, r.start + Math.min(0.3, Math.max(0, (r.end - r.start) / 2))) }
+  function activeRow(){
+    if(pinned && rows.indexOf(pinned) >= 0) return pinned
+    var best = null
+    rows.forEach(function(r){
+      if(r.text.trim() && r.start <= t + 1e-6 && t < r.end - 1e-6 && (!best || r.start >= best.start)) best = r
+    })
+    return best
+  }
+  function show(src){ img.src = src; img.style.display = 'block' }
+  function backdrop(){
+    if(!opts.frame) return
+    var key = Math.round(t * 2) / 2
+    if(shots[key]){ show(shots[key]); return }
+    if(asked[key]) return
+    clearTimeout(bt)
+    bt = setTimeout(function(){
+      asked[key] = true
+      Promise.resolve(opts.frame(key)).then(function(src){
+        if(src){ shots[key] = src; if(Math.round(t * 2) / 2 === key) show(src) }
+      }).catch(function(){}).then(function(){ delete asked[key] })
+    }, timer ? 0 : 140)
+  }
+  function paint(){
+    var r = activeRow()
+    line.textContent = r ? r.text.replace(/\s+/g, ' ').trim() : ''
+    range.value = t
+    clock.textContent = shCapFmt(t) + ' / ' + shCapFmt(dur)
+    if(r){
+      var n = r.text.replace(/\s+/g, ' ').trim().length
+      info.textContent = n + ' characters. ' + (n > maxc ? 'More than the ' + maxc + ' that fit on a line at this size, so it wraps onto a second line.' : 'Fits on one line.')
+      info.style.color = n > maxc ? 'var(--amber)' : ''
+    }else{ info.textContent = 'No caption at this moment.'; info.style.color = '' }
+    backdrop()
+  }
+  function stop(){ clearInterval(timer); timer = null; playBtn.innerHTML = '&#9654; Play' }
+  function pin(r){ stop(); pinned = r; t = Math.min(dur, pinTime(r)); paint() }
+  range.addEventListener('input', function(){ stop(); pinned = null; t = parseFloat(range.value) || 0; paint() })
+  playBtn.addEventListener('click', function(){
+    if(timer){ stop(); return }
+    pinned = null
+    if(t >= dur - 0.05) t = 0
+    var t0 = performance.now(), from = t
+    playBtn.innerHTML = '&#10074;&#10074; Pause'
+    timer = setInterval(function(){
+      if(!host.contains(line)){ stop(); return }
+      t = Math.min(dur, from + (performance.now() - t0) / 1000)
+      paint()
+      if(t >= dur) stop()
+    }, 50)
+  })
+
+  // ---- the lines ----
   function draw(){
     list.innerHTML = rows.length ? '' :
       '<div class="sh-note">No captions: nothing is said in this short' + (opts.readOnly ? '.' : '. Add a line to give it one.') + '</div>'
@@ -8062,14 +8199,64 @@ function shCapEditor(host, cues, opts){
       row.innerHTML = '<input type=text data-cap-s aria-label="Caption ' + (k + 1) + ' in" value="' + shCapFmt(r.start) + '"' + ro + '>' +
         '<input type=text data-cap-e aria-label="Caption ' + (k + 1) + ' out" value="' + shCapFmt(r.end) + '"' + ro + '>' +
         '<input type=text data-cap-t maxlength=200 spellcheck=true aria-label="Caption ' + (k + 1) + ' text" value="' + escapeHtmlLite(r.text) + '"' + ro + '>' +
-        (opts.readOnly ? '<span></span>' : '<button type=button class="btn-sm" data-cap-x aria-label="Remove caption ' + (k + 1) + '" title="Remove this line">&times;</button>')
+        (opts.readOnly ? '<span></span><span></span><span></span>' :
+          '<button type=button class="btn-sm" data-cap-split aria-label="Split caption ' + (k + 1) + ' at the cursor" title="Cut this line in two at the text cursor">Split</button>' +
+          '<button type=button class="btn-sm" data-cap-join aria-label="Join caption ' + (k + 1) + ' with the next" title="Run this line into the next one"' + (k === rows.length - 1 ? ' disabled' : '') + '>Join</button>' +
+          '<button type=button class="btn-sm" data-cap-x aria-label="Remove caption ' + (k + 1) + '" title="Remove this line">&times;</button>')
+      var si = row.querySelector('[data-cap-s]'), ei = row.querySelector('[data-cap-e]'), ti = row.querySelector('[data-cap-t]')
       // A time is only re-read when it is retyped, so one left alone keeps
       // its exact value and not the two decimals it is shown to.
-      row.querySelector('[data-cap-s]').addEventListener('change', function(){ time(this, r, 'start') })
-      row.querySelector('[data-cap-e]').addEventListener('change', function(){ time(this, r, 'end') })
-      row.querySelector('[data-cap-t]').addEventListener('input', function(){ r.text = this.value })
+      si.addEventListener('change', function(){ time(this, r, 'start'); pin(r) })
+      ei.addEventListener('change', function(){ time(this, r, 'end'); pin(r) })
+      ;[si, ei].forEach(function(inp){
+        var key = inp === si ? 'start' : 'end'
+        inp.addEventListener('focus', function(){ pin(r) })
+        if(!opts.readOnly) inp.addEventListener('keydown', function(ev){
+          if(ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown') return
+          ev.preventDefault()
+          var v = shParse(inp.value)
+          if(v == null) v = r[key]
+          v = Math.round((v + (ev.key === 'ArrowUp' ? 1 : -1) * (ev.shiftKey ? 0.5 : 0.05)) * 100) / 100
+          v = Math.max(0, Math.min(dur, v))
+          r[key] = v; inp.value = shCapFmt(v); inp.classList.remove('bad')
+          pin(r)
+          if(key === 'end') { t = Math.max(r.start, v - 0.05); paint() }
+        })
+      })
+      function over(){ ti.classList.toggle('over', r.text.trim().length > maxc) }
+      over()
+      ti.addEventListener('focus', function(){ pin(r) })
+      ti.addEventListener('input', function(){ r.text = this.value; over(); pin(r) })
       var x = row.querySelector('[data-cap-x]')
-      if(x) x.addEventListener('click', function(){ rows.splice(rows.indexOf(r), 1); draw() })
+      if(x) x.addEventListener('click', function(){ rows.splice(rows.indexOf(r), 1); if(pinned === r) pinned = null; draw(); paint() })
+      var sp = row.querySelector('[data-cap-split]')
+      if(sp) sp.addEventListener('click', function(){
+        var text = r.text, at = ti.selectionStart
+        if(document.activeElement !== ti && !(at > 0 && at < text.length)) at = null
+        if(at == null || at <= 0 || at >= text.length){
+          // No cursor inside the text: cut at the space nearest the middle.
+          var mid = Math.floor(text.length / 2), l = text.lastIndexOf(' ', mid), rr = text.indexOf(' ', mid)
+          at = l < 0 ? rr : (rr < 0 ? l : (mid - l <= rr - mid ? l : rr))
+        }
+        var left = at > 0 ? text.slice(0, at).trim() : '', right = at > 0 ? text.slice(at).trim() : ''
+        if(!left || !right){ say('There is nothing to split here: put the cursor in the middle of the line.', 'var(--amber)'); return }
+        var cut = Math.round((r.start + (r.end - r.start) * at / text.length) * 100) / 100
+        if(cut - r.start < 0.15 || r.end - cut < 0.15){ say('The line is too short to split.', 'var(--amber)'); return }
+        var tail = {start: cut, end: r.end, text: right}
+        r.end = cut; r.text = left
+        rows.splice(rows.indexOf(r) + 1, 0, tail)
+        say('')
+        draw(); pin(tail)
+      })
+      var jn = row.querySelector('[data-cap-join]')
+      if(jn) jn.addEventListener('click', function(){
+        var nx = rows[rows.indexOf(r) + 1]
+        if(!nx) return
+        r.text = (r.text.trim() + ' ' + nx.text.trim()).trim()
+        r.end = Math.max(r.end, nx.end)
+        rows.splice(rows.indexOf(nx), 1)
+        draw(); pin(r)
+      })
       list.appendChild(row)
     })
   }
@@ -8081,6 +8268,8 @@ function shCapEditor(host, cues, opts){
   }
   function say(text, colour){ out.style.color = colour || ''; out.textContent = text }
   draw()
+  if(rows.length) pin(rows[0]); else paint()
+  if(document.activeElement && document.activeElement !== document.body) { /* keep focus where the user put it */ }
 
   var add = host.querySelector('[data-cap-add]')
   if(add) add.addEventListener('click', function(){
@@ -8106,8 +8295,9 @@ function shCapEditor(host, cues, opts){
     if(err) say(err, 'var(--tally)')
   })
   var reset = host.querySelector('[data-cap-reset]')
-  if(reset) reset.addEventListener('click', function(){ opts.onReset() })
+  if(reset) reset.addEventListener('click', function(){ stop(); opts.onReset() })
   host.querySelector('[data-cap-close]').addEventListener('click', function(){
+    stop()
     host.style.display = 'none'; host.innerHTML = ''
     if(opts.onClose) opts.onClose()
   })
@@ -8140,7 +8330,12 @@ async function shCandCaptions(i){
   if(!r.ok){ host.innerHTML = '<div class="sh-warn">' + escapeHtmlLite(r.error || 'Could not load the captions.') + '</div>'; return }
   var burning = shEl('sh-captions').checked && !shEl('sh-captions').disabled
   shCapEditor(host, r.cues, {
-    dur: r.end - r.start, saveLabel: 'Use these captions',
+    dur: r.end - r.start, saveLabel: 'Use these captions', size: size,
+    frame: function(at){
+      return fetch('/api/shorts/frame', {method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({analysis_id: SH.analysis.analysis_id, t: r.start + at})})
+        .then(function(x){ return x.json() }).then(function(d){ return d.ok ? d.image : null })
+    },
     note: (r.edited ? 'Your corrected captions for this moment.' : 'The automatic captions for this moment, as they will appear.') +
       ' Change the wording, or when a line is on screen; empty a line to drop it. Times are from the start of the short.' +
       (burning ? '' : ' <b>Burn in captions</b> is off, so these go to the .srt only.') +
@@ -8341,7 +8536,7 @@ async function shBatchCaptions(card, b, s){
     : r.how === 'srt' ? 'These captions are not in the picture, only in the .srt, so saving is immediate.'
     : escapeHtmlLite(r.why || '') + ' <b>Saving here updates the .srt only.</b>'
   shCapEditor(host, r.cues, {
-    dur: r.duration, readOnly: !r.can_change, note: head + note,
+    dur: r.duration, readOnly: !r.can_change, note: head + note, size: (b.options || {}).subtitle_size || 'm',
     saveLabel: r.how === 'render' ? 'Save and render again' : 'Save to the .srt',
     onSave: async function(cues, say){
       var p = await (await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -8688,7 +8883,7 @@ function shCreateSync(){
   var form = shEl('sh-create-form'), note = shEl('sh-create-elsewhere')
   if(!form || !note) return
   var here = SH.openProject
-  var live = SH.busy || SH.settling
+  var live = SH.settling
   // A cut left behind in a project that has since been deleted is nobody's.
   if(SH.formProject && !live && !(SH.projects || []).some(function(p){ return p.project_id === SH.formProject })) SH.formProject = null
   var held = SH.formProject && SH.formProject !== here && (live || SH.analysis || SH.formNote)
@@ -8698,7 +8893,7 @@ function shCreateSync(){
   if(!held){ note.innerHTML = ''; return }
   var name = '<b>' + escapeHtmlLite(shProjectName(SH.formProject)) + '</b>'
   note.innerHTML = (live
-      ? 'Shorts are being made for ' + name + ' right now. One job runs at a time: wait for it to finish, or go back to it to watch or cancel it.'
+      ? 'A cut for ' + name + ' is being opened right now.'
       : SH.analysis
         ? 'A cut for ' + name + ' is still open for review. Go back to it, or drop it to start one for this project.'
         : 'The job for ' + name + ' stopped: <span style="color:var(--amber)">' + SH.formNote + '</span>') +
@@ -9881,7 +10076,7 @@ job. Configured via env vars:
       <h3>1. Find moments</h3>
       <p>Open the episode&rsquo;s project (see <em>Projects</em> below), go to <strong>Create shorts</strong>, pick the full episode and choose <strong>Preview the cut</strong>. Nothing is rendered in this step. <strong>Generate without preview</strong> runs the same analysis and then renders every moment it found, with the Output settings, as one job; the moments are still listed afterwards so any can be re-timed and rendered again.</p>
       <p><strong>Length of each short</strong> starts at 60 to 120 seconds. <strong>Moments to find</strong> is a ceiling &mdash; up to 5, 8, 12, 20, 50 or 100 &mdash; or <strong>Auto</strong>. A number keeps the best that many, weak ones included if there is room. Auto has no number: it keeps every distinct moment the story model rates {{ shorts_auto_min_story }}/10 or better (100 at most), and if none reaches that it lists everything it found and says so. An episode only holds so many: two moments may share up to half their length, so 45 minutes at 60&ndash;120 s yields a few dozen at most whatever is asked for. Each five-minute stretch of dialogue is asked for as many moments as it can hold end to end, eight at the very most. One render takes up to 100 shorts.</p>
-      <p><strong>Billboards, credits, narration and the like are never in a moment.</strong> A broadcast episode or a movie carries material that is not the drama: opening and closing billboards (OBB/CBB) and sponsor reads, opening titles and end credits, a narrator or voice-over telling the story, a host speaking to the audience, recaps (<em>sa nakaraang</em>) and teasers (<em>abangan</em>), and black between acts. The story model marks the lines that are any of these, and the AI Vision model says of every frame it rates whether it is the drama, credits or a title card, a logo or billboard, a host, or black &mdash; for the frames across the whole video and again for those inside each moment. A frame stands for its shot (up to 8 seconds either side of it), and non-drama frames less than 20 seconds apart with no drama between them are taken as one run, as credits are. No moment includes any of it: a moment that runs into one keeps its longest clean stretch of lines (marked <em>Trimmed clear</em>), is never lengthened into one, and its lead-in, tail and padding stop at its edge; one with too little left is dropped. A note above the list says what was left out and where. <strong>Leave out these parts of the video</strong> takes ranges of your own &mdash; <code>0:00-1:45, 44:05-end</code> &mdash; for anything they miss. Something left out by mistake can be added back with <em>Add your own moment</em>, which is never trimmed.</p>
+      <p><strong>Billboards, credits, narration and the like are never in a moment.</strong> A broadcast episode or a movie carries material that is not the drama: opening and closing billboards (OBB/CBB) and sponsor reads, opening titles and end credits, a narrator or voice-over telling the story, a host speaking to the audience, recaps (<em>sa nakaraang</em>) and teasers (<em>abangan</em>), and black between acts. The story model marks the lines that are any of these, and the AI Vision model says of every frame it rates whether it is the drama, credits or a title card, a logo or billboard, a host, or black &mdash; for the frames across the whole video and again for those inside each moment. A frame stands for its shot (up to 8 seconds either side of it), and non-drama frames less than 20 seconds apart with no drama between them are taken as one run, as credits are. No moment includes any of it: a moment that runs into one keeps its longest clean stretch of lines (marked <em>Trimmed clear</em>), is never lengthened into one, and its lead-in, tail and padding stop at its edge; one with too little left is dropped. A note above the list says what was left out and where. <strong>Spoken language</strong> tells Whisper what is being said instead of letting it guess from the first seconds, which is the biggest single gain in caption accuracy (a deployment that is nearly always one language can set <code>SHORTS_LANGUAGE</code>, e.g. <code>tl</code>, to start the form on it; leave Auto-detect for mixed speech). <strong>Names and terms</strong> are handed to Whisper as context so characters and places are spelled as written. <strong>Leave out these parts of the video</strong> takes ranges of your own &mdash; <code>0:00-1:45, 44:05-end</code> &mdash; for anything they miss. Something left out by mistake can be added back with <em>Add your own moment</em>, which is never trimmed.</p>
       <p><strong>What should these shorts feature</strong> is a preference: matching moments are favoured, but a weak one is not picked just for matching. <strong>What should these shorts avoid</strong> is a rule: a moment mainly about it, or showing it, is left out however strong. Both are judged by the story model from the dialogue and the visual notes, so neither applies when a fallback had to be used (a warning says so).</p>
       <ul style="line-height:1.8;padding-left:20px">
         <li><strong>How it looks.</strong> A bounded number of frames, spread across the whole video, are rated 1&ndash;5 by the AI Vision model for visible drama. Once the moments are proposed, up to four more frames inside each are rated too (160 in all at most, skipping any already rated), so a moment is judged on its own pictures and not on wherever the first sample happened to fall. Half as many moments again as you asked for are looked at this way, and the closer look decides which make the list.</li>
@@ -9895,7 +10090,7 @@ job. Configured via env vars:
       <h3>2. Review</h3>
       <p>Play any candidate, edit its title and its in/out (type <code>m:ss.s</code> or seconds), untick the ones you do not want, or add a range of your own. The preview shows the source framing; reframing happens at render.</p>
       <p><strong>Framing&hellip;</strong> on a candidate shows each of its shots as a still, with the 9:16 window drawn where it will be: dashed for what was worked out, solid for a correction. For any shot, choose <strong>Crop here</strong> and slide the window (or click the still where it should go), or <strong>Whole frame</strong> to show the whole picture over a blurred copy. <strong>Make vertical preview</strong> renders a small 9:16 copy of the moment as it will come out &mdash; framing, corrections and captions &mdash; in a few seconds, without spending a full render. <strong>Use this framing</strong> keeps the corrections with that moment (marked <em>framing set</em>); a corrected shot is framed that way for its whole length, even where the plan had followed someone, cut between speakers or split the screen. The corrections belong to the shots, not to the in and out points: move those afterwards and each correction stays on the shot it was made for. <strong>Back to automatic</strong> drops them.</p>
-      <p><strong>Captions&hellip;</strong> on a candidate opens the lines it will be captioned with, exactly as they will appear: change the wording, change when a line is on screen (times are from the start of the short, to a hundredth of a second), empty a line to drop it, or add one. <strong>Use these captions</strong> keeps them with that moment &mdash; it is marked <em>captions edited</em> &mdash; and they are what is burned in and written to its .srt. Moving the in or out point afterwards does not lose them: the lines still inside the new range stay, moved to where they now fall, and whatever the range gained at either end gets the automatic captions. <strong>Back to automatic</strong> drops the corrections. One caption is on screen at a time, so where two lines overlap the earlier one ends as the next begins.</p>
+      <p><strong>Captions&hellip;</strong> on a candidate opens the lines it will be captioned with, exactly as they will appear: change the wording, change when a line is on screen (times are from the start of the short, to a hundredth of a second), empty a line to drop it, or add one. <strong>Use these captions</strong> keeps them with that moment &mdash; it is marked <em>captions edited</em> &mdash; and they are what is burned in and written to its .srt. Moving the in or out point afterwards does not lose them: the lines still inside the new range stay, moved to where they now fall, and whatever the range gained at either end gets the automatic captions. <strong>Back to automatic</strong> drops the corrections. A phone-shaped <strong>preview</strong> beside the lines shows the line as it is burned in (size, outline and position), over a still from the episode, and follows what you do: click or type in a line and it shows that line; drag the slider or press <strong>Play</strong> to watch the captions change in time. Beside a line, <strong>Split</strong> cuts it in two at the text cursor (the time is divided in proportion), <strong>Join</strong> runs it into the next; in a time box the up and down keys move it by 0.05 s (Shift: 0.5 s). A line longer than fits on one line at the chosen size is marked amber and the preview shows it wrapped. One caption is on screen at a time, so where two lines overlap the earlier one ends as the next begins.</p>
       <p><strong>Your review is saved as you make it</strong> &mdash; ticks, titles, in and out points, corrected captions and framing, and moments added by hand. The analysis and the review are kept on the server (in <code>shorts_analyses</code> next to the library; <code>SHORTS_ANALYSES_DIR</code> to put them elsewhere) for 14 days after they were last opened (<code>SHORTS_ANALYSIS_DAYS</code>), so a restart or a day away does not mean analysing the episode again. <strong>Earlier cuts of this project</strong>, at the top of <strong>Create shorts</strong>, lists them with <strong>Open</strong>, which brings the cut back as it was left, and <strong>Delete</strong>, which removes the analysis and its review but never shorts made from it. You see your own; admins see everyone&rsquo;s.</p>
       <p>The episode itself is a staged copy and is still cleared from the server after a while and on a restart. If it was picked from a network folder, the analysis remembers where: the review offers <strong>Fetch the episode again</strong>, which previews and framing need, and a render fetches it by itself. An episode uploaded from a computer cannot be fetched again; pick it again and re-analyse.</p>
       <h3>3. Render</h3>
@@ -9924,7 +10119,7 @@ job. Configured via env vars:
       </ul>
       <p>Anyone who can see a batch can read its captions; changing them is for whoever rendered it and admins, like deleting it.</p>
       <h3>Projects</h3>
-      <p>Shorts are filed by project: the episode they are cut from. A project records the <strong>programme title</strong>, <strong>episode</strong>, <strong>air date</strong>, a <strong>description</strong> and a <strong>thumbnail</strong> (JPEG, PNG or WebP up to 8 MB; until one is given the project shows a frame of its newest short). A project is the only way in: choose <strong>New project</strong>, or open one, and its page has two views &mdash; <strong>Shorts in this project</strong>, every batch rendered for it, and <strong>Create shorts</strong>, the form that makes more. There is no way to start a job outside a project, so nothing is saved loose. A new project opens on <strong>Create shorts</strong>. The form holds one job or one cut under review at a time and it belongs to the project it was started in: open another project meanwhile and its <strong>Create shorts</strong> view says so, with a way back, and &mdash; once nothing is running &mdash; a way to drop that cut and start one there.</p>
+      <p>Shorts are filed by project: the episode they are cut from. A project records the <strong>programme title</strong>, <strong>episode</strong>, <strong>air date</strong>, a <strong>description</strong> and a <strong>thumbnail</strong> (JPEG, PNG or WebP up to 8 MB; until one is given the project shows a frame of its newest short). A project is the only way in: choose <strong>New project</strong>, or open one, and its page has two views &mdash; <strong>Shorts in this project</strong>, every batch rendered for it, and <strong>Create shorts</strong>, the form that makes more. There is no way to start a job outside a project, so nothing is saved loose. A new project opens on <strong>Create shorts</strong>. Jobs are <strong>queued</strong>: start <strong>Preview the cut</strong>, <strong>Generate without preview</strong> or <strong>Render</strong> again while another is running and it is added to the <strong>Queue</strong> under the buttons, each with its own progress and <strong>Cancel</strong>. The server runs as many at once as its job limit allows (the same limit as Episodic Plug) and the rest show <em>Waiting</em>. A finished cut opens by itself only if no cut is open for that project; otherwise the queue offers <strong>Open the review</strong> or <strong>Show the shorts</strong>, going to its project first. Every cut is also kept under <em>Earlier cuts</em>. The queue lives in the page: reloading it forgets the list (the jobs go on, see Jobs), so reopen finished cuts from Earlier cuts.</p>
       <p>Everyone with access to Vertical Shorts sees every project and can play, download and send what is in it. Deleting a batch, or moving it to another project, is for whoever rendered it and admins. A project can be deleted by whoever created it or an admin, and only once it is empty: deleting a project never deletes shorts. Shorts rendered before projects existed are listed under <strong>Not in a project</strong> for their maker, with <strong>Move to</strong> to file them.</p>
       <h3>Limits worth knowing</h3>
       <ul style="line-height:1.8;padding-left:20px">

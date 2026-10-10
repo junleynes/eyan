@@ -91,6 +91,9 @@ SHORTS_LOUDNESS = _env_num('SHORTS_LOUDNESS', -14.0)
 # How long the cliffhanger ending holds on its last picture before the cut to
 # black, in seconds: the form's starting value, which an editor can change per render.
 SHORTS_FADE = sc.clamp_fade(_env_num('SHORTS_FADE', 1.0)) or 1.0      # the fade-to-black ending's length, seconds
+# The language the dialogue is in, when it is nearly always the same one
+# (a station's own programmes): the form starts on it. Empty: Whisper decides.
+SHORTS_LANGUAGE = pipeline.normalize_language(os.environ.get('SHORTS_LANGUAGE'))
 SHORTS_CLIFF_HOLD = sc.clamp_hold(_env_num('SHORTS_CLIFF_HOLD', sc.CLIFFHANGER['hold'])) or sc.CLIFFHANGER['hold']
 SHORTS_TRUE_PEAK = _env_num('SHORTS_TRUE_PEAK', -1.5)
 SHORTS_SUB_FONT = os.environ.get('SHORTS_SUB_FONT', 'Arial')
@@ -801,11 +804,13 @@ def _run_analysis(jid, params):
     aligned = 0
     heard_why = None
     words, segments = [], []
+    # Only what was chosen is passed on: no language means Whisper decides.
+    stt = {k: v for k, v in (('language', params.get('language')), ('prompt', params.get('stt_prompt'))) if v}
     for k, P in enumerate(parts):
         lab = _label(n_parts, k, P['name'])
         report(percent=at(46, 54, k), step='Transcribing dialogue' if n_parts == 1
                else f'Transcribing dialogue (part {k + 1}/{n_parts})')
-        w, sg, heard = pipeline.transcribe_video_detailed(P['path'])
+        w, sg, heard = pipeline.transcribe_video_detailed(P['path'], **stt)
         if not heard.get('ok'):
             # A transcription that FAILED is not a programme without dialogue.
             # Carrying on would pick moments on picture alone and present them
@@ -1007,6 +1012,7 @@ def _run_analysis(jid, params):
         'candidates': cands, 'warnings': warnings,
         'options': {'min_dur': min_dur, 'max_dur': max_dur, 'count': 'auto' if auto else count,
                     'focus': params.get('focus'), 'avoid': params.get('avoid'),
+                    'language': params.get('language'), 'stt_prompt': params.get('stt_prompt'),
                     'leave_out': editor_out},
         'stats': {'shots': len(shots), 'frames_rated': len(visual), 'transcript_lines': len(segments),
                   'lines_aligned': aligned, 'edges_moved': edges_moved, 'frames_inside': inner_rated,
@@ -1759,6 +1765,7 @@ def api_shorts_options():
                    ending_seconds=round(SHORTS_CLIFF_HOLD + sc.CLIFFHANGER['black'], 1),
                    ending_hold=SHORTS_CLIFF_HOLD, ending_hold_range=list(sc.CLIFF_HOLD_RANGE),
                    ending_black=sc.CLIFFHANGER['black'], ending_fade=SHORTS_FADE,
+                   languages=[{'code': c, 'name': n} for c, n in pipeline.WHISPER_LANGUAGES], language=SHORTS_LANGUAGE,
                    ending_fade_range=list(sc.FADE_RANGE))
 
 
@@ -1795,6 +1802,8 @@ def api_shorts_analyze():
         'count': ('auto' if (request.form.get('count') or '').strip().lower() == 'auto'
                   else _form_num('count', 8, 1, SHORTS_MAX_ITEMS, int)),
         'vision_frames': _form_num('vision_frames', SHORTS_VISION_FRAMES, 10, 300, int),
+        'language': pipeline.normalize_language(request.form.get('language')) or SHORTS_LANGUAGE,
+        'stt_prompt': pipeline.normalize_stt_prompt(request.form.get('stt_prompt')),
         'focus': ' '.join((request.form.get('focus') or '').split())[:300] or None,
         'avoid': ' '.join((request.form.get('avoid') or '').split())[:300] or None,
         'leave_out': leave_out, 'leave_out_parts': leave_parts,
@@ -2109,6 +2118,33 @@ def api_shorts_captions():
         return jsonify(ok=False, error=str(e)), 400
     return jsonify(ok=True, start=round(t0 + off, 3), end=round(t1 + off, 3), cues=cues, edited=edited,
                    spoken=bool(a['words'] or a['segments']))
+
+
+@app.route('/api/shorts/frame', methods=['POST'])
+@require_permission('vertical_shorts')
+def api_shorts_frame():
+    """One still from the episode at a time on its timeline, for the caption
+    editor to show a line over. Small: it is a backdrop, not a preview of
+    the framing."""
+    data = request.get_json(silent=True) or {}
+    a, err = _analysis_or_error(str(data.get('analysis_id') or '').strip())
+    if err:
+        return err
+    try:
+        t = max(0.0, min(float(a['info']['duration']), float(data.get('t'))))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error='Invalid time.'), 400
+    parts = _parts(a)
+    P = parts[_part_index(parts, t)]
+    if not P.get('path') or not os.path.exists(P['path']):
+        return _source_gone(a)
+    _touch(P['path'])
+    got = _grab_frames(P['path'], [max(0.0, t - P['offset'])], float(P['info']['fps']), max_w=360)
+    b64 = got[0][1] if got else None
+    if not b64:
+        return jsonify(ok=False, error='No picture at that time.'), 404
+    return jsonify(ok=True, image='data:image/jpeg;base64,' + b64, width=int(P['info']['width']),
+                   height=int(P['info']['height']))
 
 
 def _moment_request(data):
