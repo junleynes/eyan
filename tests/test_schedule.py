@@ -96,6 +96,11 @@ def env(tmp_path, monkeypatch, artwork):
             pass
 
 
+def _plug_folders():
+    """What is in the plugs folder besides the kept looks: a plug that was not kept leaves nothing."""
+    return [n for n in os.listdir(schedule.SCHEDULE_DIR) if n != 'presets.json']
+
+
 def _client(user_id=1, role='admin', username='admin'):
     client = main.app.test_client()
     tok = f'csrf-schedule-{user_id}'
@@ -283,7 +288,7 @@ def test_layered_psd_with_music_and_the_example_prompt_end_to_end(env, artwork):
     admin, _ = _client()
     assert len(admin.get('/api/schedule/items').get_json()['items']) == 1, 'an admin sees everyone\'s'
     assert client.delete(f"/api/schedule/items/{plug['plug_id']}", headers=headers).get_json() == {'ok': True}
-    assert os.listdir(schedule.SCHEDULE_DIR) == [] and client.get(plug['url']).status_code == 404
+    assert _plug_folders() == [] and client.get(plug['url']).status_code == 404
 
 
 def _lufs(path):
@@ -485,7 +490,7 @@ def test_artwork_that_cannot_be_used_ends_the_job_with_the_reason_and_leaves_not
         client, headers = _client()
         job = _render(client, headers, schedule_image_network=bad, duration='15')
         assert job['done'] and 'could not be read' in job['error']
-        assert os.listdir(schedule.SCHEDULE_DIR) == []
+        assert _plug_folders() == []
     finally:
         os.remove(os.path.join(up, bad))
 
@@ -497,7 +502,7 @@ def test_a_failed_encode_reports_ffmpegs_reason_and_removes_the_half_made_plug(e
     client, headers = _client()
     job = _render(client, headers, schedule_image_network=env['png'], duration='10')
     assert 'could not be encoded: Unknown encoder libx264' in job['error']
-    assert os.listdir(schedule.SCHEDULE_DIR) == []
+    assert _plug_folders() == []
 
 
 def test_send_to_a_video_destination(env, monkeypatch):
@@ -636,3 +641,83 @@ def test_the_schedule_page_is_a_three_step_workspace():
     assert "fetch('/api/schedule/inspect'" in html
     for piece in ('id=sp-arrive', 'id=sp-motion', 'data-split=', "['rotate_left'", "['shake'"):
         assert piece in html, piece
+
+
+# ---- easy and advanced ----
+
+def _paths(client, h, staged):
+    return {l['name']: l['path'] for l in client.post('/api/schedule/inspect', data={'schedule_image_network': staged}, headers=h).get_json()['layers']}
+
+
+def test_the_reading_carries_the_checks_and_a_suggested_length(env):
+    client, h = _client()
+    d = client.post('/api/schedule/inspect', data={'schedule_image_network': env['psd']}, headers=h).get_json()
+    assert isinstance(d['checks'], list) and d['suggested']['duration'] in sk.DURATIONS and d['suggested']['why']
+    o = client.get('/api/schedule/options').get_json()
+    assert all(s['mood'] in ('Calm', 'Lively') for s in o['styles']) and 'shake' in [m['key'] for m in o['motions']]
+    assert o['tuning']['delay'] == [0.0, 15.0] and 'back' in o['eases']
+
+
+def test_looks_are_kept_shared_and_only_their_owner_can_remove_them(env):
+    client, h = _client()
+    path = _paths(client, h, env['psd'])
+    body = {'name': 'Primetime', 'settings': {'style': 'pop_pulse', 'duration': 20},
+            'overrides': {'layers': {path['Ribbon']: {'motion': 'shake', 'delay': 1.0}}}, 'names': {v: k for k, v in path.items()}}
+    r = client.post('/api/schedule/presets', json=body, headers=h).get_json()
+    assert r['ok'] and r['preset']['layers'] == {'ribbon': {'motion': 'shake', 'delay': 1.0}} and r['preset']['mine']
+    pid = r['preset']['id']
+    other, oh = _client(user_id=2, role='user', username='eli')
+    got = other.get('/api/schedule/presets').get_json()
+    assert [p['name'] for p in got['presets']] == ['Primetime'] and got['presets'][0]['mine'] is False
+    assert other.delete(f'/api/schedule/presets/{pid}', headers=oh).status_code == 403
+    assert other.post('/api/schedule/presets', json=dict(body, name='primetime'), headers=oh).status_code == 409
+    assert client.post('/api/schedule/presets', json={'name': ''}, headers=h).status_code == 400
+    assert client.delete(f'/api/schedule/presets/{pid}', headers=h).get_json()['ok']
+    assert client.get('/api/schedule/presets').get_json()['presets'] == []
+
+
+def test_a_saved_look_is_applied_to_a_file_by_layer_name_and_used_by_the_render(env):
+    client, h = _client()
+    path = _paths(client, h, env['psd'])
+    saved = client.post('/api/schedule/presets', json={
+        'name': 'Ribbon shakes', 'settings': {'style': 'fade_still', 'duration': 15},
+        'overrides': {'layers': {path['Ribbon']: {'motion': 'shake', 'delay': 1.5, 'intensity': 1.5}}},
+        'names': {v: k for k, v in path.items()}}, headers=h).get_json()['preset']
+    d = client.post('/api/schedule/inspect', data={'schedule_image_network': env['psd'], 'preset_id': saved['id']}, headers=h).get_json()
+    assert d['overrides']['layers'][path['Ribbon']]['motion'] == 'shake' and d['settings']['duration'] == 15 and d['preset_missing'] == []
+    assert client.post('/api/schedule/inspect', data={'schedule_image_network': env['psd'], 'preset_id': 'nope'}, headers=h).status_code == 404
+    out = _render(client, h, schedule_image_network=env['psd'], duration='10', preset_id=saved['id'])
+    plug = out['result']['plug']
+    assert plug['layer_settings']['Ribbon']['motion'] == 'shake' and plug['layer_settings']['Ribbon']['tune']['delay'] == 1.5
+    # A plain render keeps what was used, for next time.
+    _render(client, h, schedule_image_network=env['psd'], duration='10', style='fade_still',
+            layer_overrides=json.dumps({'layers': {path['Ribbon']: {'motion': 'rotate_left'}}}), layer_names=json.dumps({v: k for k, v in path.items()}))
+    last = client.get('/api/schedule/presets').get_json()['last']
+    assert last['name'] == 'Same as last time' and last['layers'] == {'ribbon': {'motion': 'rotate_left'}}
+    again = _render(client, h, schedule_image_network=env['psd'], duration='10', preset_id='last')
+    assert again['result']['plug']['layer_settings']['Ribbon']['motion'] == 'rotate_left'
+    other, oh = _client(user_id=2, role='user', username='eli')
+    assert other.get('/api/schedule/presets').get_json()['last'] is None
+
+
+def test_a_preview_is_made_in_seconds_and_served_only_by_its_own_name(env):
+    client, h = _client()
+    r = client.post('/api/schedule/preview', headers=h, data={'schedule_image_network': env['psd'], 'duration': '10', 'style': 'pop_pulse'})
+    d = r.get_json()
+    assert r.status_code == 200 and d['ok'] and d['url'].startswith('/api/schedule/preview/pv_') and d['seconds'] >= 6
+    f = client.get(d['url'])
+    assert f.status_code == 200 and f.headers['Content-Type'].startswith('video/mp4') and len(f.get_data()) > 1000
+    for bad in ('../plug.json', 'pv_1_x.mp4', 'pv_1791669037_zzzzzz.mp4'):
+        assert client.get(f'/api/schedule/preview/{bad}').status_code == 404
+    assert client.post('/api/schedule/preview', headers=h, data={}).status_code == 400
+    assert client.post('/api/schedule/preview', headers=h, data={'schedule_image_network': env['psd'], 'style': 'bogus'}).status_code == 400
+    assert client.post('/api/schedule/preview', headers=h, data={'schedule_image_network': env['psd'], 'duration': '10'}).get_json()['ok']
+
+
+def test_the_page_has_the_easy_and_advanced_controls():
+    client, _ = _client()
+    html = client.get('/').get_data(as_text=True)
+    for piece in ('data-spmode=easy', 'data-spmode=advanced', 'id=sp-easy', 'id=sp-style-cards', 'id=sp-prev-btn', 'id=sp-safe-btn',
+                  'id=sp-look', 'id=sp-look-save', 'id=sp-batch', 'spBatchRun', "'sp-t-'", 'id=sp-t-', "fetch('/api/schedule/preview'",
+                  "fetch('/api/schedule/presets'"):
+        assert piece in html or piece.replace("'sp-t-'", 'sp-t-') in html, piece

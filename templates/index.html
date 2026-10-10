@@ -902,6 +902,33 @@ input.sh-num[type=number]{width:92px}
 .sp-help>summary{cursor:pointer;font-size:11px;opacity:.7}
 .sp-lp-head{display:flex;gap:10px;align-items:center}
 .sp-lp-head .sp-lthumb{width:96px;height:54px}
+.sp-modebar{display:inline-flex;align-items:center;gap:6px;margin:0 0 0 auto;align-self:center;font-size:12px}
+.sp-modebar button{background:transparent;border:1px solid var(--line);color:var(--ink-dim);padding:4px 12px;font-size:12px;cursor:pointer;font-family:inherit}
+.sp-modebar button:first-of-type{border-radius:14px 0 0 14px}.sp-modebar button:last-of-type{border-radius:0 14px 14px 0;border-left:0}
+.sp-modebar button.on{background:var(--accent,#4f8cff);color:#fff;border-color:transparent}
+.sp-easy-only{display:none}
+#p-schedule-create.sp-easy .sp-easy-only{display:block}
+#p-schedule-create.sp-easy .sp-adv-only,#p-schedule-create.sp-easy .sp-grid>aside.ws-list,#p-schedule-create.sp-easy [data-sptab=layer]{display:none}
+#p-schedule-create.sp-easy .sp-grid{grid-template-columns:minmax(0,1fr) 380px}
+@media (max-width:1180px){ #p-schedule-create.sp-easy .sp-grid{grid-template-columns:minmax(0,1fr)}}
+.sp-looks{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px;font-size:12px}
+.sp-looks select{width:auto;min-width:200px;margin:0;padding:4px 28px 4px 8px;font-size:12px}
+.sp-right{margin:0 0 12px}.sp-right ul{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:5px}
+.sp-right li{display:flex;gap:8px;align-items:baseline;font-size:13px;flex-wrap:wrap}
+.sp-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:6px}
+.sp-card{text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:9px 10px;cursor:pointer;color:var(--ink);font-family:inherit;display:grid;gap:3px}
+.sp-card:hover{border-color:var(--ink-dim)}.sp-card.on{border-color:var(--accent,#4f8cff);box-shadow:0 0 0 1px var(--accent,#4f8cff)}
+.sp-card b{font-size:13px}.sp-card span{font-size:11px;opacity:.75}
+.sp-card i{font-style:normal;font-size:10px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;opacity:.7}
+.sp-stage video{width:100%;height:100%;object-fit:contain;display:none;background:#000}
+.sp-safe{position:absolute;inset:0;pointer-events:none;display:none}
+.sp-safe i{position:absolute;border:1px dashed;box-sizing:border-box}
+.sp-safe .a{inset:3.5%;border-color:#ffb020}.sp-safe .t{inset:5%;border-color:#34e6c5}
+.sp-safe em{position:absolute;font-size:10px;font-style:normal;padding:0 4px;background:rgba(0,0,0,.6)}
+.sp-safe .a em{left:2px;top:2px;color:#ffb020}.sp-safe .t em{right:2px;bottom:2px;color:#34e6c5}
+.sp-stale{font-size:12px;color:var(--amber);margin:4px 0}
+.sp-tune{display:grid;grid-template-columns:1fr 1fr;gap:8px}.sp-tune label{margin:0 0 2px}
+.sp-batch-row{display:flex;gap:8px;align-items:center;font-size:13px;padding:4px 0}
 .sp-anim{color:var(--accent,#4f8cff);font-weight:600}
 .sp-gicon{display:flex;height:100%;align-items:center;justify-content:center;color:#fff;font-size:18px}
 .sp-split{margin:10px 0 0}
@@ -9801,10 +9828,12 @@ document.addEventListener('DOMContentLoaded', function(){
 <div id="p-schedule-create" class="sub-panel active"><p style="font-size:12px;opacity:.75;margin-top:-6px">Turns a schedule still into an animated 16:9 plug with a music bed. The artwork is drawn on frame by frame &mdash; its layers wipe, slide, fade or pop into place &mdash; not regenerated, so every title, date and time stays exactly as designed.</p>
 
 
+
 <div id=sp-steps class=ws-steps role="tablist" aria-label="Steps">
   <button type=button class="ws-step active" data-step=art onclick="spScreen('art')"><b>1</b> Artwork</button>
   <button type=button class="ws-step" data-step=work onclick="spScreen('work')" disabled><b>2</b> Layers &amp; animation <span id=sp-step-count class=ws-count></span></button>
   <button type=button class="ws-step" data-step=result onclick="spScreen('result')" disabled><b>3</b> Result <span id=sp-step-dot class=ws-dot style="display:none"></span></button>
+  <div class="sp-modebar" id=sp-mode role="group" aria-label="Mode"><span style="opacity:.7">Mode</span><button type=button data-spmode=easy title="Pick the artwork, check it, choose a style and make it.">Easy</button><button type=button data-spmode=advanced title="Sort every layer, set each one's animation and timing.">Advanced</button></div>
 </div>
 
 <div id=sp-screen-art>
@@ -9830,6 +9859,14 @@ document.addEventListener('DOMContentLoaded', function(){
 
 <div id=sp-screen-work style="display:none">
   <div class="ws-head"><div id=sp-status class=ws-status></div></div>
+  <div class="sp-looks" id=sp-looks><label for=sp-look style="margin:0">Saved look</label>
+    <select id=sp-look aria-label="Saved look"><option value="">None</option></select>
+    <button type=button class="btn-sm" id=sp-look-save title="Keep these settings by layer name, to use again on another file">Save this look</button>
+    <button type=button class="btn-sm" id=sp-look-export disabled>Export</button>
+    <button type=button class="btn-sm" id=sp-look-import>Import</button><input type=file id=sp-look-file accept=".json,application/json" style="display:none !important">
+    <button type=button class="btn-sm" id=sp-look-del disabled style="color:var(--tally);border-color:var(--tally)">Delete</button>
+    <span id=sp-look-note class="sh-note" style="margin:0"></span></div>
+  <div id=sp-easy class="ws-card sp-right sp-easy-only"></div>
   <div id=sp-warnings></div>
   <div class="ws-grid sp-grid">
     <aside class="ws-list" aria-label="Layers">
@@ -9837,7 +9874,14 @@ document.addEventListener('DOMContentLoaded', function(){
       <div id=sp-layers class="ws-cands" style="max-height:62vh"></div>
     </aside>
     <section class="ws-stage sp-stage-col" aria-label="Preview">
-      <div class="sp-stage" id=sp-stage><img id=sp-preview alt="The artwork as it will be at rest"><div id=sp-box class="sp-box" style="display:none"></div></div>
+      <div class="sp-stage" id=sp-stage><img id=sp-preview alt="The artwork as it will be at rest"><video id=sp-prev-video playsinline muted loop></video><div id=sp-box class="sp-box" style="display:none"></div><div class="sp-safe" id=sp-safe><i class="a"><em>action safe 93%</em></i><i class="t"><em>title safe 90%</em></i></div></div>
+      <div class="ws-tools" id=sp-stage-tools>
+        <button type=button class="btn-sm" id=sp-prev-btn title="Draws the first seconds small and silent, in a few seconds' work">Preview the animation</button>
+        <button type=button class="btn-sm" id=sp-art-btn style="display:none">Show the artwork</button>
+        <span id=sp-frame-tools style="display:none"><button type=button class="btn-sm" data-frame=-1 title="One frame back">&#9664; frame</button> <button type=button class="btn-sm" data-frame=1 title="One frame forward">frame &#9654;</button></span>
+        <button type=button class="btn-sm" id=sp-safe-btn title="Shows the area a television is sure to show">Safe areas</button>
+      </div>
+      <div id=sp-stale class="sp-stale" style="display:none"></div>
       <div id=sp-pages class="ws-tools"></div>
       <div id=sp-summary class="sp-summary"></div>
     </section>
@@ -9856,12 +9900,14 @@ document.addEventListener('DOMContentLoaded', function(){
       <option value=10>10 seconds</option><option value=15 selected>15 seconds</option>
       <option value=20>20 seconds</option><option value=30>30 seconds</option>
     </select>
+    <div id=sp-dur-hint class="sh-note"></div>
   </div>
 </div>
           <div class="sp-col" style="margin-top:12px">
   <div>
     <label>Animation style:</label>
-    <select id=sp-style style="width:100%"><option value=wipe_mix selected>Wipe reveal + grow, rotate left, rotate right (mixed)</option><option value=fade_shine>Fade in + light sweep</option><option value=wipe_shine>Wipe reveal + light sweep</option><option value=slide_float>Slide up + gentle float</option><option value=pop_pulse>Pop in + pulse one by one</option><option value=stop_motion>Stop motion wipe + wobble</option><option value=pop_dance>Pop in + dancing</option><option value=pop_grow>Pop in + grow and shrink</option><option value=fade_rotate_left>Fade in + rotate left</option><option value=fade_rotate_right>Fade in + rotate right</option><option value=fade_still>Fade in + hold still</option></select>
+    <div id=sp-style-cards class="sp-cards"></div>
+    <select id=sp-style style="width:100%;display:none"><option value=wipe_mix selected>Wipe reveal + grow, rotate left, rotate right (mixed)</option><option value=fade_shine>Fade in + light sweep</option><option value=wipe_shine>Wipe reveal + light sweep</option><option value=slide_float>Slide up + gentle float</option><option value=pop_pulse>Pop in + pulse one by one</option><option value=stop_motion>Stop motion wipe + wobble</option><option value=pop_dance>Pop in + dancing</option><option value=pop_grow>Pop in + grow and shrink</option><option value=fade_rotate_left>Fade in + rotate left</option><option value=fade_rotate_right>Fade in + rotate right</option><option value=fade_still>Fade in + hold still</option></select>
   </div>
   <div>
     <label>Logo and schedule text:</label>
@@ -9925,6 +9971,17 @@ document.addEventListener('DOMContentLoaded', function(){
 
 <div id=sp-screen-result style="display:none">
 <div id=sp-result style="display:none;margin-top:18px"></div>
+<div id=sp-batch class="ws-card" style="display:none;margin-top:16px">
+  <b>The same look for more files</b>
+  <div class="sh-note">Add the other days or dayparts. Each is matched to this look by layer name and made with the same style, length, music and format.</div>
+  <div id=sp-batch-list></div>
+  <input type=hidden id=schedule_batch_network name=schedule_batch_network value="">
+  <span class="net-file-chip" id=schedule_batch_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('schedule_batch')">&#10005;</span></span>
+  <div class="promo-actions" style="margin-top:8px">
+    <button type=button class="btn-sm" onclick="openNetworkBrowser('schedule_batch','schedule','Schedule plug artwork')">Add a file&hellip;</button>
+    <button type=button class="btn btn-primary-promo" id=sp-batch-go onclick="spBatchRun()" disabled>Make them all</button>
+  </div>
+</div>
 </div>
 </div>
 
@@ -9938,7 +9995,9 @@ document.addEventListener('DOMContentLoaded', function(){
 // ---- Schedule Plug ----
 var SP = {busy: false, jobId: null, options: null, destinations: null,
           screen: 'art', info: null, token: null, name: '', ov: {background_upto: null, expand: [], layers: {}},
-          sel: null, page: 0, readTok: 0, readTimer: null}
+          sel: null, page: 0, readTok: 0, readTimer: null,
+          mode: 'easy', durTouched: false, looks: null, look: '', batch: [], previewOn: false, previewStale: false,
+          previewTimer: null, previewBusy: false}
 function spEl(id){ return document.getElementById(id) }
 function spBytes(b){
   if(b >= 1024 * 1024 * 1024) return (b / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
@@ -9994,8 +10053,9 @@ function spReading(on){
 
 // A different file was picked: what was read, and what was changed, is dropped.
 function spArtworkChanged(){
-  SP.token = null; SP.info = null; SP.name = ''; SP.sel = null; SP.page = 0
+  SP.token = null; SP.info = null; SP.name = ''; SP.sel = null; SP.page = 0; SP.durTouched = false; SP.look = ''
   SP.ov = {background_upto: null, expand: [], layers: {}}
+  spPreviewOff()
   spSteps()
   var img = spEl('sp-image'), net = spEl('schedule_image_network').value
   if((img && img.files && img.files[0]) || net) spInspect()
@@ -10013,6 +10073,7 @@ async function spInspect(opts){
     else if(f) fd.append('schedule_image', f)
     if(net) fd.append('schedule_image_network', net)
     fd.append('layer_overrides', JSON.stringify(SP.ov))
+    if(opts.preset) fd.append('preset_id', opts.preset)
     try{ return await (await fetch('/api/schedule/inspect', {method: 'POST', body: fd})).json() }
     catch(e){ return {error: 'Could not read the artwork: ' + e} }
   }
@@ -10028,6 +10089,8 @@ async function spInspect(opts){
     return
   }
   SP.info = d; SP.name = d.name || SP.name; if(d.token) SP.token = d.token
+  if(opts.preset && d.overrides){ SP.ov = d.overrides; spApplySettings(d.settings || {}); spLookNote(d) }
+  if(!SP.durTouched && d.suggested && !(opts.preset && d.settings && d.settings.duration)) spEl('sp-duration').value = String(d.suggested.duration)
   spEl('sp-note').style.display = 'none'; spEl('sp-note-w').style.display = 'none'
   var ok = d.layers.some(function(l){ return l.path === SP.sel })
   if(!ok) SP.sel = (d.layers.filter(function(l){ return l.role !== 'background' && l.role !== 'hidden' && l.role !== 'group' })[0] || d.layers[0] || {}).path
@@ -10036,6 +10099,7 @@ async function spInspect(opts){
 }
 
 function spInspectSoon(){
+  spStale()
   clearTimeout(SP.readTimer)
   var st = spEl('sp-status'); if(st) st.style.opacity = '.5'
   SP.readTimer = setTimeout(function(){ spInspect({keep: true}) }, 280)
@@ -10045,8 +10109,9 @@ function spLayer(path){ return SP.info && SP.info.layers.filter(function(l){ ret
 function spItem(path){ return SP.ov.layers[path] }
 function spTidy(path){
   var it = SP.ov.layers[path]
-  if(it && !it.role && !it.arrive && !it.motion) delete SP.ov.layers[path]
+  if(it && !Object.keys(it).length) delete SP.ov.layers[path]
 }
+function spOwnAnim(i){ return !!i && Object.keys(i).some(function(k){ return k !== 'role' && k !== 'page' }) }
 
 function spRoleChip(l){
   var label = SP_ROLE_LABEL[l.role] || l.role || ''
@@ -10076,7 +10141,8 @@ function spRenderWork(){
               (l.kind === 'group' ? 'group &middot; ' + l.child_count + (l.child_count === 1 ? ' layer' : ' layers') : escapeHtmlLite(l.kind))
     var it = SP.ov.layers[l.path] || {}
     var anim = (it.arrive ? '<span class="sp-anim" title="Arrives">&#9654; ' + escapeHtmlLite(spArriveLabel(it.arrive)) + '</span>' : '') +
-               (it.motion ? '<span class="sp-anim" title="Then">&#8635; ' + escapeHtmlLite(spMotionLabel(it.motion)) + '</span>' : '')
+               (it.motion ? '<span class="sp-anim" title="Then">&#8635; ' + escapeHtmlLite(spMotionLabel(it.motion)) + '</span>' : '') +
+               (it.delay ? '<span class="sp-anim" title="Starts later">+' + it.delay + ' s</span>' : '')
     row.innerHTML = '<div class="sp-lthumb">' + (l.thumb ? '<img src="' + l.thumb + '" alt="" loading="lazy">' : (l.role === 'group' ? '<span class="sp-gicon">&#9662;</span>' : '')) + '</div>' +
       '<div style="min-width:0"><div class="sp-lname" title="' + escapeHtmlLite(l.name) + '">' + escapeHtmlLite(l.name) + '</div>' +
       '<div class="sp-lsub">' + spRoleChip(l) + '<span>' + sub + '</span>' +
@@ -10084,7 +10150,7 @@ function spRenderWork(){
     host.appendChild(row)
   })
   host.scrollTop = keep
-  spRenderStage(); spRenderLayerPane(); spSummary(); spSteps()
+  spRenderStage(); spRenderLayerPane(); spSummary(); spSteps(); spChecks(); spEasy(); spDurHint()
 }
 
 function spSummary(){
@@ -10096,7 +10162,7 @@ function spSummary(){
     d.pages.map(function(p){ return escapeHtmlLite(p.name) + ' (' + p.rows + ')' }).join(', ') + ' &mdash; in turn</span>')
   chips.push('<span class="sp-chip"><b>' + (c.content || 0) + '</b> logo &amp; text &mdash; appear, then hold</span>')
   chips.push('<span class="sp-chip"><b>' + (c.decor || 0) + '</b> moving</span>')
-  var own = Object.keys(SP.ov.layers).filter(function(k){ var i = SP.ov.layers[k]; return i.arrive || i.motion }).length
+  var own = Object.keys(SP.ov.layers).filter(function(k){ return spOwnAnim(SP.ov.layers[k]) }).length
   if(own) chips.push('<span class="sp-chip"><b>' + own + '</b> with their own animation</span>')
   spEl('sp-summary').innerHTML = chips.join('')
   spEl('sp-bar-sum').innerHTML = (c.pages ? c.pages + ' page' + (c.pages === 1 ? '' : 's') + ' &middot; ' : '') + (c.content || 0) + ' logo/text &middot; ' + (c.decor || 0) + ' moving' + (own ? ' &middot; ' + own + ' set by you' : '')
@@ -10196,7 +10262,8 @@ function spRenderLayerPane(){
       '<div class="sh-note">Over what the style and your direction say. ' + (l.role === 'page'
         ? 'On a page it applies to every row of it.' :
         (l.role === 'decor' ? 'A moving layer is on screen from the first frame unless you give it an arrival.' : 'Logo and text hold still after they arrive unless you give them a motion.')) + '</div>' +
-      ((it.arrive || it.motion) ? '<button type=button class="btn-sm" data-anim-reset style="margin-top:6px">Back to the style</button>' : '')
+      spTuneHtml(l, it) +
+      (spOwnAnim(it) ? '<button type=button class="btn-sm" data-anim-reset style="margin-top:6px">Back to the style</button>' : '')
   }
   var kids = (l.children && l.children.length && !container) ?
     '<div class="ws-tl-label" style="margin-top:12px">Inside this group (' + l.child_count + ')</div><ul class="sp-kids">' +
@@ -10263,7 +10330,8 @@ function spToggleSplit(path){
       var sp = e.target.closest('[data-split]')
       if(sp){ spToggleSplit(sp.getAttribute('data-split')); return }
       if(e.target.closest('[data-anim-reset]') && SP.sel != null){
-        var it = SP.ov.layers[SP.sel]; if(it){ delete it.arrive; delete it.motion; spTidy(SP.sel) }
+        var it = SP.ov.layers[SP.sel]
+        if(it){ Object.keys(it).forEach(function(k){ if(k !== 'role' && k !== 'page') delete it[k] }); spTidy(SP.sel) }
         spInspectSoon(); spRenderLayerPane(); return
       }
       var t = e.target.closest('[data-sptab]'); if(!t) return
@@ -10285,6 +10353,9 @@ function spToggleSplit(path){
         spSetAnim(SP.sel, 'arrive', eff ? {effect: eff, direction: spEl('sp-arrive-dir').value || 'right'} : null)
       }else if(id === 'sp-motion' && SP.sel != null){
         spSetAnim(SP.sel, 'motion', e.target.value)
+      }else if(id.indexOf('sp-t-') === 0 && SP.sel != null){
+        var k = id.slice(5), v = e.target.value
+        spSetTune(SP.sel, k, k === 'ease' ? v : (v === '' ? null : parseFloat(v)))
       }
     })
   }
@@ -10303,6 +10374,311 @@ function spToggleSplit(path){
     }).observe(chip, {attributes: true, childList: true, subtree: true, characterData: true})
   }
 })()
+
+// ---- Easy and Advanced ----
+function spMode(m){
+  SP.mode = m === 'advanced' ? 'advanced' : 'easy'
+  try{ localStorage.setItem('sp_mode', SP.mode) }catch(e){}
+  var root = spEl('p-schedule-create')
+  if(root) root.classList.toggle('sp-easy', SP.mode === 'easy')
+  Array.prototype.forEach.call(document.querySelectorAll('[data-spmode]'), function(b){ b.classList.toggle('on', b.getAttribute('data-spmode') === SP.mode) })
+  var tab = document.querySelector('#sp-insp [data-sptab=' + (SP.mode === 'easy' ? 'animation' : 'layer') + ']')
+  if(tab) tab.click()
+}
+
+// One plain statement of what the animation will do, for someone who does not want the layer list.
+function spEasy(){
+  var d = SP.info, host = spEl('sp-easy')
+  if(!d || !host) return
+  var real = d.layers.filter(function(l){ return l.role !== 'group' })
+  var names = function(role){
+    var xs = real.filter(function(l){ return l.role === role }).map(function(l){ return l.name })
+    return xs.length ? xs.slice(0, 4).map(escapeHtmlLite).join(', ') + (xs.length > 4 ? ' and ' + (xs.length - 4) + ' more' : '') : ''
+  }
+  var bg = real.filter(function(l){ return l.role === 'background' || l.role === 'picture' })
+  var row = function(role, label, text){ return text ? '<li>' + spRoleChip({role: role}) + '<span>' + text + '</span></li>' : '' }
+  var pagesTxt = (d.pages || []).map(function(p){ return escapeHtmlLite(p.name) }).join(', ')
+  var warn = (d.checks || []).filter(function(c){ return c.level === 'warn' }).length
+  host.innerHTML = '<b>Does this look right?</b>' +
+    '<ul>' + (d.layered ?
+      row('background', '', bg.length ? '<b>' + escapeHtmlLite(bg[0].name) + '</b> stays still' : '') +
+      row('page', '', pagesTxt ? '<b>' + pagesTxt + '</b> ' + (d.pages.length > 1 ? 'come one after another over the same background' : 'appears and stays') : '') +
+      row('content', '', names('content') ? '<b>' + names('content') + '</b> appear, then hold still' : '') +
+      row('decor', '', names('decor') ? '<b>' + names('decor') + '</b> keep moving' : '')
+      : '<li>' + spRoleChip({role: 'picture'}) + '<span><b>One flat picture</b> &mdash; it arrives as a whole.</span></li>') + '</ul>' +
+    (warn ? '<div class="sh-note" style="margin-top:8px">' + warn + (warn === 1 ? ' thing to check is' : ' things to check are') + ' listed below.</div>' : '') +
+    '<div class="sh-note" style="margin-top:8px">Right? Choose a style and a length on the right and press <b>Generate schedule plug</b>. Something sorted wrongly? ' +
+    '<button type=button class="btn-sm" data-spmode=advanced>Fix it in Advanced</button></div>'
+}
+
+// What to know before drawing, in plain words (the server decides; this only shows it).
+function spChecks(){
+  var d = SP.info, host = spEl('sp-warnings')
+  if(!d || !host) return
+  host.innerHTML = (d.notes || []).map(function(w){ return '<div class="sh-warn">' + escapeHtmlLite(w) + '</div>' }).join('') +
+    (d.checks || []).map(function(c){
+      return '<div class="' + (c.level === 'warn' ? 'sh-warn' : 'sh-note') + '">' + escapeHtmlLite(c.text) + '</div>'
+    }).join('')
+}
+
+function spDurHint(){
+  var d = SP.info, el = spEl('sp-dur-hint')
+  if(!el) return
+  if(!d || !d.suggested){ el.textContent = ''; return }
+  var cur = parseInt(spEl('sp-duration').value, 10)
+  el.innerHTML = cur === d.suggested.duration ? '<b>Suggested.</b> ' + escapeHtmlLite(d.suggested.why) :
+    'Suggested: ' + d.suggested.duration + ' seconds. ' + escapeHtmlLite(d.suggested.why) +
+    ' <button type=button class="btn-sm" data-usedur=' + d.suggested.duration + '>Use ' + d.suggested.duration + ' s</button>'
+}
+
+// ---- Style as cards ----
+function spBuildStyleCards(){
+  var host = spEl('sp-style-cards'), d = SP.options
+  if(!host || !d || !d.styles) return
+  host.innerHTML = d.styles.map(function(x){
+    var parts = x.label.split(' + ')
+    return '<button type=button class="sp-card" data-style="' + escapeHtmlLite(x.key) + '"><i>' + escapeHtmlLite(x.mood || '') + '</i><b>' +
+      escapeHtmlLite(parts[0]) + '</b><span>' + escapeHtmlLite(parts.slice(1).join(' + ') || '') + '</span></button>'
+  }).join('')
+  spMarkStyle()
+}
+function spMarkStyle(){
+  var cur = spEl('sp-style').value
+  Array.prototype.forEach.call(document.querySelectorAll('#sp-style-cards .sp-card'), function(b){ b.classList.toggle('on', b.getAttribute('data-style') === cur) })
+}
+
+// ---- The preview clip, the scrubber and the safe areas ----
+function spStale(){
+  if(!SP.previewOn) return
+  SP.previewStale = true
+  var el = spEl('sp-stale'); el.style.display = 'block'
+  el.innerHTML = 'The preview is out of date. <button type=button class="btn-sm" id=sp-prev-update>Update it</button>'
+  clearTimeout(SP.previewTimer)
+  SP.previewTimer = setTimeout(spPreview, 1100)
+}
+function spPreviewOff(){
+  SP.previewOn = false; SP.previewStale = false
+  clearTimeout(SP.previewTimer)
+  var v = spEl('sp-prev-video')
+  if(v){ try{ v.pause() }catch(e){}; v.style.display = 'none'; v.removeAttribute('src') }
+  var im = spEl('sp-preview'); if(im) im.style.display = ''
+  var b = spEl('sp-art-btn'); if(b) b.style.display = 'none'
+  var f = spEl('sp-frame-tools'); if(f) f.style.display = 'none'
+  var st = spEl('sp-stale'); if(st) st.style.display = 'none'
+}
+async function spPreview(){
+  if(SP.previewBusy || !SP.info) return
+  SP.previewBusy = true
+  clearTimeout(SP.previewTimer)
+  var btn = spEl('sp-prev-btn'), was = btn.textContent
+  btn.disabled = true; btn.textContent = 'Drawing the preview…'
+  try{
+    var d = await (await fetch('/api/schedule/preview', {method: 'POST', body: spForm()})).json()
+    if(!d.ok){ spNote(escapeHtmlLite(d.error || 'The preview could not be made.'), true); return }
+    var v = spEl('sp-prev-video')
+    v.src = d.url + '?t=' + Date.now()
+    v.style.display = 'block'; spEl('sp-preview').style.display = 'none'; spEl('sp-box').style.display = 'none'
+    v.controls = true
+    try{ v.play() }catch(e){}
+    SP.previewOn = true; SP.previewStale = false
+    spEl('sp-stale').style.display = 'none'
+    spEl('sp-art-btn').style.display = ''; spEl('sp-frame-tools').style.display = ''
+    spEl('sp-note-w').style.display = 'none'
+  }catch(e){ spNote('The preview could not be made: ' + escapeHtmlLite(String(e)), true) }
+  finally{ SP.previewBusy = false; btn.disabled = false; btn.textContent = was }
+}
+
+// ---- Looks: settings kept by layer name ----
+function spNames(){
+  var m = {}
+  if(SP.info) SP.info.layers.forEach(function(l){ m[l.path] = l.name })
+  return m
+}
+function spSettings(){
+  return {style: spEl('sp-style').value, text_motion: spEl('sp-text').value, prompt: spEl('sp-prompt').value,
+          duration: parseInt(spEl('sp-duration').value, 10), format: spEl('sp-format').value}
+}
+function spApplySettings(st){
+  if(st.style && Array.prototype.some.call(spEl('sp-style').options, function(o){ return o.value === st.style })) spEl('sp-style').value = st.style
+  if(st.text_motion) spEl('sp-text').value = st.text_motion
+  if(st.prompt != null) spEl('sp-prompt').value = st.prompt
+  if(st.duration){ spEl('sp-duration').value = String(st.duration); SP.durTouched = true }
+  if(st.format && Array.prototype.some.call(spEl('sp-format').options, function(o){ return o.value === st.format })) spEl('sp-format').value = st.format
+  spMarkStyle(); spDurHint()
+}
+function spLookNote(d){
+  var el = spEl('sp-look-note'), miss = d.preset_missing || []
+  el.innerHTML = 'Applied &ldquo;' + escapeHtmlLite(d.preset_name || '') + '&rdquo;.' +
+    (miss.length ? ' <span style="color:var(--amber)">Not in this file: ' + miss.slice(0, 5).map(escapeHtmlLite).join(', ') + (miss.length > 5 ? '…' : '') + '</span>' : '')
+}
+async function spLooksLoad(select){
+  try{
+    var d = await (await fetch('/api/schedule/presets')).json()
+    if(!d.ok) return
+    SP.looks = d
+  }catch(e){ return }
+  var sel = spEl('sp-look'), cur = select != null ? select : sel.value
+  var opts = '<option value="">None</option>'
+  if(SP.looks.last) opts += '<option value="' + SP.looks.last.id + '">Same as last time</option>'
+  SP.looks.presets.forEach(function(p){ opts += '<option value="' + p.id + '">' + escapeHtmlLite(p.name) + (p.mine ? '' : ' (' + escapeHtmlLite(p.username || '') + ')') + '</option>' })
+  sel.innerHTML = opts
+  sel.value = Array.prototype.some.call(sel.options, function(o){ return o.value === cur }) ? cur : ''
+  spLookButtons()
+}
+function spLook(){ var id = spEl('sp-look').value; if(!id || !SP.looks) return null
+  return (SP.looks.last && SP.looks.last.id === id) ? SP.looks.last : SP.looks.presets.filter(function(p){ return p.id === id })[0] }
+function spLookButtons(){
+  var l = spLook()
+  spEl('sp-look-export').disabled = !l
+  spEl('sp-look-del').disabled = !l || !l.mine || (SP.looks.last && l.id === SP.looks.last.id)
+}
+async function spLookSave(){
+  if(!SP.info){ spNote('Read the artwork first.', true); return }
+  var name = prompt('Name this look (for example: Primetime weekday)', '')
+  if(!name || !name.trim()) return
+  var r = await (await fetch('/api/schedule/presets', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: name.trim(), settings: spSettings(), overrides: SP.ov, names: spNames()})})).json()
+  if(!r.ok){ spNote(escapeHtmlLite(r.error || 'Could not save the look.'), true); return }
+  await spLooksLoad(r.preset.id)
+  spEl('sp-look-note').textContent = 'Saved “' + r.preset.name + '”. It will fit any file whose layers have the same names.'
+}
+async function spLookImport(file){
+  if(!file) return
+  var data
+  try{ data = JSON.parse(await file.text()) }catch(e){ spNote('That file is not a saved look.', true); return }
+  var r = await (await fetch('/api/schedule/presets', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data)})).json()
+  if(!r.ok){ spNote(escapeHtmlLite(r.error || 'That file is not a saved look.'), true); return }
+  await spLooksLoad(r.preset.id)
+  spEl('sp-look-note').textContent = 'Imported “' + r.preset.name + '”.'
+}
+function spLookExport(){
+  var l = spLook(); if(!l) return
+  var blob = new Blob([JSON.stringify({name: l.name, settings: l.settings, background: l.background, expand: l.expand, layers: l.layers}, null, 1)], {type: 'application/json'})
+  var a = document.createElement('a'); a.href = URL.createObjectURL(blob)
+  a.download = (l.name.replace(/[^A-Za-z0-9_-]+/g, '_') || 'look') + '.schedule-look.json'
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){ URL.revokeObjectURL(a.href) }, 1000)
+}
+async function spLookDelete(){
+  var l = spLook(); if(!l || !confirm('Delete the look “' + l.name + '”?')) return
+  var r = await (await fetch('/api/schedule/presets/' + l.id, {method: 'DELETE'})).json()
+  if(!r.ok){ spNote(escapeHtmlLite(r.error || 'Could not delete.'), true); return }
+  spEl('sp-look').value = ''
+  spLooksLoad('')
+}
+
+// ---- Advanced: timing and feel of one layer ----
+var SP_EASES = [['', 'As the style'], ['out', 'Settle gently'], ['in_out', 'Smooth in and out'], ['back', 'Overshoot a little'], ['linear', 'Even']]
+function spTuneHtml(l, it){
+  var num = function(id, label, val, min, max, step, ph){
+    return '<div><label>' + label + '</label><input type=number id=sp-t-' + id + ' min=' + min + ' max=' + max + ' step=' + step +
+      ' placeholder="' + ph + '" style="width:100%" value="' + (val == null ? '' : val) + '"></div>'
+  }
+  var open = (it.delay || it.dur || it.ease || it.intensity != null || it.stagger != null) ? ' open' : ''
+  return '<details class="sp-help sp-adv-only"' + open + ' style="margin-top:10px"><summary>Timing &amp; feel</summary><div class="sp-tune" style="margin-top:8px">' +
+    num('delay', 'Starts later by (s)', it.delay, 0, 15, 0.1, '0') +
+    num('dur', 'Takes (s)', it.dur, 0.15, 4, 0.05, 'automatic') +
+    '<div><label>Eases</label><select id=sp-t-ease style="width:100%">' + spOpt(SP_EASES, it.ease || '') + '</select></div>' +
+    num('intensity', 'Strength of the motion (1 = style)', it.intensity, 0.2, 2.5, 0.1, '1') +
+    (l.role === 'page' ? num('stagger', 'Gap between its rows (s)', it.stagger, 0, 2, 0.05, 'automatic') : '') +
+    '</div><div class="sh-note">Starts later holds the layer back after its turn; a moving layer with a delay then arrives instead of being there from the start. Strength makes shake, rotate, float and the rest gentler (below 1) or bigger (above 1).</div></details>'
+}
+function spSetTune(path, key, value){
+  var it = SP.ov.layers[path] || (SP.ov.layers[path] = {})
+  if(value === null || value === '' || (typeof value === 'number' && isNaN(value))) delete it[key]; else it[key] = value
+  spTidy(path)
+  spStale()
+  spRenderWork()
+}
+
+// ---- More files with the same look ----
+function spBatchDraw(){
+  var host = spEl('sp-batch-list')
+  host.innerHTML = SP.batch.map(function(b, i){
+    return '<div class="sp-batch-row"><span style="flex:1;overflow-wrap:anywhere">' + escapeHtmlLite(b.name) + '</span><span data-bstat style="opacity:.75">' +
+      escapeHtmlLite(b.status || 'waiting') + '</span>' + (b.status ? '' : '<button type=button class="btn-sm" data-bdel=' + i + '>Remove</button>') + '</div>'
+  }).join('')
+  spEl('sp-batch-go').disabled = !SP.batch.some(function(b){ return !b.status })
+}
+async function spBatchRun(){
+  if(SP.busy) return
+  spEl('sp-batch-go').disabled = true
+  var host = spEl('sp-result')
+  for(var i = 0; i < SP.batch.length; i++){
+    var b = SP.batch[i]
+    if(b.status) continue
+    b.status = 'drawing…'; spBatchDraw()
+    var fd = new FormData()
+    fd.append('schedule_image_network', b.net)
+    fd.append('preset_id', 'last')
+    fd.append('duration', spEl('sp-duration').value)
+    fd.append('style', spEl('sp-style').value)
+    fd.append('text_motion', spEl('sp-text').value)
+    fd.append('prompt', spEl('sp-prompt').value)
+    fd.append('delivery_format', spEl('sp-format').value)
+    fd.append('loudness', spEl('sp-level').value)
+    var musNet = spEl('schedule_music_network').value, mus = spEl('sp-music')
+    if(mus && mus.files && mus.files[0]) fd.append('schedule_music', mus.files[0]); else if(musNet) fd.append('schedule_music_network', musNet)
+    var res
+    try{
+      var start = await (await fetch('/api/schedule/render', {method: 'POST', body: fd})).json()
+      res = start.error ? {error: start.error} : await spPoll(start.job_id)
+    }catch(e){ res = {error: String(e)} }
+    if(res.error){ b.status = 'failed: ' + res.error }
+    else{ b.status = 'done'; host.insertBefore(spCard(res.plug, true), host.firstChild) }
+    spBatchDraw()
+  }
+}
+
+;(function(){
+  document.addEventListener('click', function(e){
+    var m = e.target.closest('[data-spmode]'); if(m && m.closest('#p-schedule-create')){ spMode(m.getAttribute('data-spmode')); return }
+    var c = e.target.closest('#sp-style-cards .sp-card')
+    if(c){ spEl('sp-style').value = c.getAttribute('data-style'); spMarkStyle(); spStale(); return }
+    var u = e.target.closest('[data-usedur]')
+    if(u){ spEl('sp-duration').value = u.getAttribute('data-usedur'); SP.durTouched = true; spDurHint(); spStale(); return }
+    if(e.target.closest('#sp-prev-update')){ spPreview(); return }
+    var fr = e.target.closest('[data-frame]')
+    if(fr){ var v = spEl('sp-prev-video'); v.pause(); v.currentTime = Math.max(0, Math.min(v.duration || 0, v.currentTime + parseInt(fr.getAttribute('data-frame'), 10) / 12)); return }
+    var bd = e.target.closest('[data-bdel]')
+    if(bd){ SP.batch.splice(parseInt(bd.getAttribute('data-bdel'), 10), 1); spBatchDraw() }
+  })
+  var on = function(id, ev, fn){ var el = spEl(id); if(el) el.addEventListener(ev, fn) }
+  on('sp-prev-btn', 'click', spPreview)
+  on('sp-art-btn', 'click', spPreviewOff)
+  on('sp-safe-btn', 'click', function(){
+    var sf = spEl('sp-safe'), shown = sf.style.display === 'block'
+    sf.style.display = shown ? 'none' : 'block'; this.classList.toggle('on', !shown)
+  })
+  on('sp-duration', 'change', function(){ SP.durTouched = true; spDurHint(); spStale() })
+  on('sp-text', 'change', spStale)
+  on('sp-prompt', 'change', spStale)
+  on('sp-look', 'change', function(){
+    spLookButtons()
+    var id = this.value
+    if(id && SP.info) spInspect({keep: true, preset: id}); else spEl('sp-look-note').textContent = ''
+  })
+  on('sp-look-save', 'click', spLookSave)
+  on('sp-look-export', 'click', spLookExport)
+  on('sp-look-del', 'click', spLookDelete)
+  on('sp-look-import', 'click', function(){ spEl('sp-look-file').click() })
+  on('sp-look-file', 'change', function(){ spLookImport(this.files && this.files[0]); this.value = '' })
+  var chip = spEl('schedule_batch_chip')
+  if(chip && window.MutationObserver){
+    new MutationObserver(function(){
+      var hid = spEl('schedule_batch_network').value
+      var name = (chip.querySelector('.chip-name') || {}).textContent || ''
+      if(chip.style.display !== 'none' && hid && name){
+        if(!SP.batch.some(function(b){ return b.net === hid })) SP.batch.push({net: hid, name: name.replace(/\s*\([^)]*\)\s*$/, '')})
+        spBatchDraw()
+        if(typeof clearNetworkField === 'function') clearNetworkField('schedule_batch')
+      }
+    }).observe(chip, {attributes: true, childList: true, subtree: true, characterData: true})
+  }
+  var saved = 'easy'
+  try{ saved = localStorage.getItem('sp_mode') || 'easy' }catch(e){}
+  spMode(saved)
+})()
+
 
 async function scheduleOnTabOpen(){
   if(SP.options) return
@@ -10333,6 +10709,8 @@ async function scheduleOnTabOpen(){
       })
       tx.value = d.text_motions.some(function(x){ return x.key === had }) ? had : d.default_text_motion
     }
+    spBuildStyleCards()
+    spLooksLoad()
     if(!d.psd_supported){
       spNote('Photoshop files cannot be read on this server yet (the <code>psd-tools</code> package is not installed). PNG, JPEG and TIFF artwork works now.', true)
     }
@@ -10340,6 +10718,7 @@ async function scheduleOnTabOpen(){
   var saved = spEl('p-schedule-saved')
   if(saved && saved.classList.contains('active')) scheduleLoadSaved()
 }
+
 
 function spProgress(j){
   var pct = j.percent || 0
@@ -10399,9 +10778,8 @@ async function scheduleCancel(){
   try{ await fetch('/api/schedule/cancel/' + SP.jobId, {method: 'POST'}) }catch(e){}
 }
 
-async function scheduleRender(){
-  if(SP.busy) return
-  if(!SP.info){ spNote('Pick the schedule artwork and read it first.', true); return }
+// What identifies the artwork and how it should be done: shared by the preview and the render.
+function spForm(){
   var img = spEl('sp-image'), imgNet = spEl('schedule_image_network').value
   var hasLocalImg = img && img.files && img.files[0]
   var fd = new FormData()
@@ -10411,15 +10789,23 @@ async function scheduleRender(){
   else if(hasLocalImg) fd.append('schedule_image', img.files[0])
   if(imgNet) fd.append('schedule_image_network', imgNet)
   fd.append('layer_overrides', JSON.stringify(SP.ov))
-  var mus = spEl('sp-music'), musNet = spEl('schedule_music_network').value
-  if(mus && mus.files && mus.files[0]) fd.append('schedule_music', mus.files[0])
-  else if(musNet) fd.append('schedule_music_network', musNet)
+  fd.append('layer_names', JSON.stringify(spNames()))
   fd.append('duration', spEl('sp-duration').value)
-  fd.append('delivery_format', spEl('sp-format').value)
-  fd.append('loudness', spEl('sp-level').value)
   fd.append('style', spEl('sp-style').value)
   fd.append('text_motion', spEl('sp-text').value)
   fd.append('prompt', spEl('sp-prompt').value)
+  return fd
+}
+
+async function scheduleRender(){
+  if(SP.busy) return
+  if(!SP.info){ spNote('Pick the schedule artwork and read it first.', true); return }
+  var fd = spForm()
+  var mus = spEl('sp-music'), musNet = spEl('schedule_music_network').value
+  if(mus && mus.files && mus.files[0]) fd.append('schedule_music', mus.files[0])
+  else if(musNet) fd.append('schedule_music_network', musNet)
+  fd.append('delivery_format', spEl('sp-format').value)
+  fd.append('loudness', spEl('sp-level').value)
 
   spEl('sp-result').style.display = 'none'
   spBusy(true, 'Starting...')
@@ -10436,6 +10822,8 @@ async function scheduleRender(){
   host.innerHTML = ''
   host.appendChild(spCard(res.plug, true))
   host.style.display = 'block'
+  spEl('sp-batch').style.display = 'block'
+  spLooksLoad()
   spScreen('result')
 }
 
@@ -11267,6 +11655,12 @@ POST /api/shorts/analyze now also needs project_id</pre>
       <p>Select a layer and <strong>What should it do?</strong> lets you correct it: make it the <strong>Background</strong> (it and everything below it become the still backdrop), <strong>Logo or schedule text</strong>, <strong>Moving decoration</strong>, <strong>a schedule page</strong> (with its page number), or <strong>leave it out</strong>; <em>As detected</em> goes back. The list is read again after each change, so the counts and the page tabs show what will be drawn. A group shows the layers inside it.</p>
       <p><strong>Split into its layers</strong> opens a group: its layers are listed beneath it, indented, and each is sorted on its own &mdash; a header group can hold a background group (choose its last layer as <em>Background</em> to keep the whole stack still), the logo, and ornaments that move. <strong>Put the group back together</strong> undoes it. For any layer that is not the background, <strong>Animation of this layer</strong> sets how it <em>Arrives</em> (wipe, slide, fade, pop or appear at once, with a direction) and what it does <em>Then</em>: hold still, light sweep, float, pulse, wobble, <strong>shake</strong>, grow and shrink, <strong>rotate left</strong> or <strong>rotate right</strong>, sway, dance or breathe. What you set on a layer wins over the style and the prompt; <em>Back to the style</em> removes it. On a page it applies to every row of that page.</p>
       <p>The <strong>Animation</strong> tab holds the length, style, how logo and text behave and the extra direction; <strong>Music &amp; file</strong> the delivery format, the music and its level. <strong>Generate schedule plug</strong> in the bar below draws it with your corrections, and the plug opens in step 3. A Photoshop file that has to be animated as one flat picture (blend modes, effects) shows as one layer with the reason above the list.</p>
+      <h3>Easy and Advanced</h3>
+      <p>The <strong>Mode</strong> switch at the top right chooses how much you see. <strong>Easy</strong> (the default) reads the artwork, says in one short list what will happen &mdash; <em>this stays still, these pages come one after another, these appear and hold, these keep moving</em> &mdash; and lists anything worth checking in plain words: text outside the <em>title-safe</em> area (the outer 5% a television may cut off), text too small to read on a television, pages that would go by too fast. Then it asks only for a <strong>length</strong> (the server suggests one from the number of pages and rows, and picks it for you until you choose another), a <strong>style</strong> (shown as cards, each marked <em>Calm</em> or <em>Lively</em>) and the music. <strong>Advanced</strong> adds the layer list, per-layer roles, <em>Split into its layers</em> for groups, and the controls below.</p>
+      <p><strong>Preview the animation</strong> draws the first seconds small and silent in a few seconds, so you see the style move before the full render; change the style, length or a layer and it redraws by itself. The preview has the player&rsquo;s own scrubber, <em>&#9664; frame</em> and <em>frame &#9654;</em> to step one frame at a time, and <strong>Safe areas</strong> to overlay the action-safe (93%) and title-safe (90%) rectangles. Words in <em>Extra direction</em> are read by keyword only in the preview; the full render may use the AI model.</p>
+      <p><strong>Timing &amp; feel</strong> (Advanced, in <em>This layer</em>) gives one layer its own <em>Starts later by</em> (a moving layer given a delay then arrives, instead of being there from the first frame), <em>Takes</em> (how long it comes in), <em>Eases</em> (settle gently, smooth in and out, overshoot a little, even) and <em>Strength of the motion</em> (below 1 gentler, above 1 bigger &mdash; shake, rotate, float and the rest). On a page, <em>Gap between its rows</em> sets how far apart its rows come in. A group animates as one piece until it is split; split, each of its layers can be staggered with <em>Starts later by</em>.</p>
+      <p><strong>Saved looks.</strong> <em>Save this look</em> keeps the style, length, extra direction, format and everything set on layers &mdash; roles, split groups, arrival, motion, timing &mdash; <em>by layer name</em>, so it fits next week&rsquo;s file if its layers are named the same. Picking a look applies it and says which of its layers this file does not have. Looks are shared with the team: anyone can use one, only the person who made it (or an admin) can delete or replace it. <em>Export</em> and <em>Import</em> move a look as a small file between servers. <em>Same as last time</em> is always your own latest settings.</p>
+      <p><strong>The same look for more files.</strong> After a plug is made, <em>The same look for more files</em> on the result step lists other artwork from Browse library and makes each with the same style, length, music and format, matched to the look by layer name, one after another. Each finished plug is added to the results and to <em>Saved plugs</em>, with the per-layer settings used.</p>
       <h3>Why it is drawn, not generated</h3>
       <p>A schedule is text: titles, dates, times. A video model repaints every pixel of every frame, so that text would come back warped. Here each layer's own pixels are moved, faded or uncovered, so the logo and the text come to rest exactly as designed.</p>
       <h3>Artwork</h3>

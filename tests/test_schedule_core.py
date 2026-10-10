@@ -1016,3 +1016,111 @@ def test_rereading_a_file_after_a_correction_does_not_draw_its_layers_again(tmp_
     monkeypatch.setattr(sk, '_read_layer', lambda *a, **k: (calls.append(1), real(*a, **k))[1])
     sk.inspect_artwork(path, overrides={'layers': {4: {'role': 'content'}}})
     assert calls == [], 'every layer came from the first reading'
+
+
+# ---- easy and advanced: checks, suggested length, timing and feel, looks, preview ----
+
+def test_tuning_is_held_to_its_range_and_unknown_things_are_dropped():
+    got = sk.clean_overrides({'layers': {'1': {'delay': 99, 'dur': 0.01, 'intensity': 9, 'stagger': -3, 'ease': 'back'},
+                                         '2': {'delay': 'soon', 'ease': 'wild', 'intensity': float('nan')}}})
+    assert got['layers']['1'] == {'delay': 15.0, 'dur': 0.15, 'intensity': 2.5, 'stagger': 0.0, 'ease': 'back'}
+    assert '2' not in got['layers']
+
+
+def test_a_delay_holds_a_layer_back_and_makes_a_moving_layer_arrive():
+    names, roles = ['Back', 'GMA Logo', 'Spark'], ['background', 'content', 'decor']
+    base = sk.style_recipe('fade_still')
+    plain = sk.build_timeline(base, names, 10, roles, [None] * 3)
+    assert plain[2]['dur'] == 0                                      # a moving layer is there from the start
+    r = sk.apply_layer_animation(base, [{'name': n, 'role': ro, 'page': None, 'tune': t} for n, ro, t in (
+        ('Back', 'background', {}), ('GMA Logo', 'content', {'delay': 2.0, 'dur': 1.5, 'ease': 'back'}),
+        ('Spark', 'decor', {'delay': 3.0}))])
+    tl = sk.build_timeline(r, names, 10, roles, [None] * 3)
+    assert tl[1]['start'] == pytest.approx(plain[1]['start'] + 2.0) and tl[1]['dur'] == 1.5 and tl[1]['ease'] == 'back'
+    assert tl[2]['dur'] > 0 and tl[2]['start'] >= 3.0
+
+
+def test_the_gap_between_a_pages_rows_can_be_set():
+    names, roles, pages = ['Back', 'P1 a', 'P1 b', 'P1 c'], ['background', 'content', 'content', 'content'], [None, 0, 0, 0]
+    r = sk.apply_layer_animation(sk.style_recipe('fade_still'), [{'name': n, 'role': ro, 'page': pg, 'tune': {'stagger': 0.5} if pg == 0 else {}}
+                                                                for n, ro, pg in zip(names, roles, pages)])
+    tl = sk.build_timeline(r, names, 15, roles, pages)
+    assert tl[2]['start'] - tl[1]['start'] == pytest.approx(0.5) and tl[3]['start'] - tl[2]['start'] == pytest.approx(0.5)
+
+
+def test_intensity_scales_a_motion_and_ease_changes_how_a_layer_comes_in(tmp_path):
+    art = sk.load_artwork(_inspect_psd(tmp_path / 'p.psd'))
+    names = [ly['name'] for ly in art['layers']]
+    roles = [ly['role'] for ly in art['layers']]
+    pages = [ly['page'] for ly in art['layers']]
+
+    def frames(tune):
+        r = sk.apply_layer_animation(sk.style_recipe('fade_still'), [dict(ly, motion='shake', tune=tune) if ly['name'] == 'Sparkle'
+                                                                  else dict(ly) for ly in art['layers']])
+        a = sk.Animator(art, sk.build_timeline(r, names, 10, roles, pages), r, 10)
+        a.frame(9.0)
+        return a
+    calm, strong = frames({'intensity': 0.3}), frames({'intensity': 2.5})
+    rest = sk.Animator(art, sk.build_timeline(sk.style_recipe('fade_still'), names, 10, roles, pages), sk.style_recipe('fade_still'), 10).frame(9.0)
+    moved = lambda a: float(np.abs(a.frame(5.07).astype(int) - rest).sum())        # noqa: E731
+    assert moved(strong) > moved(calm) > 0
+    for kind in ('out', 'linear'):
+        assert 0.0 <= sk.eased(kind, 0.5) <= 1.0
+    assert sk.eased('linear', 0.5) == 0.5 and sk.eased('out', 0.5) > 0.5 and sk.eased('back', 0.9) > 1.0
+
+
+def test_the_checks_say_what_a_television_would_cut_off_or_not_show(tmp_path):
+    info = sk.inspect_artwork(_inspect_psd(tmp_path / 'p.psd'))
+    warns = [c['text'] for c in info['checks'] if c['level'] == 'warn']
+    assert any('title-safe' in w and 'GMA Logo' in w for w in warns)
+    psd = psd_tools.PSDImage.new('RGB', (W, H), color=0)
+    for name, im in (('Background', Image.new('RGBA', (W, H), (20, 30, 90, 255))), ('Schedule footer', _block([300, 900, 1300, 918], (255, 255, 255, 255)))):
+        box = im.getbbox()
+        psd.append(psd.create_pixel_layer(im.crop(box), name=name, top=box[1], left=box[0]))
+    psd.save(str(tmp_path / 's.psd'))
+    texts = [c['text'] for c in sk.inspect_artwork(str(tmp_path / 's.psd'))['checks']]
+    assert any('too small' in t.lower() or 'this small' in t.lower() for t in texts)
+
+
+def test_a_length_is_suggested_from_the_pages():
+    assert sk.suggest_duration([])[0] == 10
+    assert sk.suggest_duration([{'rows': 4}, {'rows': 4}])[0] == 15
+    assert sk.suggest_duration([{'rows': 5}] * 3)[0] in (20, 30)
+    d, why = sk.suggest_duration([{'rows': 8}] * 9)
+    assert d == 30 and 'more than the longest' in why
+
+
+def test_a_look_is_kept_by_layer_name_and_fits_another_file(tmp_path):
+    a = _inspect_psd(tmp_path / 'a.psd')
+    ov = {'layers': {'4': {'motion': 'shake', 'delay': 1.0}, '3': {'role': 'off'}}}
+    names = {l['path']: l['name'] for l in sk.inspect_artwork(a, overrides=ov)['layers']}
+    look = sk.preset_from_overrides('Primetime', {'style': 'pop_pulse', 'duration': 20, 'bogus': 1}, ov, names)
+    assert look['settings'] == {'style': 'pop_pulse', 'duration': 20}
+    assert look['layers'] == {'sparkle': {'motion': 'shake', 'delay': 1.0}, 'page 2': {'role': 'off'}}
+    ov2, missing = sk.overrides_from_preset(_inspect_psd(tmp_path / 'b.psd'), look)
+    assert ov2['layers'] == {'4': {'motion': 'shake', 'delay': 1.0}, '3': {'role': 'off'}} and missing == []
+    look['layers']['ghost'] = {'motion': 'shake'}
+    assert sk.overrides_from_preset(a, look)[1] == ['ghost']
+
+
+def test_a_look_from_outside_is_cleaned_before_it_is_kept():
+    assert sk.clean_preset({'name': ''}) is None and sk.clean_preset('x') is None
+    got = sk.clean_preset({'name': '  Week   look ', 'settings': {'style': 'nope', 'text_motion': 'breathe', 'duration': 17, 'format': '../x'},
+                           'layers': {'Star': {'motion': 'evil', 'arrive': {'effect': 'pop'}}, '': {'motion': 'shake'}}, 'expand': ['Header', 5]})
+    assert got['name'] == 'Week look' and got['settings'] == {'text_motion': 'breathe'}
+    assert got['layers'] == {'star': {'arrive': {'effect': 'pop', 'direction': 'right'}}} and got['expand'] == ['header']
+
+
+def test_a_preview_is_a_small_playable_clip(tmp_path):
+    import shutil as _sh, subprocess as _sp
+    if not _sh.which('ffmpeg'):
+        pytest.skip('ffmpeg not available')
+    art = sk.load_artwork(_inspect_psd(tmp_path / 'p.psd'))
+    names, roles, pages = [ly['name'] for ly in art['layers']], [ly['role'] for ly in art['layers']], [ly['page'] for ly in art['layers']]
+    r = sk.style_recipe('pop_pulse')
+    out = str(tmp_path / 'pv.mp4')
+    n = sk.encode_preview(sk.Animator(art, sk.build_timeline(r, names, 10, roles, pages), r, 10), out, 2.0)
+    assert n == 24
+    probe = _sp.run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height,codec_name', '-of', 'csv=p=0', out],
+                    capture_output=True, text=True).stdout.strip()
+    assert probe == 'h264,640,360'
