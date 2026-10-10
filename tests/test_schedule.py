@@ -553,3 +553,84 @@ def test_leftovers_from_an_interrupted_process_are_cleared_on_start(tmp_path, mo
     schedule.settle_interrupted()
     assert sorted(os.listdir(root)) == ['1700000001_bbbbbb', 'not-a-plug'], \
         'a finished plug and anything that is not ours are left alone'
+
+
+# ---- reading the artwork before drawing it ----
+
+def test_inspect_lists_the_layers_of_a_staged_file_and_shows_a_correction(env):
+    client, h = _client()
+    r = client.post('/api/schedule/inspect', data={'schedule_image_network': env['psd']}, headers=h)
+    d = r.get_json()
+    assert r.status_code == 200 and d['ok'] and d['name'] == 'Primetime_Week_42.psd' and d['token'] is None
+    by = {l['name']: l['role'] for l in d['layers']}
+    assert by == {'Schedule Tue': 'content', 'Schedule Mon': 'content', 'Title': 'content', 'Ribbon': 'decor', 'Background': 'background'}
+    assert [l['name'] for l in d['layers']][0] == 'Schedule Tue', 'top of the stack first'
+    idx = {l['name']: l['index'] for l in d['layers']}
+    r = client.post('/api/schedule/inspect', headers=h, data={
+        'schedule_image_network': env['psd'], 'layer_overrides': json.dumps({'layers': {str(idx['Ribbon']): {'role': 'off'}}})})
+    assert {l['name']: l['role'] for l in r.get_json()['layers']}['Ribbon'] == 'off'
+
+
+def test_inspect_needs_artwork_and_says_when_it_cannot_be_read(env, tmp_path):
+    client, h = _client()
+    assert client.post('/api/schedule/inspect', data={}, headers=h).status_code == 400
+    up = main.app.config['UPLOAD_FOLDER']
+    bad = f'net_{int(time.time())}_broken.psd'
+    with open(os.path.join(up, bad), 'wb') as f:
+        f.write(b'8BPSnope')
+    try:
+        r = client.post('/api/schedule/inspect', data={'schedule_image_network': bad}, headers=h)
+        assert r.status_code == 422 and 'could not be opened' in r.get_json()['error']
+    finally:
+        os.remove(os.path.join(up, bad))
+
+
+def test_the_kept_copy_is_used_only_under_the_name_inspect_gave_it(env, monkeypatch, artwork):
+    monkeypatch.setattr(pipeline, 'ALLOW_LOCAL_MEDIA_UPLOAD', True)
+    client, h = _client()
+    with open(artwork['psd'], 'rb') as f:
+        r = client.post('/api/schedule/inspect', data={'schedule_image': (f, 'week.psd')}, headers=h,
+                        content_type='multipart/form-data')
+    d = r.get_json()
+    assert d['ok'] and re.match(r'^schedule_image_\d+_\d+\.psd$', d['token']) and d['name'] == 'week.psd'
+    try:
+        # Asked again by token alone: no file sent, same layers.
+        r = client.post('/api/schedule/inspect', data={'schedule_image_token': d['token'], 'schedule_image_name': 'week.psd'}, headers=h)
+        assert r.get_json()['ok'] and len(r.get_json()['layers']) == 5
+        # A name that was not made by an upload, or a path, is never followed.
+        for bad in ('../../etc/passwd', 'net_1_week.psd', 'schedule_image_1_2.psd/../x.psd', env['psd']):
+            r = client.post('/api/schedule/inspect', data={'schedule_image_token': bad}, headers=h)
+            assert r.status_code == 400, bad
+        # And a plug can be drawn from it, with a correction, without sending the file again.
+        idx = {l['name']: l['index'] for l in client.post('/api/schedule/inspect', data={'schedule_image_token': d['token']}, headers=h).get_json()['layers']}
+        out = _render(client, h, schedule_image_token=d['token'], schedule_image_name='week.psd', duration='10',
+                      layer_overrides=json.dumps({'layers': {str(idx['Ribbon']): {'role': 'off'}}}))
+        plug = out['result']['plug']
+        assert 'Ribbon' not in plug['layers'] and plug['title'] == 'week.psd'
+    finally:
+        os.remove(os.path.join(main.app.config['UPLOAD_FOLDER'], d['token']))
+
+
+def test_a_correction_sent_with_the_render_changes_what_is_drawn(env):
+    client, h = _client()
+    idx = {l['name']: l['index'] for l in client.post('/api/schedule/inspect', data={'schedule_image_network': env['psd']}, headers=h).get_json()['layers']}
+    out = _render(client, h, schedule_image_network=env['psd'], duration='10',
+                  layer_overrides=json.dumps({'layers': {str(idx['Ribbon']): {'role': 'content'}}}))
+    plug = out['result']['plug']
+    assert plug['roles'][plug['layers'].index('Ribbon')] == 'content'
+    # Garbage in the field is ignored, not an error: the plug is made as detected.
+    out = _render(client, h, schedule_image_network=env['psd'], duration='10', layer_overrides='{not json')
+    plug = out['result']['plug']
+    assert plug['roles'][plug['layers'].index('Ribbon')] == 'decor'
+
+
+def test_the_schedule_page_is_a_three_step_workspace():
+    client, _ = _client()
+    html = client.get('/').get_data(as_text=True)
+    for step in ('art', 'work', 'result'):
+        assert f"data-step={step}" in html and f"spScreen('{step}')" in html
+    assert html.index('id=sp-screen-art') < html.index('id=sp-screen-work') < html.index('id=sp-screen-result')
+    for ident in ('sp-layers', 'sp-preview', 'sp-insp', 'sp-go-btn', 'sp-style', 'sp-text', 'sp-duration', 'sp-format',
+                  'sp-level', 'sp-prompt', 'sp-result', 'sp-progress', 'schedule_image_network'):
+        assert len(re.findall(rf'id={ident}(?=[\s>])', html)) == 1, ident
+    assert "fetch('/api/schedule/inspect'" in html

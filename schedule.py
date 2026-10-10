@@ -129,7 +129,7 @@ def _run(jid, params):
     src, duration, fmt = params['image'], params['duration'], params['format']
     report(percent=2, step='Reading artwork')
     try:
-        art = sk.load_artwork(src)
+        art = sk.load_artwork(src, overrides=params.get('overrides'))
     except sk.ArtworkError as e:
         report(error=str(e))
         return
@@ -291,6 +291,59 @@ def api_schedule_options():
                    extensions=sorted(sk.IMAGE_EXTENSIONS if psd else sk.IMAGE_EXTENSIONS - {'psd', 'psb'}))
 
 
+_TOKEN = re.compile(r'^schedule_image_\d+_\d+\.[a-z0-9]{2,4}$')
+
+
+def _artwork():
+    """(path, name to show, token) for the artwork a request names: a file
+    sent with it, a network file already staged, or the copy an earlier
+    inspect left behind (`schedule_image_token`, a name this module's own
+    uploads are given and nothing else)."""
+    tok = (request.form.get('schedule_image_token') or '').strip()
+    if tok and _TOKEN.match(tok) and os.path.splitext(tok)[1].lstrip('.').lower() in sk.IMAGE_EXTENSIONS:
+        path = pipeline.staged_path(tok)
+        if os.path.exists(path):
+            name = os.path.basename((request.form.get('schedule_image_name') or '').strip()) or tok
+            return path, name, tok
+    path = pipeline._resolve_upload('schedule_image', sk.IMAGE_EXTENSIONS)
+    if not path:
+        return None, None, None
+    base = os.path.basename(path)
+    if base.startswith('net_'):
+        return path, re.sub(r'^net_\d+_', '', base), None
+    f = request.files.get('schedule_image')
+    return path, (os.path.basename(f.filename) if f is not None and f.filename else base), base
+
+
+def _read_overrides():
+    try:
+        raw = json.loads(request.form.get('layer_overrides') or 'null')
+    except ValueError:
+        raw = None
+    clean = sk.clean_overrides(raw) if raw else None
+    return clean if clean and (clean['layers'] or clean['background_upto'] is not None) else None
+
+
+@app.route('/api/schedule/inspect', methods=['POST'])
+@require_permission('schedule_plug')
+def api_schedule_inspect():
+    """Reads the artwork and says what the animation will do with each layer,
+    so it can be checked, and corrected, before anything is drawn."""
+    if not _job_submit_limiter.allow(_client_ip()):
+        return jsonify(error='Too many requests. Wait a few minutes and try again.'), 429
+    path, name, token = _artwork()
+    if not path:
+        return jsonify(error='Pick the schedule artwork first, using Browse library.'), 400
+    try:
+        info = sk.inspect_artwork(path, overrides=_read_overrides())
+    except sk.ArtworkError as e:
+        return jsonify(error=str(e)), 422
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify(error=f'The artwork could not be read: {e}'), 500
+    return jsonify(ok=True, name=name, token=token, **info)
+
+
 @app.route('/api/schedule/render', methods=['POST'])
 @require_permission('schedule_plug')
 def api_schedule_render():
@@ -309,7 +362,7 @@ def api_schedule_render():
     content = (request.form.get('text_motion') or '').strip() or sk.DEFAULT_CONTENT
     if content not in dict(sk.CONTENT_MODES):
         return jsonify(error='Choose whether the logo and schedule text hold still or breathe.'), 400
-    image = pipeline._resolve_upload('schedule_image', sk.IMAGE_EXTENSIONS)
+    image, orig, _tok = _artwork()
     if not image:
         return jsonify(error='Pick the schedule artwork first, using Browse library.'), 400
     music = pipeline._resolve_upload('schedule_music', pipeline.AUDIO_EXTENSIONS)
@@ -326,8 +379,7 @@ def api_schedule_render():
             return shown(path)
         f = request.files.get(field)
         return os.path.basename(f.filename) if f is not None and f.filename else shown(path)
-    orig = original('schedule_image', image)
-    params = {'image': image, 'orig_name': orig, 'music': music,
+    params = {'image': image, 'orig_name': orig, 'music': music, 'overrides': _read_overrides(),
               'music_name': (original('schedule_music', music) if music else None),
               'duration': duration, 'format': fmt, 'style': style, 'content': content,
               'loudness': pipeline.resolve_loudness(request.form.get('loudness'), _house_loudness()),

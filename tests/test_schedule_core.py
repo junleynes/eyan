@@ -869,3 +869,102 @@ def test_ornaments_keep_looping_under_the_pages_and_the_layer_limit_spares_them(
     art = sk.load_artwork(str(tmp_path / 'many.psd'))
     assert art['pages'] == [{'name': 'Page 1', 'rows': 4}, {'name': 'Page 2', 'rows': 3}, {'name': 'Page 3', 'rows': 4}]
     assert sum(1 for ly in art['layers'] if ly['page'] is not None) == 11
+
+
+# ---- inspecting: what each layer will do, and corrections ----
+
+def _inspect_psd(path):
+    psd = psd_tools.PSDImage.new('RGB', (W, H), color=0)
+
+    def px(im, name, **kw):
+        box = im.getbbox()
+        return psd.create_pixel_layer(im.crop(box), name=name, top=box[1], left=box[0], **kw)
+    psd.append(px(Image.new('RGBA', (W, H), (20, 30, 90, 255)), 'Background'))
+    psd.append(px(_block([60, 40, 360, 160], (255, 200, 0, 255)), 'GMA Logo'))
+    for n, y, c in ((1, 300, (255, 255, 255, 255)), (2, 300, (255, 120, 120, 255))):
+        rows = [px(_block([500, y, 1400, y + 90], c), f'Show {n}a'), px(_block([500, y + 130, 1400, y + 220], c), f'Show {n}b')]
+        psd.append(psd.create_group(rows, name=f'Page {n}'))
+    psd.append(px(_block([1500, 700, 1700, 900], (255, 0, 0, 255)), 'Sparkle'))
+    psd.save(str(path))
+    return str(path)
+
+
+def test_inspect_lists_every_top_level_layer_top_first_with_its_part(tmp_path):
+    info = sk.inspect_artwork(_inspect_psd(tmp_path / 'paged.psd'))
+    got = [(l['name'], l['role']) for l in info['layers']]
+    assert got == [('Sparkle', 'decor'), ('Page 2', 'page'), ('Page 1', 'page'), ('GMA Logo', 'content'), ('Background', 'background')]
+    pages = {l['name']: l for l in info['layers'] if l['role'] == 'page'}
+    assert pages['Page 1']['rows'] == 2 and pages['Page 1']['child_count'] == 2 and pages['Page 1']['kind'] == 'group'
+    assert [c['name'] for c in pages['Page 1']['children']] == ['Show 1b', 'Show 1a']
+    assert info['pages'] == [{'name': 'Page 1', 'rows': 2, 'shown': True}, {'name': 'Page 2', 'rows': 2, 'shown': True}]
+    assert info['counts'] == {'content': 1, 'decor': 1, 'pages': 2, 'background': 1} and info['background_index'] == 0
+    assert [p['label'] for p in info['previews']] == ['Page 1', 'Page 2'] and all(p['image'].startswith('data:image/jpeg') for p in info['previews'])
+    sparkle = info['layers'][0]
+    assert sparkle['box'] == [1500, 700, 201, 201] and sparkle['thumb'] and sparkle['why']
+
+
+def test_inspect_says_why_a_layer_is_left_out_or_folded_into_the_background(tmp_path):
+    parts = PARTS + [('Texture', lambda: Image.new('RGBA', (W, H), (255, 255, 255, 40)))]
+    path = tmp_path / 'tex.psd'
+    psd = psd_tools.PSDImage.new('RGB', (W, H), color=0)
+    for name, make in [PARTS[0], ('Texture', parts[-1][1])] + PARTS[1:]:
+        im = make(); box = im.getbbox()
+        psd.append(psd.create_pixel_layer(im.crop(box), name=name, top=box[1], left=box[0]))
+    hidden = psd.create_pixel_layer(_block([100, 700, 300, 900], (0, 255, 0, 255)).crop([100, 700, 300, 900]), name='Old draft', top=700, left=100)
+    hidden.visible = False
+    psd.append(hidden)
+    psd.save(str(path))
+    info = sk.inspect_artwork(str(path))
+    roles = {l['name']: l for l in info['layers']}
+    assert roles['Texture']['role'] == 'background' and 'covers the whole picture' in roles['Texture']['why']
+    assert roles['Old draft']['role'] == 'hidden' and 'Switched off' in roles['Old draft']['why']
+
+
+def test_corrections_change_what_is_animated_and_survive_a_layer_the_file_hid(tmp_path):
+    path = _inspect_psd(tmp_path / 'paged.psd')
+    ov = {'layers': {4: {'role': 'content'}, 3: {'role': 'off'}}}      # Sparkle is text now; Page 2 is left out
+    art = sk.load_artwork(path, overrides=ov)
+    assert [p['name'] for p in art['pages']] == ['Page 1']
+    assert [ly['role'] for ly in art['layers'] if ly['name'] == 'Sparkle'] == ['content']
+    info = sk.inspect_artwork(path, overrides=ov)
+    by = {l['name']: l for l in info['layers']}
+    assert by['Sparkle']['role'] == 'content' and by['Sparkle']['why'] == 'Set by you.'
+    assert by['Page 2']['role'] == 'off' and by['Page 2']['why'] == 'Left out by you.'
+    assert info['counts']['pages'] == 1
+
+
+def test_a_layer_can_be_made_a_page_and_the_background_can_be_chosen(tmp_path):
+    path = _inspect_psd(tmp_path / 'paged.psd')
+    info = sk.inspect_artwork(path, overrides={'layers': {1: {'role': 'page', 'page': 3}}, 'background_upto': 1})
+    by = {l['name']: l for l in info['layers']}
+    assert by['GMA Logo']['role'] == 'page' and by['GMA Logo']['page'] == 3 and by['GMA Logo']['why'].startswith('Set as a page')
+    assert by['Background']['role'] == 'background' and info['background_index'] == 0
+    # The background chosen as the logo layer swallows everything under it.
+    info = sk.inspect_artwork(path, overrides={'background_upto': 1})
+    by = {l['name']: l for l in info['layers']}
+    assert by['Background']['role'] == 'background' and by['GMA Logo']['role'] == 'background'
+    art = sk.load_artwork(path, overrides={'background_upto': 1})
+    assert art['layers'][0]['role'] == 'background' and 'GMA Logo' not in [ly['name'] for ly in art['layers'][1:]]
+
+
+def test_overrides_are_cleaned_before_use():
+    assert sk.clean_overrides(None) == {'background_upto': None, 'layers': {}}
+    got = sk.clean_overrides({'background_upto': '2', 'layers': {'3': {'role': 'page', 'page': 500}, 'x': {'role': 'off'},
+                                                                   '4': {'role': 'evil'}, '5': 'decor', '6': {'role': 'decor'}}})
+    assert got == {'background_upto': 2, 'layers': {3: {'role': 'page', 'page': 99}, 6: {'role': 'decor'}}}
+
+
+def test_inspecting_a_flat_image_reports_one_picture(layered):
+    info = sk.inspect_artwork(layered['png'])
+    assert [(l['name'], l['role']) for l in info['layers']] == [('Image', 'picture')] and not info['layered']
+    assert info['previews'][0]['label'] == 'The artwork' and info['counts']['background'] == 1
+
+
+def test_rereading_a_file_after_a_correction_does_not_draw_its_layers_again(tmp_path, monkeypatch):
+    path = _inspect_psd(tmp_path / 'paged.psd')
+    sk.inspect_artwork(path)
+    calls = []
+    real = sk._read_layer
+    monkeypatch.setattr(sk, '_read_layer', lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    sk.inspect_artwork(path, overrides={'layers': {4: {'role': 'content'}}})
+    assert calls == [], 'every layer came from the first reading'
