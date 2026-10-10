@@ -929,6 +929,21 @@ input.sh-num[type=number]{width:92px}
 .sp-stale{font-size:12px;color:var(--amber);margin:4px 0}
 .sp-tune{display:grid;grid-template-columns:1fr 1fr;gap:8px}.sp-tune label{margin:0 0 2px}
 .sp-batch-row{display:flex;gap:8px;align-items:center;font-size:13px;padding:4px 0}
+/* Episodic Plug workspace: three screens over the existing form, review grid and result */
+#p-trailer.tr-s-review .work-in,#p-trailer.tr-s-result .work-in{display:none}
+#p-trailer.tr-s-review .work,#p-trailer.tr-s-result .work{grid-template-columns:minmax(0,1fr)}
+#p-trailer.tr-s-review .work-out,#p-trailer.tr-s-result .work-out{position:static;max-height:none}
+#p-trailer.tr-s-setup #tr-preview-area,#p-trailer.tr-s-setup #tr-area,#p-trailer.tr-s-review #tr-area,#p-trailer.tr-s-result #tr-preview-area{display:none !important}
+#p-trailer:not(.tr-s-setup) #tr-ready,#p-trailer.tr-s-review #tr-history,#p-trailer.tr-s-result #tr-history{display:none}
+#tr-ready{padding:14px 16px;margin:0 0 14px}
+#tr-ready ul{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:6px}
+#tr-ready li{display:flex;gap:8px;align-items:baseline;font-size:13px}
+#tr-ready li i{font-style:normal;width:16px;flex:none;text-align:center;font-weight:700}
+#tr-ready li.ok i{color:var(--phosphor)}#tr-ready li.todo i{color:var(--amber)}#tr-ready li.skip{opacity:.6}
+#tr-ready li span{overflow-wrap:anywhere}#tr-ready li b{font-weight:600}
+.tr-bar{position:sticky;bottom:0;z-index:5;display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 14px;margin:14px 0 0;background:var(--elevated);border:1px solid var(--line);border-radius:10px}
+.tr-bar .tr-sum{flex:1;min-width:160px;font-size:12px;opacity:.8}
+#tr-preview-area .tr-bar{margin:16px -4px -4px}
 .sp-anim{color:var(--accent,#4f8cff);font-weight:600}
 .sp-gicon{display:flex;height:100%;align-items:center;justify-content:center;color:#fff;font-size:18px}
 .sp-split{margin:10px 0 0}
@@ -1485,6 +1500,11 @@ document.addEventListener("DOMContentLoaded", function(){
 <!-- Episodic Promo Plug -->
 <div id="p-trailer" class="panel{{ ' active' if default_tab == 'p-trailer' else '' }}">
 <h2>Episodic Promo Plug Generator</h2>
+<div id=tr-steps class=ws-steps role="tablist" aria-label="Steps">
+  <button type=button class="ws-step active" data-trstep=setup onclick="trScreen('setup')"><b>1</b> Episode &amp; settings</button>
+  <button type=button class="ws-step" data-trstep=review onclick="trScreen('review')" disabled><b>2</b> Review the cut <span id=tr-step-count class=ws-count></span></button>
+  <button type=button class="ws-step" data-trstep=result onclick="trScreen('result')" disabled><b>3</b> Result</button>
+</div>
 <div class="work">
 <div class="work-in">
 <form id=tf method=POST action=/api/trailer/generate enctype=multipart/form-data novalidate>
@@ -1551,6 +1571,62 @@ document.addEventListener("DOMContentLoaded", function(){
       </div>
     </div>
   </div>
+  <label>Template:</label>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">
+    <select name=template_id id=template-select style="max-width:100%;flex:1;min-width:220px"><option value="">Loading templates…</option></select>
+    <button type=button class=btn style="padding:6px 12px;font-size:12px" onclick="loadTemplates()">Refresh</button>
+    <button type=button class=btn id=template-delete-btn disabled style="padding:6px 12px;font-size:12px;background:var(--danger,#c94f4f)" onclick="deleteSelectedTemplate()">Delete</button>
+  </div>
+  <div id=template-summary style="font-size:12px;opacity:.85;margin:0 0 14px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;display:none"></div>
+
+  <div class="promo-mode-bar" role="group" aria-label="Form mode">
+    <button type="button" class="promo-mode-btn active" id="promo-mode-quick" onclick="setPromoMode('quick')">Quick promo</button>
+    <button type="button" class="promo-mode-btn" id="promo-mode-advanced" onclick="setPromoMode('advanced')">Advanced</button>
+    <span class="promo-mode-hint" id="promo-mode-hint">Template + episode + length → Preview cut → Render</span>
+  </div>
+
+  <div class="promo-essentials">
+    <div>
+      <label>Plug length</label>
+      <select name=trailer_length id=trailer-length-select onchange="updateJobSummary()">
+        <option value=15 selected>15 sec</option>
+        <option value=30>30 sec</option>
+        <option value=45>45 sec</option>
+        <option value=60>60 sec</option>
+      </select>
+    </div>
+    <div>
+      <label>Genre</label>
+      <select name=genre id=genre-select onchange="updateJobSummary(); if(typeof updateGenreManualVisibility==='function') updateGenreManualVisibility()">
+      <option value="">Custom (manual settings below)</option>
+      <option value=action>Action</option>
+      <option value=adventure>Adventure</option>
+      <option value=comedy>Comedy</option>
+      <option value=documentary>Documentary</option>
+      <option value=drama>Drama</option>
+      <option value=fantasy>Fantasy</option>
+      <option value=horror>Horror</option>
+      <option value=mystery>Mystery</option>
+      <option value=noir>Noir</option>
+      <option value=romance>Romance</option>
+      <option value=scifi>Sci-Fi</option>
+      <option value=sports>Sports</option>
+      <option value=thriller>Thriller</option>
+      <option value=war>War</option>
+      <option value=western>Western</option>
+    </select>
+    </div>
+    <div>
+      <label>Delivery format</label>
+      <select name=delivery_format id=delivery-format-select onchange="updateJobSummary()">
+        <option value=mp4_high selected>MP4 (H.264 High Profile)</option>
+        <option value=prores_hq_2997>Apple ProRes 422 HQ — 29.97fps</option>
+        <option value=prores_hq_2398>Apple ProRes 422 HQ — 23.976fps</option>
+        <option value=avci100i>AVC-Intra 100i (approximation)</option>
+      </select>
+    </div>
+  </div><!-- /.promo-essentials -->
+
   <div class="promo-steer card" style="padding:14px 16px;margin:0 0 14px">
     <div style="font:600 11px 'JetBrains Mono',monospace;letter-spacing:.06em;text-transform:uppercase;color:var(--phosphor);margin-bottom:8px">Creative steering</div>
     <label style="margin-top:0">What should this promo feature? <span style="text-transform:none;letter-spacing:0;opacity:.6;font-weight:400">(optional)</span></label>
@@ -1764,61 +1840,6 @@ document.addEventListener("DOMContentLoaded", function(){
   </div>
 
 
-  <label>Template:</label>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0">
-    <select name=template_id id=template-select style="max-width:100%;flex:1;min-width:220px"><option value="">Loading templates…</option></select>
-    <button type=button class=btn style="padding:6px 12px;font-size:12px" onclick="loadTemplates()">Refresh</button>
-    <button type=button class=btn id=template-delete-btn disabled style="padding:6px 12px;font-size:12px;background:var(--danger,#c94f4f)" onclick="deleteSelectedTemplate()">Delete</button>
-  </div>
-  <div id=template-summary style="font-size:12px;opacity:.85;margin:0 0 14px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;display:none"></div>
-
-  <div class="promo-mode-bar" role="group" aria-label="Form mode">
-    <button type="button" class="promo-mode-btn active" id="promo-mode-quick" onclick="setPromoMode('quick')">Quick promo</button>
-    <button type="button" class="promo-mode-btn" id="promo-mode-advanced" onclick="setPromoMode('advanced')">Advanced</button>
-    <span class="promo-mode-hint" id="promo-mode-hint">Template + episode + length → Preview cut → Render</span>
-  </div>
-
-  <div class="promo-essentials">
-    <div>
-      <label>Plug length</label>
-      <select name=trailer_length id=trailer-length-select onchange="updateJobSummary()">
-        <option value=15 selected>15 sec</option>
-        <option value=30>30 sec</option>
-        <option value=45>45 sec</option>
-        <option value=60>60 sec</option>
-      </select>
-    </div>
-    <div>
-      <label>Genre</label>
-      <select name=genre id=genre-select onchange="updateJobSummary(); if(typeof updateGenreManualVisibility==='function') updateGenreManualVisibility()">
-      <option value="">Custom (manual settings below)</option>
-      <option value=action>Action</option>
-      <option value=adventure>Adventure</option>
-      <option value=comedy>Comedy</option>
-      <option value=documentary>Documentary</option>
-      <option value=drama>Drama</option>
-      <option value=fantasy>Fantasy</option>
-      <option value=horror>Horror</option>
-      <option value=mystery>Mystery</option>
-      <option value=noir>Noir</option>
-      <option value=romance>Romance</option>
-      <option value=scifi>Sci-Fi</option>
-      <option value=sports>Sports</option>
-      <option value=thriller>Thriller</option>
-      <option value=war>War</option>
-      <option value=western>Western</option>
-    </select>
-    </div>
-    <div>
-      <label>Delivery format</label>
-      <select name=delivery_format id=delivery-format-select onchange="updateJobSummary()">
-        <option value=mp4_high selected>MP4 (H.264 High Profile)</option>
-        <option value=prores_hq_2997>Apple ProRes 422 HQ — 29.97fps</option>
-        <option value=prores_hq_2398>Apple ProRes 422 HQ — 23.976fps</option>
-        <option value=avci100i>AVC-Intra 100i (approximation)</option>
-      </select>
-    </div>
-  </div><!-- /.promo-essentials -->
 
   <div id=generator-settings>
   <div class="promo-essentials">
@@ -3642,7 +3663,8 @@ document.addEventListener("DOMContentLoaded", function(){
   ['vo_upload', 'title_card_vo', 'end_card_vo', 'scoring_audio', 'sfx_upload', 'end_card_video', 'schedule_video'].forEach(wireWaveformInteraction)
   </script>
   </div><!-- /#generator-settings -->
-  <div class="promo-actions">
+  <div class="promo-actions tr-bar">
+    <span id=job-summary-text class="tr-sum">Pick a video to begin</span>
     <button class="btn btn-primary-promo" type=button id=trailer-preview-btn onclick="submitTrailer(true)">Preview the cut</button>
     <button class="btn btn-secondary-promo" type=submit id=trailer-submit-btn>Generate without preview</button>
     <button type=button id=tr-cancel-btn class=btn style="display:none;background:var(--danger,#c94f4f)">Cancel</button>
@@ -3650,6 +3672,7 @@ document.addEventListener("DOMContentLoaded", function(){
 </form>
 </div><!-- /.work-in -->
 <div class="work-out">
+<div id=tr-ready class="card" aria-live="polite"></div>
 <div id=tr-monitor class=card style="padding:0;margin-bottom:14px;overflow:hidden">
   <div id=tr-monitor-toggle style="display:flex;align-items:center;justify-content:space-between;padding:11px 16px;cursor:pointer">
     <strong style="font-size:13px">Your jobs <span id=tr-monitor-summary style="opacity:.6;font-weight:400"></span></strong>
@@ -3674,7 +3697,8 @@ document.addEventListener("DOMContentLoaded", function(){
   </div>
 </div>
 <div id=tr-area style=display:none>
-  <div style="display:flex;justify-content:flex-end;margin-bottom:8px">
+  <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+    <button type=button class=btn onclick="trScreen('setup')" style="font-size:12px;background:transparent;border:1px solid var(--line);color:var(--ink)">&#8592; Back to settings</button>
     <button type=button id=tr-close onclick="closeTrailerResult()" style="font-size:12px">&#10005; Close</button>
   </div>
   <div class=card id=tr-stats></div>
@@ -3698,7 +3722,8 @@ document.addEventListener("DOMContentLoaded", function(){
         <div id=tr-alt-grid style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px"></div>
       </div>
     </div>
-    <div style="display:flex;gap:10px;align-items:center;margin-top:16px;flex-wrap:wrap">
+    <div class="tr-bar">
+      <button type=button class=btn onclick="trScreen('setup')" style="background:transparent;border:1px solid var(--line);color:var(--ink)">&#8592; Settings</button>
       <button type=button class=btn id=tr-render-btn onclick="renderApprovedCut()">Lock cut &amp; render</button>
       <button type=button class=btn id=tr-preview-all-btn onclick="togglePreviewAll()" style="background:transparent;border:1px solid var(--line);color:var(--ink)">Deselect all</button>
       <span id=tr-preview-kept style="font-size:12px;opacity:.75"></span>
@@ -4463,6 +4488,8 @@ async function submitTrailer(previewOnly){
   document.getElementById('tr-area').style.display='none'
   document.getElementById('tr-prompt').style.display='none'
   document.getElementById('tr-preview-area').style.display='none'
+  if(typeof trScreen === 'function') trScreen('setup')
+  if(typeof trRemember === 'function') trRemember()
   var progArea=document.getElementById('tr-progress-area')
   var progBar=document.getElementById('tr-progress-bar')
   var progPct=document.getElementById('tr-progress-pct')
@@ -4629,6 +4656,102 @@ document.addEventListener('DOMContentLoaded', function(){
   setPromoMode('quick')
   updateJobSummary()
 })
+
+// ---- Episodic Plug workspace: screens, ready check, last settings ----
+var TR = {screen: 'setup', hasReview: false, hasResult: false}
+function trEl(id){ return document.getElementById(id) }
+function trScreen(name){
+  TR.screen = name
+  var root = trEl('p-trailer'); if(!root) return
+  root.classList.remove('tr-s-setup', 'tr-s-review', 'tr-s-result')
+  root.classList.add('tr-s-' + name)
+  trSteps()
+  if(name === 'setup') trReady()
+  var top = trEl('tr-steps'); if(top && top.scrollIntoView) top.scrollIntoView({block: 'nearest'})
+}
+function trSteps(){
+  var r = document.querySelector('#tr-steps [data-trstep=review]'), x = document.querySelector('#tr-steps [data-trstep=result]')
+  if(!r || !x) return
+  r.disabled = !TR.hasReview; x.disabled = !TR.hasResult
+  Array.prototype.forEach.call(document.querySelectorAll('#tr-steps .ws-step'), function(b){ b.classList.toggle('active', b.getAttribute('data-trstep') === TR.screen) })
+  var cnt = trEl('tr-step-count'), st = trEl('tr-preview-stats')
+  if(cnt) cnt.textContent = TR.hasReview && st && st.textContent ? (st.textContent.split(' · ')[0] || '') : ''
+}
+
+// What will happen, in one place, before the button is pressed.
+function trReady(){
+  var host = trEl('tr-ready'); if(!host) return
+  var val = function(id){ var e = trEl(id); return e ? e.value : '' }
+  var opt = function(id){ var e = trEl(id); return e && e.selectedIndex >= 0 && e.value ? e.options[e.selectedIndex].text.replace(/^\s+|\s+$/g, '') : '' }
+  var txt = function(id){ var e = trEl(id); return e ? (e.textContent || '').trim() : '' }
+  var preview = trEl('tr-file-preview')
+  var shown = preview && preview.classList.contains('shown')
+  var src = shown ? txt('tr-file-preview-name') : ''
+  var esc = typeof escapeHtmlLite === 'function' ? escapeHtmlLite : function(x){ return String(x) }
+  var rows = []
+  var row = function(kind, label, text){ rows.push('<li class="' + kind + '"><i>' + (kind === 'ok' ? '&#10003;' : (kind === 'todo' ? '!' : '&ndash;')) + '</i><span><b>' + label + '</b> ' + text + '</span></li>') }
+  row(src ? 'ok' : 'todo', 'Episode', src ? esc(src) : 'not picked yet &mdash; drop a video or use Browse library')
+  var tpl = opt('template-select')
+  row(tpl ? 'ok' : 'skip', 'Template', tpl ? esc(tpl) + ' &mdash; its settings are loaded' : 'none, so the settings below are used as they are')
+  var genre = opt('genre-select')
+  row('ok', 'Cut', esc((val('trailer-length-select') || '15') + ' seconds') + ', ' + (genre ? esc(genre) + ' pacing' : 'custom pacing') + ', ' + esc(opt('delivery-format-select') || 'MP4'))
+  var pr = (val('priority-prompt') || '').trim(), neg = (val('negative-prompt') || '').trim()
+  row(pr || neg ? 'ok' : 'skip', 'Steering', pr ? 'feature &ldquo;' + esc(pr.length > 60 ? pr.slice(0, 58) + '…' : pr) + '&rdquo;' + (neg ? ', avoid something' : '') : (neg ? 'avoid something' : 'none &mdash; scene scoring decides'))
+  var sum = function(id){ var t = txt(id); return t && t !== 'None' && t !== 'Not set' ? t : '' }
+  var extras = [['summary-script', 'Timecodes'], ['summary-narration', 'Narration'], ['summary-bgm', 'Music'], ['summary-title-card', 'Title card'], ['summary-end-card', 'End card'], ['summary-sfx', 'SFX']]
+    .map(function(p){ var t = sum(p[0]); return t ? '<b>' + p[1] + '</b> ' + esc(t) : '' }).filter(Boolean)
+  row(extras.length ? 'ok' : 'skip', 'Audio &amp; cards', extras.length ? extras.join(' &middot; ') : 'nothing extra chosen')
+  var down = trEl('ollama-down-banner'), downNow = down && down.style.display !== 'none'
+  var cues = !!sum('summary-script')
+  if(downNow) row(cues ? 'skip' : 'todo', 'AI Vision', cues ? 'is down, but timecode cues do not need it' : 'is unreachable: scenes cannot be rated until it is back')
+  var last = trLast()
+  host.innerHTML = '<b style="font-size:14px">Ready?</b><ul>' + rows.join('') + '</ul>' +
+    (last ? '<div style="margin-top:10px"><button type=button class="btn-sm" onclick="trUseLast()" title="Brings back the length, genre, format, template and steering from the last promo you made">Use my last settings</button></div>' : '')
+  var ok = !!src && !downNow || (!!src && cues)
+  var pb = trEl('trailer-preview-btn'); if(pb) pb.title = ok ? '' : (src ? 'AI Vision is unreachable' : 'Pick a video first')
+  var s2 = trEl('job-summary-text'); if(s2 && typeof updateJobSummary === 'function') updateJobSummary()
+}
+var TR_LAST_FIELDS = ['template-select', 'trailer-length-select', 'genre-select', 'delivery-format-select', 'priority-prompt', 'negative-prompt']
+function trLast(){ try{ return JSON.parse(localStorage.getItem('tr_last') || 'null') }catch(e){ return null } }
+function trRemember(){
+  var o = {}
+  TR_LAST_FIELDS.forEach(function(id){ var e = trEl(id); if(e) o[id] = e.value })
+  try{ localStorage.setItem('tr_last', JSON.stringify(o)) }catch(e){}
+}
+function trUseLast(){
+  var o = trLast(); if(!o) return
+  TR_LAST_FIELDS.forEach(function(id){
+    var e = trEl(id)
+    if(e && o[id] != null && (e.tagName !== 'SELECT' || Array.prototype.some.call(e.options, function(x){ return x.value === o[id] }))){
+      e.value = o[id]; e.dispatchEvent(new Event('change', {bubbles: true})); e.dispatchEvent(new Event('input', {bubbles: true}))
+    }
+  })
+  trReady()
+}
+
+;(function(){
+  var form = trEl('tf'), soon = null
+  var later = function(){ clearTimeout(soon); soon = setTimeout(trReady, 120) }
+  if(form){ form.addEventListener('input', later); form.addEventListener('change', later); form.addEventListener('click', later) }
+  var obs = window.MutationObserver ? new MutationObserver(later) : null
+  ;['tr-file-preview', 'tr-network-file', 'ollama-down-banner', 'asset-script', 'asset-narration', 'asset-title-card', 'asset-end-card', 'asset-bgm', 'asset-sfx'].forEach(function(id){
+    var e = trEl(id); if(e && obs) obs.observe(e, {attributes: true, childList: true, subtree: true, characterData: true})
+  })
+  // The screens follow what the page already does: a proposed cut opens the review, a finished plug the result.
+  var watch = function(id, show, hide){
+    var e = trEl(id); if(!e || !window.MutationObserver) return
+    new MutationObserver(function(){
+      if(e.style.display === 'block') show()
+      else if(e.style.display === 'none') hide()
+    }).observe(e, {attributes: true, attributeFilter: ['style']})
+  }
+  watch('tr-preview-area', function(){ TR.hasReview = true; if(TR.screen !== 'review') trScreen('review'); else trSteps() },
+        function(){ TR.hasReview = false; trSteps() })
+  watch('tr-area', function(){ TR.hasResult = true; if(TR.screen !== 'result') trScreen('result'); else trSteps() },
+        function(){ TR.hasResult = false; trSteps() })
+  trScreen('setup')
+})()
+
 
 // ---- Promo form mode + job summary ----
 var _promoMode = 'quick'
@@ -6779,6 +6902,7 @@ function closeTrailerResult(){
     v.load()
   }
   document.getElementById('tr-area').style.display = 'none'
+  if(typeof trScreen === 'function') trScreen('setup')
   var prompt = document.getElementById('tr-prompt')
   prompt.textContent = 'Closed. Generate a new promo, or reopen one from Recent renders / Saved plugs.'
   prompt.style.display = 'block'
@@ -11498,6 +11622,9 @@ job. Configured via env vars:
 
     <div class="docs-pane" id="docs-workflow">
       <h3 style="margin-top:0">Workflow</h3>
+      <h3>The Episodic Plug page</h3>
+      <p>The page works in three steps: <strong>1 Episode &amp; settings</strong>, <strong>2 Review the cut</strong> and <strong>3 Result</strong>. You move on by themselves &mdash; a proposed cut opens the review, a finished plug opens the result &mdash; and any step you have been to can be reopened from the bar at the top. <em>&#8592; Settings</em> and <em>&#8592; Back to settings</em> return to the form with everything as you left it.</p>
+      <p>Beside the form, <strong>Ready?</strong> says what is about to happen in one short list: the episode, the template (and that its settings are loaded), the length, genre and format, any steering, and the audio and cards chosen &mdash; and flags what is missing, such as no video yet, or AI Vision being unreachable (timecode cues do not need it). <strong>Use my last settings</strong> brings back the template, length, genre, format and steering of the last promo you started on this computer. The buttons stay at the bottom of the screen, with a one-line summary beside them, so they are never lost below a long form. <strong>Quick promo</strong> still hides the secondary controls; <strong>Advanced</strong> shows them all.</p>
       <p>What happens, in order, from upload to finished export:</p>
       <div style="overflow-x:auto;margin:14px 0 18px;background:var(--sunken);border:1px solid var(--line);border-radius:var(--radius);padding:16px;text-align:center">
       <svg viewBox="0 0 1008 348" style="width:100%;max-width:1180px;min-width:700px;aspect-ratio:1008/348;height:auto;display:inline-block;vertical-align:top;font-family:'JetBrains Mono',monospace">
