@@ -791,6 +791,93 @@ input.sh-num[type=number]{width:92px}
 .sh-q-bar div{background:var(--accent,#4f8cff);height:100%;width:0%;transition:width .3s ease}
 .sh-q-step{font-size:12px;color:var(--ink-dim);overflow-wrap:anywhere}
 .sh-q-btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+/* ---- Vertical Shorts workspace ---- */
+.ws-steps{display:flex;gap:6px;margin:4px 0 12px;border-bottom:1px solid var(--line)}
+.ws-step{background:none;border:0;border-bottom:2px solid transparent;padding:8px 14px;font-size:13px;cursor:pointer;color:var(--ink-dim);display:inline-flex;gap:8px;align-items:center;font-family:inherit}
+.ws-step b{display:inline-flex;width:20px;height:20px;border-radius:50%;border:1px solid var(--line);align-items:center;justify-content:center;font-size:11px}
+.ws-step.active{color:var(--ink);border-bottom-color:var(--accent,#4f8cff)}
+.ws-step.active b{background:var(--accent,#4f8cff);border-color:transparent;color:#fff}
+.ws-step:disabled{opacity:.4;cursor:default}
+.ws-count{font-size:11px;opacity:.7}
+.ws-dot{width:8px;height:8px;border-radius:50%;background:var(--phosphor)}
+.ws-card{padding:14px 16px;border:1px solid var(--line);border-radius:10px;background:var(--elevated)}
+.ws-more{margin-top:12px;border:1px solid var(--line);border-radius:10px;padding:10px 14px;background:var(--elevated)}
+.ws-more>summary{cursor:pointer;font-size:13px;font-weight:600}
+.ws-presets{display:flex;gap:8px;align-items:center;margin:10px 0 6px}
+.ws-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:baseline}
+.ws-status{font-size:12px;opacity:.85}
+.ws-saved{font-size:11px;opacity:.6}
+.ws-grid{display:grid;grid-template-columns:300px 300px minmax(0,1fr);gap:14px;align-items:start;margin-top:10px}
+.ws-list,.ws-insp{border:1px solid var(--line);border-radius:10px;background:var(--elevated);min-width:0}
+.ws-list{position:sticky;top:8px}
+.ws-list-head{display:flex;gap:6px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--line);font-size:13px}
+.ws-list-head select{margin:0 0 0 auto;width:auto;padding:3px 24px 3px 6px;font-size:12px}
+.ws-cands{overflow-y:auto;max-height:60vh;padding:6px}
+#sh-cands .sh-cand.ws-item{display:grid;grid-template-columns:18px 44px minmax(0,1fr) 38px;gap:8px;align-items:center;padding:6px;margin:0 0 2px;border:1px solid transparent;border-radius:8px;cursor:pointer;background:transparent}
+#sh-cands .sh-cand.ws-item:hover{background:var(--panel)}
+#sh-cands .sh-cand.ws-item.sel{border-color:var(--accent,#4f8cff);background:var(--panel)}
+#sh-cands .sh-cand.ws-item.off{opacity:.5}
+.ws-thumb{width:44px;height:78px;border-radius:5px;overflow:hidden;background:#000}
+.ws-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.ws-title{font-size:13px;font-weight:600;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.ws-sub{font-size:11px;color:var(--ink-dim);margin-top:2px;font-family:'JetBrains Mono',monospace}
+.ws-badges{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+.ws-score{width:36px;height:36px;border-radius:50%;border:3px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
+.ws-score.ws-hi{border-color:var(--phosphor)}
+.ws-score.ws-mid{border-color:var(--amber)}
+.ws-add{padding:8px 10px;border-top:1px solid var(--line);font-size:12px}
+.ws-add summary{cursor:pointer}
+.ws-stage{position:sticky;top:8px;display:flex;flex-direction:column;gap:8px;align-items:stretch}
+.ws-phone{max-width:290px;width:100%;margin:0 auto;cursor:pointer}
+.ws-phone video{object-fit:cover}
+.ws-msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:14px;font-size:12px;color:rgba(255,255,255,.75);pointer-events:none}
+.ws-transport{display:flex;gap:8px;align-items:center}
+.ws-transport input[type=range]{flex:1;margin:0}
+.ws-clock{font-size:11px;font-family:'JetBrains Mono',monospace;white-space:nowrap}
+.ws-tools{display:flex;gap:6px;flex-wrap:wrap;justify-content:center}
+.ws-keys{font-size:11px;color:var(--ink-dim);text-align:center}
+.ws-keys kbd{border:1px solid var(--line);border-radius:4px;padding:0 5px;font-size:10px;background:var(--panel);font-family:inherit}
+.ws-insp{overflow:hidden}
+.ws-tabs{display:flex;border-bottom:1px solid var(--line);background:var(--panel)}
+.ws-tab{flex:1;background:none;border:0;border-bottom:2px solid transparent;padding:9px 6px;font-size:12px;cursor:pointer;color:var(--ink-dim);font-family:inherit}
+.ws-tab.active{color:var(--ink);border-bottom-color:var(--accent,#4f8cff);font-weight:600}
+.ws-pane{padding:12px}
+.ws-empty{padding:24px;text-align:center;font-size:12px;color:var(--ink-dim)}
+.ws-nudge .btn-sm{padding:3px 7px}
+.ws-nudge{display:flex;gap:4px;flex-wrap:wrap;margin-top:8px;font-size:11px;align-items:center;color:var(--ink-dim)}
+.ws-insp .sh-cand.ws-insp-root{display:block;margin:0;padding:0;border:0;background:transparent;opacity:1}
+.ws-insp .sh-times input[type=text]{width:84px}
+.ws-insp .sh-frame{margin-top:0}
+.ws-insp .sh-frame-body{grid-template-columns:minmax(0,1fr)}
+.ws-insp .sh-frame-pv video,.ws-insp .sh-frame-pv .sh-frame-empty{width:150px;height:267px}
+.ws-insp .sh-frame-shots{max-height:none}
+.ws-insp .sh-cap{margin-top:0}
+.ws-insp .sh-cap-wrap{grid-template-columns:minmax(0,1fr)}
+.ws-insp .sh-cp-side{position:static;max-width:200px}
+.ws-insp .sh-cap-rows{max-height:none}
+.ws-insp .sh-cap-row{grid-template-columns:62px 62px minmax(0,1fr) 38px 38px 24px}
+.ws-insp .sh-cap-row input[data-cap-s],.ws-insp .sh-cap-row input[data-cap-e]{font-size:11px;padding:5px 4px}
+.ws-tl-wrap{margin-top:12px}
+.ws-tl-label{font-size:11px;color:var(--ink-dim);margin:6px 0 3px;text-transform:uppercase;letter-spacing:.05em}
+.ws-tl{position:relative;height:44px;border:1px solid var(--line);border-radius:8px;background:var(--panel);overflow:hidden}
+.ws-blk{position:absolute;top:6px;bottom:6px;min-width:4px;border-radius:4px;background:color-mix(in srgb,var(--accent,#4f8cff) 55%,transparent);border:1px solid var(--accent,#4f8cff);cursor:pointer;box-sizing:border-box}
+.ws-blk.off{background:repeating-linear-gradient(45deg,transparent 0 4px,color-mix(in srgb,var(--accent,#4f8cff) 25%,transparent) 4px 8px);opacity:.6}
+.ws-blk.sel{outline:2px solid var(--ink);z-index:2}
+.ws-brk{position:absolute;top:0;bottom:0;width:1px;background:var(--ink-dim);opacity:.6}
+.ws-ph{position:absolute;top:0;bottom:0;width:2px;background:var(--phosphor);z-index:3;pointer-events:none}
+.ws-zoom{position:relative;height:58px;border:1px solid var(--line);border-radius:8px;background:var(--panel);overflow:hidden;touch-action:none;user-select:none}
+.ws-zoom .zr{position:absolute;top:0;bottom:0;background:color-mix(in srgb,var(--accent,#4f8cff) 30%,transparent);box-sizing:border-box}
+.ws-zoom .zh{position:absolute;top:0;bottom:0;width:16px;margin-left:-8px;cursor:ew-resize;z-index:2}
+.ws-zoom .zh::after{content:"";position:absolute;left:6px;top:8px;bottom:8px;width:4px;border-radius:2px;background:var(--accent,#4f8cff)}
+.ws-zoom .tick{position:absolute;top:0;height:9px;width:1px;background:var(--ink-dim);opacity:.6}
+.ws-zoom .zt{position:absolute;bottom:2px;font-size:10px;font-family:'JetBrains Mono',monospace;color:var(--ink-dim);transform:translateX(-50%);white-space:nowrap}
+.ws-bar{position:sticky;bottom:0;z-index:6;display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 14px;margin-top:14px;border:1px solid var(--line);border-radius:10px;background:var(--elevated);box-shadow:0 -6px 18px rgba(0,0,0,.08)}
+.ws-trt{font-size:12px}
+.ws-out-sum{font-size:11px;color:var(--ink-dim)}
+.ws-pop{position:absolute;right:8px;bottom:calc(100% + 8px);width:min(780px,calc(100vw - 80px));max-height:70vh;overflow:auto;background:var(--elevated);border:1px solid var(--line);border-radius:10px;padding:12px 14px;box-shadow:0 10px 30px rgba(0,0,0,.2)}
+@media (max-width:1180px){.ws-grid{grid-template-columns:280px minmax(0,1fr)}.ws-insp{grid-column:1 / -1}.ws-stage{position:static}}
+@media (max-width:760px){.ws-grid{grid-template-columns:minmax(0,1fr)}.ws-list{position:static}}
+
 .sh-cap-row input[type=text]{margin:0;padding:5px 8px;font-size:13px}
 .sh-cap-row input[data-cap-s],.sh-cap-row input[data-cap-e]{font-family:'JetBrains Mono',monospace;font-size:12px}
 .sh-cap-row input.bad{border-color:var(--tally)}
@@ -7031,9 +7118,19 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <div id="p-shorts-create" class="sub-panel">
 <div id=sh-create-elsewhere class=no-data style="display:none;text-align:left"></div>
 <div id=sh-create-form>
-<div id=sh-earlier style="display:none;margin-bottom:16px"></div>
-<p style="font-size:12px;opacity:.75;margin-top:-6px">Cuts a long-form programme into stand-alone 9:16 shorts. Step one finds the moments: the AI Vision model rates how dramatic the picture looks, the dialogue is transcribed, and a story model reads it to propose stretches that make sense on their own &mdash; a setup, a turn, a payoff &mdash; not just the loudest peaks. <b>Preview the cut</b> renders nothing until you have reviewed them; <b>Generate without preview</b> renders them all straight away.</p>
+<div id=sh-steps class=ws-steps role="tablist" aria-label="Steps">
+  <button type=button class="ws-step active" data-step=setup onclick="shScreen('setup')"><b>1</b> Source</button>
+  <button type=button class="ws-step" data-step=moments onclick="shScreen('moments')" disabled><b>2</b> Moments <span id=ws-step-count class=ws-count></span></button>
+  <button type=button class="ws-step" data-step=export onclick="shScreen('export')" disabled><b>3</b> Export <span id=ws-step-dot class=ws-dot style="display:none"></span></button>
+</div>
+<div id=sh-queue class=sh-q aria-live="polite">
+  <div style="font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-dim)">Queue</div>
+</div>
 
+<div id=sh-screen-setup>
+<div id=sh-earlier style="display:none;margin-bottom:16px"></div>
+<p class="sh-note" style="margin:0 0 10px">Cuts a long-form programme into stand-alone 9:16 shorts: the AI Vision model rates the picture, the dialogue is transcribed, and a story model proposes stretches that stand on their own.</p>
+<div class="ws-card">
 <label>Long-form video (HIRES):</label>
 <div class="browse-row">
   {% if allow_local_upload %}<input type=file id=sh-file name=shorts_file accept="video/*" data-net-field="shorts_file" style="max-width:320px">{% endif %}
@@ -7079,6 +7176,16 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 
 <p class="sh-note" id=sh-count-note style="margin-top:6px;display:none"></p>
 
+<label for=sh-language style="margin-top:12px">Spoken language</label>
+<select id=sh-language style="width:260px" title="Tells the speech-to-text which language to listen for"><option value="">Auto-detect</option></select>
+<p class="sh-note" style="margin-top:6px">Say what is spoken and the captions and the choice of moments are more accurate than when Whisper guesses from the first seconds, which goes wrong on a programme that opens on music or mixes Filipino and English. Leave it on Auto-detect for a mix of languages.</p>
+<div class="promo-actions" style="margin-top:16px">
+  <button class="btn btn-primary-promo" type=button id=sh-analyze-btn onclick="shortsAnalyze(false)" title="Find the moments, then review, re-time and pick before anything is rendered">Preview the cut</button>
+  <button class="btn btn-secondary-promo" type=button id=sh-auto-btn onclick="shortsAnalyze(true)" title="Find the moments and render all of them straight away with the Output settings">Generate without preview</button>
+</div>
+<p class="sh-note" style="margin-top:8px"><b>Preview the cut</b> finds the moments and opens them in the workspace to play, re-time and pick before anything is rendered. <b>Generate without preview</b> renders every moment it finds in one go. Start as many as you like: they queue.</p>
+</div>
+<details class="ws-more"><summary>More options &mdash; what to feature or avoid, names, parts to leave out, models</summary>
 <label>What should these shorts feature? (optional)</label>
 <input type=text id=sh-focus class=input-box maxlength=300 placeholder="e.g. the confrontation between the sisters, anything about the missing will">
 <p class="sh-note" style="margin-top:6px">Steers which moments are preferred. Leave empty to let the story model pick the strongest ones.</p>
@@ -7087,9 +7194,6 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <input type=text id=sh-avoid class=input-box maxlength=300 placeholder="e.g. anything that gives away the ending, the hospital scenes, scenes with the children">
 <p class="sh-note" style="margin-top:6px">A moment that is mainly about this, or shows it, is left out even if it is strong. One that only mentions it in passing can still be picked.</p>
 
-<label for=sh-language style="margin-top:12px">Spoken language</label>
-<select id=sh-language style="width:260px" title="Tells the speech-to-text which language to listen for"><option value="">Auto-detect</option></select>
-<p class="sh-note" style="margin-top:6px">Say what is spoken and the captions and the choice of moments are more accurate than when Whisper guesses from the first seconds, which goes wrong on a programme that opens on music or mixes Filipino and English. Leave it on Auto-detect for a mix of languages.</p>
 <label for=sh-stt-prompt style="margin-top:8px">Names and terms in the dialogue (optional)</label>
 <input type=text id=sh-stt-prompt class=input-box maxlength=400 placeholder="e.g. Ramon, Aling Dolor, Barangay Maligaya, Kapuso">
 <p class="sh-note" style="margin-top:6px">Names of characters and places, as they should be spelled. Whisper uses them as context, so they come out right in the captions.</p>
@@ -7118,7 +7222,17 @@ document.getElementById('vf').addEventListener('submit', async function(e){
   <p class="sh-note" id=sh-capability></p>
 </details>
 
-<label style="margin-top:14px">Output:</label>
+</details>
+<details class="ws-more" id=sh-output-details open><summary>Output settings</summary>
+
+<div id=sh-output-slot><div id=sh-output-box>
+<div class="ws-presets"><label for=sh-preset style="margin:0">Preset</label>
+  <select id=sh-preset onchange="shPreset()" style="width:auto;margin:0;padding:5px 28px 5px 8px;font-size:12px">
+    <option value="">Custom</option>
+    <option value=standard>Standard &mdash; follow faces, captions on</option>
+    <option value=dialogue>Two-person scenes &mdash; stack wide two-shots, follow the speaker</option>
+    <option value=whole>Whole frame &mdash; blurred background, no captions</option>
+  </select></div>
 <div class="sh-bar" style="margin-top:4px">
     <span style="display:inline-flex;gap:6px;align-items:center;font-size:12px">Reframe
       <select id=sh-reframe title="How a 16:9 picture becomes 9:16, decided shot by shot" onchange="shSyncSpeaker()">
@@ -7183,49 +7297,76 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 
 <p class="sh-note" id=sh-format-note style="margin-top:-4px;display:none"></p>
 
-<div class="promo-actions" style="margin-top:14px">
-  <button class="btn btn-primary-promo" type=button id=sh-analyze-btn onclick="shortsAnalyze(false)" title="Find the moments, then review, re-time and pick before anything is rendered">Preview the cut</button>
-  <button class="btn btn-secondary-promo" type=button id=sh-auto-btn onclick="shortsAnalyze(true)" title="Find the moments and render all of them straight away with the Output settings above">Generate without preview</button>
-
+</div></div>
+</details>
+<div id=sh-prompt class=no-data style="margin-top:14px">Pick a full episode and choose <b>Preview the cut</b> or <b>Generate without preview</b>. Analysing a 45-minute episode takes several minutes: cut detection and transcription each read the whole file.</div>
 </div>
-<p class="sh-note" style="margin-top:8px"><b>Preview the cut</b> lists the moments it found for you to play, re-time and untick before rendering. <b>Generate without preview</b> renders every moment it finds in one go; the moments stay listed below afterwards, so you can still adjust any and render again.</p>
-
-<div id=sh-queue class=sh-q aria-live="polite">
-  <div style="font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-dim)">Queue</div>
-</div>
-
-<div id=sh-review style="display:none;margin-top:18px">
-  <div id=sh-review-status style="font-size:12px;opacity:.8"></div>
+<div id=sh-review class=ws style="display:none">
+  <div class="ws-head">
+    <div id=sh-review-status class=ws-status></div>
+    <div id=sh-review-saved class=ws-saved></div>
+  </div>
   <div id=sh-review-source></div>
-  <div id=sh-review-saved style="font-size:11px;opacity:.6;margin-top:4px"></div>
   <div id=sh-review-warnings></div>
-  <div class="sh-bar">
-    <span style="font-size:12px;opacity:.75">Rendered with the <b>Output</b> settings above.</span>
+  <div class="ws-grid">
+    <aside class="ws-list" aria-label="Moments">
+      <div class="ws-list-head">
+        <b>Moments</b>
+        <select id=sh-sort aria-label="Order" onchange="shSortCands();shRenderCands()">
+          <option value=episode selected>Episode order</option><option value=score>Best first</option>
+        </select>
+        <button type=button class="btn-sm" onclick="shortsSelectAll(true)">All</button>
+        <button type=button class="btn-sm" onclick="shortsSelectAll(false)">None</button>
+      </div>
+      <div id=sh-cands class=ws-cands></div>
+      <details class="ws-add"><summary>Add your own moment</summary>
+        <div class="sh-times" style="margin:8px 0 0">
+          <select id=sh-add-part style="display:none;margin:0;padding:4px 6px;font-size:13px" aria-label="Which part"></select>
+          In <input type=text id=sh-add-in placeholder="12:31.0"> Out <input type=text id=sh-add-out placeholder="13:20.0">
+        </div>
+        <div style="display:flex;gap:8px;margin-top:8px"><input type=text id=sh-add-title placeholder="Title" maxlength=80 style="flex:1;margin:0;padding:6px 8px;font-size:13px">
+          <button type=button class="btn-sm" onclick="shortsAddCustom()">Add</button></div>
+        <span id=sh-add-note style="font-size:12px;color:var(--amber)"></span>
+      </details>
+    </aside>
+    <section class="ws-stage" aria-label="Preview">
+      <div class="sh-cp ws-phone" id=ws-phone style="--cp-px:64">
+        <video id=ws-video playsinline preload=auto></video>
+        <div id=ws-cap class="sh-cp-line"></div>
+        <div id=ws-msg class="ws-msg">Select a moment</div>
+      </div>
+      <div class="ws-transport">
+        <button type=button class="btn-sm" id=ws-play aria-label="Play or pause">&#9654;</button>
+        <input type=range id=ws-scrub min=0 max=1 step=0.01 value=0 aria-label="Position in the moment">
+        <span id=ws-clock class="ws-clock">0:00.0 / 0:00.0</span>
+      </div>
+      <div class="ws-tools">
+        <button type=button class="btn-sm" id=ws-setin title="Start the moment here (I)">Set In here</button>
+        <button type=button class="btn-sm" id=ws-setout title="End the moment here (O)">Set Out here</button>
+        <button type=button class="btn-sm" id=ws-exact title="Render a small exact copy: framing, corrections and captions burned in">Exact 9:16 preview</button>
+      </div>
+      <div class="ws-keys"><kbd>Space</kbd> play &middot; <kbd>&uarr;</kbd><kbd>&darr;</kbd> moment &middot; <kbd>I</kbd> <kbd>O</kbd> set in / out &middot; <kbd>X</kbd> tick</div>
+    </section>
+    <aside class="ws-insp" id=ws-insp aria-label="Edit this moment"></aside>
+  </div>
+  <div class="ws-tl-wrap">
+    <div class="ws-tl-label">Episode <span id=ws-tl-note></span></div>
+    <div id=ws-tl class="ws-tl" aria-label="The moments on the episode"></div>
+    <div class="ws-tl-label">Selected moment, with its surroundings: drag the ends to trim</div>
+    <div id=ws-zoom class="ws-zoom"></div>
+  </div>
+  <div class="ws-bar">
+    <div id=sh-review-trt class="ws-trt"></div>
     <span style="flex:1"></span>
-    <label for=sh-sort style="font-size:12px;margin:0">List in</label>
-    <select id=sh-sort style="width:auto;margin:0;padding:4px 28px 4px 8px;font-size:12px" onchange="shSortCands();shRenderCands()">
-      <option value=episode selected>episode order</option><option value=score>best first</option>
-    </select>
-    <button type=button class="btn-sm" onclick="shortsSelectAll(true)">Select all</button>
-    <button type=button class="btn-sm" onclick="shortsSelectAll(false)">None</button>
+    <span id=ws-out-sum class="ws-out-sum"></span>
+    <button type=button class="btn-sm" id=ws-out-btn onclick="shWsOutput()" aria-expanded="false">Output settings</button>
     <button type=button class=btn id=sh-render-btn onclick="shortsRenderSelected()">Render selected</button>
+    <div id=ws-output-pop class="ws-pop" style="display:none"></div>
   </div>
-  <div id=sh-cands></div>
-  <div class="sh-bar" style="background:transparent">
-    <span style="font-size:12px;opacity:.8">Add your own moment:</span>
-    <span class="sh-times" style="margin:0">
-      <select id=sh-add-part style="display:none;margin:0;padding:4px 6px;font-size:13px" aria-label="Which part"></select>
-      In <input type=text id=sh-add-in placeholder="12:31.0"> Out <input type=text id=sh-add-out placeholder="13:20.0">
-    </span>
-    <input type=text id=sh-add-title placeholder="Title" maxlength=80 style="width:220px;margin:0;padding:6px 8px;font-size:13px">
-    <button type=button class="btn-sm" onclick="shortsAddCustom()">Add</button>
-    <span id=sh-add-note style="font-size:12px;color:var(--amber)"></span>
-  </div>
-  <div id=sh-review-trt class="sh-trt"></div>
 </div>
 
 <div id=sh-results style="display:none;margin-top:18px"></div>
-<div id=sh-prompt class=no-data style="margin-top:14px">Pick a full episode and choose <b>Preview the cut</b> or <b>Generate without preview</b>. Analysing a 45-minute episode takes several minutes: cut detection and transcription each read the whole file.</div>
+
 </div>
 </div>
 </div>
@@ -7243,6 +7384,10 @@ var SH = {analysis: null, cands: [], jobId: null, options: null, destinations: n
           // Inside a project: which of its two views is showing, which project
           // the create form's job or cut belongs to, and why its job stopped.
           inner: null, formProject: null, formNote: null, settling: false}
+// The Moments workspace: which moment is selected, which inspector tab, and
+// what the stage (player) is showing.
+var WS = {selC: null, loadedC: null, tab: 'trim', token: 0, loadT: null, raf: null, cues: [], dur: 0,
+          screen: 'setup', zwin: null, drag: null, exact: false}
 
 function shFmt(t){
   t = Math.max(0, Number(t) || 0)
@@ -7502,8 +7647,12 @@ async function shQFinish(e, res){
       var host = shEl('sh-results')
       host.innerHTML = ''
       host.appendChild(shBatchCard(res.batch, true))
-      host.style.display = 'block'
-      e.shown = true; shQRender()
+      // The editor stays where they are; the Export step lights up and the
+      // queue offers the shorts.
+      var onExport = WS.screen === 'export'
+      host.style.display = onExport ? 'block' : 'none'
+      e.shown = onExport
+      shWsSteps(); shQRender()
     }
   }else if(here && !SH.analysis && !SH.settling){
     await shQOpen(e)
@@ -7520,6 +7669,13 @@ async function shQOpen(e){
     shCreateReset()
   }
   SH.formProject = e.project
+  if(e.kind === 'render' && SH.analysis && SH.analysis.analysis_id === e.analysisId && e.result.batch){
+    var rh = shEl('sh-results')
+    rh.innerHTML = ''
+    rh.appendChild(shBatchCard(e.result.batch, true))
+    e.shown = true; shQRender(); shScreen('export')
+    return
+  }
   SH.settling = true
   e.shown = true; shQRender()
   try{
@@ -7656,7 +7812,6 @@ async function shShowAnalysis(res, auto){
   if(auto && res.batch){
     host.innerHTML = ''
     host.appendChild(shBatchCard(res.batch, true))
-    host.style.display = 'block'
     shEl('sh-prompt').style.display = 'none'
   }
   try{
@@ -7666,14 +7821,14 @@ async function shShowAnalysis(res, auto){
     shRenderReview(auto)
   }catch(e){ if(!auto) shNote('Could not load the analysis: ' + escapeHtmlLite(String(e)), true) }
   shLoadEarlier(SH.openProject)
-  // After the list is drawn, or it would push the finished shorts off screen.
-  if(auto && res.batch) host.scrollIntoView({behavior: 'smooth', block: 'start'})
+  if(auto && res.batch) shEl('sh-steps').scrollIntoView({behavior: 'smooth', block: 'start'})
 }
 
 // The moments of an analysis as the editor left them (its saved review), or
 // as they were found, all ticked.
 function shUseAnalysis(a){
   SH.analysis = a
+  WS.selC = null; WS.loadedC = null; WS.tab = 'trim'; WS.zwin = null
   SH.cands = a.review
     ? a.review.map(function(c){ return Object.assign({}, c) })
     : a.candidates.map(function(c){ return Object.assign({}, c, {keep: true}) })
@@ -7685,6 +7840,7 @@ function shUseAnalysis(a){
 // again after a restart, or tomorrow, from Earlier cuts.
 function shReviewChanged(){
   if(!SH.analysis) return
+  shWsRefreshMarks()
   clearTimeout(SH.saveTimer)
   var note = shEl('sh-review-saved')
   if(note) note.textContent = 'Saving your review…'
@@ -7768,7 +7924,7 @@ async function shLoadEarlier(pid){
       var aid = b.getAttribute('data-earlier-del')
       if(!confirm('Delete this analysis and the review saved with it? Shorts already made from it are kept.')) return
       await fetch('/api/shorts/analysis/' + aid, {method: 'DELETE'})
-      if(SH.analysis && SH.analysis.analysis_id === aid){ SH.analysis = null; SH.cands = []; shEl('sh-review').style.display = 'none' }
+      if(SH.analysis && SH.analysis.analysis_id === aid){ SH.analysis = null; SH.cands = []; WS.selC = null; shScreen('setup') }
       shLoadEarlier(pid)
     })
   })
@@ -7796,7 +7952,7 @@ function shRenderReview(alreadyRendered){
   shEl('sh-review-status').innerHTML = '<b>' + escapeHtmlLite(a.orig_name || '') + '</b> &middot; ' + shFmt(a.duration) +
     ' &middot; ' + (st.shots || 0) + ' shots &middot; ' + (st.frames_rated || 0) + ' frames rated &middot; ' +
     (st.transcript_lines || 0) + ' lines of dialogue. ' + (alreadyRendered
-      ? 'All of these were rendered without review (see below the list). To change any, adjust its in and out or untick it, then render again.'
+      ? 'All of these were rendered without review (see Export). To change any, adjust its in and out or untick it, then render again.'
       : 'Preview each moment, adjust its in and out, untick what you do not want, then render.')
   shRenderSource()
   var saved = shEl('sh-review-saved')
@@ -7805,8 +7961,9 @@ function shRenderReview(alreadyRendered){
     return '<div class="sh-warn">' + escapeHtmlLite(w) + '</div>'
   }).join('')
   shRenderCands()
-  shEl('sh-review').style.display = 'block'
   shEl('sh-prompt').style.display = 'none'
+  var res = shEl('sh-results')
+  shScreen(alreadyRendered && res && res.innerHTML.trim() ? 'export' : 'moments')
 }
 
 // Parts of a multi-part episode. Times in the analysis are on the joined
@@ -7860,13 +8017,18 @@ function shRenumber(){
   shReviewTrt()
   var kept = SH.cands.filter(function(c){ return c.keep }).slice().sort(function(a, b){ return a.start - b.start || a.end - b.end })
   SH.cands.forEach(function(c, i){
-    var chip = document.querySelector('#sh-cands [data-num="' + i + '"]')
-    if(!chip) return
     var at = kept.indexOf(c)
-    chip.textContent = at >= 0 ? 'Short ' + (at + 1) + ' of ' + kept.length : 'Not rendered'
-    chip.title = at >= 0 ? 'Shorts are numbered in the order their moments happen in the episode' : 'Tick it to render it'
-    chip.style.opacity = at >= 0 ? '' : '.6'
+    Array.prototype.forEach.call(document.querySelectorAll('[data-num="' + i + '"]'), function(chip){
+      chip.textContent = at >= 0 ? 'Short ' + (at + 1) + ' of ' + kept.length : 'Not rendered'
+      chip.title = at >= 0 ? 'Shorts are numbered in the order their moments happen in the episode' : 'Tick it to render it'
+      chip.style.opacity = at >= 0 ? '' : '.6'
+    })
   })
+}
+
+function shWsMarks(c){
+  return (c.framing ? '<span class="score-chip" title="Rendered with the framing you set">framing</span>' : '') +
+         (c.captions ? '<span class="score-chip" title="Rendered with the captions you corrected">captions</span>' : '')
 }
 
 function shRenderCands(){
@@ -7877,41 +8039,30 @@ function shRenderCands(){
     if(P && ps.options.length !== P.length)
       ps.innerHTML = P.map(function(x, k){ return '<option value="' + k + '">Part ' + (k + 1) + '</option>' }).join('')
   }
+  if(WS.selC && SH.cands.indexOf(WS.selC) < 0) WS.selC = null
+  if(!WS.selC && SH.cands.length) WS.selC = SH.cands[0]
   host.innerHTML = ''
   SH.cands.forEach(function(c, i){
     var row = document.createElement('div')
-    row.className = 'sh-cand' + (c.keep ? '' : ' off')
-    var thumb = c.thumb
-      ? '<img src="' + c.thumb + '" alt="" loading="lazy" decoding="async">'
-      : ''
+    row.className = 'sh-cand ws-item' + (c.keep ? '' : ' off') + (c === WS.selC ? ' sel' : '')
+    row.setAttribute('data-i', i)
+    var thumb = c.thumb ? '<img src="' + c.thumb + '" alt="" loading="lazy" decoding="async">' : ''
+    var off = shPartOff(c)
+    var sc = typeof c.score === 'number' ? c.score : null
     row.innerHTML =
-      '<div class="sh-thumb">' + thumb +
-        '<button type=button class="sh-play" aria-label="Preview this moment" data-act="preview" data-i="' + i + '">&#9654;</button></div>' +
+      '<input type=checkbox data-act="keep" data-i="' + i + '"' + (c.keep ? ' checked' : '') + ' aria-label="Render this moment">' +
+      '<div class="ws-thumb">' + thumb + '</div>' +
       '<div style="min-width:0">' +
-        '<div class="sh-head">' +
-          '<input type=checkbox data-act="keep" data-i="' + i + '"' + (c.keep ? ' checked' : '') + ' aria-label="Render this moment">' +
-          '<input type=text data-act="title" data-i="' + i + '" maxlength=80 value="' + escapeHtmlLite(c.title || '') + '" aria-label="Title">' +
-        '</div>' +
-        '<div class="sh-times">In <input type=text data-act="start" data-i="' + i + '" value="' + shFmt(c.start - shPartOff(c)) + '" aria-label="In point">' +
-          ' Out <input type=text data-act="end" data-i="' + i + '" value="' + shFmt(c.end - shPartOff(c)) + '" aria-label="Out point">' +
-          ' <span data-dur="' + i + '">' + (c.end - c.start).toFixed(1) + ' s</span>' +
-          ' <button type=button class="btn-sm" data-act="preview" data-i="' + i + '">Preview</button>' +
-          ' <button type=button class="btn-sm" data-act="captions" data-i="' + i + '" title="Read and correct the captions this short will get">Captions&hellip;</button>' +
-          ' <button type=button class="btn-sm" data-act="framing" data-i="' + i + '" title="See the moment in 9:16 and correct the crop shot by shot">Framing&hellip;</button>' +
-          (c.framing ? ' <span class="score-chip" data-frame-chip title="Rendered with the framing you set">framing set</span>' : '') +
-          (c.captions ? ' <span class="score-chip" data-cap-chip title="Rendered with the captions you corrected">captions edited</span>' : '') + '</div>' +
-        '<div class="score-chips"><span class="score-chip face" data-num="' + i + '"></span>' + shCandMeta(c) + '</div>' +
-        (c.hook ? '<div class="sh-note"><b>Hook:</b> ' + escapeHtmlLite(c.hook) + '</div>' : '') +
-        (c.why ? '<div class="sh-note"><b>Why:</b> ' + escapeHtmlLite(c.why) + '</div>' : '') +
-        (c.text ? '<details class="sh-note"><summary style="cursor:pointer">Dialogue</summary>' +
-                  '<div style="margin-top:4px;color:var(--ink)">' + escapeHtmlLite(c.text) + '</div></details>' : '') +
-        '<div data-cap-host="' + i + '" style="display:none"></div>' +
-        '<div data-frame-host="' + i + '" style="display:none"></div>' +
-      '</div>'
+        '<div class="ws-title" data-ws-title="' + i + '">' + escapeHtmlLite(c.title || 'Untitled moment') + '</div>' +
+        '<div class="ws-sub"><span data-range="' + i + '">' + shFmt(c.start - off) + '&ndash;' + shFmt(c.end - off) + '</span> &middot; <span data-dur="' + i + '">' + (c.end - c.start).toFixed(1) + ' s</span></div>' +
+        '<div class="ws-badges"><span class="score-chip face" data-num="' + i + '"></span><span data-mk="' + i + '">' + shWsMarks(c) + '</span></div>' +
+      '</div>' +
+      '<div class="ws-score ' + (sc == null ? '' : sc >= 75 ? 'ws-hi' : sc >= 50 ? 'ws-mid' : '') + '" title="Overall score (story, visual drama and pace)">' + (sc == null ? '&ndash;' : sc) + '</div>'
     host.appendChild(row)
   })
   shRenumber()
   shUpdateRenderBtn()
+  shWsAfterRender()
 }
 
 function shReviewTrt(){
@@ -7936,53 +8087,490 @@ function shortsSelectAll(on){
   shReviewChanged()
 }
 
-// One listener on the list rather than one per input: the list is rebuilt
-// whenever a moment is added or selection changes, and delegated handlers
-// survive that without re-binding.
-(function(){
-  var host = shEl('sh-cands')
-  if(!host) return
-  host.addEventListener('click', function(e){
-    var t = e.target.closest('[data-act=preview]')
-    if(t){ shortsPreview(parseInt(t.getAttribute('data-i'), 10)); return }
-    t = e.target.closest('[data-act=captions]')
-    if(t){ shCandCaptions(parseInt(t.getAttribute('data-i'), 10)); return }
-    t = e.target.closest('[data-act=framing]')
-    if(t) shCandFraming(parseInt(t.getAttribute('data-i'), 10))
+// ---- The Moments workspace ----
+// Three screens share the page: Source (setup), Moments (this workspace) and
+// Export (the finished shorts). The ids of the old layout are kept, so the
+// editors and the queue keep working in place.
+function shScreen(name){
+  WS.screen = name
+  var ids = {setup: 'sh-screen-setup', moments: 'sh-review', export: 'sh-results'}
+  Object.keys(ids).forEach(function(k){
+    var el = shEl(ids[k])
+    if(el) el.style.display = k === name ? 'block' : 'none'
   })
-  host.addEventListener('change', function(e){
-    var t = e.target, act = t.getAttribute && t.getAttribute('data-act')
-    if(!act) return
-    var c = SH.cands[parseInt(t.getAttribute('data-i'), 10)]
-    if(!c) return
-    if(act === 'keep'){
-      c.keep = t.checked
-      t.closest('.sh-cand').classList.toggle('off', !c.keep)
-      shRenumber()
-      shUpdateRenderBtn()
-      shReviewChanged()
-    }else if(act === 'title'){
-      c.title = t.value.trim()
-      shReviewChanged()
-    }else if(act === 'start' || act === 'end'){
-      var v = shParse(t.value)
-      var P = shParts(), pk = shPartIdx(c)
-      var off = P ? P[pk].offset : 0
-      var dur = P ? off + P[pk].duration : (SH.analysis ? SH.analysis.duration : 0)
-      if(v != null) v += off            // typed within the part; kept on the joined timeline
-      var other = act === 'start' ? c.end : c.start
-      var ok = v != null && v >= off && v <= dur + 0.05 && (act === 'start' ? v < other : v > other)
-      t.classList.toggle('bad', !ok)
-      if(!ok) return
-      c[act] = Math.min(v, dur)
-      t.value = shFmt(c[act] - off)
-      var d = host.querySelector('[data-dur="' + t.getAttribute('data-i') + '"]')
-      if(d) d.textContent = (c.end - c.start).toFixed(1) + ' s'
-      shRenumber()
-      shReviewChanged()
-    }
+  if(name !== 'moments') shWsStop()
+  shWsOutputHome()
+  shWsSteps()
+  if(name === 'moments') shWsEnter()
+  if(name === 'export'){
+    // The queue's "Show the shorts" has been answered.
+    SH.queue.forEach(function(e){ if(e.kind === 'render' && e.state === 'done' && SH.analysis && e.analysisId === SH.analysis.analysis_id) e.shown = true })
+    shQRender()
+  }
+}
+
+function shWsSteps(){
+  var m = document.querySelector('.ws-step[data-step=moments]'), x = document.querySelector('.ws-step[data-step=export]')
+  if(!m || !x) return
+  var res = shEl('sh-results'), has = !!SH.analysis, hasRes = !!(res && res.innerHTML.trim())
+  m.disabled = !has; x.disabled = !hasRes
+  Array.prototype.forEach.call(document.querySelectorAll('.ws-step'), function(b){
+    b.classList.toggle('active', b.getAttribute('data-step') === WS.screen)
+  })
+  var n = SH.cands.filter(function(c){ return c.keep }).length
+  shEl('ws-step-count').textContent = has ? n + ' of ' + SH.cands.length : ''
+  shEl('ws-step-dot').style.display = hasRes && WS.screen !== 'export' ? '' : 'none'
+}
+
+// ---- Output settings: in their own place on Source, in a drawer on Moments ----
+function shWsOutputHome(){
+  var box = shEl('sh-output-box'), pop = shEl('ws-output-pop')
+  if(!box || !pop) return
+  var want = WS.screen === 'moments' ? pop : shEl('sh-output-slot')
+  if(box.parentNode !== want) want.appendChild(box)
+  if(WS.screen !== 'moments'){ pop.style.display = 'none'; shEl('ws-out-btn').setAttribute('aria-expanded', 'false') }
+  shWsOutSum()
+}
+function shWsOutput(force){
+  var pop = shEl('ws-output-pop'), open = force != null ? force : pop.style.display === 'none'
+  pop.style.display = open ? 'block' : 'none'
+  shEl('ws-out-btn').setAttribute('aria-expanded', open ? 'true' : 'false')
+}
+function shWsOutSum(){
+  var el = shEl('ws-out-sum'), r = shEl('sh-reframe')
+  if(!el || !r || !r.options.length) return
+  var how = r.options[r.selectedIndex].text.split(/\s+—\s+/)[0]
+  var cap = shEl('sh-captions').checked ? 'captions ' + shEl('sh-caption-size').selectedOptions[0].text.toLowerCase() : 'no captions'
+  el.textContent = how + ' · ' + cap
+}
+function shPreset(){
+  var v = shEl('sh-preset').value
+  var P = {standard: ['auto', false, true], dialogue: ['split', true, true], whole: ['fit', false, false]}[v]
+  if(!P) return
+  shEl('sh-reframe').value = P[0]
+  shSyncSpeaker()
+  shEl('sh-speaker').checked = P[1] && !shEl('sh-speaker').disabled
+  shEl('sh-captions').checked = P[2]
+  shWsOutSum(); shWsCapVis()
+}
+;(function(){
+  var box = shEl('sh-output-box')
+  if(!box) return
+  box.addEventListener('change', function(e){
+    if(e.target.id !== 'sh-preset' && shEl('sh-preset')) shEl('sh-preset').value = ''
+    shWsOutSum(); shWsCapVis()
   })
 })()
+
+// ---- Selecting a moment ----
+function shWsIndex(){ return WS.selC ? SH.cands.indexOf(WS.selC) : -1 }
+
+function shWsSelect(c, how){
+  if(!c || c === WS.selC && how !== 'force') return
+  WS.selC = c; WS.tab = 'trim'; WS.zwin = null
+  Array.prototype.forEach.call(document.querySelectorAll('#sh-cands .ws-item'), function(r){
+    r.classList.toggle('sel', SH.cands[parseInt(r.getAttribute('data-i'), 10)] === c)
+  })
+  var row = document.querySelector('#sh-cands .ws-item.sel')
+  if(row && how === 'key') row.scrollIntoView({block: 'nearest'})
+  shWsInspector(); shWsTimeline()
+  shWsLoad(how === 'key' ? 350 : 0)
+}
+
+function shWsEnter(){
+  if(!WS.selC && SH.cands.length) WS.selC = SH.cands[0]
+  shWsInspector(); shWsTimeline()
+  if(WS.loadedC !== WS.selC) shWsLoad(0)
+}
+
+function shWsAfterRender(){
+  shWsSteps()
+  if(WS.screen !== 'moments') return
+  shWsInspector(); shWsTimeline()
+  if(WS.loadedC !== WS.selC) shWsLoad(0)
+}
+
+// Small chips on the list rows follow the review as it is changed.
+function shWsRefreshMarks(){
+  SH.cands.forEach(function(c, i){
+    var m = document.querySelector('#sh-cands [data-mk="' + i + '"]')
+    if(m) m.innerHTML = shWsMarks(c)
+  })
+}
+
+// ---- The inspector: Trim / Captions / Framing / Dialogue ----
+var WS_TABS = [['trim', 'Trim'], ['captions', 'Captions'], ['framing', 'Framing'], ['dialogue', 'Dialogue']]
+
+function shWsInspector(){
+  var host = shEl('ws-insp'), c = WS.selC, i = shWsIndex()
+  if(!host) return
+  if(!c || i < 0){ host.innerHTML = '<div class="ws-empty">Select a moment to edit it.</div>'; return }
+  var off = shPartOff(c)
+  host.innerHTML =
+    '<div class="ws-tabs" role="tablist">' + WS_TABS.map(function(t){
+      return '<button type=button class="ws-tab' + (t[0] === WS.tab ? ' active' : '') + '" role="tab" data-tab="' + t[0] + '">' + t[1] + '</button>'
+    }).join('') + '</div>' +
+    '<div class="ws-pane"><div class="sh-cand ws-insp-root">' +
+      '<div data-pane="trim">' +
+        '<div class="sh-head"><input type=checkbox data-act="keep" data-i="' + i + '"' + (c.keep ? ' checked' : '') + ' aria-label="Render this moment">' +
+          '<input type=text data-act="title" data-i="' + i + '" maxlength=80 value="' + escapeHtmlLite(c.title || '') + '" aria-label="Title"></div>' +
+        '<div class="sh-times">In <input type=text data-act="start" data-i="' + i + '" value="' + shFmt(c.start - off) + '" aria-label="In point">' +
+          ' Out <input type=text data-act="end" data-i="' + i + '" value="' + shFmt(c.end - off) + '" aria-label="Out point">' +
+          ' <span data-dur="' + i + '">' + (c.end - c.start).toFixed(1) + ' s</span></div>' +
+        '<div class="ws-nudge">In ' + [-1, -0.1, 0.1, 1].map(function(d){ return '<button type=button class="btn-sm" data-nudge="start" data-d="' + d + '">' + (d > 0 ? '+' : '−') + Math.abs(d) + '</button>' }).join('') +
+          ' &nbsp; Out ' + [-1, -0.1, 0.1, 1].map(function(d){ return '<button type=button class="btn-sm" data-nudge="end" data-d="' + d + '">' + (d > 0 ? '+' : '−') + Math.abs(d) + '</button>' }).join('') + '</div>' +
+        '<div class="score-chips" style="margin-top:10px"><span class="score-chip face" data-num="' + i + '"></span>' + shCandMeta(c) + '</div>' +
+        (c.hook ? '<div class="sh-note"><b>Hook:</b> ' + escapeHtmlLite(c.hook) + '</div>' : '') +
+        (c.why ? '<div class="sh-note"><b>Why:</b> ' + escapeHtmlLite(c.why) + '</div>' : '') +
+      '</div>' +
+      '<div data-pane="captions" style="display:none"><div data-cap-host="' + i + '" style="display:none"></div></div>' +
+      '<div data-pane="framing" style="display:none"><div data-frame-host="' + i + '" style="display:none"></div></div>' +
+      '<div data-pane="dialogue" style="display:none">' + (c.text
+        ? '<div class="sh-note" style="margin-top:0;color:var(--ink);line-height:1.5">' + escapeHtmlLite(c.text) + '</div>'
+        : '<div class="ws-empty">No dialogue was found in this moment.</div>') + '</div>' +
+    '</div></div>'
+  // Marks on the chips the editors add (framing set / captions edited).
+  var at = host.querySelector('.sh-times')
+  if(c.framing) at.insertAdjacentHTML('beforeend', ' <span class="score-chip" data-frame-chip title="Rendered with the framing you set">framing set</span>')
+  if(c.captions) at.insertAdjacentHTML('beforeend', ' <span class="score-chip" data-cap-chip title="Rendered with the captions you corrected">captions edited</span>')
+  shRenumber()
+  shWsTab(WS.tab, true)
+}
+
+function shWsTab(name, quiet){
+  WS.tab = name
+  var host = shEl('ws-insp'), i = shWsIndex()
+  Array.prototype.forEach.call(host.querySelectorAll('.ws-tab'), function(b){ b.classList.toggle('active', b.getAttribute('data-tab') === name) })
+  Array.prototype.forEach.call(host.querySelectorAll('[data-pane]'), function(p){ p.style.display = p.getAttribute('data-pane') === name ? '' : 'none' })
+  if(name === 'trim' || quiet && name === 'trim') return
+  shWsStop()
+  var sel = name === 'captions' ? '[data-cap-host="' + i + '"]' : name === 'framing' ? '[data-frame-host="' + i + '"]' : null
+  var h = sel && host.querySelector(sel)
+  if(h && h.style.display !== 'block') (name === 'captions' ? shCandCaptions : shCandFraming)(i)
+}
+
+// ---- Typing, nudging or dragging an in or out point ----
+function shPointOk(c, which, v){
+  var P = shParts(), pk = shPartIdx(c), off = P ? P[pk].offset : 0
+  var dur = P ? off + P[pk].duration : (SH.analysis ? SH.analysis.duration : 0)
+  var other = which === 'start' ? c.end : c.start
+  if(v == null || !(v >= off - 1e-6 && v <= dur + 0.05)) return null
+  if(which === 'start' ? !(v < other) : !(v > other)) return null
+  v = Math.min(v, dur)
+  // A moment keeps to the lengths set for the cut -- unless it already breaks
+  // them, in which case a change may not make that worse.
+  var lim = SH.options || {min_clip: 3, max_clip: 300}
+  var now = c.end - c.start, then = which === 'start' ? c.end - v : v - c.start
+  if(then < lim.min_clip - 1e-6 && then < now) return null
+  if(then > lim.max_clip + 1e-6 && then > now) return null
+  return v
+}
+function shPointSet(c, which, v){
+  var ok = shPointOk(c, which, v)
+  if(ok == null) return false
+  c[which] = Math.round(ok * 100) / 100
+  shPointRefresh(c)
+  return true
+}
+function shPointRefresh(c){
+  var i = SH.cands.indexOf(c), off = shPartOff(c)
+  Array.prototype.forEach.call(document.querySelectorAll('[data-dur="' + i + '"]'), function(el){ el.textContent = (c.end - c.start).toFixed(1) + ' s' })
+  var rg = document.querySelector('#sh-cands [data-range="' + i + '"]')
+  if(rg) rg.innerHTML = shFmt(c.start - off) + '&ndash;' + shFmt(c.end - off)
+  ;['start', 'end'].forEach(function(k){
+    var inp = document.querySelector('#ws-insp [data-act="' + k + '"][data-i="' + i + '"]')
+    if(inp && document.activeElement !== inp){ inp.value = shFmt(c[k] - off); inp.classList.remove('bad') }
+  })
+  shRenumber()
+  shWsTimeline()
+  shReviewChanged()
+  if(c === WS.selC) shWsLoad(500)
+}
+
+// One listener per list rather than one per input: the list is rebuilt
+// whenever a moment is added or the order changes, and delegated handlers
+// survive that without re-binding.
+function shCandChange(e){
+  var t = e.target, act = t.getAttribute && t.getAttribute('data-act')
+  if(!act) return
+  var i = parseInt(t.getAttribute('data-i'), 10), c = SH.cands[i]
+  if(!c) return
+  if(act === 'keep'){
+    c.keep = t.checked
+    Array.prototype.forEach.call(document.querySelectorAll('[data-act="keep"][data-i="' + i + '"]'), function(x){ x.checked = c.keep })
+    var r = document.querySelector('#sh-cands .ws-item[data-i="' + i + '"]')
+    if(r) r.classList.toggle('off', !c.keep)
+    shRenumber(); shUpdateRenderBtn(); shReviewChanged(); shWsTimeline()
+  }else if(act === 'title'){
+    c.title = t.value.trim()
+    var tt = document.querySelector('[data-ws-title="' + i + '"]')
+    if(tt) tt.textContent = c.title || 'Untitled moment'
+    shReviewChanged()
+  }else if(act === 'start' || act === 'end'){
+    var v = shParse(t.value)
+    if(v != null) v += shPartOff(c)       // typed within the part; kept on the joined timeline
+    var ok = shPointOk(c, act, v) != null
+    t.classList.toggle('bad', !ok)
+    if(!ok) return
+    shPointSet(c, act, v)
+    t.value = shFmt(c[act] - shPartOff(c))
+  }
+}
+;(function(){
+  var list = shEl('sh-cands'), insp = shEl('ws-insp')
+  if(list){
+    list.addEventListener('change', shCandChange)
+    list.addEventListener('click', function(e){
+      if(e.target.closest('input')) return
+      var row = e.target.closest('.ws-item')
+      if(row) shWsSelect(SH.cands[parseInt(row.getAttribute('data-i'), 10)], 'click')
+    })
+  }
+  if(insp){
+    insp.addEventListener('change', shCandChange)
+    insp.addEventListener('click', function(e){
+      var tb = e.target.closest('[data-tab]')
+      if(tb){ shWsTab(tb.getAttribute('data-tab')); return }
+      var nb = e.target.closest('[data-nudge]')
+      if(nb && WS.selC){
+        var k = nb.getAttribute('data-nudge'), c = WS.selC
+        shPointSet(c, k, Math.round((c[k] + parseFloat(nb.getAttribute('data-d'))) * 100) / 100)
+      }
+    })
+  }
+})()
+
+// ---- The stage: the moment itself, with the captions it will get ----
+function shWsMsg(text){ var m = shEl('ws-msg'); m.textContent = text || ''; m.style.display = text ? '' : 'none' }
+
+function shWsCapVis(){
+  var cap = shEl('ws-cap'), ph = shEl('ws-phone')
+  if(!cap) return
+  var on = shEl('sh-captions').checked && !shEl('sh-captions').disabled && !WS.exact
+  cap.style.visibility = on ? '' : 'hidden'
+  var px = {s: 52, m: 64, l: 78}[shEl('sh-caption-size').value] || 64
+  ph.style.setProperty('--cp-px', px)
+}
+
+function shWsStop(){
+  var v = shEl('ws-video')
+  if(v && !v.paused) v.pause()
+  if(WS.raf){ cancelAnimationFrame(WS.raf); WS.raf = null }
+  var b = shEl('ws-play'); if(b) b.innerHTML = '&#9654;'
+}
+
+function shWsPost(url, body){
+  return fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)}).then(function(r){ return r.json() })
+}
+
+function shWsLoad(delay){
+  clearTimeout(WS.loadT)
+  var tok = ++WS.token
+  if(delay){ WS.loadT = setTimeout(function(){ if(tok === WS.token) shWsLoad(0) }, delay); return }
+  var c = WS.selC, a = SH.analysis, v = shEl('ws-video')
+  shWsStop()
+  WS.exact = false; v.style.objectFit = ''; shWsCapVis()
+  if(!c || !a){ v.removeAttribute('src'); shWsMsg('Select a moment'); return }
+  WS.loadedC = c
+  WS.dur = c.end - c.start
+  WS.cues = []
+  shEl('ws-cap').textContent = ''
+  shWsMsg('Preparing the clip…')
+  Promise.all([
+    shWsPost('/api/shorts/clip', {analysis_id: a.analysis_id, start: c.start, end: c.end}),
+    shWsPost('/api/shorts/captions', {analysis_id: a.analysis_id, start: c.start, end: c.end,
+                                      subtitle_size: shEl('sh-caption-size').value, edited: c.captions || null})
+  ]).then(function(r){
+    if(tok !== WS.token) return
+    WS.cues = r[1] && r[1].ok ? r[1].cues : []
+    if(!r[0].ok){ v.removeAttribute('src'); shWsMsg(r[0].error || 'Could not prepare the clip.'); return }
+    v.src = r[0].url; v.load()
+    shEl('ws-scrub').max = WS.dur
+  }).catch(function(err){ if(tok === WS.token) shWsMsg('Could not prepare the clip: ' + err) })
+}
+
+function shWsPaint(){
+  var v = shEl('ws-video'), c = WS.selC
+  if(!c) return
+  var t = Math.max(0, Math.min(WS.dur, v.currentTime || 0))
+  if(document.activeElement !== shEl('ws-scrub')) shEl('ws-scrub').value = t
+  shEl('ws-clock').textContent = t.toFixed(1) + ' / ' + WS.dur.toFixed(1)
+  var line = ''
+  if(!WS.exact) WS.cues.forEach(function(q){ if(q.text && q.text.trim() && q.start <= t + 1e-6 && t < q.end - 1e-6) line = q.text.replace(/\s+/g, ' ').trim() })
+  var cap = shEl('ws-cap')
+  if(cap.textContent !== line) cap.textContent = line
+  shWsPlayhead(c.start + t)
+}
+
+function shWsTick(){
+  shWsPaint()
+  var v = shEl('ws-video')
+  WS.raf = (!v.paused && !v.ended) ? requestAnimationFrame(shWsTick) : null
+}
+
+;(function(){
+  var v = shEl('ws-video'), b = shEl('ws-play')
+  if(!v) return
+  v.addEventListener('loadedmetadata', function(){ shWsMsg(''); shWsPaint() })
+  v.addEventListener('error', function(){ if(v.getAttribute('src')) shWsMsg("This couldn't be played back.") })
+  v.addEventListener('play', function(){ b.innerHTML = '&#10074;&#10074;'; if(!WS.raf) WS.raf = requestAnimationFrame(shWsTick) })
+  v.addEventListener('pause', function(){ b.innerHTML = '&#9654;' })
+  v.addEventListener('ended', function(){ b.innerHTML = '&#9654;'; shWsPaint() })
+  v.addEventListener('seeked', shWsPaint)
+  function toggle(){ if(!v.getAttribute('src')) return; if(v.paused){ if(v.ended || v.currentTime >= WS.dur - 0.05) v.currentTime = 0; v.play().catch(function(){}) } else v.pause() }
+  b.addEventListener('click', toggle)
+  shEl('ws-phone').addEventListener('click', toggle)
+  shEl('ws-scrub').addEventListener('input', function(){ v.currentTime = parseFloat(this.value) || 0; shWsPaint() })
+  shEl('ws-setin').addEventListener('click', function(){ shWsSetHere('start') })
+  shEl('ws-setout').addEventListener('click', function(){ shWsSetHere('end') })
+  shEl('ws-exact').addEventListener('click', shWsExact)
+  window.shWsToggle = toggle
+})()
+
+function shWsSetHere(which){
+  var c = WS.selC, v = shEl('ws-video')
+  if(!c || WS.exact || !v.getAttribute('src')) return
+  var t = c.start + (v.currentTime || 0)
+  if(!shPointSet(c, which, Math.round(t * 100) / 100)){
+    var tok = WS.token
+    shWsMsg(which === 'start' ? 'In must be before the out point.' : 'Out must be after the in point.')
+    setTimeout(function(){ if(tok === WS.token) shWsMsg('') }, 1600)
+  }
+}
+
+async function shWsExact(){
+  var c = WS.selC, a = SH.analysis, v = shEl('ws-video'), btn = shEl('ws-exact')
+  if(!c || !a) return
+  var tok = ++WS.token
+  shWsStop()
+  btn.disabled = true
+  shWsMsg('Rendering a small 9:16 copy…')
+  var o = shRenderOptions(), r
+  try{
+    r = await shWsPost('/api/shorts/vpreview', {analysis_id: a.analysis_id, start: c.start, end: c.end, reframe: o.reframe,
+      speaker: o.speaker, subtitles: o.subtitles, subtitle_size: o.subtitle_size, framing: c.framing || null, captions: c.captions || null})
+  }catch(err){ r = {ok: false, error: String(err)} }
+  btn.disabled = false
+  if(tok !== WS.token) return
+  if(!r.ok){ shWsMsg(r.error || 'Could not make the preview.'); return }
+  WS.exact = true; WS.loadedC = c
+  shWsCapVis(); shEl('ws-cap').textContent = ''
+  v.style.objectFit = 'contain'
+  v.src = r.url; v.load(); shWsMsg('')
+  v.play().catch(function(){})
+}
+
+// ---- The timelines ----
+function shWsPlayhead(t){
+  var a = SH.analysis, c = WS.selC
+  if(!a) return
+  var p = shEl('ws-ph-a'), q = shEl('ws-ph-b')
+  if(p){ p.style.left = (t / (a.duration || 1) * 100) + '%'; p.style.display = '' }
+  if(q && WS.zwin){ q.style.left = ((t - WS.zwin[0]) / (WS.zwin[1] - WS.zwin[0]) * 100) + '%'; q.style.display = '' }
+}
+
+function shWsTimeline(){
+  var tl = shEl('ws-tl'), a = SH.analysis
+  if(!tl || !a || WS.screen !== 'moments') return
+  var D = a.duration || 1, h = ''
+  var P = shParts()
+  if(P) P.forEach(function(x, k){ if(k) h += '<div class="ws-brk" style="left:' + (x.offset / D * 100) + '%" title="Part ' + (k + 1) + ' starts"></div>' })
+  SH.cands.forEach(function(c, k){
+    h += '<div class="ws-blk' + (c.keep ? '' : ' off') + (c === WS.selC ? ' sel' : '') + '" data-i="' + k + '" style="left:' + (c.start / D * 100) +
+      '%;width:' + ((c.end - c.start) / D * 100) + '%" title="' + escapeHtmlLite(c.title || 'Moment') + ' · ' + shFmt(c.start - shPartOff(c)) + '"></div>'
+  })
+  h += '<div class="ws-ph" id="ws-ph-a" style="display:none"></div>'
+  tl.innerHTML = h
+  var n = SH.cands.filter(function(c){ return c.keep }).length
+  shEl('ws-tl-note').textContent = '· ' + n + ' of ' + SH.cands.length + ' moments ticked'
+  shWsSteps()
+  shWsZoom()
+}
+
+(function(){
+  var tl = shEl('ws-tl')
+  if(tl) tl.addEventListener('click', function(e){
+    var b = e.target.closest('.ws-blk')
+    if(b) shWsSelect(SH.cands[parseInt(b.getAttribute('data-i'), 10)], 'click')
+  })
+})()
+
+function shWsZoomWin(c){
+  var P = shParts(), a = SH.analysis, k = shPartIdx(c)
+  var lo = P ? P[k].offset : 0, hi = P ? lo + P[k].duration : a.duration
+  var pad = Math.max(10, (c.end - c.start) * 0.6)
+  var w = WS.zwin
+  if(!w || c.start < w[0] || c.end > w[1] || w[0] < lo - 1e-6 || w[1] > hi + 1e-6)
+    w = WS.zwin = [Math.max(lo, c.start - pad), Math.min(hi, c.end + pad)]
+  return {w: w, lo: lo, hi: hi}
+}
+
+function shWsZoom(){
+  var z = shEl('ws-zoom'), c = WS.selC
+  if(!z || !c || !SH.analysis) { if(z) z.innerHTML = ''; return }
+  var g = shWsZoomWin(c), w = g.w, span = w[1] - w[0], off = shPartOff(c)
+  function x(t){ return (t - w[0]) / span * 100 }
+  if(WS.drag){
+    var r = z.querySelector('.zr'), hs = z.querySelectorAll('.zh')
+    r.style.left = x(c.start) + '%'; r.style.width = (x(c.end) - x(c.start)) + '%'
+    hs[0].style.left = x(c.start) + '%'; hs[1].style.left = x(c.end) + '%'
+    return
+  }
+  var step = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600].filter(function(s){ return span / s <= 8 })[0] || 600
+  var h = ''
+  for(var t = Math.ceil(w[0] / step) * step; t <= w[1]; t += step)
+    h += '<div class="tick" style="left:' + x(t) + '%"></div><div class="zt" style="left:' + x(t) + '%">' + shFmt(t - off) + '</div>'
+  h += '<div class="zr" style="left:' + x(c.start) + '%;width:' + (x(c.end) - x(c.start)) + '%"></div>' +
+       '<div class="zh" data-h="start" style="left:' + x(c.start) + '%" title="In"></div>' +
+       '<div class="zh" data-h="end" style="left:' + x(c.end) + '%" title="Out"></div>' +
+       '<div class="ws-ph" id="ws-ph-b" style="display:none"></div>'
+  z.innerHTML = h
+}
+
+;(function(){
+  var z = shEl('ws-zoom')
+  if(!z) return
+  z.addEventListener('pointerdown', function(e){
+    var h = e.target.closest('.zh')
+    if(!h || !WS.selC) return
+    e.preventDefault()
+    WS.drag = h.getAttribute('data-h')
+    try{ z.setPointerCapture(e.pointerId) }catch(err){}
+  })
+  z.addEventListener('pointermove', function(e){
+    if(!WS.drag || !WS.selC || !WS.zwin) return
+    var rect = z.getBoundingClientRect(), w = WS.zwin
+    var t = w[0] + Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)) * (w[1] - w[0])
+    t = Math.round(t * 10) / 10
+    shPointSet(WS.selC, WS.drag, t)
+  })
+  function end(){ if(WS.drag){ WS.drag = null; shWsZoom() } }
+  z.addEventListener('pointerup', end)
+  z.addEventListener('pointercancel', end)
+})()
+
+// ---- Keyboard ----
+document.addEventListener('keydown', function(e){
+  if(WS.screen !== 'moments' || !SH.analysis || e.ctrlKey || e.metaKey || e.altKey) return
+  var rv = shEl('sh-review')
+  if(!rv || rv.offsetParent === null) return
+  var tg = e.target, tag = tg && tg.tagName, type = tg && tg.type
+  if(tag === 'TEXTAREA' || tag === 'SELECT' || (tag === 'INPUT' && type !== 'checkbox' && type !== 'range')) return
+  if((tag === 'BUTTON' || tag === 'INPUT') && (e.key === ' ' || e.key === 'Enter')) return
+  var i = shWsIndex(), k = e.key.toLowerCase()
+  if(e.key === ' '){ e.preventDefault(); if(window.shWsToggle) window.shWsToggle() }
+  else if(e.key === 'ArrowDown' || e.key === 'ArrowUp'){
+    e.preventDefault()
+    var n = SH.cands[i + (e.key === 'ArrowDown' ? 1 : -1)]
+    if(n) shWsSelect(n, 'key')
+  }
+  else if(k === 'i') shWsSetHere('start')
+  else if(k === 'o') shWsSetHere('end')
+  else if(k === 'x' && WS.selC){
+    var cb = document.querySelector('#sh-cands [data-act="keep"][data-i="' + i + '"]')
+    if(cb){ cb.checked = !cb.checked; shCandChange({target: cb}) }
+  }
+})
 
 function shortsAddCustom(){
   var note = shEl('sh-add-note'), a = SH.analysis
@@ -8073,7 +8661,7 @@ async function shortsRenderSelected(){
 function shShowResultError(msg){
   var host = shEl('sh-results')
   host.innerHTML = '<div class="sh-warn" style="color:var(--tally);border-color:var(--tally)">' + escapeHtmlLite(msg) + '</div>'
-  host.style.display = 'block'
+  shScreen('export')
 }
 
 function shLayoutNote(l){
@@ -8390,9 +8978,10 @@ async function shCandCaptions(i){
       c.captions = {start: v.start, end: v.end, cues: v.cues}
       chip()
       shReviewChanged()
+      if(c === WS.selC) shWsLoad(300)
       say('Kept: this short will be rendered with these ' + v.cues.length + ' line' + (v.cues.length === 1 ? '' : 's') + '.', 'var(--phosphor)')
     },
-    onReset: function(){ delete c.captions; chip(); shReviewChanged(); host.style.display = 'none'; shCandCaptions(i) }
+    onReset: function(){ delete c.captions; chip(); shReviewChanged(); if(c === WS.selC) shWsLoad(300); host.style.display = 'none'; shCandCaptions(i) }
   })
 }
 
@@ -8989,10 +9578,11 @@ function shCreateReset(){
   shEl('sh-parts-note').style.display = 'none'
   shEl('sh-add-part-link').style.display = ''
   shEl('sh-add-part-link').textContent = '+ This episode comes in more than one part'
-  shEl('sh-review').style.display = 'none'
-  shEl('sh-results').style.display = 'none'
   shEl('sh-results').innerHTML = ''
   shEl('sh-cands').innerHTML = ''
+  WS.selC = null; WS.loadedC = null; WS.tab = 'trim'; WS.zwin = null
+  shWsStop()
+  shScreen('setup')
   shNote('Pick a full episode and choose <b>Preview the cut</b> or <b>Generate without preview</b>. Analysing a 45-minute episode takes several minutes: cut detection and transcription each read the whole file.')
 }
 
@@ -10153,9 +10743,9 @@ job. Configured via env vars:
       </ul>
       <p>Each candidate's score (0&ndash;100) weighs story most, then visual drama, then dialogue pace, then sound. Both Ollama and faster-whisper must be reachable; the job refuses to start otherwise rather than choose on half the evidence. The same goes for a transcription that fails part-way (the service errors or times out): the job stops and says why. Only a source with genuinely nothing to hear &mdash; no audio track, or no speech in it &mdash; falls back to picture alone. A warning above the list tells you when a fallback was used (no story found, or no dialogue at all). The speech-to-text service has to return timings as well as text: it is asked for <code>verbose_json</code> with timestamps and, if it answers that with the text alone, for <code>srt</code> and then <code>vtt</code>, which every Whisper server can write. Subtitle timings are per line, not per word, so captions made that way change a line at a time. A server that gives no timings in any of the three stops the job with a message saying so. On a master that keeps its sound on separate tracks or channels (eight mono tracks, say, with the full mix on 3 and 4), the dialogue is looked for where there is sound rather than on the first track: silent channels are never sent, a stereo pair recorded out of phase is sent as one side, and if the first candidate has no speech in it the next is tried, up to four. A note above the list says which track the dialogue was read from, and the shorts and their previews take their sound from the same place. When nothing is found, the warning lists what was tried and at what level.</p>
       <h3>2. Review</h3>
-      <p>Play any candidate, edit its title and its in/out (type <code>m:ss.s</code> or seconds), untick the ones you do not want, or add a range of your own. The preview shows the source framing; reframing happens at render.</p>
-      <p><strong>Framing&hellip;</strong> on a candidate shows each of its shots as a still, with the 9:16 window drawn where it will be: dashed for what was worked out, solid for a correction. For any shot, choose <strong>Crop here</strong> and slide the window (or click the still where it should go), <strong>Whole frame</strong> to show the whole picture over a blurred copy, or <strong>Split screen</strong> to stack the two people of the shot, one above the other (offered only for a shot with exactly two people far enough apart to give each a pane; the panes are drawn on the still, numbered top to bottom, and every split in a clip shares one window size). <strong>Make vertical preview</strong> renders a small 9:16 copy of the moment as it will come out &mdash; framing, corrections and captions &mdash; in a few seconds, without spending a full render. <strong>Use this framing</strong> keeps the corrections with that moment (marked <em>framing set</em>); a corrected shot is framed that way for its whole length, even where the plan had followed someone, cut between speakers or split the screen. The corrections belong to the shots, not to the in and out points: move those afterwards and each correction stays on the shot it was made for. <strong>Back to automatic</strong> drops them.</p>
-      <p><strong>Captions&hellip;</strong> on a candidate opens the lines it will be captioned with, exactly as they will appear: change the wording, change when a line is on screen (times are from the start of the short, to a hundredth of a second), empty a line to drop it, or add one. <strong>Use these captions</strong> keeps them with that moment &mdash; it is marked <em>captions edited</em> &mdash; and they are what is burned in and written to its .srt. Moving the in or out point afterwards does not lose them: the lines still inside the new range stay, moved to where they now fall, and whatever the range gained at either end gets the automatic captions. <strong>Back to automatic</strong> drops the corrections. A phone-shaped <strong>preview</strong> beside the lines shows the line as it is burned in (size, outline and position) and follows what you do: click or type in a line and it shows that line; drag the slider to any point of the short. <strong>Play</strong> plays the real clip with its sound, a few seconds after the editor opens (while it is prepared the preview is stills and a clock), and the line on screen follows the picture&rsquo;s own clock, so each caption is shown with its voice. Captions are timed from the words: when an analysis is made the first word after a silence is moved to where the speech really begins, so a caption does not come up early and wait for the voice. Beside a line, <strong>Split</strong> cuts it in two at the text cursor (the time is divided in proportion), <strong>Join</strong> runs it into the next; in a time box the up and down keys move it by 0.05 s (Shift: 0.5 s). A line longer than fits on one line at the chosen size is marked amber and the preview shows it wrapped. One caption is on screen at a time, so where two lines overlap the earlier one ends as the next begins.</p>
+      <p>The page works in three steps, shown along the top: <strong>1 Source</strong> (the episode, lengths, language and Output settings), <strong>2 Moments</strong> and <strong>3 Export</strong> (the finished shorts). Moments is a workspace. On the left is the list of moments, best first or in episode order, each with a thumbnail, its in&ndash;out, length and score (green 75 and over, amber 50 and over); the tick decides whether it is rendered, and clicking a row selects it. In the middle is a 9:16 player: it plays the real clip with its sound and shows the captions the moment will get, as they will be burned in (a correction made in <strong>Captions</strong> shows at once). <strong>Set In here</strong> and <strong>Set Out here</strong> take the in or out point from the picture&rsquo;s position; <strong>Exact 9:16 preview</strong> renders a small copy with the framing, corrections and captions applied. On the right the editor has four tabs: <strong>Trim</strong> (title, in and out typed as <code>m:ss.s</code> or seconds, or nudged by &plusmn;0.1 and &plusmn;1 s), <strong>Captions</strong>, <strong>Framing</strong> and <strong>Dialogue</strong>. Under them, the whole episode is drawn as a timeline of its moments (ticked ones solid, unticked hatched, the selected one outlined, the joins between parts marked) and, below it, the selected moment with its surroundings, where the two ends can be dragged. A change that would take a moment outside the lengths set for the cut is refused. The bar at the bottom stays in view: total running time, a summary of the Output settings (open them there, with presets &mdash; <em>Standard</em>, <em>Two-person scenes</em> and <em>Whole frame</em>), and <strong>Render</strong>. A finished render lights up <strong>Export</strong> and is offered in the queue as <strong>Show the shorts</strong>; it never takes the editor away from you. Keys, when you are not typing in a box: <kbd>Space</kbd> play or pause, <kbd>&uarr;</kbd> <kbd>&darr;</kbd> previous or next moment, <kbd>I</kbd> and <kbd>O</kbd> set in and out at the playhead, <kbd>X</kbd> tick or untick. The player shows the source framing; reframing happens at render, and the exact preview shows it.</p>
+      <p>The <strong>Framing</strong> tab shows each of its shots as a still, with the 9:16 window drawn where it will be: dashed for what was worked out, solid for a correction. For any shot, choose <strong>Crop here</strong> and slide the window (or click the still where it should go), <strong>Whole frame</strong> to show the whole picture over a blurred copy, or <strong>Split screen</strong> to stack the two people of the shot, one above the other (offered only for a shot with exactly two people far enough apart to give each a pane; the panes are drawn on the still, numbered top to bottom, and every split in a clip shares one window size). <strong>Make vertical preview</strong> renders a small 9:16 copy of the moment as it will come out &mdash; framing, corrections and captions &mdash; in a few seconds, without spending a full render. <strong>Use this framing</strong> keeps the corrections with that moment (marked <em>framing set</em>); a corrected shot is framed that way for its whole length, even where the plan had followed someone, cut between speakers or split the screen. The corrections belong to the shots, not to the in and out points: move those afterwards and each correction stays on the shot it was made for. <strong>Back to automatic</strong> drops them.</p>
+      <p>The <strong>Captions</strong> tab opens the lines it will be captioned with, exactly as they will appear: change the wording, change when a line is on screen (times are from the start of the short, to a hundredth of a second), empty a line to drop it, or add one. <strong>Use these captions</strong> keeps them with that moment &mdash; it is marked <em>captions edited</em> &mdash; and they are what is burned in and written to its .srt. Moving the in or out point afterwards does not lose them: the lines still inside the new range stay, moved to where they now fall, and whatever the range gained at either end gets the automatic captions. <strong>Back to automatic</strong> drops the corrections. A phone-shaped <strong>preview</strong> beside the lines shows the line as it is burned in (size, outline and position) and follows what you do: click or type in a line and it shows that line; drag the slider to any point of the short. <strong>Play</strong> plays the real clip with its sound, a few seconds after the editor opens (while it is prepared the preview is stills and a clock), and the line on screen follows the picture&rsquo;s own clock, so each caption is shown with its voice. Captions are timed from the words: when an analysis is made the first word after a silence is moved to where the speech really begins, so a caption does not come up early and wait for the voice. Beside a line, <strong>Split</strong> cuts it in two at the text cursor (the time is divided in proportion), <strong>Join</strong> runs it into the next; in a time box the up and down keys move it by 0.05 s (Shift: 0.5 s). A line longer than fits on one line at the chosen size is marked amber and the preview shows it wrapped. One caption is on screen at a time, so where two lines overlap the earlier one ends as the next begins.</p>
       <p><strong>Your review is saved as you make it</strong> &mdash; ticks, titles, in and out points, corrected captions and framing, and moments added by hand. The analysis and the review are kept on the server (in <code>shorts_analyses</code> next to the library; <code>SHORTS_ANALYSES_DIR</code> to put them elsewhere) for 14 days after they were last opened (<code>SHORTS_ANALYSIS_DAYS</code>), so a restart or a day away does not mean analysing the episode again. <strong>Earlier cuts of this project</strong>, at the top of <strong>Create shorts</strong>, lists them with <strong>Open</strong>, which brings the cut back as it was left, and <strong>Delete</strong>, which removes the analysis and its review but never shorts made from it. You see your own; admins see everyone&rsquo;s.</p>
       <p>The episode itself is a staged copy and is still cleared from the server after a while and on a restart. If it was picked from a network folder, the analysis remembers where: the review offers <strong>Fetch the episode again</strong>, which previews and framing need, and a render fetches it by itself. An episode uploaded from a computer cannot be fetched again; pick it again and re-analyse.</p>
       <h3>3. Render</h3>

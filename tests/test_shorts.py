@@ -473,6 +473,24 @@ def _render(client, headers, aid, items, **opts):
 # The tab: registration and permissions
 # --------------------------------------------------------------------------
 
+def test_the_page_is_a_three_step_workspace(users_db):
+    client, _ = _client()
+    html = client.get('/').get_data(as_text=True)
+    # Source -> Moments -> Export, each one a screen of the same form.
+    for step in ('setup', 'moments', 'export'):
+        assert f"data-step={step}" in html and f"shScreen('{step}')" in html
+    assert html.index('id=sh-screen-setup') < html.index('id=sh-review') < html.index('id=sh-results')
+    # The workspace: list, 9:16 player with live captions, tabbed editor, timelines, sticky render bar.
+    for ident in ('sh-cands', 'ws-video', 'ws-cap', 'ws-insp', 'ws-tl', 'ws-zoom', 'sh-render-btn', 'ws-output-pop', 'sh-preset'):
+        assert f'id={ident}' in html or f'id="{ident}"' in html, ident
+    assert 'data-tab="' in html and "['captions', 'Captions']" in html and "['framing', 'Framing']" in html
+    # The Output settings live in one box that moves between the setup page and the drawer,
+    # so every control keeps its id.
+    for ident in ('sh-reframe', 'sh-speaker', 'sh-captions', 'sh-caption-size', 'sh-format', 'sh-level', 'sh-ending'):
+        assert len(re.findall(rf'id={ident}(?=[\s>])', html)) == 1, ident
+    assert 'position:sticky;bottom:0' in html.replace(' ', '') or '.ws-bar{position:sticky;bottom:0' in html
+
+
 def test_tab_is_registered_and_gated_by_its_own_permission(users_db):
     assert 'vertical_shorts' in auth._PERMISSION_KEYS
     client, _ = _client()
