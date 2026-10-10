@@ -56,10 +56,10 @@ PUSH_IN = 0.05              # how much larger the picture is by the last frame o
 #   decor        every other layer -- on screen from the first frame and
 #                moving in a loop from the first frame to the last.
 # These are the loops. A style names one for the decor layers.
-AMBIENTS = ('none', 'shine', 'float', 'pulse', 'wobble', 'grow', 'rotate_left', 'rotate_right', 'sway', 'dance',
+AMBIENTS = ('none', 'shine', 'float', 'pulse', 'wobble', 'shake', 'grow', 'rotate_left', 'rotate_right', 'sway', 'dance',
             'mix', 'breathe')
 AMBIENT_LABELS = {'none': 'hold still', 'shine': 'light sweep', 'float': 'gentle float',
-                  'pulse': 'pulse one by one', 'wobble': 'wobble', 'grow': 'grow and shrink',
+                  'pulse': 'pulse one by one', 'wobble': 'wobble', 'shake': 'shake', 'grow': 'grow and shrink',
                   'rotate_left': 'rotate left', 'rotate_right': 'rotate right', 'sway': 'sway left and right',
                   'dance': 'dancing', 'mix': 'grow, rotate left, rotate right (layers take turns)',
                   'breathe': 'breathe'}
@@ -343,37 +343,71 @@ def _page_rows(parts, name, canvas):
 
 
 OVERRIDE_ROLES = ('content', 'decor', 'off', 'page')
+MOTIONS = tuple(a for a in AMBIENTS if a != 'mix')      # what a layer can be told to do once it is in
+_PATH = re.compile(r'^\d{1,3}(\.\d{1,3}){0,4}$')
+
+
+def _path_key(key):
+    """A layer's address: its place in the file, '3' for the fourth top-level
+    layer or group (bottom first) and '3.1' for the second layer inside it."""
+    key = str(key).strip()
+    return key if _PATH.match(key) else None
 
 
 def clean_overrides(raw):
-    """What the editor changed in the layer list, made safe: {'background_upto':
-    int or None, 'layers': {top-level index (bottom first): {'role', 'page'}}}.
-    Anything that is not recognised is dropped rather than guessed at."""
-    out = {'background_upto': None, 'layers': {}}
+    """What the editor changed, made safe: {'background_upto': path or None,
+    'expand': [paths of groups split into their layers], 'layers': {path:
+    {'role', 'page', 'arrive': {'effect', 'direction'}, 'motion'}}}. Anything
+    that is not recognised is dropped rather than guessed at."""
+    out = {'background_upto': None, 'expand': [], 'layers': {}}
     if not isinstance(raw, dict):
         return out
-    try:
-        if raw.get('background_upto') is not None:
-            out['background_upto'] = max(0, min(int(raw['background_upto']), 999))
-    except (TypeError, ValueError):
-        pass
+    if raw.get('background_upto') is not None:
+        out['background_upto'] = _path_key(raw['background_upto'])
+    seen = set()
+    for key in (raw.get('expand') if isinstance(raw.get('expand'), list) else []):
+        pk = _path_key(key)
+        if pk and pk not in seen:
+            seen.add(pk)
+            out['expand'].append(pk)
     layers = raw.get('layers')
     for key, val in (layers.items() if isinstance(layers, dict) else []):
-        try:
-            idx = int(key)
-        except (TypeError, ValueError):
+        pk = _path_key(key)
+        if not pk or not isinstance(val, dict):
             continue
-        role = val.get('role') if isinstance(val, dict) else None
-        if not (0 <= idx < 1000) or role not in OVERRIDE_ROLES:
-            continue
-        item = {'role': role}
-        if role == 'page':
-            try:
-                item['page'] = max(1, min(int(val.get('page') or 1), 99))
-            except (TypeError, ValueError):
-                item['page'] = 1
-        out['layers'][idx] = item
+        item = {}
+        role = val.get('role')
+        if role in OVERRIDE_ROLES:
+            item['role'] = role
+            if role == 'page':
+                try:
+                    item['page'] = max(1, min(int(val.get('page') or 1), 99))
+                except (TypeError, ValueError):
+                    item['page'] = 1
+        arrive = val.get('arrive')
+        if isinstance(arrive, dict) and arrive.get('effect') in EFFECTS:
+            item['arrive'] = {'effect': arrive['effect'],
+                              'direction': arrive.get('direction') if arrive.get('direction') in DIRECTIONS else 'right'}
+        if val.get('motion') in MOTIONS:
+            item['motion'] = val['motion']
+        if item:
+            out['layers'][pk] = item
     return out
+
+
+def apply_layer_animation(recipe, layers):
+    """Folds what the editor set on individual layers (how it arrives, what it
+    does afterwards) into the recipe, over whatever the style and the words
+    said. Layers are keyed by name, so the names must be unique (they are,
+    after load_artwork)."""
+    recipe = dict(recipe, layers=dict(recipe.get('layers') or {}), layer_ambient=dict(recipe.get('layer_ambient') or {}))
+    for ly in layers[1:]:
+        key = str(ly.get('name', '')).lower()
+        if ly.get('arrive'):
+            recipe['layers'][key] = dict(ly['arrive'])
+        if ly.get('motion'):
+            recipe['layer_ambient'][key] = ly['motion']
+    return recipe
 
 
 def _data_uri(img_bgr, width, quality=80):
@@ -409,7 +443,7 @@ def _layer_thumb(parts, canvas):
     return _data_uri(crop, max(8, int(w * k))), box
 
 
-def _report_entry(idx, layer):
+def _report_entry(idx, layer, path=None, depth=0, visible=None):
     kids = []
     try:
         if layer.is_group():
@@ -417,8 +451,13 @@ def _report_entry(idx, layer):
                     for c in list(layer)[::-1][:24]]
     except Exception:
         kids = []
-    return {'index': idx, 'name': str(layer.name or 'Layer').strip(), 'kind': str(layer.kind),
-            'visible': bool(layer.visible), 'text': _is_text(layer), 'children': kids,
+    try:
+        can_expand = bool(layer.is_group()) and len(list(layer)) > 0 and page_number(layer.name) is None
+    except Exception:
+        can_expand = False
+    return {'index': idx, 'path': path if path is not None else str(idx), 'depth': depth, 'expanded': False,
+            'can_expand': can_expand, 'name': str(layer.name or 'Layer').strip(), 'kind': str(layer.kind),
+            'visible': bool(layer.visible if visible is None else visible), 'text': _is_text(layer), 'children': kids,
             'child_count': (len(list(layer)) if kids else 0), 'role': None, 'why': '', 'page': None,
             'rows': None, 'thumb': None, 'box': None}
 
@@ -426,7 +465,7 @@ def _report_entry(idx, layer):
 def _user_backdrop(layers, upto, canvas, notes):
     """The editor chose the background: that layer and every plain layer
     below it become one still backdrop."""
-    parts = [ly for ly in layers if 'page_slot' not in ly and ly.get('_idx', 10 ** 9) <= upto]
+    parts = [ly for ly in layers if 'page_slot' not in ly and ly.get('_seq', 10 ** 9) <= upto]
     if not parts:
         return layers
     if len(parts) == 1 and layers[0] is parts[0]:
@@ -463,6 +502,36 @@ def _cached_read(key, fn):
     return (dict(layer) if layer else layer), ok
 
 
+def _walk(psd, expand, ov_layers):
+    """The file's layers as a flat list, bottom first: top-level layers and
+    groups, with the groups the editor split replaced by what is inside them
+    (and the group itself following, as a container, so a list drawn top
+    first shows it above its contents). Each item: path, layer, depth,
+    visible (it and every group above it are switched on), opacity (the
+    groups' own), plain (their blend modes and effects are ones that
+    survive being drawn alone), container."""
+    out = []
+
+    def go(layers, prefix, depth, visible, opacity, plain):
+        for ci, layer in enumerate(layers):
+            path = f'{prefix}{ci}'
+            vis = visible and bool(layer.visible)
+            ov = ov_layers.get(path) or {}
+            splits = (path in expand and layer.is_group() and len(list(layer)) > 0 and ov.get('role') != 'page'
+                      and page_number(layer.name) is None)
+            if not splits:
+                out.append({'path': path, 'layer': layer, 'depth': depth, 'visible': vis, 'opacity': opacity,
+                            'plain': plain, 'container': False})
+                continue
+            mode = str(getattr(layer.blend_mode, 'name', layer.blend_mode)).upper()
+            ok = plain and mode in ('NORMAL', 'PASS_THROUGH') and not layer.has_effects()
+            go(list(layer), path + '.', depth + 1, vis, opacity * (layer.opacity / 255.0), ok)
+            out.append({'path': path, 'layer': layer, 'depth': depth, 'visible': vis, 'opacity': opacity,
+                        'plain': plain, 'container': True})
+    go(list(psd), '', 0, True, 1.0, True)
+    return out
+
+
 def _load_psd(path, canvas, overrides=None, report=None):
     try:
         from psd_tools import PSDImage
@@ -488,15 +557,27 @@ def _load_psd(path, canvas, overrides=None, report=None):
     # `layers` holds the shared layers and, where a page group sat in the
     # stack, a marker for it ({'page_slot': k}) to be replaced by its rows.
     ov_layers = (overrides or {}).get('layers') or {}
-    bg_upto = (overrides or {}).get('background_upto')
+    bg_path = (overrides or {}).get('background_upto')
+    expand = set((overrides or {}).get('expand') or [])
     notes, layers, plain, found = [], [], True, []
-    for idx, layer in enumerate(psd):                   # bottom first
+    seq, seq_at = 0, {}
+    for it in _walk(psd, expand, ov_layers):            # bottom first
+        layer, idx = it['layer'], it['path']
+        top = int(idx.split('.')[0])
         ov = ov_layers.get(idx) or {}
         orole = ov.get('role')
-        entry = _report_entry(idx, layer) if report is not None else None
+        entry = _report_entry(top, layer, path=idx, depth=it['depth'], visible=it['visible']) if report is not None else None
         if entry is not None:
             report.append(entry)
+        if it['container']:
+            seq_at[idx] = seq - 1
+            if entry:
+                entry.update(role='group', expanded=True, why='Split into its layers: each one is sorted below it.')
+            continue
+        if not it['plain']:
+            plain = False
         if orole == 'off':
+            seq_at[idx] = seq - 1
             if entry:
                 entry.update(role='off', why='Left out by you.')
             continue
@@ -518,40 +599,58 @@ def _load_psd(path, canvas, overrides=None, report=None):
             if layer.is_group() and (mode not in ('NORMAL', 'PASS_THROUGH') or layer.has_effects()):
                 page_plain = False
             plain = plain and page_plain
-            if layer.is_group() and layer.opacity < 255:
+            fade = (layer.opacity / 255.0 if layer.is_group() else 1.0) * it['opacity']
+            if fade < 0.999:
                 for got in parts:
-                    got['px'] = (got['px'].astype(np.uint16) * int(layer.opacity) // 255).astype(np.uint8)
+                    got['px'] = (got['px'].astype(np.float32) * fade + 0.5).astype(np.uint8)
             name = str(layer.name or f'Page {number}').strip()
             rows = _page_rows(parts, name, canvas)
+            for r in rows:
+                if ov.get('arrive'):
+                    r['arrive'] = dict(ov['arrive'])
+                if ov.get('motion'):
+                    r['motion'] = ov['motion']
             if entry is not None:
                 entry.update(role='page', page=number, rows=len(rows) or 0,
                              why=('Set as a page by you.' if orole == 'page' else 'Named as a page.')
-                                 + ('' if layer.visible else ' Hidden in the file, still played.'))
+                                 + ('' if it['visible'] else ' Hidden in the file, still played.'))
                 entry['thumb'], entry['box'] = _layer_thumb(parts, canvas)
                 if not rows:
                     entry.update(role='empty', why='Nothing on this page has pixels to read.')
             if rows:
                 layers.append({'page_slot': len(found)})
-                found.append({'number': number, 'name': name, 'rows': rows, 'shown': bool(layer.visible),
+                found.append({'number': number, 'name': name, 'rows': rows, 'shown': bool(it['visible']),
                               'plain': page_plain})
+            seq_at[idx] = seq - 1
             continue
-        if not layer.visible and orole not in ('content', 'decor'):
+        if not it['visible'] and orole not in ('content', 'decor'):
+            seq_at[idx] = seq - 1
             if entry:
                 entry.update(role='hidden', why='Switched off in the file, so it is left out.')
             continue
-        got, ok = read((idx, 'top', not layer.visible), layer, doc, canvas, in_page=not layer.visible)
+        got, ok = read((idx, 'top', not it['visible']), layer, doc, canvas, in_page=not it['visible'])
         plain = plain and ok
+        if got and it['opacity'] < 0.999:
+            got['px'] = (got['px'].astype(np.float32) * it['opacity'] + 0.5).astype(np.uint8)
         if got:
-            got['_idx'] = idx
+            got['_seq'] = seq
+            seq += 1
             if orole in ('content', 'decor'):
                 got['role'] = orole
                 got['forced'] = True
+            if ov.get('arrive'):
+                got['arrive'] = dict(ov['arrive'])
+            if ov.get('motion'):
+                got['motion'] = ov['motion']
+            seq_at[idx] = seq - 1
             layers.append(got)
             if entry is not None:
                 entry['ref'] = got
                 entry['thumb'], entry['box'] = _layer_thumb([got], canvas)
-        elif entry:
-            entry.update(role='empty', why='Nothing in it has pixels to read.')
+        else:
+            seq_at[idx] = seq - 1
+            if entry:
+                entry.update(role='empty', why='Nothing in it has pixels to read.')
 
     # Pages play in the order of their numbers, wherever they sit in the stack.
     order = sorted(range(len(found)), key=lambda k: (found[k]['number'], -k))
@@ -606,7 +705,7 @@ def _load_psd(path, canvas, overrides=None, report=None):
             raise ArtworkError(f'This Photoshop file cannot be used as it is: {flat_reason}. Save it with '
                                '"Maximize Compatibility" on, or export a PNG.')
         for e in (report or []):
-            if e['role'] in (None, 'page') or e.get('ref'):
+            if e['role'] in (None, 'page', 'group') or e.get('ref'):
                 e.update(role='flat', why='The file is animated as one flat picture.')
             e.pop('ref', None)
         notes.append(f'This Photoshop file was animated as one flat picture, because {flat_reason}. '
@@ -621,8 +720,9 @@ def _load_psd(path, canvas, overrides=None, report=None):
                      'were hidden when the file was saved, so they could not be checked against the file\'s own '
                      'picture and may look different here. Rasterise or merge those layers to be sure.')
 
+    bg_upto = seq_at.get(bg_path) if bg_path is not None else None
     if bg_upto is not None:
-        layers = _user_backdrop(layers, int(bg_upto), canvas, notes)
+        layers = _user_backdrop(layers, bg_upto, canvas, notes)
     else:
         layers = _merge_backdrop(layers, doc, canvas, notes)
     shared = [k for k, ly in enumerate(layers) if 'page_slot' not in ly]
@@ -690,6 +790,7 @@ def load_artwork(path, canvas=CANVAS, overrides=None, with_report=False):
     them as [{'name', 'rows'}]. The artwork is
     fitted inside the canvas whole (never cropped: the edge of a schedule is
     usually where the times are), on black."""
+    overrides = clean_overrides(overrides) if overrides else None
     ext = os.path.splitext(path)[1].lower().lstrip('.')
     notes, pages = [], []
     rep_list = [] if with_report else None
@@ -708,6 +809,13 @@ def load_artwork(path, canvas=CANVAS, overrides=None, with_report=False):
     if size[0] < canvas[0] * 0.75:
         notes.append(f'The artwork is only {size[0]} pixels wide and was enlarged to {canvas[0]}; text may '
                      'look soft. Use artwork at 1920x1080 or larger.')
+    seen = {}
+    for ly in layers:                    # one name per layer: a recipe, and a prompt, find a layer by it
+        base = str(ly.get('name') or 'Layer')
+        n = seen.get(base.lower(), 0) + 1
+        seen[base.lower()] = n
+        if n > 1:
+            ly['name'] = f'{base} ({n})'
     for i, ly in enumerate(layers):
         ly['role'] = 'picture' if len(layers) == 1 else ('background' if i == 0 else ly.get('role') or 'decor')
         ly.setdefault('page', None)
@@ -822,7 +930,8 @@ _AMBIENT_WORDS = (
     ('breathe', r'\bbreath(e|es|ing)\b'),
     ('pulse', r'\bpuls(e|es|ing)\b|\bthrob\w*|\bheartbeat\b'),
     ('dance', r'\bdanc\w*|\bgroov\w*|\bboogi\w*'),
-    ('wobble', r'\bwobbl\w*|\bjitter\w*|\bwiggl\w*|\bshak(e|es|ing|y)\b'),
+    ('shake', r'\bshak(e|es|ing|y)\b|\bvibrat\w*|\bquak\w*|\brattl\w*'),
+    ('wobble', r'\bwobbl\w*|\bjitter\w*|\bwiggl\w*'),
     ('mix', r'\bmix(ed|es|ing)?\b|\bassorted\b|\bdifferent\s+(motion|movement|animation)s?\b'),
     ('grow', r'\bgrow(s|ing)?\b|\bshrink(s|ing)?\b|\bsink(s|ing)?\b|\bswell(s|ing)?\b'),
     ('sway', r'\bsidetoside\b'),
@@ -1321,6 +1430,7 @@ GROW_BY, GROW_PERIOD = 0.035, 3.6
 BREATHE_BY, BREATHE_PERIOD = 0.018, 4.2     # small enough to read through
 DANCE_BEAT, DANCE_HOP, DANCE_SIDE, DANCE_SWELL = 1.2, 7.0, 4.0, 0.03
 ROTATE_MAX_DEG, ROTATE_MAX_SWING, ROTATE_PERIOD = 12.0, 18.0, 4.0
+SHAKE_PX, SHAKE_DEG = 5.0, 1.1                 # a quick shudder: small enough to keep the text readable
 EASE_OFF = 0.8              # ongoing motion eases away over the last moments: the final frame is the artwork
 
 
@@ -1381,7 +1491,7 @@ class Animator:
         px, x, y = ly['px'], ly['x'], ly['y']
         w, h = self.canvas
         amb = self._amb[i]
-        if amb in ('float', 'wobble', 'grow', 'breathe', 'dance', 'rotate_left', 'rotate_right', 'sway'):
+        if amb in ('float', 'wobble', 'shake', 'grow', 'breathe', 'dance', 'rotate_left', 'rotate_right', 'sway'):
             since = tm - tl['start'] - tl['dur']
             env = _smooth(since / EASE_OFF) if tl['dur'] > 0 else 1.0     # there from the start: moving from the start
             if not self._loops[i]:
@@ -1406,6 +1516,12 @@ class Animator:
                 ph = 2.0 * math.pi * since / ROTATE_PERIOD
                 lean = math.sin(ph) if amb == 'sway' else (0.5 - 0.5 * math.cos(ph)) * (1 if amb == 'rotate_left' else -1)
                 _paste_turned(dst, px, x, y, degrees=most * env * lean)
+            elif amb == 'shake':
+                # Quick, uneven shudders -- three beats that never line up, each layer on its own phase.
+                a, b = 2.0 * math.pi * tm, 0.9 * i
+                _paste_turned(dst, px, x, y, degrees=SHAKE_DEG * env * math.sin(a * 7.3 + b),
+                              dx=SHAKE_PX * env * (math.sin(a * 11.0 + b) + 0.5 * math.sin(a * 17.3 + 2 * b)),
+                              dy=0.6 * SHAKE_PX * env * math.sin(a * 13.1 + 1.3 + b))
             elif amb == 'float':
                 # One slow wave running up the stack, each layer a little behind the one below.
                 ph = 2.0 * math.pi * tm / FLOAT_PERIOD - 0.7 * i

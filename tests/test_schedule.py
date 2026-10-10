@@ -634,3 +634,5 @@ def test_the_schedule_page_is_a_three_step_workspace():
                   'sp-level', 'sp-prompt', 'sp-result', 'sp-progress', 'schedule_image_network'):
         assert len(re.findall(rf'id={ident}(?=[\s>])', html)) == 1, ident
     assert "fetch('/api/schedule/inspect'" in html
+    for piece in ('id=sp-arrive', 'id=sp-motion', 'data-split=', "['rotate_left'", "['shake'"):
+        assert piece in html, piece
