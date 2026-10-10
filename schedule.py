@@ -82,7 +82,7 @@ def _public(m):
             'size': m.get('size'), 'file': m.get('file'), 'layers': m.get('layers'), 'layered': m.get('layered'),
             'prompt': m.get('prompt'), 'animation': m.get('animation'), 'read_by': m.get('read_by'),
             'style': m.get('style'), 'style_label': m.get('style_label'),
-            'roles': m.get('roles'), 'text_motion': m.get('text_motion'),
+            'roles': m.get('roles'), 'text_motion': m.get('text_motion'), 'layer_settings': m.get('layer_settings') or {},
             'page_of': m.get('page_of'), 'pages': m.get('pages') or [],
             'music': m.get('music'), 'notes': m.get('notes') or [],
             'url': f"/api/schedule/file/{pid}/{m['file']}",
@@ -94,13 +94,13 @@ def _public(m):
 # The job
 # --------------------------------------------------------------------------
 
-def _read_prompt(prompt, layer_names, notes, style=None, content=None):
+def _read_prompt(prompt, layer_names, notes, style=None, content=None, use_llm=True):
     """(recipe, who read it). The chosen style is the starting point and the
     prompt changes what it names. The built-in reading always runs; the
     language model, when it is reachable, gets to refine it. Nothing here
     can fail the job: a plug in the plain style is still a plug."""
     base = sk.parse_prompt(prompt, layer_names, base=sk.style_recipe(style, content))
-    if not (prompt and SCHEDULE_USE_LLM):
+    if not (prompt and SCHEDULE_USE_LLM and use_llm):
         return base, 'built-in'
     prod = pipeline.load_production_defaults()
     model = prod.get('vision_model') or 'qwen3-vl:8b'
@@ -124,21 +124,15 @@ def _read_prompt(prompt, layer_names, notes, style=None, content=None):
         return base, 'built-in'
 
 
-def _run(jid, params):
-    report = lambda **kw: pipeline.job_set(jid, **kw)        # noqa: E731
-    src, duration, fmt = params['image'], params['duration'], params['format']
-    report(percent=2, step='Reading artwork')
-    try:
-        art = sk.load_artwork(src, overrides=params.get('overrides'))
-    except sk.ArtworkError as e:
-        report(error=str(e))
-        return
+def _plan(art, params, duration, use_llm=True):
+    """Everything decided before a frame is drawn: the recipe (style, then the
+    words, then what was set on single layers), the timeline, and what to tell
+    the editor. Shared by the real render and the quick preview."""
     names = [ly['name'] for ly in art['layers']]
     notes = list(art['notes'])
-
-    report(percent=10, step='Planning the animation')
     roles = [ly['role'] for ly in art['layers']]
-    recipe, read_by = _read_prompt(params.get('prompt'), names, notes, params.get('style'), params.get('content'))
+    recipe, read_by = _read_prompt(params.get('prompt'), names, notes, params.get('style'), params.get('content'),
+                                   use_llm=use_llm)
     recipe = sk.apply_layer_animation(recipe, art['layers'])     # what was set on single layers wins
     recipe, cannot = sk.fit_to_artwork(recipe, names)
     if cannot:
@@ -151,6 +145,23 @@ def _run(jid, params):
     if plan and plan['count'] > 1:
         animation += f"; {plan['count']} pages, about {plan['slot']:.0f} s each"
         notes.extend(sk.page_notes(plan, duration))
+    return {'names': names, 'notes': notes, 'roles': roles, 'pages': pages, 'recipe': recipe, 'read_by': read_by,
+            'timeline': timeline, 'animation': animation}
+
+
+def _run(jid, params):
+    report = lambda **kw: pipeline.job_set(jid, **kw)        # noqa: E731
+    src, duration, fmt = params['image'], params['duration'], params['format']
+    report(percent=2, step='Reading artwork')
+    try:
+        art = sk.load_artwork(src, overrides=params.get('overrides'))
+    except sk.ArtworkError as e:
+        report(error=str(e))
+        return
+    report(percent=10, step='Planning the animation')
+    plan = _plan(art, params, duration)
+    names, notes, roles, pages = plan['names'], plan['notes'], plan['roles'], plan['pages']
+    recipe, read_by, timeline, animation = plan['recipe'], plan['read_by'], plan['timeline'], plan['animation']
 
     pid = f'{int(time.time())}_{secrets.token_hex(3)}'
     pdir = os.path.join(SCHEDULE_DIR, pid)
@@ -216,6 +227,8 @@ def _run(jid, params):
                     'roles': roles, 'text_motion': recipe.get('content'),
                     'page_of': pages, 'pages': art['pages'],
                     'animation': animation, 'read_by': read_by, 'music': params.get('music_name'),
+                    'layer_settings': {ly['name']: {k: ly[k] for k in ('arrive', 'motion', 'tune') if ly.get(k)}
+                                       for ly in art['layers'] if any(ly.get(k) for k in ('arrive', 'motion', 'tune'))},
                     'loudness': loudness if params.get('music') else None,
                     'fps': f'{fps[0]}/{fps[1]}', 'notes': notes}
         _write_manifest(pdir, manifest)
@@ -285,7 +298,11 @@ def api_schedule_options():
     return jsonify(ok=True, durations=list(sk.DURATIONS),
                    formats=[{'key': k, 'label': v['label']} for k, v in pipeline.EXPORT_FORMATS.items()],
                    loudness=_house_loudness(), levels=pipeline.loudness_choices(_house_loudness()),
-                   styles=[{'key': k, 'label': label} for k, label, _ in sk.STYLES], default_style=sk.DEFAULT_STYLE,
+                   styles=[{'key': k, 'label': label, 'arrives': v['effect'], 'then': v['ambient'],
+                             'mood': 'Calm' if v['ambient'] in ('none', 'shine', 'float', 'breathe') else 'Lively'}
+                            for k, label, v in sk.STYLES], default_style=sk.DEFAULT_STYLE,
+                   motions=[{'key': k, 'label': sk.AMBIENT_LABELS[k]} for k in sk.MOTIONS], eases=list(sk.EASES),
+                   tuning={k: list(v) for k, v in sk.TUNING.items()},
                    text_motions=[{'key': k, 'label': label} for k, label in sk.CONTENT_MODES],
                    default_text_motion=sk.DEFAULT_CONTENT,
                    effects=list(sk.EFFECTS), psd_supported=psd, max_layers=sk.MAX_LAYERS,
@@ -325,6 +342,202 @@ def _read_overrides():
     return clean if clean and (clean['layers'] or clean['expand'] or clean['background_upto'] is not None) else None
 
 
+def _read_names():
+    """{path: layer name} as the editor saw them: what lets settings be kept by name."""
+    try:
+        raw = json.loads(request.form.get('layer_names') or 'null')
+    except ValueError:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k)[:20]: str(v)[:120] for k, v in list(raw.items())[:200] if isinstance(v, (str, int))}
+
+
+# --------------------------------------------------------------------------
+# Looks: settings kept by layer name, shared by the team, so next week's file is ready sorted
+# --------------------------------------------------------------------------
+
+_PRESET_LOCK = threading.Lock()
+MAX_PRESETS = 60
+
+
+def _presets_path():
+    return os.path.join(SCHEDULE_DIR, 'presets.json')
+
+
+def _presets_read():
+    try:
+        with open(_presets_path(), encoding='utf-8') as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _presets_write(d):
+    tmp = f'{_presets_path()}.{secrets.token_hex(3)}.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(d, f, indent=1)
+    os.replace(tmp, _presets_path())
+
+
+def _preset_public(p):
+    return {'id': p['id'], 'name': p['name'], 'settings': p.get('settings') or {}, 'background': p.get('background'),
+            'expand': p.get('expand') or [], 'layers': p.get('layers') or {}, 'username': p.get('username'),
+            'created': p.get('created'), 'mine': p.get('user_id') == session.get('user_id')}
+
+
+def _preset_visible(pid):
+    p = _presets_read().get(pid)
+    if not p:
+        return None
+    if str(pid).startswith('last_') and p.get('user_id') != session.get('user_id'):
+        return None
+    return p
+
+
+def _remember_last(preset):
+    """Keeps this person's latest settings as 'Same as last time'."""
+    uid = session.get('user_id')
+    if not preset or uid is None:
+        return
+    with _PRESET_LOCK:
+        d = _presets_read()
+        d[f'last_{uid}'] = dict(preset, id=f'last_{uid}', name='Same as last time', user_id=uid,
+                               username=session.get('username'), created=time.time())
+        _presets_write(d)
+
+
+@app.route('/api/schedule/presets')
+@require_permission('schedule_plug')
+def api_schedule_presets():
+    d = _presets_read()
+    mine = d.get(f"last_{session.get('user_id')}")
+    shared = sorted((p for k, p in d.items() if not str(k).startswith('last_')), key=lambda p: p['name'].lower())
+    return jsonify(ok=True, presets=[_preset_public(p) for p in shared], last=_preset_public(mine) if mine else None)
+
+
+@app.route('/api/schedule/presets', methods=['POST'])
+@require_permission('schedule_plug')
+def api_schedule_preset_save():
+    """Saves a look. Either in its portable form (what an exported file holds), or as the
+    editor's overrides with the layer names they refer to."""
+    data = request.get_json(silent=True) or {}
+    if isinstance(data.get('overrides'), dict):
+        pre = sk.preset_from_overrides(data.get('name'), data.get('settings'), data['overrides'],
+                                       {str(k): str(v) for k, v in (data.get('names') or {}).items()}
+                                       if isinstance(data.get('names'), dict) else {})
+    else:
+        pre = sk.clean_preset(data)
+    if not pre:
+        return jsonify(ok=False, error='Give the look a name.'), 400
+    with _PRESET_LOCK:
+        d = _presets_read()
+        same = next((k for k, p in d.items() if not k.startswith('last_') and p['name'].lower() == pre['name'].lower()), None)
+        if same and not (d[same].get('user_id') == session.get('user_id') or session.get('role') == 'admin'):
+            return jsonify(ok=False, error=f"A look called \"{d[same]['name']}\" already exists, made by {d[same].get('username')}. Use another name."), 409
+        if not same and sum(1 for k in d if not k.startswith('last_')) >= MAX_PRESETS:
+            return jsonify(ok=False, error='There are too many saved looks. Delete one you no longer use.'), 409
+        pid = same or f'p{int(time.time())}{secrets.token_hex(3)}'
+        d[pid] = dict(pre, id=pid, user_id=session.get('user_id'), username=session.get('username'), created=time.time())
+        _presets_write(d)
+    return jsonify(ok=True, preset=_preset_public(d[pid]))
+
+
+@app.route('/api/schedule/presets/<pid>', methods=['DELETE'])
+@require_permission('schedule_plug')
+def api_schedule_preset_delete(pid):
+    with _PRESET_LOCK:
+        d = _presets_read()
+        p = d.get(pid)
+        if not p or pid.startswith('last_'):
+            return jsonify(ok=False, error='Not found'), 404
+        if not (p.get('user_id') == session.get('user_id') or session.get('role') == 'admin'):
+            return jsonify(ok=False, error='That look was made by someone else.'), 403
+        d.pop(pid)
+        _presets_write(d)
+    return jsonify(ok=True)
+
+
+# --------------------------------------------------------------------------
+# A quick look before the real render
+# --------------------------------------------------------------------------
+
+PREVIEW_SECONDS = 6
+_PREVIEW_NAME = re.compile(r'^pv_\d{10,}_[0-9a-f]{6}\.mp4$')
+_PREVIEW_LOCK = threading.Lock()
+
+
+def _preview_dir():
+    return os.path.join(SCHEDULE_DIR, '.previews')
+
+
+def _sweep_previews(keep_seconds=3600):
+    try:
+        for n in os.listdir(_preview_dir()):
+            p = os.path.join(_preview_dir(), n)
+            if time.time() - os.path.getmtime(p) > keep_seconds:
+                os.remove(p)
+    except OSError:
+        pass
+
+
+@app.route('/api/schedule/preview', methods=['POST'])
+@require_permission('schedule_plug')
+def api_schedule_preview():
+    """The first seconds of the plug, small and silent, in a few seconds' work: how it arrives and
+    moves with these choices, before the full render. The animation words are read by keyword only,
+    so a preview never waits for the language model."""
+    if not _job_submit_limiter.allow(_client_ip()):
+        return jsonify(error='Too many requests. Wait a few minutes and try again.'), 429
+    path, name, token = _artwork()
+    if not path:
+        return jsonify(error='Pick the schedule artwork first, using Browse library.'), 400
+    try:
+        duration = int(float(request.form.get('duration') or sk.DURATIONS[0]))
+    except ValueError:
+        duration = sk.DURATIONS[0]
+    if duration not in sk.DURATIONS:
+        duration = sk.DURATIONS[0]
+    style = (request.form.get('style') or '').strip() or sk.DEFAULT_STYLE
+    content = (request.form.get('text_motion') or '').strip() or sk.DEFAULT_CONTENT
+    if not sk.style_label(style) or content not in dict(sk.CONTENT_MODES):
+        return jsonify(error='Choose one of the listed animation styles.'), 400
+    params = {'style': style, 'content': content, 'prompt': ' '.join((request.form.get('prompt') or '').split())[:600]}
+    if not _PREVIEW_LOCK.acquire(blocking=False):
+        return jsonify(error='Another preview is being drawn. Try again in a moment.'), 429
+    try:
+        art = sk.load_artwork(path, overrides=_read_overrides())
+        plan = _plan(art, params, duration, use_llm=False)
+        os.makedirs(_preview_dir(), exist_ok=True)
+        _sweep_previews()
+        fname = f'pv_{int(time.time())}_{secrets.token_hex(3)}.mp4'
+        animator = sk.Animator(art, plan['timeline'], plan['recipe'], duration)
+        seconds = min(duration, max(PREVIEW_SECONDS, sk.settle_time(plan['timeline']) + 1.5))
+        sk.encode_preview(animator, os.path.join(_preview_dir(), fname), seconds, ffmpeg=pipeline.FFMPEG)
+    except sk.ArtworkError as e:
+        return jsonify(error=str(e)), 422
+    except sk.EncodeError as e:
+        return jsonify(error=f'The preview could not be made: {e}'), 500
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify(error=f'The preview could not be made: {e}'), 500
+    finally:
+        _PREVIEW_LOCK.release()
+    return jsonify(ok=True, url=f'/api/schedule/preview/{fname}', seconds=round(seconds, 1), duration=duration,
+                   animation=plan['animation'], notes=plan['notes'])
+
+
+@app.route('/api/schedule/preview/<fname>')
+@require_permission('schedule_plug')
+def api_schedule_preview_file(fname):
+    if not _PREVIEW_NAME.match(fname):
+        return jsonify(ok=False, error='Not found'), 404
+    resp = send_from_directory(_preview_dir(), fname, conditional=True)
+    resp.headers['Cache-Control'] = 'private, max-age=600'
+    return resp
+
+
 @app.route('/api/schedule/inspect', methods=['POST'])
 @require_permission('schedule_plug')
 def api_schedule_inspect():
@@ -335,14 +548,28 @@ def api_schedule_inspect():
     path, name, token = _artwork()
     if not path:
         return jsonify(error='Pick the schedule artwork first, using Browse library.'), 400
+    preset, missing, applied = None, [], None
     try:
-        info = sk.inspect_artwork(path, overrides=_read_overrides())
+        pid = (request.form.get('preset_id') or '').strip()
+        if pid:
+            preset = _preset_visible(pid)
+            if not preset:
+                return jsonify(error='That saved look no longer exists.'), 404
+            ov, missing = sk.overrides_from_preset(path, preset)
+            applied = ov
+        else:
+            ov = _read_overrides()
+        info = sk.inspect_artwork(path, overrides=ov)
     except sk.ArtworkError as e:
         return jsonify(error=str(e)), 422
     except Exception as e:
         traceback.print_exc()
         return jsonify(error=f'The artwork could not be read: {e}'), 500
-    return jsonify(ok=True, name=name, token=token, **info)
+    extra = {}
+    if preset:
+        extra = {'overrides': applied, 'settings': preset.get('settings') or {}, 'preset_missing': missing,
+                 'preset_name': preset.get('name')}
+    return jsonify(ok=True, name=name, token=token, **info, **extra)
 
 
 @app.route('/api/schedule/render', methods=['POST'])
@@ -386,6 +613,25 @@ def api_schedule_render():
               'loudness': pipeline.resolve_loudness(request.form.get('loudness'), _house_loudness()),
               'prompt': ' '.join((request.form.get('prompt') or '').split())[:600],
               'user_id': session.get('user_id'), 'username': session.get('username')}
+    look = (request.form.get('preset_id') or '').strip()
+    if look == 'last':
+        look = f"last_{session.get('user_id')}"
+    if look:
+        # A saved look is matched to this file by layer name, so the same one serves next week's file.
+        pre = _preset_visible(look)
+        if not pre:
+            return jsonify(error='That saved look no longer exists.'), 404
+        try:
+            params['overrides'], _missing = sk.overrides_from_preset(image, pre)
+        except sk.ArtworkError as e:
+            return jsonify(error=str(e)), 422
+    try:
+        if not look:
+            _remember_last(sk.preset_from_overrides('Same as last time', {
+                'style': style, 'text_motion': content, 'prompt': params['prompt'], 'duration': duration, 'format': fmt},
+                params['overrides'], _read_names()))
+    except Exception as e:                                  # a convenience: never in the way of the render
+        print(f'Schedule Plug: could not keep the last settings ({e})')
     jid = pipeline.job_new(user_id=session.get('user_id'), username=session.get('username'), kind='schedule')
     pipeline.job_set_orig_name(jid, f'{orig} (schedule plug, {duration}s)')
     if len(_JOBS) > 500:

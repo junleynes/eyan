@@ -344,6 +344,9 @@ def _page_rows(parts, name, canvas):
 
 OVERRIDE_ROLES = ('content', 'decor', 'off', 'page')
 MOTIONS = tuple(a for a in AMBIENTS if a != 'mix')      # what a layer can be told to do once it is in
+EASES = ('out', 'in_out', 'back', 'linear')
+# What a person can tune on one layer, with the range each is held to.
+TUNING = {'delay': (0.0, 15.0), 'dur': (0.15, 4.0), 'intensity': (0.2, 2.5), 'stagger': (0.0, 2.0)}
 _PATH = re.compile(r'^\d{1,3}(\.\d{1,3}){0,4}$')
 
 
@@ -352,6 +355,37 @@ def _path_key(key):
     layer or group (bottom first) and '3.1' for the second layer inside it."""
     key = str(key).strip()
     return key if _PATH.match(key) else None
+
+
+def _clean_item(val):
+    """One layer's settings, made safe: only what is recognised, within its range."""
+    if not isinstance(val, dict):
+        return {}
+    item = {}
+    role = val.get('role')
+    if role in OVERRIDE_ROLES:
+        item['role'] = role
+        if role == 'page':
+            try:
+                item['page'] = max(1, min(int(val.get('page') or 1), 99))
+            except (TypeError, ValueError):
+                item['page'] = 1
+    arrive = val.get('arrive')
+    if isinstance(arrive, dict) and arrive.get('effect') in EFFECTS:
+        item['arrive'] = {'effect': arrive['effect'],
+                          'direction': arrive.get('direction') if arrive.get('direction') in DIRECTIONS else 'right'}
+    if val.get('motion') in MOTIONS:
+        item['motion'] = val['motion']
+    for k, (lo, hi) in TUNING.items():
+        try:
+            v = float(val.get(k))
+        except (TypeError, ValueError):
+            continue
+        if v == v and v not in (float('inf'), float('-inf')):
+            item[k] = round(min(max(v, lo), hi), 2)
+    if val.get('ease') in EASES:
+        item['ease'] = val['ease']
+    return item
 
 
 def clean_overrides(raw):
@@ -373,26 +407,14 @@ def clean_overrides(raw):
     layers = raw.get('layers')
     for key, val in (layers.items() if isinstance(layers, dict) else []):
         pk = _path_key(key)
-        if not pk or not isinstance(val, dict):
-            continue
-        item = {}
-        role = val.get('role')
-        if role in OVERRIDE_ROLES:
-            item['role'] = role
-            if role == 'page':
-                try:
-                    item['page'] = max(1, min(int(val.get('page') or 1), 99))
-                except (TypeError, ValueError):
-                    item['page'] = 1
-        arrive = val.get('arrive')
-        if isinstance(arrive, dict) and arrive.get('effect') in EFFECTS:
-            item['arrive'] = {'effect': arrive['effect'],
-                              'direction': arrive.get('direction') if arrive.get('direction') in DIRECTIONS else 'right'}
-        if val.get('motion') in MOTIONS:
-            item['motion'] = val['motion']
-        if item:
+        item = _clean_item(val)
+        if pk and item:
             out['layers'][pk] = item
     return out
+
+
+def _tuning(item):
+    return {k: item[k] for k in (*TUNING, 'ease') if k in item}
 
 
 def apply_layer_animation(recipe, layers):
@@ -400,9 +422,15 @@ def apply_layer_animation(recipe, layers):
     does afterwards) into the recipe, over whatever the style and the words
     said. Layers are keyed by name, so the names must be unique (they are,
     after load_artwork)."""
-    recipe = dict(recipe, layers=dict(recipe.get('layers') or {}), layer_ambient=dict(recipe.get('layer_ambient') or {}))
+    recipe = dict(recipe, layers=dict(recipe.get('layers') or {}), layer_ambient=dict(recipe.get('layer_ambient') or {}),
+                  layer_tune=dict(recipe.get('layer_tune') or {}), page_stagger=dict(recipe.get('page_stagger') or {}))
     for ly in layers[1:]:
         key = str(ly.get('name', '')).lower()
+        tune = ly.get('tune') or {}
+        if tune:
+            recipe['layer_tune'][key] = dict(tune)
+            if ly.get('page') is not None and 'stagger' in tune:
+                recipe['page_stagger'][ly['page']] = tune['stagger']
         if ly.get('arrive'):
             recipe['layers'][key] = dict(ly['arrive'])
         if ly.get('motion'):
@@ -610,6 +638,7 @@ def _load_psd(path, canvas, overrides=None, report=None):
                     r['arrive'] = dict(ov['arrive'])
                 if ov.get('motion'):
                     r['motion'] = ov['motion']
+                r['tune'] = _tuning(ov)
             if entry is not None:
                 entry.update(role='page', page=number, rows=len(rows) or 0,
                              why=('Set as a page by you.' if orole == 'page' else 'Named as a page.')
@@ -642,6 +671,7 @@ def _load_psd(path, canvas, overrides=None, report=None):
                 got['arrive'] = dict(ov['arrive'])
             if ov.get('motion'):
                 got['motion'] = ov['motion']
+            got['tune'] = _tuning(ov)
             seq_at[idx] = seq - 1
             layers.append(got)
             if entry is not None:
@@ -827,6 +857,153 @@ def load_artwork(path, canvas=CANVAS, overrides=None, with_report=False):
     return art
 
 
+# --------------------------------------------------------------------------
+# Looks: what was set for one artwork, kept by layer name so it fits the next file
+# --------------------------------------------------------------------------
+
+PRESET_SETTINGS = ('style', 'text_motion', 'prompt', 'duration', 'format')
+
+
+def clean_preset(raw):
+    """A look in its portable form, or None: {'name', 'settings', 'background', 'expand', 'layers'},
+    where layers are keyed by lower-case layer name rather than by position."""
+    if not isinstance(raw, dict):
+        return None
+    name = ' '.join(str(raw.get('name') or '').split())[:60]
+    if not name:
+        return None
+    settings = {}
+    src = raw.get('settings') if isinstance(raw.get('settings'), dict) else {}
+    if src.get('style') and style_label(str(src['style'])):
+        settings['style'] = str(src['style'])
+    if src.get('text_motion') in dict(CONTENT_MODES):
+        settings['text_motion'] = src['text_motion']
+    if src.get('prompt'):
+        settings['prompt'] = ' '.join(str(src['prompt']).split())[:600]
+    try:
+        if int(float(src.get('duration'))) in DURATIONS:
+            settings['duration'] = int(float(src['duration']))
+    except (TypeError, ValueError):
+        pass
+    if isinstance(src.get('format'), str) and re.match(r'^[A-Za-z0-9_.-]{1,40}$', src['format']):
+        settings['format'] = src['format']
+    out = {'name': name, 'settings': settings, 'background': None, 'expand': [], 'layers': {}}
+    bg = raw.get('background')
+    if isinstance(bg, str) and bg.strip():
+        out['background'] = bg.strip()[:120].lower()
+    for n in (raw.get('expand') if isinstance(raw.get('expand'), list) else [])[:40]:
+        if isinstance(n, str) and n.strip() and n.strip()[:120].lower() not in out['expand']:
+            out['expand'].append(n.strip()[:120].lower())
+    layers = raw.get('layers') if isinstance(raw.get('layers'), dict) else {}
+    for n, val in list(layers.items())[:80]:
+        item = _clean_item(val)
+        if isinstance(n, str) and n.strip() and item:
+            out['layers'][n.strip()[:120].lower()] = item
+    return out
+
+
+def preset_from_overrides(name, settings, overrides, names):
+    """The portable look for a set of overrides, given the name of each layer
+    path (what the editor was looking at): {path: layer name}."""
+    ov = clean_overrides(overrides)
+    pick = lambda path: (names or {}).get(path)         # noqa: E731
+    return clean_preset({
+        'name': name, 'settings': settings or {},
+        'background': pick(ov['background_upto']) if ov['background_upto'] else None,
+        'expand': [pick(p) for p in ov['expand'] if pick(p)],
+        'layers': {pick(p): v for p, v in ov['layers'].items() if pick(p)}})
+
+
+def overrides_from_preset(path, preset, canvas=CANVAS):
+    """(overrides, missing): what a saved look comes to for this file --
+    groups opened by name, layers matched by name -- and the names in the
+    look that this file has no layer for."""
+    ov = {'background_upto': None, 'expand': [], 'layers': {}}
+    if not preset:
+        return clean_overrides(ov), []
+    want = set(preset['expand'])
+    info = inspect_artwork(path, canvas, overrides=ov)
+    for _ in range(5):
+        opened = [l['path'] for l in info['layers'] if l['name'].lower() in want and l['can_expand'] and l['path'] not in ov['expand']
+                  and l['role'] != 'group']
+        if not opened:
+            break
+        ov['expand'] += opened
+        info = inspect_artwork(path, canvas, overrides=ov)
+    by_name = {}
+    for l in info['layers']:
+        by_name.setdefault(l['name'].lower(), l['path'])
+    missing = []
+    for n, item in preset['layers'].items():
+        if n in by_name:
+            ov['layers'][by_name[n]] = dict(item)
+        else:
+            missing.append(n)
+    if preset['background']:
+        if preset['background'] in by_name:
+            ov['background_upto'] = by_name[preset['background']]
+        else:
+            missing.append(preset['background'])
+    for n in preset['expand']:
+        if n not in by_name:
+            missing.append(n)
+    return clean_overrides(ov), sorted(set(missing))
+
+
+TITLE_SAFE = 0.05           # a broadcast title-safe area: 5% in from every edge
+SMALL_TEXT_PX = 26          # a line of text shorter than this on a 1080p frame is hard to read on a television
+
+
+def suggest_duration(pages):
+    """(seconds, why): the shortest standard length that lets the logo and day
+    land and every page be read for about three and a half seconds."""
+    if not pages:
+        return DURATIONS[0], 'A single screen needs only a few seconds to land and be read.'
+    need = 4.0 + sum(3.5 + 0.25 * max(0, (pg.get('rows') or 0) - 4) for pg in pages)
+    for d in DURATIONS:
+        if d >= need:
+            return d, (f"{len(pages)} page{'s need' if len(pages) != 1 else ' needs'} about {need:.0f} seconds: "
+                       'a few for the logo and day to land, then time to read each page.')
+    return DURATIONS[-1], (f"{len(pages)} pages need about {need:.0f} seconds, more than the longest plug. "
+                           'Split the schedule into two files, or put fewer pages in one.')
+
+
+def artwork_checks(art, canvas=CANVAS):
+    """Things worth knowing before drawing, in plain words: [{'level': 'warn'|'info', 'text', 'layer'}]."""
+    out, w, h = [], canvas[0], canvas[1]
+    mx, my = w * TITLE_SAFE, h * TITLE_SAFE
+    layers = art['layers']
+    if art['layered'] and len(layers) > 1:
+        roles = [ly.get('role') for ly in layers[1:]]
+        if not any(r in ('content', 'decor') for r in roles) and not any(ly.get('page') is not None for ly in layers):
+            out.append({'level': 'warn', 'layer': None, 'text': 'Nothing above the background was found to animate.'})
+    outside, small = [], []
+    for ly in layers[1:]:
+        if ly.get('role') not in ('content',) and ly.get('page') is None:
+            continue
+        ph, pw = ly['px'].shape[:2]
+        x, y = ly['x'], ly['y']
+        if x < mx - 1 or y < my - 1 or x + pw > w - mx + 1 or y + ph > h - my + 1:
+            outside.append(ly['name'])
+        if ph < SMALL_TEXT_PX and pw > 3 * ph:
+            small.append(ly['name'])
+    if outside:
+        out.append({'level': 'warn', 'layer': outside[0], 'text': 'Reaches outside the title-safe area (the outer 5% of the '
+                    'picture, which some televisions cut off): ' + ', '.join(outside[:4]) + ('...' if len(outside) > 4 else '') + '.'})
+    if small:
+        out.append({'level': 'warn', 'layer': small[0], 'text': 'Text this small is hard to read on a television: '
+                    + ', '.join(small[:4]) + ('...' if len(small) > 4 else '') + '. Make it taller in the file.'})
+    pages = art.get('page_info') or []
+    if pages:
+        d, why = suggest_duration(pages)
+        if len(pages) > 1 and d == DURATIONS[-1] and 'more than' in why:
+            out.append({'level': 'warn', 'layer': None, 'text': why})
+    for n in art.get('notes') or []:
+        if 'one flat picture' in n or 'animated as one' in n:
+            out.append({'level': 'info', 'layer': None, 'text': n})
+    return out
+
+
 def inspect_artwork(path, canvas=CANVAS, overrides=None):
     """What load_artwork() makes of a file, laid out for a person to check:
     every top-level layer or group with the part it will play (background,
@@ -850,7 +1027,9 @@ def inspect_artwork(path, canvas=CANVAS, overrides=None):
             'pages': [{'name': pg['name'], 'rows': pg['rows'], 'shown': pg['shown']} for pg in pages],
             'counts': {'content': roles.count('content'), 'decor': roles.count('decor'),
                        'pages': len(pages), 'background': roles.count('background') + roles.count('picture')},
-            'background_index': max(bg) if bg else None}
+            'background_index': max(bg) if bg else None,
+            'checks': artwork_checks(art, canvas),
+            'suggested': dict(zip(('duration', 'why'), suggest_duration(pages)))}
 
 
 # --------------------------------------------------------------------------
@@ -1243,7 +1422,24 @@ def build_timeline(recipe, layer_names, duration, roles=None, pages=None):
     there = {'effect': 'cut', 'direction': 'right', 'start': 0.0, 'dur': 0.0}
     page_of = list(pages) if pages is not None else [None] * n
     count = max((p for p in page_of if p is not None), default=-1) + 1
-    arrives = [page_of[i] is None and (roles is None or roles[i] != 'decor' or layer_names[i].lower() in recipe['layers'])
+    tune = recipe.get('layer_tune') or {}
+
+    def tuned(entry, name):
+        # What the editor set on this one layer: when it comes in, how long it takes, how it eases.
+        t = tune.get(name.lower())
+        if not t:
+            return entry
+        entry = dict(entry)
+        if t.get('dur'):
+            entry['dur'] = float(t['dur'])
+        if t.get('delay'):
+            entry['start'] = entry['start'] + float(t['delay'])
+        if t.get('ease'):
+            entry['ease'] = t['ease']
+        return entry
+
+    arrives = [page_of[i] is None and (roles is None or roles[i] != 'decor' or layer_names[i].lower() in recipe['layers']
+                                       or bool((tune.get(layer_names[i].lower()) or {}).get('delay')))
                for i in range(1, n)]
     rest = sum(arrives)
     # A beat on the bare background before anything lands on it.
@@ -1260,9 +1456,9 @@ def build_timeline(recipe, layer_names, duration, roles=None, pages=None):
             if not arriving:
                 continue
             c = recipe['layers'].get(layer_names[i].lower(), recipe['default'])
-            out[i] = dict(c, start=first + turn * max(gap, 0.0), dur=each)
-            # The first page starts as the last shared piece is landing.
-            begin = out[i]['start'] + each * 0.6
+            out[i] = tuned(dict(c, start=first + turn * max(gap, 0.0), dur=each), layer_names[i])
+            # The first page starts as the last shared piece is landing -- not as a layer held back by hand does.
+            begin = first + turn * max(gap, 0.0) + each * 0.6
             turn += 1
     if not count:
         return out
@@ -1278,9 +1474,11 @@ def build_timeline(recipe, layer_names, duration, roles=None, pages=None):
         window = max(0.3, min(room * 0.35, (0.3 + 0.35 * len(rows)) * k, 2.4))
         each = float(np.clip(window / len(rows) * 1.6, 0.25, max(0.25, min(1.0, window))))
         gap = (window - each) / (len(rows) - 1) if len(rows) > 1 else 0.0
+        if (recipe.get('page_stagger') or {}).get(p) is not None:
+            gap = float(recipe['page_stagger'][p])           # the editor said how far apart the rows come in
         for j, i in enumerate(rows):
             c = recipe['layers'].get(layer_names[i].lower(), recipe['default'])
-            out[i] = dict(c, start=start + j * max(gap, 0.0), dur=each)
+            out[i] = tuned(dict(c, start=start + j * max(gap, 0.0), dur=each), layer_names[i])
         if leaves is not None:
             # Together, and never before the last of them has finished arriving.
             leaves = max(leaves, max(out[i]['start'] + out[i]['dur'] for i in rows))
@@ -1356,6 +1554,22 @@ def ease_out_back(u):
     u = min(1.0, max(0.0, u))
     c1 = 1.70158
     return 1.0 + (c1 + 1.0) * (u - 1.0) ** 3 + c1 * (u - 1.0) ** 2
+
+
+def ease_in_out(u):
+    u = min(1.0, max(0.0, u))
+    return u * u * (3.0 - 2.0 * u)
+
+
+def eased(kind, u):
+    """u (0..1) through the curve a layer was given; 'back' overshoots a little."""
+    if kind == 'linear':
+        return min(1.0, max(0.0, u))
+    if kind == 'in_out':
+        return ease_in_out(u)
+    if kind == 'back':
+        return ease_out_back(u)
+    return ease_out(u)
 
 
 def _wipe(px, u, direction):
@@ -1477,6 +1691,8 @@ class Animator:
         # leave with their page; below it, never, so those can be baked.
         self._movers = next((i for i, (a, tl) in enumerate(zip(self._amb, timeline)) if a != 'none' or 'out' in tl), n)
         self._pulsers = [i for i, a in enumerate(self._amb) if a == 'pulse']
+        tune = recipe.get('layer_tune') or {}
+        self._inten = [float((tune.get(str(ly.get('name', '')).lower()) or {}).get('intensity', 1.0)) for ly in self.layers]
         self._base = np.zeros((canvas[1], canvas[0], 3), np.uint8)
         self._baked = 0
         self._last_t = -1.0
@@ -1497,6 +1713,7 @@ class Animator:
             if not self._loops[i]:
                 # At rest by the end -- of the plug, or of its page's turn.
                 env *= _smooth(((tl['out'][0] if 'out' in tl else self.duration) - tm) / EASE_OFF)
+            env *= self._inten[i]
             if amb == 'breathe':
                 # Together, like one thing breathing: text that swelled out of step would look loose.
                 _paste_turned(dst, px, x, y, scale=1.0 + BREATHE_BY * env * math.sin(2.0 * math.pi * tm / BREATHE_PERIOD))
@@ -1568,7 +1785,7 @@ class Animator:
             if turn != i or u >= 1.0 or (ends > self.duration - 0.15 and not self._loops[i]):
                 paste(dst, px, x, y)
                 return
-            s = 1.0 + PULSE_GROW * math.sin(math.pi * u) ** 2
+            s = 1.0 + PULSE_GROW * self._inten[i] * math.sin(math.pi * u) ** 2
             ph_, pw_ = px.shape[:2]
             nw, nh = max(1, int(round(pw_ * s))), max(1, int(round(ph_ * s)))
             paste(dst, cv2.resize(px, (nw, nh), interpolation=cv2.INTER_LINEAR), x + (pw_ - nw) // 2, y + (ph_ - nh) // 2)
@@ -1593,13 +1810,14 @@ class Animator:
             else:
                 paste(dst, px, x, y)
             return
-        u = ease_out(raw)
+        kind = tl.get('ease')
+        u = eased(kind, raw)
         dx = dy = 0
         if self.recipe.get('stop_motion'):
             dx, dy = _jitter(i, step)
         effect, direction = tl['effect'], tl['direction']
         if effect == 'wipe':
-            paste(dst, _wipe(px, u, direction), x + dx, y + dy)
+            paste(dst, _wipe(px, min(1.0, u), direction), x + dx, y + dy)
         elif effect == 'slide':
             travel = 0.16 * (self.canvas[0] if direction in ('left', 'right') else self.canvas[1])
             off = int(round((1.0 - u) * travel))
@@ -1607,13 +1825,13 @@ class Animator:
             sy = {'down': -off, 'up': off}.get(direction, 0)
             paste(dst, px, x + sx + dx, y + sy + dy, opacity=min(1.0, raw * 2.5))
         elif effect == 'pop':
-            s = 0.8 + 0.2 * ease_out_back(raw)
+            s = 0.8 + 0.2 * (eased(kind, raw) if kind else ease_out_back(raw))
             h, w = px.shape[:2]
             nw, nh = max(1, int(round(w * s))), max(1, int(round(h * s)))
             scaled = cv2.resize(px, (nw, nh), interpolation=cv2.INTER_LINEAR)
             paste(dst, scaled, x + (w - nw) // 2 + dx, y + (h - nh) // 2 + dy, opacity=min(1.0, raw * 3.0))
         else:                                                   # fade
-            paste(dst, px, x + dx, y + dy, opacity=u)
+            paste(dst, px, x + dx, y + dy, opacity=min(1.0, u))
 
     def frame(self, t):
         t = min(max(0.0, float(t)), self.duration)
@@ -1692,6 +1910,41 @@ def build_encode_cmd(ffmpeg, out_path, canvas, fps, duration, music_path=None, m
 
 class EncodeError(RuntimeError):
     pass
+
+
+def encode_preview(animator, out_path, seconds, ffmpeg='ffmpeg', fps=12, size=(640, 360), timeout=120):
+    """A small, silent H.264 of the first `seconds` of the animation: what the
+    arrivals and motion will look like, in a few seconds' work. Returns the frame count."""
+    seconds = min(float(seconds), animator.duration)
+    total = max(1, int(round(seconds * fps)))
+    cmd = [ffmpeg, '-y', '-hide_banner', '-nostats', '-loglevel', 'error', '-f', 'rawvideo', '-pix_fmt', 'bgr24',
+           '-s', f'{size[0]}x{size[1]}', '-r', str(fps), '-i', 'pipe:0', '-an', '-c:v', 'libx264', '-preset', 'ultrafast',
+           '-crf', '28', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', out_path]
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    try:
+        try:
+            for n in range(total):
+                f = cv2.resize(animator.frame(n / float(fps)), size, interpolation=cv2.INTER_AREA)
+                proc.stdin.write(f.tobytes())
+        except (BrokenPipeError, OSError):
+            pass
+        try:
+            proc.stdin.close()
+        except OSError:
+            pass
+        proc.stdin = None
+        try:
+            _, err = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as e:
+            raise EncodeError('the preview did not finish in time') from e
+    except BaseException:
+        proc.kill()
+        proc.wait()
+        raise
+    if proc.returncode != 0 or not (os.path.exists(out_path) and os.path.getsize(out_path) > 0):
+        text = ' | '.join(ln.strip() for ln in err.decode('utf-8', 'replace').splitlines() if ln.strip())
+        raise EncodeError(text[:300] or f'ffmpeg exited with code {proc.returncode}')
+    return total
 
 
 def encode(animator, out_path, fps, duration, ffmpeg='ffmpeg', music_path=None, music_start=0.0,
