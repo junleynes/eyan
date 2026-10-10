@@ -871,6 +871,43 @@ input.sh-num[type=number]{width:92px}
 .ws-zoom .zh::after{content:"";position:absolute;left:6px;top:8px;bottom:8px;width:4px;border-radius:2px;background:var(--accent,#4f8cff)}
 .ws-zoom .tick{position:absolute;top:0;height:9px;width:1px;background:var(--ink-dim);opacity:.6}
 .ws-zoom .zt{position:absolute;bottom:2px;font-size:10px;font-family:'JetBrains Mono',monospace;color:var(--ink-dim);transform:translateX(-50%);white-space:nowrap}
+/* ---- Schedule Plug workspace ---- */
+.sp-grid{grid-template-columns:270px minmax(0,1fr) 360px}
+.sp-grid .ws-stage{position:static}
+.sp-layer{display:grid;grid-template-columns:64px minmax(0,1fr);gap:8px;align-items:center;padding:6px;margin:0 0 3px;border:1px solid transparent;border-radius:8px;cursor:pointer}
+.sp-layer:hover{background:var(--panel)}
+.sp-layer.sel{border-color:var(--accent,#4f8cff);background:var(--panel)}
+.sp-layer.dim{opacity:.55}
+.sp-lthumb{width:64px;height:36px;border-radius:4px;overflow:hidden;background:#333}
+.sp-lthumb{background:#4e4a46}
+.sp-lthumb img{width:100%;height:100%;object-fit:contain;display:block}
+.ws-tools .btn-sm.on{background:var(--accent,#4f8cff);color:#fff;border-color:transparent}
+.sp-lname{font-size:13px;font-weight:600;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sp-lsub{display:flex;gap:6px;align-items:center;margin-top:3px;font-size:11px;color:var(--ink-dim);flex-wrap:wrap}
+.sp-role{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;padding:1px 7px;border-radius:9px;border:1px solid var(--line)}
+.sp-role.r-background,.sp-role.r-picture{color:var(--ink-dim)}
+.sp-role.r-content{color:var(--phosphor);border-color:var(--phosphor)}
+.sp-role.r-decor{color:var(--amber);border-color:var(--amber)}
+.sp-role.r-page{color:var(--accent,#4f8cff);border-color:var(--accent,#4f8cff)}
+.sp-role.r-off,.sp-role.r-hidden,.sp-role.r-empty,.sp-role.r-flat{opacity:.6}
+.sp-stage{position:relative;width:100%;aspect-ratio:16/9;background:#000;border-radius:10px;overflow:hidden;border:1px solid var(--line)}
+.sp-stage img{width:100%;height:100%;object-fit:contain;display:block}
+.sp-box{position:absolute;border:2px solid var(--accent,#4f8cff);background:color-mix(in srgb,var(--accent,#4f8cff) 14%,transparent);pointer-events:none;box-sizing:border-box}
+.sp-summary{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+.sp-chip{font-size:12px;padding:5px 10px;border:1px solid var(--line);border-radius:8px;background:var(--elevated)}
+.sp-chip b{font-weight:700}
+.sp-col{display:grid;gap:10px;margin-top:10px}
+.sp-col select,.sp-col input[type=text]{width:100%}
+.sp-help{margin-top:6px}
+.sp-help>summary{cursor:pointer;font-size:11px;opacity:.7}
+.sp-lp-head{display:flex;gap:10px;align-items:center}
+.sp-lp-head .sp-lthumb{width:96px;height:54px}
+.sp-kids{margin:8px 0 0;padding:0;list-style:none;font-size:12px;max-height:180px;overflow:auto;border:1px solid var(--line);border-radius:8px}
+.sp-kids li{display:flex;justify-content:space-between;gap:8px;padding:4px 8px;border-bottom:1px solid var(--line)}
+.sp-kids li:last-child{border-bottom:0}
+.sp-kids li.off{opacity:.5}
+@media (max-width:1180px){.sp-grid{grid-template-columns:250px minmax(0,1fr)}.sp-grid .ws-insp{grid-column:1 / -1}}
+@media (max-width:760px){.sp-grid{grid-template-columns:minmax(0,1fr)}}
 .ws-bar{position:sticky;bottom:0;z-index:6;display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 14px;margin-top:14px;border:1px solid var(--line);border-radius:10px;background:var(--elevated);box-shadow:0 -6px 18px rgba(0,0,0,.08)}
 .ws-trt{font-size:12px}
 .ws-out-sum{font-size:11px;color:var(--ink-dim)}
@@ -9758,9 +9795,17 @@ document.addEventListener('DOMContentLoaded', function(){
   <div class="sub-tab" onclick="switchSubTab('p-schedule-saved',this);scheduleLoadSaved()" role="button" tabindex="0">Saved plugs</div>
 </div>
 
-<div id="p-schedule-create" class="sub-panel active">
-<p style="font-size:12px;opacity:.75;margin-top:-6px">Turns a schedule still into an animated 16:9 plug with a music bed. The artwork is drawn on frame by frame &mdash; its layers wipe, slide, fade or pop into place &mdash; not regenerated, so every title, date and time stays exactly as designed.</p>
+<div id="p-schedule-create" class="sub-panel active"><p style="font-size:12px;opacity:.75;margin-top:-6px">Turns a schedule still into an animated 16:9 plug with a music bed. The artwork is drawn on frame by frame &mdash; its layers wipe, slide, fade or pop into place &mdash; not regenerated, so every title, date and time stays exactly as designed.</p>
 
+
+<div id=sp-steps class=ws-steps role="tablist" aria-label="Steps">
+  <button type=button class="ws-step active" data-step=art onclick="spScreen('art')"><b>1</b> Artwork</button>
+  <button type=button class="ws-step" data-step=work onclick="spScreen('work')" disabled><b>2</b> Layers &amp; animation <span id=sp-step-count class=ws-count></span></button>
+  <button type=button class="ws-step" data-step=result onclick="spScreen('result')" disabled><b>3</b> Result <span id=sp-step-dot class=ws-dot style="display:none"></span></button>
+</div>
+
+<div id=sp-screen-art>
+<div class="ws-card">
 <label>Schedule artwork (image or layered PSD):</label>
 <div class="browse-row">
   {% if allow_local_upload %}<input type=file id=sp-image name=schedule_image accept="image/*,.psd,.psb,.tif,.tiff" data-net-field="schedule_image" style="max-width:320px">{% endif %}
@@ -9768,58 +9813,93 @@ document.addEventListener('DOMContentLoaded', function(){
 </div>
 <input type=hidden id=schedule_image_network name=schedule_image_network value="">
 <span class="net-file-chip" id=schedule_image_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('schedule_image')">&#10005;</span></span>
+
+<div class="promo-actions" style="margin-top:12px"><button class="btn btn-primary-promo" type=button id=sp-read-btn onclick="spInspect()">Read the artwork</button>
+  <span class="sh-note" style="margin:0">It is read as soon as it is picked: its layers, groups and pages are listed next, and you confirm what each one does.</span></div>
+</div>
+<details class="ws-more"><summary>How to prepare a Photoshop file</summary>
 <p class="sh-note" style="margin-top:6px">PNG, JPEG, TIFF or a Photoshop file, ideally 1920&times;1080. In a PSD, the bottom layer is the background and stays still; each top-level layer or group above it animates on its own &mdash; group the things that should move together, and name the layers so the direction can refer to them. <b>Several schedule pages in one file:</b> put each page&rsquo;s rows in a top-level group named <b>Page 1</b>, <b>Page 2</b>, <b>Page 3</b>&hellip; They play in that order over the same background, and it does not matter which of them is showing or hidden when the file is saved.</p>
 
-<div class="sh-row" style="margin-top:10px">
-  <div>
+</details>
+<div id=sp-note class=no-data style="margin-top:14px">Pick the artwork, a length and optionally a music bed, then choose <b>Generate schedule plug</b>. A 15-second plug takes well under a minute.</div>
+
+</div>
+
+<div id=sp-screen-work style="display:none">
+  <div class="ws-head"><div id=sp-status class=ws-status></div></div>
+  <div id=sp-warnings></div>
+  <div class="ws-grid sp-grid">
+    <aside class="ws-list" aria-label="Layers">
+      <div class="ws-list-head"><b>Layers</b><span id=sp-layer-count class="ws-count" style="margin-left:auto"></span></div>
+      <div id=sp-layers class="ws-cands" style="max-height:62vh"></div>
+    </aside>
+    <section class="ws-stage sp-stage-col" aria-label="Preview">
+      <div class="sp-stage" id=sp-stage><img id=sp-preview alt="The artwork as it will be at rest"><div id=sp-box class="sp-box" style="display:none"></div></div>
+      <div id=sp-pages class="ws-tools"></div>
+      <div id=sp-summary class="sp-summary"></div>
+    </section>
+    <aside class="ws-insp" id=sp-insp aria-label="Settings">
+      <div class="ws-tabs" role="tablist">
+        <button type=button class="ws-tab active" data-sptab=layer>This layer</button>
+        <button type=button class="ws-tab" data-sptab=animation>Animation</button>
+        <button type=button class="ws-tab" data-sptab=delivery>Music &amp; file</button>
+      </div>
+      <div class="ws-pane">
+        <div data-sppane=layer><div id=sp-layer-pane></div></div>
+        <div data-sppane=animation style="display:none">
+          <div class="sp-col" style="margin-top:0"><div>
     <label>Length:</label>
     <select id=sp-duration style="width:130px">
       <option value=10>10 seconds</option><option value=15 selected>15 seconds</option>
       <option value=20>20 seconds</option><option value=30>30 seconds</option>
     </select>
   </div>
+</div>
+          <div class="sp-col" style="margin-top:12px">
   <div>
+    <label>Animation style:</label>
+    <select id=sp-style style="width:100%"><option value=wipe_mix selected>Wipe reveal + grow, rotate left, rotate right (mixed)</option><option value=fade_shine>Fade in + light sweep</option><option value=wipe_shine>Wipe reveal + light sweep</option><option value=slide_float>Slide up + gentle float</option><option value=pop_pulse>Pop in + pulse one by one</option><option value=stop_motion>Stop motion wipe + wobble</option><option value=pop_dance>Pop in + dancing</option><option value=pop_grow>Pop in + grow and shrink</option><option value=fade_rotate_left>Fade in + rotate left</option><option value=fade_rotate_right>Fade in + rotate right</option><option value=fade_still>Fade in + hold still</option></select>
+  </div>
+  <div>
+    <label>Logo and schedule text:</label>
+    <select id=sp-text style="width:100%"><option value=hold selected>Appear, then hold still</option><option value=breathe>Appear, then breathe</option></select>
+  </div>
+</div>
+<details class="sp-help"><summary>How this works</summary><p class="sh-note" style="margin-top:6px">A layered file is animated in three groups. The <b>background</b> (bottom layer) is static. The <b>logo and schedule text</b> only appear, the way the style says (wipe, fade, slide, pop) &mdash; then hold still, or breathe if you choose it &mdash; so they stay readable. <b>Every other layer</b> (shapes, ornaments, pictures) is on screen from the first frame and moves in a loop from the first frame to the last, in the style&rsquo;s motion: <b>mixed</b> (layers take turns growing and shrinking, rotating left, rotating right), <b>light sweep</b>, <b>gentle float</b>, <b>pulse</b>, <b>wobble</b>, <b>dancing</b>, <b>grow and shrink</b>, <b>rotate left</b> or <b>right</b>. Logo and text layers are Photoshop text layers, groups that hold one, and layers with a word like <i>logo, schedule, text, title, time, date</i> or a day in their name &mdash; rename a layer to move it between groups; the result lists which layer went where. A flat picture has no separate layers: the whole picture arrives, and only the light sweep can run on it.</p></details>
+
+<label style="margin-top:12px">Extra direction (optional):</label>
+<input type=text id=sp-prompt class=input-box maxlength=600 placeholder="e.g. title pops in, wipe in reveal schedule from the left">
+<details class="sp-help"><summary>How this works</summary><p class="sh-note" style="margin-top:6px">Changes whatever it names on top of the style. What it can say: <b>wipe</b>, <b>slide</b>, <b>fade</b>, <b>pop</b> or <b>cut</b> each layer in, from a direction (&ldquo;from the left&rdquo;, &ldquo;bottom to top&rdquo;); <b>stop motion</b>; <b>fast</b> or <b>slow</b>; <b>light sweep</b>, <b>float</b>, <b>pulse</b>, <b>wobble</b>, <b>dance</b>, <b>grow and shrink</b>, <b>rotate left</b>, <b>rotate right</b>, <b>sway</b>, <b>mixed</b> or <b>hold still</b> for the moving layers. Name a layer to treat it differently, in how it appears or how it moves &mdash; this is also how to overrule the grouping for one layer (&ldquo;title pops in, stars dance, logo breathes, ribbon holds still, burst pops in&rdquo;).</p></details>
+
+
+        </div>
+        <div data-sppane=delivery style="display:none">
+          <div class="sp-col" style="margin-top:0">  <div>
     <label>Delivery format:</label>
     <select id=sp-format style="width:300px"><option value=mp4_high>MP4 (H.264 High Profile)</option></select>
   </div>
 </div>
-
-<label style="margin-top:12px">Music (optional):</label>
+          <label style="margin-top:12px">Music (optional):</label>
 <div class="browse-row">
   {% if allow_local_upload %}<input type=file id=sp-music name=schedule_music accept="audio/*" data-net-field="schedule_music" style="max-width:320px">{% endif %}
   <button type=button class="browse-btn" onclick="openNetworkBrowser('schedule_music','music','Music')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7z"/></svg>Browse library</button>
 </div>
 <input type=hidden id=schedule_music_network name=schedule_music_network value="">
 <span class="net-file-chip" id=schedule_music_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('schedule_music')">&#10005;</span></span>
-<div class="sh-row" style="margin-top:8px">
+<div class="sp-col" style="margin-top:8px">
   <div>
     <label for=sp-level>Audio level:</label>
-    <select id=sp-level style="width:360px" title="How loud the music is, overall (integrated loudness)"><option value="" selected>Config &gt; Production default</option></select>
+    <select id=sp-level style="width:100%" title="How loud the music is, overall (integrated loudness)"><option value="" selected>Config &gt; Production default</option></select>
   </div>
 </div>
-<p class="sh-note" style="margin-top:6px">Trimmed to the length with a fade out, looped if it is shorter, and levelled to the <b>Audio level</b> chosen here: it starts on the loudness target under Config &gt; Production. Without music the plug is silent, and the level has nothing to act on.</p>
+<details class="sp-help"><summary>How this works</summary><p class="sh-note" style="margin-top:6px">Trimmed to the length with a fade out, looped if it is shorter, and levelled to the <b>Audio level</b> chosen here: it starts on the loudness target under Config &gt; Production. Without music the plug is silent, and the level has nothing to act on.</p></details>
 
-<div class="sh-row" style="margin-top:12px">
-  <div>
-    <label>Animation style:</label>
-    <select id=sp-style style="width:400px"><option value=wipe_mix selected>Wipe reveal + grow, rotate left, rotate right (mixed)</option><option value=fade_shine>Fade in + light sweep</option><option value=wipe_shine>Wipe reveal + light sweep</option><option value=slide_float>Slide up + gentle float</option><option value=pop_pulse>Pop in + pulse one by one</option><option value=stop_motion>Stop motion wipe + wobble</option><option value=pop_dance>Pop in + dancing</option><option value=pop_grow>Pop in + grow and shrink</option><option value=fade_rotate_left>Fade in + rotate left</option><option value=fade_rotate_right>Fade in + rotate right</option><option value=fade_still>Fade in + hold still</option></select>
+
+        </div>
+      </div>
+    </aside>
   </div>
-  <div>
-    <label>Logo and schedule text:</label>
-    <select id=sp-text style="width:240px"><option value=hold selected>Appear, then hold still</option><option value=breathe>Appear, then breathe</option></select>
-  </div>
-</div>
-<p class="sh-note" style="margin-top:6px">A layered file is animated in three groups. The <b>background</b> (bottom layer) is static. The <b>logo and schedule text</b> only appear, the way the style says (wipe, fade, slide, pop) &mdash; then hold still, or breathe if you choose it &mdash; so they stay readable. <b>Every other layer</b> (shapes, ornaments, pictures) is on screen from the first frame and moves in a loop from the first frame to the last, in the style&rsquo;s motion: <b>mixed</b> (layers take turns growing and shrinking, rotating left, rotating right), <b>light sweep</b>, <b>gentle float</b>, <b>pulse</b>, <b>wobble</b>, <b>dancing</b>, <b>grow and shrink</b>, <b>rotate left</b> or <b>right</b>. Logo and text layers are Photoshop text layers, groups that hold one, and layers with a word like <i>logo, schedule, text, title, time, date</i> or a day in their name &mdash; rename a layer to move it between groups; the result lists which layer went where. A flat picture has no separate layers: the whole picture arrives, and only the light sweep can run on it.</p>
-
-<label style="margin-top:12px">Extra direction (optional):</label>
-<input type=text id=sp-prompt class=input-box maxlength=600 placeholder="e.g. title pops in, wipe in reveal schedule from the left">
-<p class="sh-note" style="margin-top:6px">Changes whatever it names on top of the style. What it can say: <b>wipe</b>, <b>slide</b>, <b>fade</b>, <b>pop</b> or <b>cut</b> each layer in, from a direction (&ldquo;from the left&rdquo;, &ldquo;bottom to top&rdquo;); <b>stop motion</b>; <b>fast</b> or <b>slow</b>; <b>light sweep</b>, <b>float</b>, <b>pulse</b>, <b>wobble</b>, <b>dance</b>, <b>grow and shrink</b>, <b>rotate left</b>, <b>rotate right</b>, <b>sway</b>, <b>mixed</b> or <b>hold still</b> for the moving layers. Name a layer to treat it differently, in how it appears or how it moves &mdash; this is also how to overrule the grouping for one layer (&ldquo;title pops in, stars dance, logo breathes, ribbon holds still, burst pops in&rdquo;).</p>
-
-<div class="promo-actions" style="margin-top:14px">
-  <button class="btn btn-primary-promo" type=button id=sp-go-btn onclick="scheduleRender()">Generate schedule plug</button>
-  <button class=btn type=button id=sp-cancel-btn style="display:none;color:var(--tally);border-color:var(--tally)" onclick="scheduleCancel()">Cancel</button>
-</div>
-
+  <div id=sp-note-w class=no-data style="display:none;margin-top:12px"></div>
 <div id=sp-progress class=no-data style="display:none;text-align:left;padding:20px 24px;margin-top:14px">
   <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;color:var(--ink)">
     <span id=sp-progress-step>Working&hellip;</span>
@@ -9831,8 +9911,18 @@ document.addEventListener('DOMContentLoaded', function(){
   <div id=sp-stage-list style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px"></div>
 </div>
 
-<div id=sp-note class=no-data style="margin-top:14px">Pick the artwork, a length and optionally a music bed, then choose <b>Generate schedule plug</b>. A 15-second plug takes well under a minute.</div>
+
+  <div class="ws-bar">
+    <div id=sp-bar-sum class="ws-trt"></div>
+    <span style="flex:1"></span>
+    <button class=btn type=button id=sp-cancel-btn style="display:none;color:var(--tally);border-color:var(--tally)" onclick="scheduleCancel()">Cancel</button>
+    <button class="btn btn-primary-promo" type=button id=sp-go-btn onclick="scheduleRender()">Generate schedule plug</button>
+  </div>
+</div>
+
+<div id=sp-screen-result style="display:none">
 <div id=sp-result style="display:none;margin-top:18px"></div>
+</div>
 </div>
 
 <div id="p-schedule-saved" class="sub-panel">
@@ -9843,7 +9933,9 @@ document.addEventListener('DOMContentLoaded', function(){
 
 <script>
 // ---- Schedule Plug ----
-var SP = {busy: false, jobId: null, options: null, destinations: null}
+var SP = {busy: false, jobId: null, options: null, destinations: null,
+          screen: 'art', info: null, token: null, name: '', ov: {background_upto: null, layers: {}},
+          sel: null, page: 0, readTok: 0, readTimer: null}
 function spEl(id){ return document.getElementById(id) }
 function spBytes(b){
   if(b >= 1024 * 1024 * 1024) return (b / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
@@ -9851,10 +9943,252 @@ function spBytes(b){
   return Math.max(1, Math.round(b / 1024)) + ' KB'
 }
 function spNote(html, isError){
-  var el = spEl('sp-note')
+  var el = spEl(SP.screen === 'work' ? 'sp-note-w' : 'sp-note')
   el.style.display = 'block'
   el.innerHTML = isError ? '<span style="color:var(--amber)">' + html + '</span>' : html
 }
+
+// ---- The artwork, read: layers, groups and pages, and what each will do ----
+var SP_ROLE_LABEL = {background: 'Background', content: 'Logo & text', decor: 'Moving', page: 'Page', hidden: 'Hidden',
+                     off: 'Left out', empty: 'No pixels', flat: 'Flat', picture: 'Picture'}
+
+function spScreen(name){
+  SP.screen = name
+  var ids = {art: 'sp-screen-art', work: 'sp-screen-work', result: 'sp-screen-result'}
+  Object.keys(ids).forEach(function(k){ spEl(ids[k]).style.display = k === name ? 'block' : 'none' })
+  spSteps()
+}
+
+function spSteps(){
+  var w = document.querySelector('#sp-steps .ws-step[data-step=work]'), r = document.querySelector('#sp-steps .ws-step[data-step=result]')
+  if(!w || !r) return
+  var res = spEl('sp-result'), has = !!(res && res.innerHTML.trim())
+  w.disabled = !SP.info; r.disabled = !has
+  Array.prototype.forEach.call(document.querySelectorAll('#sp-steps .ws-step'), function(b){
+    b.classList.toggle('active', b.getAttribute('data-step') === SP.screen)
+  })
+  spEl('sp-step-count').textContent = SP.info ? SP.info.layers.length + ' layers' : ''
+  spEl('sp-step-dot').style.display = has && SP.screen !== 'result' ? '' : 'none'
+}
+
+function spReading(on){
+  spEl('sp-read-btn').disabled = on
+  if(on) spNote('Reading the artwork&hellip; a large Photoshop file takes a few seconds.')
+}
+
+// A different file was picked: what was read, and what was changed, is dropped.
+function spArtworkChanged(){
+  SP.token = null; SP.info = null; SP.name = ''; SP.sel = null; SP.page = 0
+  SP.ov = {background_upto: null, layers: {}}
+  spSteps()
+  var img = spEl('sp-image'), net = spEl('schedule_image_network').value
+  if((img && img.files && img.files[0]) || net) spInspect()
+}
+
+async function spInspect(opts){
+  opts = opts || {}
+  var img = spEl('sp-image'), net = spEl('schedule_image_network').value
+  var f = img && img.files && img.files[0]
+  if(!SP.token && !f && !net){ spNote('Pick the schedule artwork first, using Browse library.', true); return }
+  var tok = ++SP.readTok
+  async function ask(useToken){
+    var fd = new FormData()
+    if(useToken){ fd.append('schedule_image_token', SP.token); fd.append('schedule_image_name', SP.name) }
+    else if(f) fd.append('schedule_image', f)
+    if(net) fd.append('schedule_image_network', net)
+    fd.append('layer_overrides', JSON.stringify(SP.ov))
+    try{ return await (await fetch('/api/schedule/inspect', {method: 'POST', body: fd})).json() }
+    catch(e){ return {error: 'Could not read the artwork: ' + e} }
+  }
+  if(!opts.keep) spReading(true)
+  var d = await ask(!!SP.token)
+  if(!d.ok && SP.token && (f || net)){ SP.token = null; d = await ask(false) }     // the kept copy is gone
+  if(tok !== SP.readTok) return
+  spEl('sp-read-btn').disabled = false
+  if(!d.ok){
+    SP.token = null
+    if(opts.keep){ spNote(escapeHtmlLite(d.error || 'Could not read the artwork.'), true) }
+    else { SP.info = null; spScreen('art'); spNote(escapeHtmlLite(d.error || 'Could not read the artwork.'), true) }
+    return
+  }
+  SP.info = d; SP.name = d.name || SP.name; if(d.token) SP.token = d.token
+  spEl('sp-note').style.display = 'none'; spEl('sp-note-w').style.display = 'none'
+  var ok = d.layers.some(function(l){ return l.index === SP.sel })
+  if(!ok) SP.sel = (d.layers.filter(function(l){ return l.role !== 'background' && l.role !== 'hidden' })[0] || d.layers[0] || {}).index
+  spRenderWork()
+  if(!opts.keep) spScreen('work')
+}
+
+function spInspectSoon(){
+  clearTimeout(SP.readTimer)
+  var st = spEl('sp-status'); if(st) st.style.opacity = '.5'
+  SP.readTimer = setTimeout(function(){ spInspect({keep: true}) }, 280)
+}
+
+function spLayer(idx){ return SP.info && SP.info.layers.filter(function(l){ return l.index === idx })[0] }
+
+function spRoleChip(l){
+  var label = SP_ROLE_LABEL[l.role] || l.role || ''
+  if(l.role === 'page' && l.page != null) label = 'Page ' + l.page
+  return '<span class="sp-role r-' + escapeHtmlLite(String(l.role)) + '">' + escapeHtmlLite(label) + '</span>'
+}
+
+function spRenderWork(){
+  var d = SP.info
+  if(!d) return
+  var st = spEl('sp-status'); st.style.opacity = ''
+  st.innerHTML = '<b>' + escapeHtmlLite(SP.name || 'Artwork') + '</b> &middot; ' + d.size[0] + '&times;' + d.size[1] + ' &middot; ' +
+    (d.layered ? d.layers.length + ' top-level layers and groups' : 'a flat image') +
+    (d.pages.length ? ' &middot; ' + d.pages.length + ' page' + (d.pages.length === 1 ? '' : 's') : '') +
+    '. Check what each one will do; change any that is wrong.'
+  spEl('sp-warnings').innerHTML = (d.notes || []).map(function(w){ return '<div class="sh-warn">' + escapeHtmlLite(w) + '</div>' }).join('')
+  spEl('sp-layer-count').textContent = d.layers.length + (d.layers.length === 1 ? ' layer' : ' layers')
+  var host = spEl('sp-layers'), keep = host.scrollTop
+  host.innerHTML = ''
+  d.layers.forEach(function(l){
+    var row = document.createElement('div')
+    row.className = 'sp-layer' + (l.index === SP.sel ? ' sel' : '') + (l.role === 'off' || l.role === 'hidden' || l.role === 'empty' ? ' dim' : '')
+    row.setAttribute('data-idx', l.index)
+    var sub = (l.kind === 'group' ? 'group &middot; ' + l.child_count + (l.child_count === 1 ? ' layer' : ' layers') : escapeHtmlLite(l.kind))
+    row.innerHTML = '<div class="sp-lthumb">' + (l.thumb ? '<img src="' + l.thumb + '" alt="" loading="lazy">' : '') + '</div>' +
+      '<div style="min-width:0"><div class="sp-lname" title="' + escapeHtmlLite(l.name) + '">' + escapeHtmlLite(l.name) + '</div>' +
+      '<div class="sp-lsub">' + spRoleChip(l) + '<span>' + sub + '</span>' +
+      (l.role === 'page' && l.rows != null ? '<span>' + l.rows + (l.rows === 1 ? ' piece' : ' rows') + '</span>' : '') + '</div></div>'
+    host.appendChild(row)
+  })
+  host.scrollTop = keep
+  spRenderStage(); spRenderLayerPane(); spSummary(); spSteps()
+}
+
+function spSummary(){
+  var d = SP.info, c = d.counts || {}
+  var bg = d.layers.filter(function(l){ return l.role === 'background' || l.role === 'picture' })
+  var chips = []
+  chips.push('<span class="sp-chip"><b>Background</b> ' + (bg.length ? escapeHtmlLite(bg[bg.length - 1].name) + (bg.length > 1 ? ' + ' + (bg.length - 1) + ' under it' : '') + ' &mdash; still' : 'none') + '</span>')
+  if(d.pages.length) chips.push('<span class="sp-chip"><b>' + d.pages.length + ' page' + (d.pages.length === 1 ? '' : 's') + '</b> ' +
+    d.pages.map(function(p){ return escapeHtmlLite(p.name) + ' (' + p.rows + ')' }).join(', ') + ' &mdash; in turn</span>')
+  chips.push('<span class="sp-chip"><b>' + (c.content || 0) + '</b> logo &amp; text &mdash; appear, then hold</span>')
+  chips.push('<span class="sp-chip"><b>' + (c.decor || 0) + '</b> moving</span>')
+  spEl('sp-summary').innerHTML = chips.join('')
+  spEl('sp-bar-sum').innerHTML = (c.pages ? c.pages + ' page' + (c.pages === 1 ? '' : 's') + ' &middot; ' : '') + (c.content || 0) + ' logo/text &middot; ' + (c.decor || 0) + ' moving'
+}
+
+function spRenderStage(){
+  var d = SP.info, l = spLayer(SP.sel)
+  if(l && l.role === 'page'){
+    var k = d.pages.map(function(p){ return p.name }).indexOf(l.name)
+    if(k >= 0) SP.page = k
+  }
+  if(SP.page >= d.previews.length) SP.page = 0
+  var pv = d.previews[SP.page]
+  spEl('sp-preview').src = pv ? pv.image : ''
+  var tabs = spEl('sp-pages')
+  tabs.innerHTML = d.previews.length > 1 ? d.previews.map(function(p, k){
+    return '<button type=button class="btn-sm' + (k === SP.page ? ' on' : '') + '" data-pg="' + k + '">' + escapeHtmlLite(p.label) + '</button>'
+  }).join('') : ''
+  var box = spEl('sp-box')
+  if(l && l.box && l.role !== 'background' && l.role !== 'picture'){
+    box.style.display = 'block'
+    box.style.left = (l.box[0] / 1920 * 100) + '%'; box.style.top = (l.box[1] / 1080 * 100) + '%'
+    box.style.width = (l.box[2] / 1920 * 100) + '%'; box.style.height = (l.box[3] / 1080 * 100) + '%'
+  }else box.style.display = 'none'
+}
+
+function spRoleChoice(l){
+  var ov = SP.ov
+  if(ov.background_upto === l.index) return 'background'
+  if(ov.layers[l.index]) return ov.layers[l.index].role
+  return 'auto'
+}
+
+function spRenderLayerPane(){
+  var host = spEl('sp-layer-pane'), l = spLayer(SP.sel), d = SP.info
+  if(!l){ host.innerHTML = '<div class="ws-empty">Select a layer to see what it does.</div>'; return }
+  var flat = l.role === 'picture' || l.role === 'flat'
+  var under = SP.ov.background_upto != null && l.index < SP.ov.background_upto && SP.ov.background_upto !== l.index
+  var choice = spRoleChoice(l)
+  var auto = SP_ROLE_LABEL[l.role] || l.role
+  var opts = [['auto', 'As detected (' + (l.role === 'page' ? 'Page ' + l.page : auto) + ')'],
+              ['background', 'Background (this and everything below it)'],
+              ['content', 'Logo or schedule text (appears, then holds)'],
+              ['decor', 'Moving decoration'],
+              ['page', 'A schedule page (plays in turn)'],
+              ['off', 'Leave it out']]
+  host.innerHTML =
+    '<div class="sp-lp-head"><div class="sp-lthumb">' + (l.thumb ? '<img src="' + l.thumb + '" alt="">' : '') + '</div>' +
+      '<div style="min-width:0"><b style="overflow-wrap:anywhere">' + escapeHtmlLite(l.name) + '</b>' +
+      '<div class="sp-lsub">' + spRoleChip(l) + '<span>' + (l.kind === 'group' ? 'group' : escapeHtmlLite(l.kind)) + (l.visible ? '' : ' &middot; hidden in the file') + '</span></div></div></div>' +
+    '<div class="sh-note">' + escapeHtmlLite(l.why || '') + '</div>' +
+    (flat ? '<div class="sh-note">There is nothing to sort: this is animated as one picture.</div>' :
+      '<label style="margin-top:12px">What should it do?</label>' +
+      '<select id=sp-role' + (under ? ' disabled' : '') + '>' + opts.map(function(o){
+        return '<option value="' + o[0] + '"' + (o[0] === choice ? ' selected' : '') + '>' + escapeHtmlLite(o[1]) + '</option>' }).join('') + '</select>' +
+      (under ? '<div class="sh-note">It is under the background you chose, so it is part of it. Choose the background again to change that.</div>' : '') +
+      (choice === 'page' || (choice === 'auto' && l.role === 'page') ?
+        '<label style="margin-top:10px">Page number</label><input type=number id=sp-pagenum min=1 max=99 style="width:90px" value="' +
+        (SP.ov.layers[l.index] && SP.ov.layers[l.index].page || l.page || 1) + '"><div class="sh-note">Pages play in the order of their numbers, one after another over the same background.</div>' : '')) +
+    (l.children && l.children.length ?
+      '<div class="ws-tl-label" style="margin-top:12px">Inside this group (' + l.child_count + ')</div><ul class="sp-kids">' +
+      l.children.map(function(c){ return '<li' + (c.visible ? '' : ' class="off"') + '><span style="overflow-wrap:anywhere">' + escapeHtmlLite(c.name) + '</span><span style="opacity:.6">' + escapeHtmlLite(c.kind) + '</span></li>' }).join('') + '</ul>' : '')
+}
+
+function spSetRole(idx, val, page){
+  var ov = SP.ov
+  if(ov.background_upto === idx && val !== 'background') ov.background_upto = null
+  delete ov.layers[idx]
+  if(val === 'background') ov.background_upto = idx
+  else if(val !== 'auto'){
+    ov.layers[idx] = val === 'page' ? {role: 'page', page: page || ((SP.info.pages || []).length + 1)} : {role: val}
+  }
+  spInspectSoon()
+}
+
+;(function(){
+  var layers = spEl('sp-layers'), insp = spEl('sp-insp'), pages = spEl('sp-pages')
+  if(layers) layers.addEventListener('click', function(e){
+    var r = e.target.closest('.sp-layer'); if(!r) return
+    SP.sel = parseInt(r.getAttribute('data-idx'), 10)
+    Array.prototype.forEach.call(layers.querySelectorAll('.sp-layer'), function(x){ x.classList.toggle('sel', x === r) })
+    spRenderStage(); spRenderLayerPane()
+  })
+  if(pages) pages.addEventListener('click', function(e){
+    var b = e.target.closest('[data-pg]'); if(!b) return
+    SP.page = parseInt(b.getAttribute('data-pg'), 10); spRenderStage()
+  })
+  if(insp){
+    insp.addEventListener('click', function(e){
+      var t = e.target.closest('[data-sptab]'); if(!t) return
+      var name = t.getAttribute('data-sptab')
+      Array.prototype.forEach.call(insp.querySelectorAll('[data-sptab]'), function(b){ b.classList.toggle('active', b === t) })
+      Array.prototype.forEach.call(insp.querySelectorAll('[data-sppane]'), function(p){ p.style.display = p.getAttribute('data-sppane') === name ? '' : 'none' })
+    })
+    insp.addEventListener('change', function(e){
+      if(e.target.id === 'sp-role' && SP.sel != null){
+        var v = e.target.value
+        var cur = SP.ov.layers[SP.sel]
+        spSetRole(SP.sel, v, v === 'page' ? ((cur && cur.page) || (spLayer(SP.sel) || {}).page || null) : null)
+        spRenderLayerPane()
+      }else if(e.target.id === 'sp-pagenum' && SP.sel != null){
+        var n = Math.max(1, Math.min(99, parseInt(e.target.value, 10) || 1))
+        spSetRole(SP.sel, 'page', n)
+      }
+    })
+  }
+  var img = spEl('sp-image')
+  if(img) img.addEventListener('change', function(){ if(img.files && img.files[0]) spArtworkChanged() })
+  // A file chosen from the network library fills a hidden field and a chip,
+  // with no event of its own: the chip is watched.
+  var chip = spEl('schedule_image_chip')
+  if(chip && window.MutationObserver){
+    var last = ''
+    new MutationObserver(function(){
+      var name = (chip.querySelector('.chip-name') || {}).textContent || ''
+      var shown = chip.style.display !== 'none' && name
+      if(shown && name !== last){ last = name; spArtworkChanged() }
+      if(!shown) last = ''
+    }).observe(chip, {attributes: true, childList: true, subtree: true, characterData: true})
+  }
+})()
 
 async function scheduleOnTabOpen(){
   if(SP.options) return
@@ -9920,7 +10254,7 @@ function spBusy(on, label){
   spEl('sp-cancel-btn').style.display = on ? 'inline-block' : 'none'
   spEl('sp-cancel-btn').disabled = false
   spEl('sp-progress').style.display = on ? 'block' : 'none'
-  if(on){ spProgress({percent: 0, step: label || 'Starting...', stages: []}); spEl('sp-note').style.display = 'none' }
+  if(on){ spProgress({percent: 0, step: label || 'Starting...', stages: []}); spEl('sp-note').style.display = 'none'; spEl('sp-note-w').style.display = 'none' }
 }
 
 function spPoll(jobId){
@@ -9953,11 +10287,16 @@ async function scheduleCancel(){
 
 async function scheduleRender(){
   if(SP.busy) return
+  if(!SP.info){ spNote('Pick the schedule artwork and read it first.', true); return }
   var img = spEl('sp-image'), imgNet = spEl('schedule_image_network').value
   var hasLocalImg = img && img.files && img.files[0]
-  if(!hasLocalImg && !imgNet){ spNote('Pick the schedule artwork first, using Browse library.', true); return }
   var fd = new FormData()
-  if(hasLocalImg) fd.append('schedule_image', img.files[0]); else fd.append('schedule_image_network', imgNet)
+  // The copy the reading left on the server is used when there is one: a PSD
+  // is not sent a second time. The file itself goes only if that copy is gone.
+  if(SP.token){ fd.append('schedule_image_token', SP.token); fd.append('schedule_image_name', SP.name) }
+  else if(hasLocalImg) fd.append('schedule_image', img.files[0])
+  if(imgNet) fd.append('schedule_image_network', imgNet)
+  fd.append('layer_overrides', JSON.stringify(SP.ov))
   var mus = spEl('sp-music'), musNet = spEl('schedule_music_network').value
   if(mus && mus.files && mus.files[0]) fd.append('schedule_music', mus.files[0])
   else if(musNet) fd.append('schedule_music_network', musNet)
@@ -9973,7 +10312,7 @@ async function scheduleRender(){
   var start
   try{ start = await (await fetch('/api/schedule/render', {method: 'POST', body: fd})).json() }
   catch(err){ spBusy(false); spNote('Could not start: ' + escapeHtmlLite(String(err)), true); return }
-  if(start.error){ spBusy(false); spNote(escapeHtmlLite(start.error), true); return }
+  if(start.error){ spBusy(false); SP.token = null; spNote(escapeHtmlLite(start.error), true); return }
   SP.jobId = start.job_id
   var res = await spPoll(start.job_id)
   SP.jobId = null
@@ -9983,7 +10322,7 @@ async function scheduleRender(){
   host.innerHTML = ''
   host.appendChild(spCard(res.plug, true))
   host.style.display = 'block'
-  host.scrollIntoView({behavior: 'smooth', block: 'nearest'})
+  spScreen('result')
 }
 
 function spCard(p, fresh){
@@ -10809,6 +11148,9 @@ POST /api/shorts/analyze now also needs project_id</pre>
     <div class="docs-pane" id="docs-schedule">
       <h3 style="margin-top:0">Schedule Plug</h3>
       <p>Turns one schedule still into an animated 16:9 plug of 10, 15, 20 or 30 seconds with a music bed, in any of the delivery formats the promo generator offers.</p>
+      <h3>The workspace</h3>
+      <p>The page works in three steps: <strong>1 Artwork</strong>, <strong>2 Layers &amp; animation</strong> and <strong>3 Result</strong>. The artwork is read as soon as it is picked (from Browse library, or from this computer where that is allowed) and the layers step opens: every top-level layer and group of the PSD, top of the stack first, as Photoshop lists them, each with a thumbnail, its kind, and the part it will play &mdash; <em>Background</em> (the bottom layer, and anything that covers the whole picture over it: still), <em>Page n</em> (a group named as a page, with how many rows it breaks into), <em>Logo &amp; text</em> (a text layer, or one named like a logo or the schedule: appears, then holds or breathes), <em>Moving</em> (everything else), or <em>Hidden</em> / <em>Left out</em>. A layer that was switched off in the file is listed and left out. The picture in the middle shows the artwork as it will rest, one tab per page, with the selected layer outlined; the line under it counts what is background, pages, logo and text, and moving layers.</p>
+      <p>Select a layer and <strong>What should it do?</strong> lets you correct it: make it the <strong>Background</strong> (it and everything below it become the still backdrop), <strong>Logo or schedule text</strong>, <strong>Moving decoration</strong>, <strong>a schedule page</strong> (with its page number), or <strong>leave it out</strong>; <em>As detected</em> goes back. The list is read again after each change, so the counts and the page tabs show what will be drawn. A group shows the layers inside it. The <strong>Animation</strong> tab holds the length, style, how logo and text behave and the extra direction; <strong>Music &amp; file</strong> the delivery format, the music and its level. <strong>Generate schedule plug</strong> in the bar below draws it with your corrections, and the plug opens in step 3. A Photoshop file that has to be animated as one flat picture (blend modes, effects) shows as one layer with the reason above the list.</p>
       <h3>Why it is drawn, not generated</h3>
       <p>A schedule is text: titles, dates, times. A video model repaints every pixel of every frame, so that text would come back warped. Here each layer's own pixels are moved, faded or uncovered, so the logo and the text come to rest exactly as designed.</p>
       <h3>Artwork</h3>

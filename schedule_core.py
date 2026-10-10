@@ -27,6 +27,7 @@ frame is the artwork exactly.
      clip, and Animator.frame() draws any moment of it.
   4. encode() pipes the frames to ffmpeg with the music.
 """
+import base64
 import copy
 import json
 import math
@@ -277,7 +278,7 @@ def _read_layer(layer, doc, canvas, in_page=False):
         # also applies the layer's own mask, which topil() does not.
         if layer.is_group() or layer.has_mask():
             if in_page:
-                img = layer.composite(viewport=(0, 0, doc[0], doc[1]), layer_filter=lambda ly: ly.visible)
+                img = layer.composite(viewport=(0, 0, doc[0], doc[1]), layer_filter=lambda ly: ly.visible or ly is layer)
                 left, top = 0, 0
             else:
                 img = layer.composite()
@@ -341,7 +342,128 @@ def _page_rows(parts, name, canvas):
             for k, (_, _, group) in enumerate(rows, 1)]
 
 
-def _load_psd(path, canvas):
+OVERRIDE_ROLES = ('content', 'decor', 'off', 'page')
+
+
+def clean_overrides(raw):
+    """What the editor changed in the layer list, made safe: {'background_upto':
+    int or None, 'layers': {top-level index (bottom first): {'role', 'page'}}}.
+    Anything that is not recognised is dropped rather than guessed at."""
+    out = {'background_upto': None, 'layers': {}}
+    if not isinstance(raw, dict):
+        return out
+    try:
+        if raw.get('background_upto') is not None:
+            out['background_upto'] = max(0, min(int(raw['background_upto']), 999))
+    except (TypeError, ValueError):
+        pass
+    layers = raw.get('layers')
+    for key, val in (layers.items() if isinstance(layers, dict) else []):
+        try:
+            idx = int(key)
+        except (TypeError, ValueError):
+            continue
+        role = val.get('role') if isinstance(val, dict) else None
+        if not (0 <= idx < 1000) or role not in OVERRIDE_ROLES:
+            continue
+        item = {'role': role}
+        if role == 'page':
+            try:
+                item['page'] = max(1, min(int(val.get('page') or 1), 99))
+            except (TypeError, ValueError):
+                item['page'] = 1
+        out['layers'][idx] = item
+    return out
+
+
+def _data_uri(img_bgr, width, quality=80):
+    h, w = img_bgr.shape[:2]
+    small = cv2.resize(img_bgr, (width, max(1, int(round(h * width / float(w))))), interpolation=cv2.INTER_AREA)
+    ok, buf = cv2.imencode('.jpg', small, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    return 'data:image/jpeg;base64,' + base64.b64encode(buf.tobytes()).decode('ascii') if ok else None
+
+
+def _layer_thumb(parts, canvas):
+    """A layer (or a page's rows) where it sits on the canvas, on grey so a
+    dark layer shows too: (data URI, [x, y, w, h] on the canvas)."""
+    parts = [ly for ly in parts if ly and 'px' in ly]
+    if not parts:
+        return None, None
+    out = np.full((canvas[1], canvas[0], 3), (78, 74, 70), np.uint8)
+    for ly in parts:
+        paste(out, ly['px'], ly['x'], ly['y'])
+    x0 = min(ly['x'] for ly in parts)
+    y0 = min(ly['y'] for ly in parts)
+    x1 = max(ly['x'] + ly['px'].shape[1] for ly in parts)
+    y1 = max(ly['y'] + ly['px'].shape[0] for ly in parts)
+    box = [int(x0), int(y0), int(x1 - x0), int(y1 - y0)]
+    # Cropped to the layer: a logo or a row of times is what the person is
+    # looking for, not the empty canvas around it. Where it sits is the
+    # preview's job.
+    pad = 6
+    cx0, cy0 = max(0, x0 - pad), max(0, y0 - pad)
+    cx1, cy1 = min(canvas[0], x1 + pad), min(canvas[1], y1 + pad)
+    crop = out[cy0:cy1, cx0:cx1]
+    h, w = crop.shape[:2]
+    k = min(224.0 / w, 126.0 / h, 2.0)
+    return _data_uri(crop, max(8, int(w * k))), box
+
+
+def _report_entry(idx, layer):
+    kids = []
+    try:
+        if layer.is_group():
+            kids = [{'name': str(c.name or '').strip() or 'Layer', 'kind': str(c.kind), 'visible': bool(c.visible)}
+                    for c in list(layer)[::-1][:24]]
+    except Exception:
+        kids = []
+    return {'index': idx, 'name': str(layer.name or 'Layer').strip(), 'kind': str(layer.kind),
+            'visible': bool(layer.visible), 'text': _is_text(layer), 'children': kids,
+            'child_count': (len(list(layer)) if kids else 0), 'role': None, 'why': '', 'page': None,
+            'rows': None, 'thumb': None, 'box': None}
+
+
+def _user_backdrop(layers, upto, canvas, notes):
+    """The editor chose the background: that layer and every plain layer
+    below it become one still backdrop."""
+    parts = [ly for ly in layers if 'page_slot' not in ly and ly.get('_idx', 10 ** 9) <= upto]
+    if not parts:
+        return layers
+    if len(parts) == 1 and layers[0] is parts[0]:
+        return layers
+    base = np.zeros((canvas[1], canvas[0], 4), np.uint8)
+    for ly in parts:
+        paste(base, ly['px'], ly['x'], ly['y'])
+    cut = _crop_to_content(base)
+    if cut is None:
+        return layers
+    px, x, y = cut
+    merged = {'px': px, 'x': x, 'y': y, 'name': parts[-1]['name'] if len(parts) == 1 else parts[0]['name']}
+    taken = {id(ly) for ly in parts}
+    return [merged] + [ly for ly in layers if id(ly) not in taken]
+
+
+READ_CACHE_BYTES = 400 * 1024 * 1024
+_READ_CACHE = {'key': None, 'items': {}, 'bytes': 0}
+
+
+def _cached_read(key, fn):
+    """A layer is the same pixels whatever the editor decides it is for, so
+    a file being re-read after each correction does not draw every layer
+    again. One file is kept at a time. The result is copied: callers set
+    roles and positions on it."""
+    got = _READ_CACHE['items'].get(key)
+    if got is None:
+        got = fn()
+        size = int(got[0]['px'].nbytes) if got[0] else 0
+        if _READ_CACHE.get('bytes', 0) + size <= READ_CACHE_BYTES:      # past that, redrawn each time rather than kept
+            _READ_CACHE['items'][key] = got
+            _READ_CACHE['bytes'] = _READ_CACHE.get('bytes', 0) + size
+    layer, ok = got
+    return (dict(layer) if layer else layer), ok
+
+
+def _load_psd(path, canvas, overrides=None, report=None):
     try:
         from psd_tools import PSDImage
     except ImportError as e:
@@ -354,18 +476,41 @@ def _load_psd(path, canvas):
     doc = (int(psd.width), int(psd.height))
     if doc[0] < 16 or doc[1] < 16:
         raise ArtworkError('This Photoshop file has no usable canvas.')
+    try:
+        stamp = (os.path.abspath(path), os.stat(path).st_mtime_ns, os.path.getsize(path), tuple(canvas))
+    except OSError:
+        stamp = None
+    if _READ_CACHE['key'] != stamp:
+        _READ_CACHE['key'], _READ_CACHE['items'], _READ_CACHE['bytes'] = stamp, {}, 0
+    read = (lambda key, *a, **k: _cached_read(key, lambda: _read_layer(*a, **k))) if stamp else \
+           (lambda key, *a, **k: _read_layer(*a, **k))
 
     # `layers` holds the shared layers and, where a page group sat in the
     # stack, a marker for it ({'page_slot': k}) to be replaced by its rows.
+    ov_layers = (overrides or {}).get('layers') or {}
+    bg_upto = (overrides or {}).get('background_upto')
     notes, layers, plain, found = [], [], True, []
-    for layer in psd:                                   # bottom first
+    for idx, layer in enumerate(psd):                   # bottom first
+        ov = ov_layers.get(idx) or {}
+        orole = ov.get('role')
+        entry = _report_entry(idx, layer) if report is not None else None
+        if entry is not None:
+            report.append(entry)
+        if orole == 'off':
+            if entry:
+                entry.update(role='off', why='Left out by you.')
+            continue
         number = page_number(layer.name)
+        if orole == 'page':
+            number = int(ov.get('page') or number or 1)
+        elif orole in ('content', 'decor'):
+            number = None
         if number is not None:
             parts, page_plain = [], True
-            for child in (layer if layer.is_group() else [layer]):
+            for ci, child in enumerate(layer if layer.is_group() else [layer]):
                 if child is not layer and not child.visible:
                     continue
-                got, ok = _read_layer(child, doc, canvas, in_page=True)
+                got, ok = read((idx, 'child', ci), child, doc, canvas, in_page=True)
                 page_plain = page_plain and ok
                 if got:
                     parts.append(got)
@@ -378,17 +523,35 @@ def _load_psd(path, canvas):
                     got['px'] = (got['px'].astype(np.uint16) * int(layer.opacity) // 255).astype(np.uint8)
             name = str(layer.name or f'Page {number}').strip()
             rows = _page_rows(parts, name, canvas)
+            if entry is not None:
+                entry.update(role='page', page=number, rows=len(rows) or 0,
+                             why=('Set as a page by you.' if orole == 'page' else 'Named as a page.')
+                                 + ('' if layer.visible else ' Hidden in the file, still played.'))
+                entry['thumb'], entry['box'] = _layer_thumb(parts, canvas)
+                if not rows:
+                    entry.update(role='empty', why='Nothing on this page has pixels to read.')
             if rows:
                 layers.append({'page_slot': len(found)})
                 found.append({'number': number, 'name': name, 'rows': rows, 'shown': bool(layer.visible),
                               'plain': page_plain})
             continue
-        if not layer.visible:
+        if not layer.visible and orole not in ('content', 'decor'):
+            if entry:
+                entry.update(role='hidden', why='Switched off in the file, so it is left out.')
             continue
-        got, ok = _read_layer(layer, doc, canvas)
+        got, ok = read((idx, 'top', not layer.visible), layer, doc, canvas, in_page=not layer.visible)
         plain = plain and ok
         if got:
+            got['_idx'] = idx
+            if orole in ('content', 'decor'):
+                got['role'] = orole
+                got['forced'] = True
             layers.append(got)
+            if entry is not None:
+                entry['ref'] = got
+                entry['thumb'], entry['box'] = _layer_thumb([got], canvas)
+        elif entry:
+            entry.update(role='empty', why='Nothing in it has pixels to read.')
 
     # Pages play in the order of their numbers, wherever they sit in the stack.
     order = sorted(range(len(found)), key=lambda k: (found[k]['number'], -k))
@@ -418,6 +581,12 @@ def _load_psd(path, canvas):
     flat_reason = None
     if not layers:
         flat_reason = 'no visible layer in it has pixels PRISM can read'
+    elif reference is not None and ov_layers:
+        # The editor has switched layers on or off, so the file's own
+        # picture no longer says what the result should look like.
+        if not plain:
+            notes.append('Some layers use blend modes, effects or clipping, which are not reproduced when a layer '
+                         'is animated on its own; check the result against the artwork.')
     elif reference is not None:
         # The file's own flattened picture shows what was visible when it was
         # saved: the shared layers and whichever pages were switched on.
@@ -429,13 +598,17 @@ def _load_psd(path, canvas):
         if diff > 2.5:
             flat_reason = ('its layers use blend modes, effects, masks or adjustment layers that cannot be '
                            'animated one at a time without changing how the artwork looks')
-    elif not plain:
+    elif not plain and not ov_layers:
         flat_reason = ('its layers use blend modes or effects and the file was saved without a flattened '
                        'preview to check the result against')
     if flat_reason:
         if reference is None:
             raise ArtworkError(f'This Photoshop file cannot be used as it is: {flat_reason}. Save it with '
                                '"Maximize Compatibility" on, or export a PNG.')
+        for e in (report or []):
+            if e['role'] in (None, 'page') or e.get('ref'):
+                e.update(role='flat', why='The file is animated as one flat picture.')
+            e.pop('ref', None)
         notes.append(f'This Photoshop file was animated as one flat picture, because {flat_reason}. '
                      'For layer-by-layer animation, rasterise or merge those layers so each top-level layer '
                      'is plain pixels in Normal mode.'
@@ -448,7 +621,10 @@ def _load_psd(path, canvas):
                      'were hidden when the file was saved, so they could not be checked against the file\'s own '
                      'picture and may look different here. Rasterise or merge those layers to be sure.')
 
-    layers = _merge_backdrop(layers, doc, canvas, notes)
+    if bg_upto is not None:
+        layers = _user_backdrop(layers, int(bg_upto), canvas, notes)
+    else:
+        layers = _merge_backdrop(layers, doc, canvas, notes)
     shared = [k for k, ly in enumerate(layers) if 'page_slot' not in ly]
     if len(shared) > MAX_LAYERS:
         # The lowest layers are the backdrop; merging them costs the least.
@@ -471,10 +647,36 @@ def _load_psd(path, canvas):
     if pages and (not layers or 'page_slot' in layers[0]):
         raise ArtworkError('The pages in this file have nothing under them. Put the background on a layer of its '
                            'own below the Page groups: it is what stays on screen while the pages change.')
+    if report is not None:
+        _resolve_report(report, layers, bg_upto is not None)
     return with_pages(layers), doc, notes, pages
 
 
-def load_artwork(path, canvas=CANVAS):
+def _resolve_report(report, layers, chosen):
+    """Says, for each top-level layer, what the animation will do with it."""
+    shared = [ly for ly in layers if 'page_slot' not in ly]
+    alive = {id(ly) for ly in shared}
+    for e in report:
+        ref = e.pop('ref', None)
+        if e['role'] is not None or ref is None:
+            continue
+        if id(ref) not in alive:
+            e.update(role='background', why='Part of the background: it covers the picture, or sits under the '
+                                           'background layer you chose.' if chosen else
+                                           'Part of the background: it covers the whole picture, or the file '
+                                           'has too many layers and the lowest are merged.')
+        elif shared and ref is shared[0]:
+            e.update(role='background', why='The bottom layer: it stays still.' if not chosen
+                     else 'Set as the background by you.')
+        elif ref.get('forced'):
+            e.update(role=ref['role'], why='Set by you.')
+        else:
+            role = ref.get('role') or 'decor'
+            e.update(role=role, why=('A text layer.' if e['text'] else 'Its name looks like a logo or the schedule.')
+                     if role == 'content' else 'No text or logo found in it, so it keeps moving.')
+
+
+def load_artwork(path, canvas=CANVAS, overrides=None, with_report=False):
     """Reads `path` into {'layers': [...], 'size': (w, h) of the source,
     'layered': bool, 'notes': [str]}.
 
@@ -490,10 +692,16 @@ def load_artwork(path, canvas=CANVAS):
     usually where the times are), on black."""
     ext = os.path.splitext(path)[1].lower().lstrip('.')
     notes, pages = [], []
+    rep_list = [] if with_report else None
     if ext in ('psd', 'psb'):
-        layers, size, notes, pages = _load_psd(path, canvas)
+        layers, size, notes, pages = _load_psd(path, canvas, overrides=overrides, report=rep_list)
     else:
         layers, size = _load_flat(path, canvas)
+        if with_report:
+            thumb, box = _layer_thumb(layers, canvas)
+            rep_list.append({'index': 0, 'name': 'Image', 'kind': 'image', 'visible': True, 'text': False,
+                             'children': [], 'child_count': 0, 'role': 'picture', 'page': None, 'rows': None,
+                             'why': 'A flat image: it is animated as one picture.', 'thumb': thumb, 'box': box})
     if abs(size[0] / float(size[1]) - canvas[0] / float(canvas[1])) > 0.02:
         notes.append(f'The artwork is {size[0]}x{size[1]}, not 16:9, so it is shown whole with black at the '
                      'sides or top and bottom.')
@@ -503,8 +711,38 @@ def load_artwork(path, canvas=CANVAS):
     for i, ly in enumerate(layers):
         ly['role'] = 'picture' if len(layers) == 1 else ('background' if i == 0 else ly.get('role') or 'decor')
         ly.setdefault('page', None)
-    return {'layers': layers, 'size': size, 'layered': len(layers) > 1, 'notes': notes,
-            'pages': [{'name': pg['name'], 'rows': pg['rows']} for pg in pages]}
+    art = {'layers': layers, 'size': size, 'layered': len(layers) > 1, 'notes': notes,
+           'pages': [{'name': pg['name'], 'rows': pg['rows']} for pg in pages]}
+    if with_report:
+        art['report'] = rep_list[::-1]                  # top of the stack first, as Photoshop lists them
+        art['page_info'] = pages
+    return art
+
+
+def inspect_artwork(path, canvas=CANVAS, overrides=None):
+    """What load_artwork() makes of a file, laid out for a person to check:
+    every top-level layer or group with the part it will play (background,
+    logo or text, page, moving decoration, or left out) and why, and a
+    picture of each page as it will look."""
+    overrides = clean_overrides(overrides) if overrides else None
+    art = load_artwork(path, canvas, overrides=overrides, with_report=True)
+    layers = art['layers']
+    pages = art.get('page_info') or []
+    previews = []
+    if len(pages) > 1 or (pages and art['layered']):
+        for k in range(len(pages)):
+            shown = [ly for ly in layers if ly.get('page') in (None, k)]
+            previews.append({'label': pages[k]['name'], 'image': _data_uri(_flatten(shown, canvas), 640)})
+    else:
+        previews.append({'label': 'The artwork', 'image': _data_uri(_flatten(layers, canvas), 640)})
+    roles = [e['role'] for e in art['report']]
+    bg = [e['index'] for e in art['report'] if e['role'] == 'background']
+    return {'size': list(art['size']), 'layered': art['layered'], 'notes': art['notes'],
+            'layers': art['report'], 'previews': previews,
+            'pages': [{'name': pg['name'], 'rows': pg['rows'], 'shown': pg['shown']} for pg in pages],
+            'counts': {'content': roles.count('content'), 'decor': roles.count('decor'),
+                       'pages': len(pages), 'background': roles.count('background') + roles.count('picture')},
+            'background_index': max(bg) if bg else None}
 
 
 # --------------------------------------------------------------------------
