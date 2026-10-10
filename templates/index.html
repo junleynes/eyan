@@ -902,6 +902,9 @@ input.sh-num[type=number]{width:92px}
 .sp-help>summary{cursor:pointer;font-size:11px;opacity:.7}
 .sp-lp-head{display:flex;gap:10px;align-items:center}
 .sp-lp-head .sp-lthumb{width:96px;height:54px}
+.sp-anim{color:var(--accent,#4f8cff);font-weight:600}
+.sp-gicon{display:flex;height:100%;align-items:center;justify-content:center;color:#fff;font-size:18px}
+.sp-split{margin:10px 0 0}
 .sp-kids{margin:8px 0 0;padding:0;list-style:none;font-size:12px;max-height:180px;overflow:auto;border:1px solid var(--line);border-radius:8px}
 .sp-kids li{display:flex;justify-content:space-between;gap:8px;padding:4px 8px;border-bottom:1px solid var(--line)}
 .sp-kids li:last-child{border-bottom:0}
@@ -9934,7 +9937,7 @@ document.addEventListener('DOMContentLoaded', function(){
 <script>
 // ---- Schedule Plug ----
 var SP = {busy: false, jobId: null, options: null, destinations: null,
-          screen: 'art', info: null, token: null, name: '', ov: {background_upto: null, layers: {}},
+          screen: 'art', info: null, token: null, name: '', ov: {background_upto: null, expand: [], layers: {}},
           sel: null, page: 0, readTok: 0, readTimer: null}
 function spEl(id){ return document.getElementById(id) }
 function spBytes(b){
@@ -9950,7 +9953,20 @@ function spNote(html, isError){
 
 // ---- The artwork, read: layers, groups and pages, and what each will do ----
 var SP_ROLE_LABEL = {background: 'Background', content: 'Logo & text', decor: 'Moving', page: 'Page', hidden: 'Hidden',
-                     off: 'Left out', empty: 'No pixels', flat: 'Flat', picture: 'Picture'}
+                     off: 'Left out', empty: 'No pixels', flat: 'Flat', picture: 'Picture', group: 'Group'}
+var SP_EFFECTS = [['', 'As the style'], ['wipe', 'Wipe'], ['slide', 'Slide'], ['fade', 'Fade'], ['pop', 'Pop'], ['cut', 'Appear at once']]
+var SP_DIRS = [['right', 'from the left'], ['left', 'from the right'], ['down', 'from the top'], ['up', 'from the bottom']]
+var SP_MOTIONS = [['', 'As the style'], ['none', 'Hold still'], ['shine', 'Light sweep'], ['float', 'Gentle float'],
+                  ['pulse', 'Pulse'], ['wobble', 'Wobble'], ['shake', 'Shake'], ['grow', 'Grow and shrink'],
+                  ['rotate_left', 'Rotate left'], ['rotate_right', 'Rotate right'], ['sway', 'Sway left and right'],
+                  ['dance', 'Dance'], ['breathe', 'Breathe']]
+function spMotionLabel(v){ var m = SP_MOTIONS.filter(function(x){ return x[0] === v })[0]; return m ? m[1] : v }
+function spArriveLabel(a){
+  if(!a) return ''
+  var e = SP_EFFECTS.filter(function(x){ return x[0] === a.effect })[0]
+  var d = SP_DIRS.filter(function(x){ return x[0] === a.direction })[0]
+  return (e ? e[1] : a.effect) + ((a.effect === 'wipe' || a.effect === 'slide') && d ? ' ' + d[1] : '')
+}
 
 function spScreen(name){
   SP.screen = name
@@ -9967,7 +9983,7 @@ function spSteps(){
   Array.prototype.forEach.call(document.querySelectorAll('#sp-steps .ws-step'), function(b){
     b.classList.toggle('active', b.getAttribute('data-step') === SP.screen)
   })
-  spEl('sp-step-count').textContent = SP.info ? SP.info.layers.length + ' layers' : ''
+  spEl('sp-step-count').textContent = SP.info ? SP.info.layers.filter(function(l){ return l.role !== 'group' }).length + ' layers' : ''
   spEl('sp-step-dot').style.display = has && SP.screen !== 'result' ? '' : 'none'
 }
 
@@ -9979,7 +9995,7 @@ function spReading(on){
 // A different file was picked: what was read, and what was changed, is dropped.
 function spArtworkChanged(){
   SP.token = null; SP.info = null; SP.name = ''; SP.sel = null; SP.page = 0
-  SP.ov = {background_upto: null, layers: {}}
+  SP.ov = {background_upto: null, expand: [], layers: {}}
   spSteps()
   var img = spEl('sp-image'), net = spEl('schedule_image_network').value
   if((img && img.files && img.files[0]) || net) spInspect()
@@ -10013,8 +10029,8 @@ async function spInspect(opts){
   }
   SP.info = d; SP.name = d.name || SP.name; if(d.token) SP.token = d.token
   spEl('sp-note').style.display = 'none'; spEl('sp-note-w').style.display = 'none'
-  var ok = d.layers.some(function(l){ return l.index === SP.sel })
-  if(!ok) SP.sel = (d.layers.filter(function(l){ return l.role !== 'background' && l.role !== 'hidden' })[0] || d.layers[0] || {}).index
+  var ok = d.layers.some(function(l){ return l.path === SP.sel })
+  if(!ok) SP.sel = (d.layers.filter(function(l){ return l.role !== 'background' && l.role !== 'hidden' && l.role !== 'group' })[0] || d.layers[0] || {}).path
   spRenderWork()
   if(!opts.keep) spScreen('work')
 }
@@ -10025,7 +10041,12 @@ function spInspectSoon(){
   SP.readTimer = setTimeout(function(){ spInspect({keep: true}) }, 280)
 }
 
-function spLayer(idx){ return SP.info && SP.info.layers.filter(function(l){ return l.index === idx })[0] }
+function spLayer(path){ return SP.info && SP.info.layers.filter(function(l){ return l.path === path })[0] }
+function spItem(path){ return SP.ov.layers[path] }
+function spTidy(path){
+  var it = SP.ov.layers[path]
+  if(it && !it.role && !it.arrive && !it.motion) delete SP.ov.layers[path]
+}
 
 function spRoleChip(l){
   var label = SP_ROLE_LABEL[l.role] || l.role || ''
@@ -10037,23 +10058,29 @@ function spRenderWork(){
   var d = SP.info
   if(!d) return
   var st = spEl('sp-status'); st.style.opacity = ''
+  var n = d.layers.filter(function(l){ return l.role !== 'group' }).length
   st.innerHTML = '<b>' + escapeHtmlLite(SP.name || 'Artwork') + '</b> &middot; ' + d.size[0] + '&times;' + d.size[1] + ' &middot; ' +
-    (d.layered ? d.layers.length + ' top-level layers and groups' : 'a flat image') +
+    (d.layered ? n + ' layers' : 'a flat image') +
     (d.pages.length ? ' &middot; ' + d.pages.length + ' page' + (d.pages.length === 1 ? '' : 's') : '') +
-    '. Check what each one will do; change any that is wrong.'
+    '. Check what each one will do; change any that is wrong. A group can be split into its own layers.'
   spEl('sp-warnings').innerHTML = (d.notes || []).map(function(w){ return '<div class="sh-warn">' + escapeHtmlLite(w) + '</div>' }).join('')
-  spEl('sp-layer-count').textContent = d.layers.length + (d.layers.length === 1 ? ' layer' : ' layers')
+  spEl('sp-layer-count').textContent = n + (n === 1 ? ' layer' : ' layers')
   var host = spEl('sp-layers'), keep = host.scrollTop
   host.innerHTML = ''
   d.layers.forEach(function(l){
     var row = document.createElement('div')
-    row.className = 'sp-layer' + (l.index === SP.sel ? ' sel' : '') + (l.role === 'off' || l.role === 'hidden' || l.role === 'empty' ? ' dim' : '')
-    row.setAttribute('data-idx', l.index)
-    var sub = (l.kind === 'group' ? 'group &middot; ' + l.child_count + (l.child_count === 1 ? ' layer' : ' layers') : escapeHtmlLite(l.kind))
-    row.innerHTML = '<div class="sp-lthumb">' + (l.thumb ? '<img src="' + l.thumb + '" alt="" loading="lazy">' : '') + '</div>' +
+    row.className = 'sp-layer' + (l.path === SP.sel ? ' sel' : '') + (l.role === 'off' || l.role === 'hidden' || l.role === 'empty' ? ' dim' : '')
+    row.setAttribute('data-path', l.path)
+    row.style.marginLeft = (l.depth * 14) + 'px'
+    var sub = l.role === 'group' ? 'split &middot; its layers are below' :
+              (l.kind === 'group' ? 'group &middot; ' + l.child_count + (l.child_count === 1 ? ' layer' : ' layers') : escapeHtmlLite(l.kind))
+    var it = SP.ov.layers[l.path] || {}
+    var anim = (it.arrive ? '<span class="sp-anim" title="Arrives">&#9654; ' + escapeHtmlLite(spArriveLabel(it.arrive)) + '</span>' : '') +
+               (it.motion ? '<span class="sp-anim" title="Then">&#8635; ' + escapeHtmlLite(spMotionLabel(it.motion)) + '</span>' : '')
+    row.innerHTML = '<div class="sp-lthumb">' + (l.thumb ? '<img src="' + l.thumb + '" alt="" loading="lazy">' : (l.role === 'group' ? '<span class="sp-gicon">&#9662;</span>' : '')) + '</div>' +
       '<div style="min-width:0"><div class="sp-lname" title="' + escapeHtmlLite(l.name) + '">' + escapeHtmlLite(l.name) + '</div>' +
       '<div class="sp-lsub">' + spRoleChip(l) + '<span>' + sub + '</span>' +
-      (l.role === 'page' && l.rows != null ? '<span>' + l.rows + (l.rows === 1 ? ' piece' : ' rows') + '</span>' : '') + '</div></div>'
+      (l.role === 'page' && l.rows != null ? '<span>' + l.rows + (l.rows === 1 ? ' piece' : ' rows') + '</span>' : '') + anim + '</div></div>'
     host.appendChild(row)
   })
   host.scrollTop = keep
@@ -10069,8 +10096,10 @@ function spSummary(){
     d.pages.map(function(p){ return escapeHtmlLite(p.name) + ' (' + p.rows + ')' }).join(', ') + ' &mdash; in turn</span>')
   chips.push('<span class="sp-chip"><b>' + (c.content || 0) + '</b> logo &amp; text &mdash; appear, then hold</span>')
   chips.push('<span class="sp-chip"><b>' + (c.decor || 0) + '</b> moving</span>')
+  var own = Object.keys(SP.ov.layers).filter(function(k){ var i = SP.ov.layers[k]; return i.arrive || i.motion }).length
+  if(own) chips.push('<span class="sp-chip"><b>' + own + '</b> with their own animation</span>')
   spEl('sp-summary').innerHTML = chips.join('')
-  spEl('sp-bar-sum').innerHTML = (c.pages ? c.pages + ' page' + (c.pages === 1 ? '' : 's') + ' &middot; ' : '') + (c.content || 0) + ' logo/text &middot; ' + (c.decor || 0) + ' moving'
+  spEl('sp-bar-sum').innerHTML = (c.pages ? c.pages + ' page' + (c.pages === 1 ? '' : 's') + ' &middot; ' : '') + (c.content || 0) + ' logo/text &middot; ' + (c.decor || 0) + ' moving' + (own ? ' &middot; ' + own + ' set by you' : '')
 }
 
 function spRenderStage(){
@@ -10094,51 +10123,125 @@ function spRenderStage(){
   }else box.style.display = 'none'
 }
 
+// Is this layer under the background the editor chose (so part of it)?
+function spUnderBackground(l){
+  var bgPath = SP.ov.background_upto
+  if(bgPath == null || bgPath === l.path) return false
+  var order = SP.info.layers.map(function(x){ return x.path })
+  return order.indexOf(l.path) > order.indexOf(bgPath)
+}
+
 function spRoleChoice(l){
-  var ov = SP.ov
-  if(ov.background_upto === l.index) return 'background'
-  if(ov.layers[l.index]) return ov.layers[l.index].role
-  return 'auto'
+  if(SP.ov.background_upto === l.path) return 'background'
+  var it = SP.ov.layers[l.path]
+  return it && it.role ? it.role : 'auto'
+}
+
+function spOpt(list, cur){
+  return list.map(function(o){ return '<option value="' + o[0] + '"' + (o[0] === cur ? ' selected' : '') + '>' + escapeHtmlLite(o[1]) + '</option>' }).join('')
 }
 
 function spRenderLayerPane(){
   var host = spEl('sp-layer-pane'), l = spLayer(SP.sel), d = SP.info
   if(!l){ host.innerHTML = '<div class="ws-empty">Select a layer to see what it does.</div>'; return }
   var flat = l.role === 'picture' || l.role === 'flat'
-  var under = SP.ov.background_upto != null && l.index < SP.ov.background_upto && SP.ov.background_upto !== l.index
+  var container = l.role === 'group'
+  var under = spUnderBackground(l)
   var choice = spRoleChoice(l)
+  var it = SP.ov.layers[l.path] || {}
   var auto = SP_ROLE_LABEL[l.role] || l.role
+  var isBg = l.role === 'background' && !container
   var opts = [['auto', 'As detected (' + (l.role === 'page' ? 'Page ' + l.page : auto) + ')'],
               ['background', 'Background (this and everything below it)'],
               ['content', 'Logo or schedule text (appears, then holds)'],
               ['decor', 'Moving decoration'],
               ['page', 'A schedule page (plays in turn)'],
               ['off', 'Leave it out']]
-  host.innerHTML =
+  var head =
     '<div class="sp-lp-head"><div class="sp-lthumb">' + (l.thumb ? '<img src="' + l.thumb + '" alt="">' : '') + '</div>' +
       '<div style="min-width:0"><b style="overflow-wrap:anywhere">' + escapeHtmlLite(l.name) + '</b>' +
       '<div class="sp-lsub">' + spRoleChip(l) + '<span>' + (l.kind === 'group' ? 'group' : escapeHtmlLite(l.kind)) + (l.visible ? '' : ' &middot; hidden in the file') + '</span></div></div></div>' +
-    '<div class="sh-note">' + escapeHtmlLite(l.why || '') + '</div>' +
-    (flat ? '<div class="sh-note">There is nothing to sort: this is animated as one picture.</div>' :
-      '<label style="margin-top:12px">What should it do?</label>' +
-      '<select id=sp-role' + (under ? ' disabled' : '') + '>' + opts.map(function(o){
-        return '<option value="' + o[0] + '"' + (o[0] === choice ? ' selected' : '') + '>' + escapeHtmlLite(o[1]) + '</option>' }).join('') + '</select>' +
-      (under ? '<div class="sh-note">It is under the background you chose, so it is part of it. Choose the background again to change that.</div>' : '') +
-      (choice === 'page' || (choice === 'auto' && l.role === 'page') ?
-        '<label style="margin-top:10px">Page number</label><input type=number id=sp-pagenum min=1 max=99 style="width:90px" value="' +
-        (SP.ov.layers[l.index] && SP.ov.layers[l.index].page || l.page || 1) + '"><div class="sh-note">Pages play in the order of their numbers, one after another over the same background.</div>' : '')) +
-    (l.children && l.children.length ?
-      '<div class="ws-tl-label" style="margin-top:12px">Inside this group (' + l.child_count + ')</div><ul class="sp-kids">' +
-      l.children.map(function(c){ return '<li' + (c.visible ? '' : ' class="off"') + '><span style="overflow-wrap:anywhere">' + escapeHtmlLite(c.name) + '</span><span style="opacity:.6">' + escapeHtmlLite(c.kind) + '</span></li>' }).join('') + '</ul>' : '')
+    '<div class="sh-note">' + escapeHtmlLite(l.why || '') + '</div>'
+  var split = ''
+  if(container || (l.can_expand && l.role !== 'page' && !flat)){
+    split = '<div class="sp-split"><button type=button class="btn-sm" data-split="' + escapeHtmlLite(l.path) + '">' +
+      (container ? 'Put the group back together' : 'Split into its layers') + '</button>' +
+      '<div class="sh-note" style="margin-top:6px">' + (container
+        ? 'Its layers are listed below it. Each is sorted on its own.'
+        : 'A group animates as one piece. Split it to see what is inside &mdash; a background, text, ornaments &mdash; and treat each separately.') + '</div></div>'
+  }
+  if(container || flat){
+    host.innerHTML = head + split + (flat ? '<div class="sh-note">There is nothing to sort: this is animated as one picture.</div>' : '')
+    return
+  }
+  var role =
+    '<label style="margin-top:12px">What should it do?</label>' +
+    '<select id=sp-role' + (under ? ' disabled' : '') + '>' + spOpt(opts, choice) + '</select>' +
+    (under ? '<div class="sh-note">It is under the background you chose, so it is part of it. Choose the background again to change that.</div>' : '') +
+    (choice === 'page' || (choice === 'auto' && l.role === 'page') ?
+      '<label style="margin-top:10px">Page number</label><input type=number id=sp-pagenum min=1 max=99 style="width:90px" value="' +
+      ((it.page) || l.page || 1) + '"><div class="sh-note">Pages play in the order of their numbers, one after another over the same background.</div>' : '')
+  var ar = it.arrive || {}
+  var anim = ''
+  if(isBg || under || choice === 'off' || l.role === 'hidden'){
+    anim = '<div class="sh-note" style="margin-top:12px">' + (isBg || under ? 'The background stays still.' : 'It is not in the plug.') + '</div>'
+  }else{
+    anim =
+      '<div class="ws-tl-label" style="margin-top:14px">Animation of this layer</div>' +
+      '<label>Arrives</label>' +
+      '<div style="display:flex;gap:6px"><select id=sp-arrive style="flex:1">' + spOpt(SP_EFFECTS, ar.effect || '') + '</select>' +
+      '<select id=sp-arrive-dir style="flex:1;' + (ar.effect === 'wipe' || ar.effect === 'slide' ? '' : 'display:none') + '">' + spOpt(SP_DIRS, ar.direction || 'right') + '</select></div>' +
+      '<label style="margin-top:8px">Then</label>' +
+      '<select id=sp-motion>' + spOpt(SP_MOTIONS, it.motion || '') + '</select>' +
+      '<div class="sh-note">Over what the style and your direction say. ' + (l.role === 'page'
+        ? 'On a page it applies to every row of it.' :
+        (l.role === 'decor' ? 'A moving layer is on screen from the first frame unless you give it an arrival.' : 'Logo and text hold still after they arrive unless you give them a motion.')) + '</div>' +
+      ((it.arrive || it.motion) ? '<button type=button class="btn-sm" data-anim-reset style="margin-top:6px">Back to the style</button>' : '')
+  }
+  var kids = (l.children && l.children.length && !container) ?
+    '<div class="ws-tl-label" style="margin-top:12px">Inside this group (' + l.child_count + ')</div><ul class="sp-kids">' +
+    l.children.map(function(c){ return '<li' + (c.visible ? '' : ' class="off"') + '><span style="overflow-wrap:anywhere">' + escapeHtmlLite(c.name) + '</span><span style="opacity:.6">' + escapeHtmlLite(c.kind) + '</span></li>' }).join('') + '</ul>' : ''
+  host.innerHTML = head + split + role + anim + kids
 }
 
-function spSetRole(idx, val, page){
+function spSetRole(path, val, page){
   var ov = SP.ov
-  if(ov.background_upto === idx && val !== 'background') ov.background_upto = null
-  delete ov.layers[idx]
-  if(val === 'background') ov.background_upto = idx
+  if(ov.background_upto === path && val !== 'background') ov.background_upto = null
+  var it = ov.layers[path] || (ov.layers[path] = {})
+  delete it.role; delete it.page
+  if(val === 'background') ov.background_upto = path
   else if(val !== 'auto'){
-    ov.layers[idx] = val === 'page' ? {role: 'page', page: page || ((SP.info.pages || []).length + 1)} : {role: val}
+    it.role = val
+    if(val === 'page') it.page = page || ((SP.info.pages || []).length + 1)
+  }
+  spTidy(path)
+  spInspectSoon()
+}
+
+function spSetAnim(path, field, value){
+  var it = SP.ov.layers[path] || (SP.ov.layers[path] = {})
+  if(field === 'arrive'){
+    if(!value || !value.effect) delete it.arrive; else it.arrive = value
+  }else{
+    if(!value) delete it.motion; else it.motion = value
+  }
+  spTidy(path)
+  spInspectSoon()
+  spRenderLayerPane()
+}
+
+function spToggleSplit(path){
+  var ex = SP.ov.expand, i = ex.indexOf(path)
+  if(i >= 0){
+    // Putting a group back drops what was said about the layers inside it.
+    ex.splice(i, 1)
+    Object.keys(SP.ov.layers).forEach(function(k){ if(k.indexOf(path + '.') === 0) delete SP.ov.layers[k] })
+    if(SP.ov.background_upto && SP.ov.background_upto.indexOf(path + '.') === 0) SP.ov.background_upto = null
+    SP.sel = path
+  }else{
+    ex.push(path)
+    var l = spLayer(path)
+    SP.sel = path
   }
   spInspectSoon()
 }
@@ -10147,7 +10250,7 @@ function spSetRole(idx, val, page){
   var layers = spEl('sp-layers'), insp = spEl('sp-insp'), pages = spEl('sp-pages')
   if(layers) layers.addEventListener('click', function(e){
     var r = e.target.closest('.sp-layer'); if(!r) return
-    SP.sel = parseInt(r.getAttribute('data-idx'), 10)
+    SP.sel = r.getAttribute('data-path')
     Array.prototype.forEach.call(layers.querySelectorAll('.sp-layer'), function(x){ x.classList.toggle('sel', x === r) })
     spRenderStage(); spRenderLayerPane()
   })
@@ -10157,20 +10260,31 @@ function spSetRole(idx, val, page){
   })
   if(insp){
     insp.addEventListener('click', function(e){
+      var sp = e.target.closest('[data-split]')
+      if(sp){ spToggleSplit(sp.getAttribute('data-split')); return }
+      if(e.target.closest('[data-anim-reset]') && SP.sel != null){
+        var it = SP.ov.layers[SP.sel]; if(it){ delete it.arrive; delete it.motion; spTidy(SP.sel) }
+        spInspectSoon(); spRenderLayerPane(); return
+      }
       var t = e.target.closest('[data-sptab]'); if(!t) return
       var name = t.getAttribute('data-sptab')
       Array.prototype.forEach.call(insp.querySelectorAll('[data-sptab]'), function(b){ b.classList.toggle('active', b === t) })
       Array.prototype.forEach.call(insp.querySelectorAll('[data-sppane]'), function(p){ p.style.display = p.getAttribute('data-sppane') === name ? '' : 'none' })
     })
     insp.addEventListener('change', function(e){
-      if(e.target.id === 'sp-role' && SP.sel != null){
+      var id = e.target.id
+      if(id === 'sp-role' && SP.sel != null){
         var v = e.target.value
         var cur = SP.ov.layers[SP.sel]
         spSetRole(SP.sel, v, v === 'page' ? ((cur && cur.page) || (spLayer(SP.sel) || {}).page || null) : null)
         spRenderLayerPane()
-      }else if(e.target.id === 'sp-pagenum' && SP.sel != null){
-        var n = Math.max(1, Math.min(99, parseInt(e.target.value, 10) || 1))
-        spSetRole(SP.sel, 'page', n)
+      }else if(id === 'sp-pagenum' && SP.sel != null){
+        spSetRole(SP.sel, 'page', Math.max(1, Math.min(99, parseInt(e.target.value, 10) || 1)))
+      }else if((id === 'sp-arrive' || id === 'sp-arrive-dir') && SP.sel != null){
+        var eff = spEl('sp-arrive').value
+        spSetAnim(SP.sel, 'arrive', eff ? {effect: eff, direction: spEl('sp-arrive-dir').value || 'right'} : null)
+      }else if(id === 'sp-motion' && SP.sel != null){
+        spSetAnim(SP.sel, 'motion', e.target.value)
       }
     })
   }
@@ -11150,7 +11264,9 @@ POST /api/shorts/analyze now also needs project_id</pre>
       <p>Turns one schedule still into an animated 16:9 plug of 10, 15, 20 or 30 seconds with a music bed, in any of the delivery formats the promo generator offers.</p>
       <h3>The workspace</h3>
       <p>The page works in three steps: <strong>1 Artwork</strong>, <strong>2 Layers &amp; animation</strong> and <strong>3 Result</strong>. The artwork is read as soon as it is picked (from Browse library, or from this computer where that is allowed) and the layers step opens: every top-level layer and group of the PSD, top of the stack first, as Photoshop lists them, each with a thumbnail, its kind, and the part it will play &mdash; <em>Background</em> (the bottom layer, and anything that covers the whole picture over it: still), <em>Page n</em> (a group named as a page, with how many rows it breaks into), <em>Logo &amp; text</em> (a text layer, or one named like a logo or the schedule: appears, then holds or breathes), <em>Moving</em> (everything else), or <em>Hidden</em> / <em>Left out</em>. A layer that was switched off in the file is listed and left out. The picture in the middle shows the artwork as it will rest, one tab per page, with the selected layer outlined; the line under it counts what is background, pages, logo and text, and moving layers.</p>
-      <p>Select a layer and <strong>What should it do?</strong> lets you correct it: make it the <strong>Background</strong> (it and everything below it become the still backdrop), <strong>Logo or schedule text</strong>, <strong>Moving decoration</strong>, <strong>a schedule page</strong> (with its page number), or <strong>leave it out</strong>; <em>As detected</em> goes back. The list is read again after each change, so the counts and the page tabs show what will be drawn. A group shows the layers inside it. The <strong>Animation</strong> tab holds the length, style, how logo and text behave and the extra direction; <strong>Music &amp; file</strong> the delivery format, the music and its level. <strong>Generate schedule plug</strong> in the bar below draws it with your corrections, and the plug opens in step 3. A Photoshop file that has to be animated as one flat picture (blend modes, effects) shows as one layer with the reason above the list.</p>
+      <p>Select a layer and <strong>What should it do?</strong> lets you correct it: make it the <strong>Background</strong> (it and everything below it become the still backdrop), <strong>Logo or schedule text</strong>, <strong>Moving decoration</strong>, <strong>a schedule page</strong> (with its page number), or <strong>leave it out</strong>; <em>As detected</em> goes back. The list is read again after each change, so the counts and the page tabs show what will be drawn. A group shows the layers inside it.</p>
+      <p><strong>Split into its layers</strong> opens a group: its layers are listed beneath it, indented, and each is sorted on its own &mdash; a header group can hold a background group (choose its last layer as <em>Background</em> to keep the whole stack still), the logo, and ornaments that move. <strong>Put the group back together</strong> undoes it. For any layer that is not the background, <strong>Animation of this layer</strong> sets how it <em>Arrives</em> (wipe, slide, fade, pop or appear at once, with a direction) and what it does <em>Then</em>: hold still, light sweep, float, pulse, wobble, <strong>shake</strong>, grow and shrink, <strong>rotate left</strong> or <strong>rotate right</strong>, sway, dance or breathe. What you set on a layer wins over the style and the prompt; <em>Back to the style</em> removes it. On a page it applies to every row of that page.</p>
+      <p>The <strong>Animation</strong> tab holds the length, style, how logo and text behave and the extra direction; <strong>Music &amp; file</strong> the delivery format, the music and its level. <strong>Generate schedule plug</strong> in the bar below draws it with your corrections, and the plug opens in step 3. A Photoshop file that has to be animated as one flat picture (blend modes, effects) shows as one layer with the reason above the list.</p>
       <h3>Why it is drawn, not generated</h3>
       <p>A schedule is text: titles, dates, times. A video model repaints every pixel of every frame, so that text would come back warped. Here each layer's own pixels are moved, faded or uncovered, so the logo and the text come to rest exactly as designed.</p>
       <h3>Artwork</h3>

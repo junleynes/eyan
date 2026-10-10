@@ -139,6 +139,7 @@ def _run(jid, params):
     report(percent=10, step='Planning the animation')
     roles = [ly['role'] for ly in art['layers']]
     recipe, read_by = _read_prompt(params.get('prompt'), names, notes, params.get('style'), params.get('content'))
+    recipe = sk.apply_layer_animation(recipe, art['layers'])     # what was set on single layers wins
     recipe, cannot = sk.fit_to_artwork(recipe, names)
     if cannot:
         notes.append(cannot)
@@ -321,7 +322,7 @@ def _read_overrides():
     except ValueError:
         raw = None
     clean = sk.clean_overrides(raw) if raw else None
-    return clean if clean and (clean['layers'] or clean['background_upto'] is not None) else None
+    return clean if clean and (clean['layers'] or clean['expand'] or clean['background_upto'] is not None) else None
 
 
 @app.route('/api/schedule/inspect', methods=['POST'])

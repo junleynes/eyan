@@ -1,3 +1,4 @@
+import os
 """
 Schedule Plug -- schedule_core.py: reading artwork, understanding the prompt,
 timing the layers and drawing the frames.
@@ -430,7 +431,7 @@ def test_the_styles_on_offer():
                                          'then gentle float'),
     # The background can be made to arrive, never to keep moving.
     ('fade_still', 'fade in the background and rotate it left', 'background: fade; 3 layers: fade'),
-    ('wipe_shine', 'shaky', 'background: static; 3 layers: wipe right; then wobble'),
+    ('wipe_shine', 'shaky', 'background: static; 3 layers: wipe right; then shake'),
     # "Float up" is a way of arriving, not something to go on doing.
     ('fade_shine', 'bring the title in with a bounce and float the rest up',
      'background: static; 2 layers: slide up; Title: pop; then light sweep'),
@@ -948,10 +949,57 @@ def test_a_layer_can_be_made_a_page_and_the_background_can_be_chosen(tmp_path):
 
 
 def test_overrides_are_cleaned_before_use():
-    assert sk.clean_overrides(None) == {'background_upto': None, 'layers': {}}
+    assert sk.clean_overrides(None) == {'background_upto': None, 'expand': [], 'layers': {}}
     got = sk.clean_overrides({'background_upto': '2', 'layers': {'3': {'role': 'page', 'page': 500}, 'x': {'role': 'off'},
                                                                    '4': {'role': 'evil'}, '5': 'decor', '6': {'role': 'decor'}}})
-    assert got == {'background_upto': 2, 'layers': {3: {'role': 'page', 'page': 99}, 6: {'role': 'decor'}}}
+    assert got == {'background_upto': '2', 'expand': [], 'layers': {'3': {'role': 'page', 'page': 99}, '6': {'role': 'decor'}}}
+
+
+def test_overrides_keep_only_known_animation_and_group_paths():
+    got = sk.clean_overrides({'expand': ['0', '0.1', 'x', '1; drop'], 'background_upto': '0.0',
+                              'layers': {'0.2': {'arrive': {'effect': 'pop', 'direction': 'up'}, 'motion': 'shake'},
+                                         '0.3': {'arrive': {'effect': 'boom'}, 'motion': 'explode'},
+                                         '0.4': {'motion': 'rotate_left'}}})
+    assert got['expand'] == ['0', '0.1'] and got['background_upto'] == '0.0'
+    assert got['layers']['0.2'] == {'arrive': {'effect': 'pop', 'direction': 'up'}, 'motion': 'shake'}
+    assert '0.3' not in got['layers'] and got['layers']['0.4'] == {'motion': 'rotate_left'}
+
+
+NESTED = '/home/claude/exp/sched_nested.psd'
+
+
+@pytest.mark.skipif(not os.path.exists(NESTED), reason='needs the nested sample PSD')
+def test_a_group_can_be_split_into_background_and_animated_layers():
+    info = sk.inspect_artwork(NESTED)
+    top = [l for l in info['layers'] if l['name'] == 'Header'][0]
+    assert top['can_expand'] and top['role'] == 'background'
+    ov = {'expand': ['0', '0.0'], 'background_upto': '0.0'}
+    info = sk.inspect_artwork(NESTED, overrides=ov)
+    by = {l['name']: l for l in info['layers']}
+    assert by['Sky']['role'] == 'background' and by['Grain']['role'] == 'background'
+    assert by['Star']['role'] == 'decor' and by['GMA Logo']['role'] == 'content' and by['Star']['depth'] == 1
+    art = sk.load_artwork(NESTED, overrides=ov)
+    assert art['layers'][0]['role'] == 'background'
+    assert {'Star', 'Moon', 'GMA Logo'} <= {ly['name'] for ly in art['layers'][1:]}
+
+
+@pytest.mark.skipif(not os.path.exists(NESTED), reason='needs the nested sample PSD')
+def test_a_layer_inside_a_group_takes_its_own_arrival_and_motion():
+    ov = {'expand': ['0'], 'layers': {'0.2': {'arrive': {'effect': 'pop', 'direction': 'up'}, 'motion': 'shake'}}}
+    art = sk.load_artwork(NESTED, overrides=ov)
+    star = [ly for ly in art['layers'] if ly['name'] == 'Star'][0]
+    assert star['arrive'] == {'effect': 'pop', 'direction': 'up'} and star['motion'] == 'shake'
+    base = sk.style_recipe('fade_still')
+    r = sk.apply_layer_animation(base, art['layers'])
+    assert r['layers']['star'] == {'effect': 'pop', 'direction': 'up'} and r['layer_ambient']['star'] == 'shake'
+    assert 'Star: pop up; then shake' in sk.describe_recipe(r, [ly['name'] for ly in art['layers']]) or 'shake' in sk.describe_recipe(r, [ly['name'] for ly in art['layers']])
+    assert 'star' not in base.get('layers', {})
+
+
+def test_shake_moves_a_layer_and_rotate_turns_it():
+    import numpy as np
+    assert 'shake' in sk.AMBIENTS and 'rotate_left' in sk.MOTIONS and 'shake' in sk.MOTIONS
+    assert sk.parse_prompt('shake the logo', ['GMA Logo'], base=sk.style_recipe('fade_still')) is not None
 
 
 def test_inspecting_a_flat_image_reports_one_picture(layered):
