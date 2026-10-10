@@ -802,6 +802,7 @@ def _run_analysis(jid, params):
     # ---- Layer 2: does it tell a story ----
     warnings = []
     aligned = 0
+    words_aligned = 0
     heard_why = None
     words, segments = [], []
     # Only what was chosen is passed on: no language means Whisper decides.
@@ -834,6 +835,13 @@ def _run_analysis(jid, params):
         # gets is part of its score.
         report(percent=at(54, 58, k), step='Reading the sound')
         P['db'] = sc.read_envelope(pipeline.FFMPEG, P['path'], P['info'], timeout=pipeline.FFMPEG_LONG_TIMEOUT)
+        if w:
+            # Captions come up with the first word of a phrase: put that word
+            # where the speech begins, not where Whisper put it after a silence.
+            w, moved_w = sc.align_word_starts(w, P['db'])
+            if moved_w:
+                words_aligned += moved_w
+                sg = sc.sync_segment_starts(sg, w)
         if sg and not w and sc.coarse_times(sg):
             # Timed only to the line, and rounded to the whole second: every line
             # is moved onto where its sound really starts and stops, which is what
@@ -1015,7 +1023,7 @@ def _run_analysis(jid, params):
                     'language': params.get('language'), 'stt_prompt': params.get('stt_prompt'),
                     'leave_out': editor_out},
         'stats': {'shots': len(shots), 'frames_rated': len(visual), 'transcript_lines': len(segments),
-                  'lines_aligned': aligned, 'edges_moved': edges_moved, 'frames_inside': inner_rated,
+                  'lines_aligned': aligned, 'words_aligned': words_aligned, 'edges_moved': edges_moved, 'frames_inside': inner_rated,
                   'story_parts': len(chunks), 'vision_model': vision_model, 'story_model': story_model,
                   'parts': n_parts},
     }
@@ -1085,7 +1093,7 @@ def _framing_overrides(it, start_f, fps):
     return [(int(round(o['at'] * fps)) - start_f, o['layout'], o.get('x')) for o in fr.get('shots') or []]
 
 
-def _plan_moment(a, src, info, start_f, end_f, reframe, speaker, detector, framing=None, mouth=None):
+def _plan_moment(a, src, info, start_f, end_f, reframe, speaker, detector, framing=None, mouth=None, splits_out=None):
     """How one moment is reframed: (segments, shot starts within it).
 
     The faces (and, where there are none, the head-and-shoulders) in it are
@@ -1107,8 +1115,18 @@ def _plan_moment(a, src, info, start_f, end_f, reframe, speaker, detector, frami
     segs = sc.plan_reframe(samples, shot_starts, n_frames, info['disp_w'], info['disp_h'], crop_w,
                            mode=reframe, fps=fps, speaker=speaker, speech=speech, bodies=bodies,
                            focus=focus)
+    # Where the screen could be split, for the editor to offer and to apply:
+    # the same samples planned as 'split', so no second look at the faces.
+    splits = []
+    if (splits_out is not None or any(o[1] == 'split' for o in framing or [])) and samples and reframe != 'fit':
+        splits = [x for x in sc.plan_reframe(samples, shot_starts, n_frames, info['disp_w'], info['disp_h'], crop_w,
+                                             mode='split', fps=fps, speaker=False, speech=None, bodies=bodies,
+                                             focus=focus) if x['layout'] == 'split']
+    if splits_out is not None:
+        splits_out.extend(splits)
     if framing:
-        segs = sc.apply_framing(segs, shot_starts, n_frames, framing, max(0.0, float(info['disp_w'] - crop_w)))
+        segs = sc.apply_framing(segs, shot_starts, n_frames, framing, max(0.0, float(info['disp_w'] - crop_w)),
+                                splits=splits, disp=(info['disp_w'], info['disp_h']))
     return segs, shot_starts
 
 
@@ -1130,7 +1148,7 @@ def _parse_framing(raw, label, duration):
             x = float(o.get('x')) if layout == 'crop' else None
         except (AttributeError, TypeError, ValueError):
             return None, f'"{label}": its framing is not valid.'
-        if layout not in ('crop', 'fit') or not (0.0 <= at <= duration) or (x is not None and not math.isfinite(x)):
+        if layout not in ('crop', 'fit', 'split') or not (0.0 <= at <= duration) or (x is not None and not math.isfinite(x)):
             return None, f'"{label}": its framing is not valid.'
         out.append({'at': round(at, 3), 'layout': layout, 'x': None if x is None else round(max(0.0, x), 1)})
     return ({'shots': out} if out else None), None
@@ -1584,7 +1602,7 @@ def _start_job(kind, body, params, label, after=None):
 # Routes
 # --------------------------------------------------------------------------
 
-MAX_PARTS = 3
+MAX_PARTS = 10
 
 
 def _resolve_source(field='shorts_file'):
@@ -1624,10 +1642,10 @@ def _resolve_source(field='shorts_file'):
 
 def _resolve_sources():
     """([{path, name}], display name, error): the one source, or its parts
-    (fields shorts_file, shorts_file2, shorts_file3, in that order).
+    (fields shorts_file, shorts_file2 ... shorts_file10, in that order).
     A gap -- part 3 given without part 2 -- is simply closed up."""
     srcs = []
-    for field in ('shorts_file', 'shorts_file2', 'shorts_file3'):
+    for field in ['shorts_file'] + [f'shorts_file{k}' for k in range(2, MAX_PARTS + 1)]:
         has = ((request.files.get(field) is not None and request.files.get(field).filename)
                or (request.form.get(field + '_network') or '').strip())
         if not has:
@@ -1644,7 +1662,7 @@ def _resolve_sources():
     return srcs, f'{stem} ({len(srcs)} parts)', None
 
 
-_PART_PREFIX = re.compile(r'^\s*p(?:art)?\s*(\d)\s*[:\s]\s*', re.I)
+_PART_PREFIX = re.compile(r'^\s*p(?:art)?\s*(\d{1,2})\s*[:\s]\s*', re.I)
 
 
 def _parse_leave_out(text, n_parts):
@@ -1652,7 +1670,7 @@ def _parse_leave_out(text, n_parts):
     plain list. With several, each entry may start 'part 2' (or 'p2'); one
     that does not is read as part 1. Per-part ranges are [(k, start, end)]
     in that part's own time, 'end' meaning the part's end."""
-    text = (text or '')[:600]
+    text = (text or '')[:1500]
     if n_parts <= 1:
         r, bad = sc.parse_ranges(text, 10 ** 7)
         return r, None, bad
@@ -2191,8 +2209,9 @@ def _cached_plan(a, start_f, end_f, reframe, speaker):
         speaker = bool(speaker) and detector is not None and bool(a['words'] or a['segments'])
         if len(plans) > 40:
             plans.pop(next(iter(plans)))
-        plans[key] = _plan_moment(a, a['path'], info, start_f, end_f, reframe, speaker, detector) + (
-            detector.kind if detector else None,)
+        alt = []
+        planned = _plan_moment(a, a['path'], info, start_f, end_f, reframe, speaker, detector, splits_out=alt)
+        plans[key] = planned + (detector.kind if detector else None, alt)
     return plans[key]
 
 
@@ -2227,7 +2246,7 @@ def api_shorts_framing():
     opts = _render_options(data)
     info = a['info']
     fps = info['fps']
-    segs, shot_starts, kind = _cached_plan(a, start_f, end_f, opts['reframe'], opts['speaker'])
+    segs, shot_starts, kind, alt = _cached_plan(a, start_f, end_f, opts['reframe'], opts['speaker'])
     crop_w, _ = sc.crop_geometry(info['disp_w'], info['disp_h'])
     shots = []
     cap = cv2.VideoCapture(a['path'])
@@ -2247,7 +2266,9 @@ def api_shorts_framing():
                                        interpolation=cv2.INTER_AREA)
                     cv2.imwrite(path, frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
             off = a.get('_offset', 0.0)
-            shots.append({'index': k, 'start': round((start_f + sa) / fps + off, 3),
+            sp = [t for t in alt if t['a'] <= sb and t['b'] >= sa]
+            split = ({'size': list(sp[0]['size']), 'panes': [list(p) for p in sp[0]['panes']]} if sp else None)
+            shots.append({'index': k, 'can_split': bool(sp), 'split': split, 'start': round((start_f + sa) / fps + off, 3),
                           'end': round((start_f + sb + 1) / fps + off, 3),
                           'at': round(mid / fps + off, 3), 'auto': how, 'x': None if x is None else round(x, 1),
                           'thumb': f'/uploads/{name}' if os.path.exists(path) else None})
@@ -2283,12 +2304,13 @@ def api_shorts_vpreview():
         return jsonify(ok=False, error=bad), 400
     local = _localize_item({'start': 0.0, 'end': 0.0, 'framing': framing, 'captions': captions}, off)
     framing, captions = local.get('framing'), local.get('captions')
-    segs, shot_starts, _ = _cached_plan(a, start_f, end_f, opts['reframe'], opts['speaker'])
+    segs, shot_starts, _, alt = _cached_plan(a, start_f, end_f, opts['reframe'], opts['speaker'])
     crop_w, _ = sc.crop_geometry(info['disp_w'], info['disp_h'])
     n_frames = end_f - start_f
     item = {'framing': framing, 'captions': captions}
     segs = sc.apply_framing(segs, shot_starts, n_frames, _framing_overrides(item, start_f, fps),
-                            max(0.0, float(info['disp_w'] - crop_w)))
+                            max(0.0, float(info['disp_w'] - crop_w)), splits=alt,
+                            disp=(info['disp_w'], info['disp_h']))
     burn = opts['subtitles'] and _captions_available()
     cues = []
     if burn:

@@ -2313,7 +2313,7 @@ def shot_bounds(shot_starts, n_frames):
     return [(a, (bounds[k + 1] - 1) if k + 1 < len(bounds) else int(n_frames) - 1) for k, a in enumerate(bounds)]
 
 
-def apply_framing(segs, shot_starts, n_frames, overrides, max_x):
+def apply_framing(segs, shot_starts, n_frames, overrides, max_x, splits=None, disp=None):
     """The planned framing with the editor's corrections laid over it.
 
     `overrides` are [(frame, layout, x)]: for the shot containing `frame`
@@ -2325,13 +2325,22 @@ def apply_framing(segs, shot_starts, n_frames, overrides, max_x):
 
     A corrected shot is one segment, still: whatever the plan had done
     within it (followed someone, cut between speakers, split the screen)
-    gives way to what the editor chose."""
+    gives way to what the editor chose.
+
+    'split' stacks the two people of the shot, one above the other. It
+    needs `splits` -- the split segments the planner would make for the
+    clip (plan_reframe in 'split' mode) -- and `disp` (the picture's
+    width, height): a shot the planner finds no two people in cannot be
+    split, and keeps its plan."""
     if not overrides:
         return segs
+    splits = [s for s in splits or [] if s['layout'] == 'split']
     chosen = {}
     for a, b in shot_bounds(shot_starts, n_frames):
         for f, layout, x in overrides:
-            if a <= f <= b and layout in ('crop', 'fit'):
+            if a <= f <= b and layout in ('crop', 'fit', 'split'):
+                if layout == 'split' and not (disp and any(t['a'] <= b and t['b'] >= a for t in splits)):
+                    continue
                 chosen[(a, b)] = (layout, x)
                 break
     if not chosen:
@@ -2357,10 +2366,16 @@ def apply_framing(segs, shot_starts, n_frames, overrides, max_x):
         if out and out[-1].get('_editor') == own:
             continue                                # the rest of a shot already replaced
         layout, x = chosen[own]
+        if layout == 'split':
+            out.extend(dict(t, a=max(own[0], t['a']), b=min(own[1], t['b']), _editor=own)
+                       for t in splits if t['a'] <= own[1] and t['b'] >= own[0])
+            continue
         out.append({'a': own[0], 'b': own[1], 'layout': layout, 'keys': None, '_editor': own,
                     'x': float(min(max(0.0, float(x or 0.0)), max_x)) if layout == 'crop' else None})
     for s in out:
         s.pop('_editor', None)
+    if any(s['layout'] == 'split' for s in out) and disp:
+        _finish_split(out, disp[0], disp[1])      # one window size for every split in the clip
     return out
 
 
@@ -2813,6 +2828,79 @@ def align_segments(segments, db, hop=ENVELOPE_HOP):
             moved += 1
         out.append(dict(sg, start=new_s, end=new_e))
     return out, moved
+
+
+WORD_ONSET = {'gap': 0.4,      # only a word that follows at least this much silence is looked at
+              'reach': 6.0,    # ...and moved at most this far later
+              'min_move': 0.15}
+
+
+def align_word_starts(words, db, hop=ENVELOPE_HOP):
+    """Word timings with the first word after a silence moved onto where
+    the speech really begins: (words, how many were moved).
+
+    Reported: the first caption was on screen well before anyone spoke and
+    only caught up once the voice came in. Whisper times a word well in the
+    middle of speech; the first word after a stretch with no speech -- music,
+    a look, a walk across a room -- is often given a start somewhere in that
+    stretch (see trim_absorbed_silence, which only catches the extreme
+    cases). Captions are built from word starts, so they came up early.
+
+    The sound says where speech begins: a word that follows a gap and is
+    timed in quiet starts where the sound first rises after that, if that
+    is soon enough and still before the word ends. A word timed inside
+    sound is left alone, as is any word in a wall of music, where the sound
+    cannot tell speech from a gap."""
+    if db is None or not len(db) or not words:
+        return words, 0
+    db = np.asarray(db, dtype=np.float64)
+    n = len(db)
+    sound_run = max(2, int(round(ALIGN['sound'] / hop)))
+    out, moved = [], 0
+    for k, w in enumerate(words):
+        s, e = float(w['start']), float(w['end'])
+        prev_end = out[-1]['end'] if out else 0.0
+        if k and s - prev_end < WORD_ONSET['gap']:
+            out.append(dict(w))
+            continue
+        lo = max(0, int((s - ALIGN['window']) / hop))
+        hi = min(n, int((e + ALIGN['window']) / hop) + 1)
+        here = db[lo:hi]
+        if len(here) < 30:
+            out.append(dict(w))
+            continue
+        floor, top = float(np.percentile(here, 10)), float(np.percentile(here, 95))
+        if top - floor < WORD_END['contrast']:
+            out.append(dict(w))
+            continue
+        quiet = here < floor + max(4.0, 0.3 * (top - floor))
+        j0 = int(round(s / hop)) - lo
+        if not (0 <= j0 < len(here)) or quiet[max(0, j0 - 3):j0 + 4].mean() < 0.5:
+            out.append(dict(w))                    # sound already: it had begun
+            continue
+        rises = [(lo + j) * hop for j in range(max(1, j0), len(here) - sound_run)
+                 if quiet[j - 1] and not quiet[j:j + sound_run].any()]
+        t = rises[0] - 0.03 if rises else None
+        if (t is None or t - s < WORD_ONSET['min_move'] or t - s > WORD_ONSET['reach']
+                or t >= e - 0.05 or t < prev_end):
+            out.append(dict(w))
+            continue
+        out.append(dict(w, start=round(t, 3)))
+        moved += 1
+    return out, moved
+
+
+def sync_segment_starts(segments, words, min_move=0.3):
+    """Lines that begin no earlier than their first word: a line whose start
+    is more than `min_move` before its first word's is moved up to it."""
+    out = []
+    for sg in segments or []:
+        inner = [w for w in words if sg['start'] - 0.05 <= (w['start'] + w['end']) / 2.0 <= sg['end'] + 0.05]
+        first = min((w['start'] for w in inner), default=None)
+        if first is not None and first - sg['start'] > min_move and first < sg['end'] - 0.1:
+            sg = dict(sg, start=round(first - 0.05, 3))
+        out.append(sg)
+    return out
 
 
 def read_pcm(ffmpeg, src, info, start, dur, rate=16000, timeout=60):

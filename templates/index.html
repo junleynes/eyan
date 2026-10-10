@@ -778,7 +778,7 @@ input.sh-num[type=number]{width:92px}
 .sh-cap-wrap{display:grid;grid-template-columns:minmax(0,1fr) 190px;gap:16px;align-items:start}
 .sh-cp-side{position:sticky;top:8px}
 .sh-cp{position:relative;width:100%;aspect-ratio:9/16;background:#0b0d10;border-radius:10px;overflow:hidden;border:1px solid var(--line);container-type:inline-size}
-.sh-cp img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.sh-cp img,.sh-cp video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 .sh-cp-line{position:absolute;left:7.4%;right:7.4%;bottom:23%;text-align:center;color:#fff;font-weight:700;font-family:Arial,Helvetica,sans-serif;line-height:1.15;
   font-size:calc(var(--cp-px,64) * 100cqw / 1080);-webkit-text-stroke:calc(var(--cp-px,64) / 15 * 100cqw / 1080) #000;paint-order:stroke fill;overflow-wrap:anywhere}
 .sh-cp input[type=range],.sh-cp-side input[type=range]{width:100%;margin:8px 0 4px}
@@ -7043,24 +7043,17 @@ document.getElementById('vf').addEventListener('submit', async function(e){
 <span class="net-file-chip" id=shorts_file_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('shorts_file')">&#10005;</span></span>
 <div id=sh-more-parts style="margin-top:6px">
   <a href="#" id=sh-add-part-link onclick="shAddPart();return false" style="font-size:12px">+ This episode comes in more than one part</a>
-  <div id=sh-part2 style="display:none;margin-top:6px">
-    <label>Part 2:</label>
+  {% for k in range(2, 11) %}
+  <div id=sh-part{{ k }} class=sh-part style="display:none;margin-top:6px">
+    <label>Part {{ k }}:</label>
     <div class="browse-row">
-      {% if allow_local_upload %}<input type=file id=sh-file2 name=shorts_file2 accept="video/*" style="max-width:320px">{% endif %}
-      <button type=button class="browse-btn" onclick="openNetworkBrowser('shorts_file2','shorts','Vertical Shorts video, part 2')">Browse library</button>
+      {% if allow_local_upload %}<input type=file id=sh-file{{ k }} name=shorts_file{{ k }} accept="video/*" style="max-width:320px">{% endif %}
+      <button type=button class="browse-btn" onclick="openNetworkBrowser('shorts_file{{ k }}','shorts','Vertical Shorts video, part {{ k }}')">Browse library</button>
     </div>
-    <input type=hidden id=shorts_file2_network name=shorts_file2_network value="">
-    <span class="net-file-chip" id=shorts_file2_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('shorts_file2')">&#10005;</span></span>
+    <input type=hidden id=shorts_file{{ k }}_network name=shorts_file{{ k }}_network value="">
+    <span class="net-file-chip" id=shorts_file{{ k }}_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('shorts_file{{ k }}')">&#10005;</span></span>
   </div>
-  <div id=sh-part3 style="display:none;margin-top:6px">
-    <label>Part 3:</label>
-    <div class="browse-row">
-      {% if allow_local_upload %}<input type=file id=sh-file3 name=shorts_file3 accept="video/*" style="max-width:320px">{% endif %}
-      <button type=button class="browse-btn" onclick="openNetworkBrowser('shorts_file3','shorts','Vertical Shorts video, part 3')">Browse library</button>
-    </div>
-    <input type=hidden id=shorts_file3_network name=shorts_file3_network value="">
-    <span class="net-file-chip" id=shorts_file3_chip><span class=chip-name></span><span class=chip-x onclick="clearNetworkField('shorts_file3')">&#10005;</span></span>
-  </div>
+  {% endfor %}
   <div id=sh-parts-note style="display:none;font-size:12px;opacity:.75;margin-top:4px">Parts are joined in this order and read as one episode, so the story can span them. A short never runs across the break between two parts.</div>
 </div>
 
@@ -7594,13 +7587,17 @@ function shRenderOptions(){
 // auto=true:  "Generate without preview" -- one job that analyses and then
 // renders every moment found. It is one job on the server, not two started
 // from here, so closing the tab part-way doesn't strand it between the two.
+var SH_MAX_PARTS = 10
 function shAddPart(){
-  var two = shEl('sh-part2'), three = shEl('sh-part3')
-  if(two.style.display === 'none') two.style.display = ''
-  else { three.style.display = ''; shEl('sh-add-part-link').style.display = 'none' }
+  var next = null
+  for(var k = 2; k <= SH_MAX_PARTS; k++){
+    var el = shEl('sh-part' + k)
+    if(el && el.style.display === 'none'){ next = k; el.style.display = ''; break }
+  }
   shEl('sh-parts-note').style.display = ''
   var link = shEl('sh-add-part-link')
-  if(three.style.display === '') link.style.display = 'none'; else link.textContent = '+ A third part'
+  if(next === null || next >= SH_MAX_PARTS) link.style.display = 'none'
+  else link.textContent = '+ Part ' + (next + 1)
 }
 
 async function shortsAnalyze(auto){
@@ -7616,7 +7613,7 @@ async function shortsAnalyze(auto){
   var fd = new FormData()
   if(hasLocal) fd.append('shorts_file', f.files[0]); else fd.append('shorts_file_network', net)
   var n = 1
-  ;['2', '3'].forEach(function(k){
+  ;['2', '3', '4', '5', '6', '7', '8', '9', '10'].forEach(function(k){
     var lf = shEl('sh-file' + k), nn = shEl('shorts_file' + k + '_network').value
     if(lf && lf.files && lf.files[0]){ fd.append('shorts_file' + k, lf.files[0]); n++ }
     else if(nn){ fd.append('shorts_file' + k + '_network', nn); n++ }
@@ -8123,20 +8120,23 @@ function shCapEditor(host, cues, opts){
       '<span data-cap-out style="font-size:12px;overflow-wrap:anywhere"></span></div>' +
     (opts.readOnly ? '' : '<div class="sh-note">In a time box, the up and down keys move it by 0.05 s (hold Shift for 0.5 s). <b>Split</b> cuts a line at the text cursor; <b>Join</b> runs it into the next.</div>') +
     '</div><div class="sh-cp-side">' +
-      '<div class="sh-cp" data-cp style="--cp-px:' + PX[size] + '"><img data-cp-img alt="" style="display:none"><div class="sh-cp-line" data-cp-line></div></div>' +
+      '<div class="sh-cp" data-cp style="--cp-px:' + PX[size] + '"><img data-cp-img alt="" style="display:none"><video data-cp-video playsinline preload=auto style="display:none"></video><div class="sh-cp-line" data-cp-line></div></div>' +
       '<input type=range data-cp-t min=0 max=' + dur + ' step=0.05 value=0 aria-label="Position in the short">' +
       '<div class="sh-cp-ctl"><button type=button class="btn-sm" data-cp-play>&#9654; Play</button><span data-cp-clock></span></div>' +
       '<div class="sh-note" data-cp-info></div>' +
-      '<div class="sh-note">Shown as it will be burned in. ' + (opts.frame ? 'The picture behind is the middle of the source frame; the real framing may differ.' : '') + '</div>' +
+      '<div class="sh-note">Shown as it will be burned in. ' + (opts.frame ? 'The picture behind is the middle of the source frame; the real framing may differ.' : '') + (opts.clip ? ' <b>Play</b> uses the real sound.' : '') + '</div>' +
     '</div></div></div>'
   var list = host.querySelector('[data-cap-rows]'), out = host.querySelector('[data-cap-out]')
   var ro = opts.readOnly ? ' readonly' : ''
   var img = host.querySelector('[data-cp-img]'), line = host.querySelector('[data-cp-line]')
   var range = host.querySelector('[data-cp-t]'), clock = host.querySelector('[data-cp-clock]')
   var info = host.querySelector('[data-cp-info]'), playBtn = host.querySelector('[data-cp-play]')
+  var vid = host.querySelector('[data-cp-video]'), ready = false, raf = null
 
   // ---- the preview: where we are in the short, and which line is on screen ----
   var t = 0, pinned = null, timer = null, shots = {}, asked = {}, bt = null
+  function seek(){ if(ready){ try{ vid.currentTime = Math.min(t, vid.duration || t) }catch(e){} } }
+  function playing(){ return !!timer || !!raf }
   function pinTime(r){ return Math.max(0, r.start + Math.min(0.3, Math.max(0, (r.end - r.start) / 2))) }
   function activeRow(){
     if(pinned && rows.indexOf(pinned) >= 0) return pinned
@@ -8148,7 +8148,7 @@ function shCapEditor(host, cues, opts){
   }
   function show(src){ img.src = src; img.style.display = 'block' }
   function backdrop(){
-    if(!opts.frame) return
+    if(!opts.frame || ready) return
     var key = Math.round(t * 2) / 2
     if(shots[key]){ show(shots[key]); return }
     if(asked[key]) return
@@ -8172,13 +8172,34 @@ function shCapEditor(host, cues, opts){
     }else{ info.textContent = 'No caption at this moment.'; info.style.color = '' }
     backdrop()
   }
-  function stop(){ clearInterval(timer); timer = null; playBtn.innerHTML = '&#9654; Play' }
-  function pin(r){ stop(); pinned = r; t = Math.min(dur, pinTime(r)); paint() }
-  range.addEventListener('input', function(){ stop(); pinned = null; t = parseFloat(range.value) || 0; paint() })
+  function stop(){
+    clearInterval(timer); timer = null
+    if(raf){ cancelAnimationFrame(raf); raf = null }
+    if(ready) vid.pause()
+    playBtn.innerHTML = '&#9654; Play'
+  }
+  function pin(r){ stop(); pinned = r; t = Math.min(dur, pinTime(r)); seek(); paint() }
+  range.addEventListener('input', function(){ stop(); pinned = null; t = parseFloat(range.value) || 0; seek(); paint() })
   playBtn.addEventListener('click', function(){
-    if(timer){ stop(); return }
+    if(playing()){ stop(); return }
     pinned = null
     if(t >= dur - 0.05) t = 0
+    if(ready){
+      // The real clip with its sound: the line shown is read off the
+      // picture's own clock, so it is on screen with the voice.
+      vid.currentTime = t
+      playBtn.innerHTML = '&#10074;&#10074; Pause'
+      vid.play().catch(function(){ stop() })
+      var loop = function(){
+        if(!host.contains(line)){ stop(); return }
+        t = Math.min(dur, vid.currentTime)
+        paint()
+        if(vid.ended || t >= dur - 0.02){ stop(); return }
+        raf = requestAnimationFrame(loop)
+      }
+      raf = requestAnimationFrame(loop)
+      return
+    }
     var t0 = performance.now(), from = t
     playBtn.innerHTML = '&#10074;&#10074; Pause'
     timer = setInterval(function(){
@@ -8220,7 +8241,7 @@ function shCapEditor(host, cues, opts){
           v = Math.max(0, Math.min(dur, v))
           r[key] = v; inp.value = shCapFmt(v); inp.classList.remove('bad')
           pin(r)
-          if(key === 'end') { t = Math.max(r.start, v - 0.05); paint() }
+          if(key === 'end') { t = Math.max(r.start, v - 0.05); seek(); paint() }
         })
       })
       function over(){ ti.classList.toggle('over', r.text.trim().length > maxc) }
@@ -8269,7 +8290,24 @@ function shCapEditor(host, cues, opts){
   function say(text, colour){ out.style.color = colour || ''; out.textContent = text }
   draw()
   if(rows.length) pin(rows[0]); else paint()
-  if(document.activeElement && document.activeElement !== document.body) { /* keep focus where the user put it */ }
+  // The clip, with its sound, fetched in the background: until it is ready
+  // the preview is stills and the clock, as before.
+  if(opts.clip){
+    playBtn.disabled = true; playBtn.textContent = 'Preparing the clip\u2026'
+    var failed = function(){ playBtn.disabled = false; playBtn.innerHTML = '&#9654; Play'; vid.removeAttribute('src') }
+    Promise.resolve(opts.clip()).then(function(url){
+      if(!url || !host.contains(line)) throw new Error('none')
+      vid.addEventListener('loadedmetadata', function(){
+        ready = true
+        vid.style.display = 'block'; vid.style.opacity = opts.clipHidden ? '0' : ''
+        img.style.display = 'none'
+        playBtn.disabled = false; playBtn.innerHTML = '&#9654; Play'
+        seek(); paint()
+      }, {once: true})
+      vid.addEventListener('error', failed, {once: true})
+      vid.src = url
+    }).catch(failed)
+  }
 
   var add = host.querySelector('[data-cap-add]')
   if(add) add.addEventListener('click', function(){
@@ -8297,7 +8335,7 @@ function shCapEditor(host, cues, opts){
   var reset = host.querySelector('[data-cap-reset]')
   if(reset) reset.addEventListener('click', function(){ stop(); opts.onReset() })
   host.querySelector('[data-cap-close]').addEventListener('click', function(){
-    stop()
+    stop(); vid.removeAttribute('src')
     host.style.display = 'none'; host.innerHTML = ''
     if(opts.onClose) opts.onClose()
   })
@@ -8336,6 +8374,11 @@ async function shCandCaptions(i){
         body: JSON.stringify({analysis_id: SH.analysis.analysis_id, t: r.start + at})})
         .then(function(x){ return x.json() }).then(function(d){ return d.ok ? d.image : null })
     },
+    clip: function(){
+      return fetch('/api/shorts/clip', {method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({analysis_id: SH.analysis.analysis_id, start: r.start, end: r.end})})
+        .then(function(x){ return x.json() }).then(function(d){ return d.ok ? d.url : null })
+    },
     note: (r.edited ? 'Your corrected captions for this moment.' : 'The automatic captions for this moment, as they will appear.') +
       ' Change the wording, or when a line is on screen; empty a line to drop it. Times are from the start of the short.' +
       (burning ? '' : ' <b>Burn in captions</b> is off, so these go to the .srt only.') +
@@ -8363,6 +8406,24 @@ function shDrawShot(canvas, img, d, sh, choice){
   g.drawImage(img, 0, 0, w, h)
   var layout = choice.layout === 'auto' ? sh.auto : choice.layout
   var x = choice.layout === 'crop' ? choice.x : sh.x
+  if(layout === 'split' && sh.split){
+    // The two windows that are stacked, top then bottom.
+    var kx = w / d.disp_w, ky = h / d.disp_h
+    g.fillStyle = 'rgba(0,0,0,.45)'; g.fillRect(0, 0, w, h)
+    sh.split.panes.forEach(function(p, n){
+      var px = p[0] * kx, py = p[1] * ky, pw = sh.split.size[0] * kx, ph = sh.split.size[1] * ky
+      g.drawImage(img, p[0] * (img.naturalWidth / d.disp_w), p[1] * (img.naturalHeight / d.disp_h),
+                  sh.split.size[0] * (img.naturalWidth / d.disp_w), sh.split.size[1] * (img.naturalHeight / d.disp_h), px, py, pw, ph)
+      g.strokeStyle = choice.layout === 'auto' ? 'rgba(255,255,255,.9)' : 'rgba(52,230,197,.95)'
+      g.lineWidth = 3
+      if(choice.layout === 'auto') g.setLineDash([8, 6])
+      g.strokeRect(px + 1.5, py + 1.5, pw - 3, ph - 3)
+      g.setLineDash([])
+      g.fillStyle = 'rgba(0,0,0,.6)'; g.fillRect(px + 4, py + 4, 18, 18)
+      g.fillStyle = '#fff'; g.font = '12px sans-serif'; g.fillText(String(n + 1), px + 9, py + 17)
+    })
+    return
+  }
   if(layout === 'fit' || layout === 'split' || x == null){
     g.strokeStyle = 'rgba(52,230,197,.95)'; g.lineWidth = 3; g.strokeRect(1.5, 1.5, w - 3, h - 3)
     return
@@ -8401,7 +8462,7 @@ async function shCandFraming(i){
   host.innerHTML = '<div class="sh-frame">' +
     '<div class="sh-note" style="margin-top:0">How each shot of this moment will be framed. The dashed box is what was worked out' +
       (d.detector ? '' : ' (no face detector here: shots are centre-cropped)') +
-      '; choose <b>Crop here</b> and slide the box to put it somewhere else, or <b>Whole frame</b> to show the whole picture. ' +
+      '; choose <b>Crop here</b> and slide the box to put it somewhere else, <b>Whole frame</b> to show the whole picture, or <b>Split screen</b> to stack two people, one above the other. ' +
       '<b>Make vertical preview</b> shows the result in 9:16, captions and all.</div>' +
     '<div class="sh-frame-body">' +
       '<div class="sh-frame-pv"><div class="sh-frame-empty" data-pv>No preview yet</div>' +
@@ -8423,7 +8484,9 @@ async function shCandFraming(i){
       '<div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">' +
         '<select data-shot-layout aria-label="Framing of shot ' + (k + 1) + '">' +
           '<option value=auto>As worked out</option>' + (crops ? '<option value=crop>Crop here</option>' : '') +
-          '<option value=fit>Whole frame</option></select></div>' +
+          '<option value=fit>Whole frame</option>' +
+          (crops ? '<option value=split' + (sh.can_split ? '' : ' disabled') + '>Split screen' + (sh.can_split ? ' (two people, stacked)' : ' (needs two people)') + '</option>' : '') +
+          '</select></div>' +
       '<input type=range data-shot-x min=0 max=' + d.max_x + ' step=1 aria-label="Where the crop of shot ' + (k + 1) + ' sits"></div>'
     var canvas = row.querySelector('canvas'), sel = row.querySelector('[data-shot-layout]'), slide = row.querySelector('[data-shot-x]')
     var img = new Image()
@@ -8455,6 +8518,7 @@ async function shCandFraming(i){
       var ch = choices[k]
       if(ch.layout === 'crop') shots.push({at: sh.at, layout: 'crop', x: Math.round(ch.x)})
       else if(ch.layout === 'fit') shots.push({at: sh.at, layout: 'fit'})
+      else if(ch.layout === 'split' && sh.can_split) shots.push({at: sh.at, layout: 'split'})
     })
     return shots.length ? {shots: shots} : null
   }
@@ -8537,6 +8601,7 @@ async function shBatchCaptions(card, b, s){
     : escapeHtmlLite(r.why || '') + ' <b>Saving here updates the .srt only.</b>'
   shCapEditor(host, r.cues, {
     dur: r.duration, readOnly: !r.can_change, note: head + note, size: (b.options || {}).subtitle_size || 'm',
+    clip: function(){ return Promise.resolve(s.url) }, clipHidden: !!r.burned,
     saveLabel: r.how === 'render' ? 'Save and render again' : 'Save to the .srt',
     onSave: async function(cues, say){
       var p = await (await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -8915,7 +8980,7 @@ function shCreateReset(){
   var f = shEl('sh-file')
   if(f) f.value = ''
   if(typeof clearNetworkField === 'function' && shEl('shorts_file_network').value) clearNetworkField('shorts_file')
-  ;['2', '3'].forEach(function(k){
+  ;['2', '3', '4', '5', '6', '7', '8', '9', '10'].forEach(function(k){
     var lf = shEl('sh-file' + k)
     if(lf) lf.value = ''
     if(typeof clearNetworkField === 'function' && shEl('shorts_file' + k + '_network').value) clearNetworkField('shorts_file' + k)
@@ -10089,8 +10154,8 @@ job. Configured via env vars:
       <p>Each candidate's score (0&ndash;100) weighs story most, then visual drama, then dialogue pace, then sound. Both Ollama and faster-whisper must be reachable; the job refuses to start otherwise rather than choose on half the evidence. The same goes for a transcription that fails part-way (the service errors or times out): the job stops and says why. Only a source with genuinely nothing to hear &mdash; no audio track, or no speech in it &mdash; falls back to picture alone. A warning above the list tells you when a fallback was used (no story found, or no dialogue at all). The speech-to-text service has to return timings as well as text: it is asked for <code>verbose_json</code> with timestamps and, if it answers that with the text alone, for <code>srt</code> and then <code>vtt</code>, which every Whisper server can write. Subtitle timings are per line, not per word, so captions made that way change a line at a time. A server that gives no timings in any of the three stops the job with a message saying so. On a master that keeps its sound on separate tracks or channels (eight mono tracks, say, with the full mix on 3 and 4), the dialogue is looked for where there is sound rather than on the first track: silent channels are never sent, a stereo pair recorded out of phase is sent as one side, and if the first candidate has no speech in it the next is tried, up to four. A note above the list says which track the dialogue was read from, and the shorts and their previews take their sound from the same place. When nothing is found, the warning lists what was tried and at what level.</p>
       <h3>2. Review</h3>
       <p>Play any candidate, edit its title and its in/out (type <code>m:ss.s</code> or seconds), untick the ones you do not want, or add a range of your own. The preview shows the source framing; reframing happens at render.</p>
-      <p><strong>Framing&hellip;</strong> on a candidate shows each of its shots as a still, with the 9:16 window drawn where it will be: dashed for what was worked out, solid for a correction. For any shot, choose <strong>Crop here</strong> and slide the window (or click the still where it should go), or <strong>Whole frame</strong> to show the whole picture over a blurred copy. <strong>Make vertical preview</strong> renders a small 9:16 copy of the moment as it will come out &mdash; framing, corrections and captions &mdash; in a few seconds, without spending a full render. <strong>Use this framing</strong> keeps the corrections with that moment (marked <em>framing set</em>); a corrected shot is framed that way for its whole length, even where the plan had followed someone, cut between speakers or split the screen. The corrections belong to the shots, not to the in and out points: move those afterwards and each correction stays on the shot it was made for. <strong>Back to automatic</strong> drops them.</p>
-      <p><strong>Captions&hellip;</strong> on a candidate opens the lines it will be captioned with, exactly as they will appear: change the wording, change when a line is on screen (times are from the start of the short, to a hundredth of a second), empty a line to drop it, or add one. <strong>Use these captions</strong> keeps them with that moment &mdash; it is marked <em>captions edited</em> &mdash; and they are what is burned in and written to its .srt. Moving the in or out point afterwards does not lose them: the lines still inside the new range stay, moved to where they now fall, and whatever the range gained at either end gets the automatic captions. <strong>Back to automatic</strong> drops the corrections. A phone-shaped <strong>preview</strong> beside the lines shows the line as it is burned in (size, outline and position), over a still from the episode, and follows what you do: click or type in a line and it shows that line; drag the slider or press <strong>Play</strong> to watch the captions change in time. Beside a line, <strong>Split</strong> cuts it in two at the text cursor (the time is divided in proportion), <strong>Join</strong> runs it into the next; in a time box the up and down keys move it by 0.05 s (Shift: 0.5 s). A line longer than fits on one line at the chosen size is marked amber and the preview shows it wrapped. One caption is on screen at a time, so where two lines overlap the earlier one ends as the next begins.</p>
+      <p><strong>Framing&hellip;</strong> on a candidate shows each of its shots as a still, with the 9:16 window drawn where it will be: dashed for what was worked out, solid for a correction. For any shot, choose <strong>Crop here</strong> and slide the window (or click the still where it should go), <strong>Whole frame</strong> to show the whole picture over a blurred copy, or <strong>Split screen</strong> to stack the two people of the shot, one above the other (offered only for a shot with exactly two people far enough apart to give each a pane; the panes are drawn on the still, numbered top to bottom, and every split in a clip shares one window size). <strong>Make vertical preview</strong> renders a small 9:16 copy of the moment as it will come out &mdash; framing, corrections and captions &mdash; in a few seconds, without spending a full render. <strong>Use this framing</strong> keeps the corrections with that moment (marked <em>framing set</em>); a corrected shot is framed that way for its whole length, even where the plan had followed someone, cut between speakers or split the screen. The corrections belong to the shots, not to the in and out points: move those afterwards and each correction stays on the shot it was made for. <strong>Back to automatic</strong> drops them.</p>
+      <p><strong>Captions&hellip;</strong> on a candidate opens the lines it will be captioned with, exactly as they will appear: change the wording, change when a line is on screen (times are from the start of the short, to a hundredth of a second), empty a line to drop it, or add one. <strong>Use these captions</strong> keeps them with that moment &mdash; it is marked <em>captions edited</em> &mdash; and they are what is burned in and written to its .srt. Moving the in or out point afterwards does not lose them: the lines still inside the new range stay, moved to where they now fall, and whatever the range gained at either end gets the automatic captions. <strong>Back to automatic</strong> drops the corrections. A phone-shaped <strong>preview</strong> beside the lines shows the line as it is burned in (size, outline and position) and follows what you do: click or type in a line and it shows that line; drag the slider to any point of the short. <strong>Play</strong> plays the real clip with its sound, a few seconds after the editor opens (while it is prepared the preview is stills and a clock), and the line on screen follows the picture&rsquo;s own clock, so each caption is shown with its voice. Captions are timed from the words: when an analysis is made the first word after a silence is moved to where the speech really begins, so a caption does not come up early and wait for the voice. Beside a line, <strong>Split</strong> cuts it in two at the text cursor (the time is divided in proportion), <strong>Join</strong> runs it into the next; in a time box the up and down keys move it by 0.05 s (Shift: 0.5 s). A line longer than fits on one line at the chosen size is marked amber and the preview shows it wrapped. One caption is on screen at a time, so where two lines overlap the earlier one ends as the next begins.</p>
       <p><strong>Your review is saved as you make it</strong> &mdash; ticks, titles, in and out points, corrected captions and framing, and moments added by hand. The analysis and the review are kept on the server (in <code>shorts_analyses</code> next to the library; <code>SHORTS_ANALYSES_DIR</code> to put them elsewhere) for 14 days after they were last opened (<code>SHORTS_ANALYSIS_DAYS</code>), so a restart or a day away does not mean analysing the episode again. <strong>Earlier cuts of this project</strong>, at the top of <strong>Create shorts</strong>, lists them with <strong>Open</strong>, which brings the cut back as it was left, and <strong>Delete</strong>, which removes the analysis and its review but never shorts made from it. You see your own; admins see everyone&rsquo;s.</p>
       <p>The episode itself is a staged copy and is still cleared from the server after a while and on a restart. If it was picked from a network folder, the analysis remembers where: the review offers <strong>Fetch the episode again</strong>, which previews and framing need, and a render fetches it by itself. An episode uploaded from a computer cannot be fetched again; pick it again and re-analyse.</p>
       <h3>3. Render</h3>
@@ -10133,8 +10198,8 @@ job. Configured via env vars:
       <p>(Episodic Plug and the Player have the same switch on the <strong>Video (HIRES)</strong> folder.)</p>
       <p>By default, picking an episode from <strong>Browse library</strong> copies it to the server first. Under <strong>Config &gt; Network</strong>, switch on <strong>Read files in place</strong> for the Vertical Shorts folder and nothing is copied: the episode is analysed and rendered straight from the share, so there is no wait and no extra disk use. The account PRISM runs under must be able to open the share path itself (the login in Config is only used for browsing and copying); when it cannot, that pick is copied as before and says so on its chip. PRISM only reads the file &mdash; it never changes or deletes it &mdash; but the share has to stay reachable while you work on the project, and analyses and renders go at the speed of the share.</p>
       <h3>Episodes in more than one part</h3>
-      <p>If the episode comes as two or three files, add them under <strong>This episode comes in more than one part</strong>. The parts are laid end to end and read as one episode: the story model sees the whole thing, so a setup in part 1 can pay off in part 2, and the sound and picture are rated against the whole programme. A short is always cut from one part &mdash; it never runs across the break &mdash; and each moment shows which part it is in, with its times read within that part. To leave something out, name the part: <code>part 2 0:00-1:45, part 3 18:10-end</code> (a range with no part means part 1). Shorts are numbered in episode order across all the parts, and the total running time counts every part.</p>
-      <pre>POST /api/shorts/analyze  + shorts_file_network, (shorts_file2_network, shorts_file3_network), min_dur, max_dur, count, focus?, avoid?
+      <p>If the episode comes as several files (up to ten), add them under <strong>This episode comes in more than one part</strong>. The parts are laid end to end and read as one episode: the story model sees the whole thing, so a setup in part 1 can pay off in part 2, and the sound and picture are rated against the whole programme. A short is always cut from one part &mdash; it never runs across the break &mdash; and each moment shows which part it is in, with its times read within that part. To leave something out, name the part: <code>part 2 0:00-1:45, part 3 18:10-end</code> (a range with no part means part 1). Shorts are numbered in episode order across all the parts, and the total running time counts every part.</p>
+      <pre>POST /api/shorts/analyze  + shorts_file_network, (shorts_file2_network ... shorts_file10_network), min_dur, max_dur, count, focus?, avoid?
                           + auto_render=1, reframe, speaker, subtitles, subtitle_size  (render every moment found, no review)
 GET  /api/shorts/progress/&lt;job_id&gt;
 GET  /api/shorts/analysis/&lt;analysis_id&gt;

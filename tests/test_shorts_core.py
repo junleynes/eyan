@@ -1740,3 +1740,58 @@ def test_moments_are_built_clear_of_what_is_not_story():
     m = [{'start': 30.0, 'end': 50.0, 'duration': 20.0, 'flags': []}, {'start': 60.0, 'end': 70.0, 'duration': 10.0, 'flags': []}]
     kept, gone = sc.clear_of(m, [(45.0, 52.0, ['credits']), (62.0, 70.0, ['logo'])], min_dur=8, fps=25)
     assert gone == 1 and kept[0]['end'] == 45.0 and 'cleaned' in kept[0]['flags']
+
+
+# ---- captions that come up with the voice, split screen from the editor ----
+
+def _envelope(quiet_until, until, hop=None):
+    hop = hop or sc.ENVELOPE_HOP
+    n = int(until / hop)
+    return np.array([-55.0 if i * hop < quiet_until else -20.0 for i in range(n)], dtype=np.float32)
+
+
+def test_the_first_word_after_a_silence_starts_where_the_speech_does():
+    db = _envelope(5.0, 12.0)
+    words = [{'start': 1.0, 'end': 5.6, 'word': 'Oh'}, {'start': 5.7, 'end': 6.2, 'word': 'my'},
+             {'start': 6.3, 'end': 6.9, 'word': 'God'}]
+    out, moved = sc.align_word_starts(words, db)
+    assert moved == 1 and 4.9 <= out[0]['start'] <= 5.05, out
+    assert [w['start'] for w in out[1:]] == [5.7, 6.3], 'words inside the phrase keep their times'
+    assert [w['end'] for w in out] == [5.6, 6.2, 6.9]
+
+
+def test_a_word_timed_inside_sound_or_in_a_wall_of_sound_is_left_alone():
+    words = [{'start': 6.0, 'end': 6.5, 'word': 'Hoy'}]
+    assert sc.align_word_starts(words, _envelope(5.0, 12.0))[1] == 0
+    flat = np.full(int(12 / sc.ENVELOPE_HOP), -20.0, dtype=np.float32)
+    assert sc.align_word_starts([{'start': 1.0, 'end': 5.6, 'word': 'Oh'}], flat)[1] == 0
+    assert sc.align_word_starts([{'start': 1.0, 'end': 5.6, 'word': 'Oh'}], None)[1] == 0
+
+
+def test_lines_begin_no_earlier_than_their_first_word():
+    words = [{'start': 4.97, 'end': 5.6, 'word': 'Oh'}, {'start': 5.7, 'end': 6.2, 'word': 'my'}]
+    segs = [{'start': 1.0, 'end': 6.3, 'text': 'Oh my'}, {'start': 7.0, 'end': 8.0, 'text': 'none'}]
+    out = sc.sync_segment_starts(segs, words)
+    assert out[0]['start'] == 4.92 and out[1]['start'] == 7.0
+
+
+def test_the_editor_can_split_a_shot_that_has_two_people_and_not_one_that_does_not():
+    segs = [{'a': 0, 'b': 49, 'layout': 'crop', 'x': 100.0, 'keys': None},
+            {'a': 50, 'b': 99, 'layout': 'crop', 'x': 600.0, 'keys': None}]
+    alt = [{'a': 0, 'b': 49, 'layout': 'split', 'x': None, 'keys': None, 'size': (900, 800),
+            'people': [(300, 400, 80, 80), (1500, 400, 80, 80)], 'panes': [(0, 0), (1000, 0)]}]
+    out = sc.apply_framing(segs, [50], 100, [(10, 'split', None), (60, 'split', None)], 1312.0,
+                           splits=alt, disp=(1920, 1080))
+    assert [(s['a'], s['b'], s['layout']) for s in out] == [(0, 49, 'split'), (50, 99, 'crop')], \
+        'the second shot has no two people, so it keeps its plan'
+    assert out[0]['size'] and out[0]['panes']
+    # Nothing to split with, or no picture size: nothing changes.
+    assert [s['layout'] for s in sc.apply_framing(segs, [50], 100, [(10, 'split', None)], 1312.0)] == ['crop', 'crop']
+
+
+def test_a_clip_can_be_cut_from_ten_parts():
+    import shorts
+    assert shorts.MAX_PARTS == 10
+    r, parts, bad = shorts._parse_leave_out('part 10 0:00-1:00, part 2 0:10-0:20, 5:00-6:00', 10)
+    assert bad is None and sorted({k for k, _, _ in parts}) == [0, 1, 9]
+    assert shorts._parse_leave_out('part 11 0:00-1:00', 10)[2]

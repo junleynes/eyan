@@ -1821,6 +1821,10 @@ def test_a_moments_shots_are_shown_with_their_framing_and_can_be_corrected(env, 
     assert [(sh['start'], sh['end']) for sh in d['shots']] == [(2.0, 3.0), (3.0, 6.0), (6.0, 8.0)]
     assert all(sh['auto'] == 'crop' and sh['x'] == 109.0 for sh in d['shots']), 'no faces: the middle'
     assert all(2.0 <= sh['at'] < 8.0 and sh['start'] <= sh['at'] < sh['end'] for sh in d['shots'])
+    assert all(sh['can_split'] is False and sh['split'] is None for sh in d['shots']), 'no two people: nothing to split'
+    nosplit = {'shots': [{'at': d['shots'][1]['at'], 'layout': 'split'}]}
+    assert post('/api/shorts/vpreview', start=2.0, end=8.0, framing=nosplit, subtitles=False).get_json()['ok'], \
+        'a split asked for where there are not two people keeps the plan'
     thumb = client.get(d['shots'][1]['thumb'])
     assert thumb.status_code == 200 and cv2.imdecode(np.frombuffer(thumb.data, np.uint8), 1).shape[:2] == (216, 384)
     assert post('/api/shorts/framing', start=2.0, end=3.0).status_code == 400
