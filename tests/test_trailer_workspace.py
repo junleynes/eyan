@@ -44,3 +44,20 @@ def test_the_essentials_come_before_the_long_steering_block():
     assert html.index('id=template-select') < html.index('class="promo-steer card"')
     assert html.index('id=trailer-length-select') < html.index('class="promo-steer card"')
     assert html.index('class="promo-steer card"') < html.index('id=generator-settings')
+
+
+def test_cleaner_edits_settings_are_on_by_default_and_posted_with_the_form():
+    html = _page()
+    assert 'id="promo-clean"' in html
+    for name, default in (('cut_clean', 'on'), ('card_fit', 'fit'), ('vo_smart', 'on')):
+        m = re.search(rf'<select name={name} [^>]*>(.*?)</select>', html, re.S)
+        assert m, name
+        assert re.search(rf'<option value={default} selected>', m.group(1)), name
+    assert html.index('class="promo-essentials"') < html.index('id="promo-clean"') < html.index('class="promo-steer card"')
+
+
+def test_the_review_has_a_place_for_the_edit_report_and_the_ready_panel_a_time_budget():
+    html = _page()
+    assert html.count('id=tr-edit-report') == 1
+    for piece in ('function renderEditReport(', 'renderEditReport(d)', 'function trCardSecs(', "'Time budget'"):
+        assert piece in html, piece

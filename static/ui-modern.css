@@ -384,6 +384,30 @@ img[src*="prism-logo"],img[src*="logo-mark"],img[src*="branding/logo"]{
 .score-chip.total{color:var(--phosphor);border-color:color-mix(in srgb,var(--phosphor) 35%,transparent)}
 .score-chip.speech{color:var(--amber)}
 .score-chip.face{color:var(--accent,#4f8cff)}
+.score-chip.cut-ok{color:#2e9e5b;border-color:color-mix(in srgb,#2e9e5b 40%,transparent)}
+.score-chip.cut-warn{color:#b8860b;border-color:color-mix(in srgb,#b8860b 45%,transparent)}
+.score-chip.cut-bad{color:#d1453b;border-color:color-mix(in srgb,#d1453b 45%,transparent)}
+.promo-clean{padding:10px 14px;margin:0 0 14px}
+.promo-clean summary{cursor:pointer;font:600 11px 'JetBrains Mono',monospace;letter-spacing:.06em;text-transform:uppercase;color:var(--phosphor)}
+.promo-clean summary span{text-transform:none;letter-spacing:0;font-weight:400;color:var(--ink-dim);margin-left:8px}
+.promo-clean .clean-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:10px}
+.promo-clean label{margin-top:0}
+.promo-clean .clean-help{font-size:11.5px;opacity:.75;margin:4px 0 0;line-height:1.45}
+.edit-report{margin:12px 0 0;padding:0;list-style:none;display:grid;gap:6px;font-size:12px}
+.edit-report>li{display:flex;gap:8px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--sunken)}
+.edit-report>li>i{font-style:normal;font-weight:700;width:14px;flex:none;text-align:center}
+.edit-report>li>span{flex:1;min-width:0}
+.edit-report>li.ok>i{color:#2e9e5b}
+.edit-report>li.warn>i{color:#b8860b}
+.edit-report>li.skip>i{opacity:.5}
+.edit-report .er-notes{display:block;margin-top:3px;opacity:.8}
+.vo-lines{width:100%;border-collapse:collapse;margin-top:6px;font-size:11.5px}
+.vo-lines td{padding:3px 6px;border-top:1px solid var(--line);vertical-align:top}
+.vo-lines td.t{font:600 11px 'JetBrains Mono',monospace;white-space:nowrap;opacity:.85}
+.vo-lines .st{font:600 9px 'JetBrains Mono',monospace;letter-spacing:.04em;padding:1px 6px;border-radius:999px;border:1px solid var(--line)}
+.vo-lines .st.bad{color:#d1453b}
+.vo-lines .st.warn{color:#b8860b}
+.vo-lines .st.ok{color:#2e9e5b}
 .cut-timeline{margin:0 0 4px}
 .cut-track{
   display:flex;gap:3px;height:28px;padding:3px;border-radius:10px;
