@@ -27,6 +27,7 @@ import smbclient  # pip install smbprotocol -- lets the upload panels browse a W
 from smbprotocol.exceptions import SharingViolation
 
 from core import app, ALLOWED_EXTENSIONS, _job_submit_limiter, _client_ip
+import cutcraft
 from schedule_core import IMAGE_EXTENSIONS as SCHEDULE_IMAGE_EXTENSIONS
 from library_db import (LIBRARY_DIR, _sqlite_connect, library_add, library_list, library_stats, library_get_row, library_delete,
     audit_log, audit_log_list, network_favorites_list, network_favorite_add, network_favorite_remove,
@@ -92,6 +93,7 @@ TEMPLATE_SETTING_FIELDS = [
     'target_loudness', 'true_peak', 'music_duck_db', 'duck_depth_db',
     'duck_release_hold', 'beat_match', 'broadcast_stereo',
     'sync_beats', 'whisper_enhance',
+    'cut_clean', 'card_fit', 'vo_smart',
 ]
 # Checkbox-style fields: absent from a form POST means "off", so they must be
 # recorded as off rather than left at whatever the previous value was.
@@ -2037,7 +2039,7 @@ def build_ai_vision_prompt(base_prompt, genre, priority_prompt=None, negative_pr
                      f"noticeably lower than scenes that don't.")
     return ai_prompt
 
-def _detect_silence_intervals(audio_path, noise_db=-35, min_dur=0.35, timeout=120):
+def _detect_silence_intervals(audio_path, noise_db=-35, min_dur=0.35, timeout=120, sample_rate=44100):
     """Runs ffmpeg's silencedetect filter and parses stderr for silence_start/silence_end
     pairs. Returns a list of (start, end) SILENT intervals in audio_path. A silence_start
     with no matching silence_end (file ends mid-silence) is dropped rather than guessed at —
@@ -2061,7 +2063,7 @@ def _detect_silence_intervals(audio_path, noise_db=-35, min_dur=0.35, timeout=12
     pcm_path = None
     try:
         pcm_path = os.path.join(app.config['UPLOAD_FOLDER'], f'sildet_{uuid.uuid4().hex}.wav')
-        subprocess.run([FFMPEG, '-y', '-i', audio_path, '-ac', '1', '-ar', '44100',
+        subprocess.run([FFMPEG, '-y', '-i', audio_path, '-ac', '1', '-ar', str(sample_rate),
                                 '-c:a', 'pcm_s16le', pcm_path],
                                capture_output=True, text=True, timeout=timeout)
         analyze_path = pcm_path if (os.path.exists(pcm_path) and os.path.getsize(pcm_path) > 0) else audio_path
@@ -3017,6 +3019,38 @@ def mux_card_vo(video_path, vo_path, trim_start, trim_end, output_path):
             pass
     return None
 
+def _card_measure(video_path, duration):
+    """How short can this card safely get? -> (floor, details).
+
+    A card's own voice has to finish and its animation has to settle before
+    anything is trimmed off the end. The voice end comes from silence
+    detection on the card's audio, the settle point from ffmpeg's freezedetect
+    (the picture stops changing). A card with sound that runs to the end, or
+    where nothing can be measured, keeps its full length (the last-resort
+    pass in the job can still use the old fixed 1.0 s floor if the plug would
+    otherwise miss its length)."""
+    voice_end = still_from = None
+    info = probe_media_info(video_path)
+    try:
+        if info.get('has_audio'):
+            sil = _detect_silence_intervals(video_path, noise_db=-40, min_dur=0.15, timeout=60)
+            voice_end = cutcraft.voice_end_from_silences(sil, duration)
+        r = subprocess.run([FFMPEG, '-hide_banner', '-i', video_path, '-vf',
+                            'freezedetect=n=-55dB:d=0.3', '-an', '-f', 'null', '-'],
+                           capture_output=True, text=True, timeout=120)
+        still_from = cutcraft.parse_freeze_tail(r.stderr, duration)
+    except Exception as e:
+        print(f'Card measure error ({video_path}): {e}')
+        return duration, {'voice_end': None, 'still_from': None}
+    if still_from is None:
+        # The picture is still moving at the very end (or never settles), so
+        # nothing can be trimmed without cutting the animation.
+        floor = duration
+    else:
+        floor = cutcraft.card_floor(duration, voice_end=voice_end, still_from=still_from)
+    return floor, {'voice_end': voice_end, 'still_from': still_from}
+
+
 def _adjust_card_duration(video_path, delta, output_path):
     """Grow or shrink a title/end card's duration by `delta` seconds
     (positive to grow, negative to shrink) as a last-resort gap-filler when
@@ -3060,8 +3094,13 @@ def _adjust_card_duration(video_path, delta, output_path):
                    '-c:v', 'libx264', '-preset', 'fast', '-an', output_path]
     else:
         new_duration = max(0.3, orig_dur + delta)
-        cmd = [FFMPEG, '-y', '-i', video_path, '-t', str(new_duration),
-               '-c:v', 'libx264', '-preset', 'fast', '-c:a', 'aac', '-b:a', '192k', output_path]
+        cmd = [FFMPEG, '-y', '-i', video_path, '-t', str(new_duration)]
+        if info.get('has_audio'):
+            # A short fade so the new end never clicks, even when the cut
+            # lands after the card's own voice (see _card_measure).
+            fade = min(0.12, new_duration / 4)
+            cmd += ['-af', f'afade=t=out:st={max(0.0, new_duration - fade):.3f}:d={fade:.3f}']
+        cmd += ['-c:v', 'libx264', '-preset', 'fast', '-c:a', 'aac', '-b:a', '192k', output_path]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=FFMPEG_LONG_TIMEOUT)
         stderr = r.stderr
@@ -3710,6 +3749,88 @@ def transcribe_audio_file(path, trim_start=0.0, trim_end=None):
                 os.remove(audio_path)
             except OSError:
                 pass
+
+
+def _build_vo_plan(vo_path, vo_text, trim_start, trim_end, vo_start, window_end):
+    """Plan the uploaded narration: where each line goes and where it is cut.
+
+    Reads the recording with Whisper (word times), reads the script text for
+    timed lines ("00:03 VO: ..."), finds every line in the recording, and
+    returns cutcraft.plan_vo()'s plan plus bookkeeping:
+      edited    True when the render should build the narration from the plan
+                (timed script lines, or the recording would overrun the plug);
+                False means the recording plays as before, plan is advisory
+      scripted  the text had lines to match
+      coarse    the speech service gave line times only, so cuts are phrase-level
+    Returns None when there is nothing to plan (no speech service, no speech)."""
+    if not vo_path or not os.path.exists(vo_path):
+        return None
+    words, segments = transcribe_audio_file(vo_path, trim_start=trim_start, trim_end=trim_end)
+    if not words and not segments:
+        return None
+    coarse = not words
+    if coarse:
+        words = cutcraft.words_from_segments(segments)
+        if not words:
+            return None
+    try:
+        sil = _detect_silence_intervals(vo_path, noise_db=-38, min_dur=0.08, timeout=120)
+        sil = [(a - (trim_start or 0.0), b - (trim_start or 0.0)) for a, b in sil]
+        refined = cutcraft.refine_words([(w['start'], w['end']) for w in words], sil)
+        words = [dict(w, start=s, end=e) for w, (s, e) in zip(words, refined)]
+    except Exception as e:
+        print(f'VO pause scan skipped: {e}')
+    lines = cutcraft.parse_vo_script(vo_text)
+    timed = any(l['at'] is not None for l in lines)
+    scripted = bool(lines)
+    if not lines:
+        lines = [{'at': None, 'text': (sg.get('text') or '').strip(), 'optional': False}
+                 for sg in segments if (sg.get('text') or '').strip()]
+    plan = cutcraft.plan_vo(lines, words, start_at=float(vo_start or 0.0), window_end=window_end)
+    total = probe_duration(vo_path) or 0.0
+    span = (float(trim_end) if trim_end is not None else total) - float(trim_start or 0.0)
+    legacy_end = float(vo_start or 0.0) + max(0.0, span)
+    overruns = window_end is not None and legacy_end > window_end + 0.02
+    plan.update(edited=bool(plan['pieces']) and (timed or overruns), scripted=scripted, timed=timed,
+                coarse=coarse, legacy_end=round(legacy_end, 2), window_end=window_end,
+                overruns=overruns, trim_start=float(trim_start or 0.0), trim_end=trim_end)
+    if not plan['edited']:
+        plan['notes'] = [n for n in plan['notes'] if 'not found' in n]
+    return plan
+
+
+def _vo_plan_summary(plan):
+    """What the review screen shows of a narration plan."""
+    if not plan:
+        return None
+    return {'edited': plan['edited'], 'scripted': plan['scripted'], 'timed': plan['timed'],
+            'coarse': plan['coarse'], 'fits': plan['fits'], 'end': plan['end'],
+            'overruns': plan['overruns'], 'legacy_end': plan['legacy_end'],
+            'window_end': plan['window_end'], 'notes': plan['notes'][:8],
+            'lines': [dict(l) for l in plan['lines'][:30]]}
+
+
+def _render_vo_from_plan(plan, vo_path, out_path):
+    """Cut and place the narration as planned -> out_path, or None."""
+    graph, label = cutcraft.vo_filter(plan['pieces'])
+    if not graph:
+        return None
+    cmd = [FFMPEG, '-y']
+    if plan.get('trim_start'):
+        cmd += ['-ss', str(plan['trim_start'])]
+    if plan.get('trim_end') is not None:
+        cmd += ['-to', str(plan['trim_end'])]
+    cmd += ['-i', vo_path, '-filter_complex', graph, '-map', label,
+            '-ar', '44100', '-c:a', 'pcm_s16le', out_path]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=FFMPEG_LONG_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        print('VO edit timed out')
+        return None
+    if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+        return out_path
+    print(f'VO edit error: {r.stderr[-500:]}')
+    return None
 
 
 def _vo_beats_from_segments(segments):
@@ -5872,6 +5993,13 @@ def api_trailer():
         vo_trim_end = None
     if vo_trim_end is not None and vo_trim_end <= vo_trim_start:
         vo_trim_end = None
+    # Cleaner edits (all on by default, each can be switched off):
+    #   cut_clean  settle every clip's in/out so it never lands inside a word
+    #   card_fit   fit the title/end cards to the plug length
+    #   vo_smart   cut and place the uploaded narration at the script's own points
+    cut_clean = request.form.get('cut_clean', 'on') != 'off'
+    card_fit = 'off' if request.form.get('card_fit', 'fit') == 'off' else 'fit'
+    vo_smart = request.form.get('vo_smart', 'on') != 'off'
 
     # Same idea, for the uploaded background music track: which portion of
     # that source file to actually use, rather than always starting from
@@ -6146,6 +6274,7 @@ def api_trailer():
                   vo_rate=vo_rate, vo_start=vo_start, vo_volume=vo_volume, sync_beats=sync_beats, whisper_enhance=whisper_enhance,
                   selection_driver=selection_driver,
                   vo_trim_start=vo_trim_start, vo_trim_end=vo_trim_end,
+                  cut_clean=cut_clean, card_fit=card_fit, vo_smart=vo_smart,
                   scoring_audio_trim_start=scoring_audio_trim_start, scoring_audio_trim_end=scoring_audio_trim_end,
                   end_card_path=end_card_path, end_card_orig_name=end_card_orig_name,
                   end_card_video_start=end_card_video_start, end_card_video_end=end_card_video_end,
@@ -9751,6 +9880,7 @@ def _run_trailer_job(jid, params):
     transcribe_for_cuts = (whisper_enhance or
                            os.environ.get('SPEECH_SAFE_CUTS', '1').lower() not in ('0', 'false', 'no'))
     end_card_path = params['end_card_path']; schedule_card_path = params['schedule_card_path']
+    cut_clean = params.get('cut_clean', True); card_fit = params.get('card_fit', 'fit'); vo_smart = params.get('vo_smart', True)
     title_card_vo_path = params.get('title_card_vo_path'); title_card_vo_start = params.get('title_card_vo_start', 0.0); title_card_vo_end = params.get('title_card_vo_end')
     end_card_vo_path = params.get('end_card_vo_path'); end_card_vo_start = params.get('end_card_vo_start', 0.0); end_card_vo_end = params.get('end_card_vo_end')
     end_card_video_start = params.get('end_card_video_start', 0.0); end_card_video_end = params.get('end_card_video_end')
@@ -9810,6 +9940,7 @@ def _run_trailer_job(jid, params):
 
     # Measure card durations before selecting scenes
     card_files = []
+    card_labels = []
     card_durations = []
     _card_vo_ts = int(time.time() * 1000)
     if end_card_path and os.path.exists(end_card_path):
@@ -9824,6 +9955,7 @@ def _run_trailer_job(jid, params):
             if result:
                 end_card_path = result
         card_files.append(end_card_path)
+        card_labels.append('Title card')
     if schedule_card_path and os.path.exists(schedule_card_path):
         if schedule_video_start > 0 or schedule_video_end is not None:
             trimmed = os.path.join(app.config['UPLOAD_FOLDER'], f'endcard_trim_{_card_vo_ts}.mp4')
@@ -9836,6 +9968,7 @@ def _run_trailer_job(jid, params):
             if result:
                 schedule_card_path = result
         card_files.append(schedule_card_path)
+        card_labels.append('End card')
     for cf in card_files:
         d = probe_duration(cf)
         if d is None or d <= 0:
@@ -9848,6 +9981,44 @@ def _run_trailer_job(jid, params):
             return
         card_durations.append(d)
     total_card_dur = sum(card_durations)
+
+    # Card fit. A title or end card that is long for a short plug leaves the
+    # scenes too little room, and the only thing that used to close the gap
+    # was a 1 s last-resort nudge at the very end. Measure how short each card
+    # can safely get (its voice finished, its animation settled), and if the
+    # cards would crowd the scenes out, shorten them now, before scenes are
+    # chosen. card_floors also bound the last-resort pass below.
+    card_floors = [min(d, 1.0) for d in card_durations]
+    card_fit_info = {'policy': card_fit, 'cards': [], 'notes': []}
+    if card_files:
+        labels = card_labels
+        measured = [_card_measure(cf, d) for cf, d in zip(card_files, card_durations)] \
+            if card_fit != 'off' else [(min(d, 1.0), {}) for d in card_durations]
+        card_floors = [m[0] for m in measured]
+        if card_fit != 'off':
+            plan = cutcraft.plan_card_fit(trailer_length, card_durations, card_floors)
+            for i in range(len(card_files)):
+                cut = card_durations[i] - plan['targets'][i]
+                if cut > 0.05:
+                    adj = os.path.join(app.config['UPLOAD_FOLDER'],
+                                       f'cardfit_{jid}_{i}_{int(time.time() * 1000) % 100000}.mp4')
+                    res = _adjust_card_duration(card_files[i], -cut, adj)
+                    if res:
+                        card_files[i] = res
+                        card_durations[i] -= cut
+                        note = f'{labels[i]} shortened by {cut:.1f}s so the scenes have room.'
+                        card_fit_info['notes'].append(note)
+            total_card_dur = sum(card_durations)
+            card_floors = [min(f, d) for f, d in zip(card_floors, card_durations)]
+            if plan['short_by'] > 0.05:
+                card_fit_info['notes'].append(
+                    f'Even at their shortest the cards leave the scenes {plan["short_by"]:.1f}s less than '
+                    f'recommended for a {trailer_length:g}s plug. Consider a shorter card or a longer plug.')
+        for i, d in enumerate(card_durations):
+            card_fit_info['cards'].append({'label': labels[i] if i < len(labels) else f'Card {i + 1}',
+                                           'secs': round(d, 2), 'floor': round(card_floors[i], 2),
+                                           'details': measured[i][1]})
+    card_fit_info['scene_budget'] = round(trailer_length - total_card_dur, 2)
 
     # Scene target starts at trailer_length, minus cards duration
     base_target = max(5, trailer_length - total_card_dur)
@@ -9862,6 +10033,8 @@ def _run_trailer_job(jid, params):
     early_bgm_path = None
     early_bgm_source = 'none'
 
+    cut_quiet = []
+    cut_words = []
     preselected = params.get('preselected')
     if preselected:
         # Rendering an approved preview: detection, quality scoring, AI vision
@@ -10320,6 +10493,16 @@ def _run_trailer_job(jid, params):
                 word_ends = [w['end'] for w in words]
                 phrase_ends = [sg['end'] for sg in segments]
                 speech_spans = [(sg['start'], sg['end']) for sg in segments]
+                if cut_clean:
+                    # Measured silences let a cut land where the sound
+                    # really stops, rather than where Whisper estimated it
+                    # (usually good to 50-150 ms, no better).
+                    job_set(jid, percent=32, step='Finding pauses for clean cuts')
+                    try:
+                        cut_quiet = _detect_silence_intervals(path, noise_db=-38, min_dur=0.08, timeout=300, sample_rate=16000)
+                    except Exception as e:
+                        print(f'Clean-cut silence scan skipped: {e}')
+                        cut_quiet = []
                 for s in scenes_data:
                     overlap_text = ' '.join(
                         sg['text'] for sg in segments if sg['start'] < s['end'] and sg['end'] > s['start']
@@ -10449,7 +10632,7 @@ def _run_trailer_job(jid, params):
             selected = []
             total_sel = 0
             if has_narration:
-                vo_for_sel = (params.get('vo_text') or '').strip()
+                vo_for_sel = cutcraft.strip_vo_markers(params.get('vo_text')) if params.get('vo_mode') != 'tts' else (params.get('vo_text') or '').strip()
                 vo_beats = None
                 # Uploaded narration: transcribe with Whisper so selection can follow the spoken lines
                 if not vo_for_sel and params.get('vo_mode') == 'upload' and params.get('vo_upload_path'):
@@ -10712,6 +10895,26 @@ def _run_trailer_job(jid, params):
         job_set(jid, error='No scenes selected.')
         return
 
+    # Clean cuts. Whatever picked the clips, nudge each in and out so it never
+    # lands inside a word: room kept for the transition fade, the in point
+    # moved to the start of a sentence when it falls mid-sentence, hairline
+    # gaps between words skipped for a real pause. Script timecode cues are
+    # the user's own exact in/out points, so those stay as written. The exact
+    # length correction below then works from these settled clips.
+    if transcribe_for_cuts and word_starts and not preselected:
+        cut_words = cutcraft.refine_words(list(zip(word_starts, word_ends)), cut_quiet)
+    if cut_clean and cut_words and used_driver != 'cue' and not preselected:
+        for s in selected:
+            src = s.get('source_path')
+            if src and src != path:
+                continue        # the speech we have is the primary file's only
+            new_ts, new_dur, _rep = cutcraft.refine_clip(
+                s.get('trim_start', s['start']), s['selected_dur'],
+                (s['start'], s['start'] + s['duration']),
+                cut_words, speech_spans, xfade=xfade_dur, min_len=min_seg_dur)
+            s['trim_start'], s['selected_dur'] = new_ts, new_dur
+        total_sel = sum(s['selected_dur'] for s in selected)
+
     # Distributes the remaining error across clips proportionally rather than
     # dumping it all on one: taking 0.4s off a single clip is an audible jolt,
     # taking ~0.05s off each of eight is not. Grows are capped by each clip's
@@ -10779,29 +10982,70 @@ def _run_trailer_job(jid, params):
     # `total_card_dur` feeds the preview's own estimated_duration too.
     if card_files and abs(residual) > 0.01:
         growing = residual > 0
-        budget = min(abs(residual), CARD_DURATION_ADJUST_LIMIT)
-        for i in range(len(card_files)):
-            if budget <= 0.01:
-                break
-            if growing:
-                take = budget
-            else:
-                # Never shrink a card below 1.0s -- it still needs to read
-                # as a card, not a flash-frame.
-                room = max(0.0, card_durations[i] - 1.0)
-                take = min(budget, room)
-            if take < 0.05:
-                continue
-            delta = take if growing else -take
-            adjusted_path = os.path.join(app.config['UPLOAD_FOLDER'],
-                                          f'cardadj_{jid}_{i}_{int(time.time() * 1000) % 100000}.mp4')
-            result = _adjust_card_duration(card_files[i], delta, adjusted_path)
-            if result:
-                card_files[i] = result
-                card_durations[i] += delta
-                total_card_dur += delta
-                residual -= delta
-                budget -= take
+        limit = cutcraft.card_adjust_limit(trailer_length, card_fit)
+
+        def _absorb(budget, floors, tag):
+            """Spread `budget` seconds over the cards, growing or shrinking,
+            never shrinking a card under its floor."""
+            nonlocal residual, total_card_dur
+            for i in range(len(card_files)):
+                if budget <= 0.01:
+                    break
+                if growing:
+                    take = budget
+                else:
+                    take = min(budget, max(0.0, card_durations[i] - floors[i]))
+                if take < 0.05:
+                    continue
+                delta = take if growing else -take
+                adjusted_path = os.path.join(app.config['UPLOAD_FOLDER'],
+                                              f'cardadj_{jid}_{i}_{int(time.time() * 1000) % 100000}.mp4')
+                result = _adjust_card_duration(card_files[i], delta, adjusted_path)
+                if result:
+                    card_files[i] = result
+                    card_durations[i] += delta
+                    total_card_dur += delta
+                    residual -= delta
+                    budget -= take
+                    card_fit_info['notes'].append(
+                        f'{card_labels[i]} {"held" if growing else "trimmed"} {take:.1f}s{tag} to land on '
+                        f'{trailer_length:g}s.')
+            return budget
+
+        # First, within what each card can give without cutting its voice or
+        # its animation. 'off' keeps the old behaviour: 1.0 s total, floor 1.0 s.
+        _absorb(min(abs(residual), limit), card_floors, '')
+        # Only if the plug would still miss its exact length, take the old
+        # last resort (down to 1.0 s a card, up to 1.0 s in total) and say so.
+        if not growing and card_fit != 'off' and abs(residual) > 0.01:
+            _absorb(min(abs(residual), CARD_DURATION_ADJUST_LIMIT),
+                    [min(d, 1.0) for d in card_durations], ' (past where it settles)')
+
+    # How clean did each edge end up? Shown in the review so a risky cut is
+    # visible before anything is rendered.
+    for s in selected:
+        src = s.get('source_path')
+        if cut_words and not preselected and (not src or src == path):
+            ts = s.get('trim_start', s['start'])
+            s['cut'] = {'in': cutcraft.classify_cut('in', ts, cut_words, speech_spans),
+                        'out': cutcraft.classify_cut('out', ts + s['selected_dur'], cut_words, speech_spans)}
+        else:
+            s['cut'] = None
+    cut_info = cutcraft.cut_summary([s['cut'] for s in selected if s.get('cut')])
+    cut_info['checked'] = bool(cut_words) and not preselected
+    cut_info['cleaned'] = bool(cut_clean)
+
+    # Narration: read the recording against the script and plan the cuts now,
+    # so the review shows them and the render uses exactly this plan.
+    if (params.get('preview_only') and vo_smart and vo_mode == 'upload' and vo_upload_path
+            and os.path.exists(vo_upload_path)):
+        job_set(jid, percent=33, step='Reading the narration against the script')
+        try:
+            params['vo_plan'] = _build_vo_plan(vo_upload_path, vo_text, vo_trim_start, vo_trim_end,
+                                               vo_start, trailer_length - cutcraft.VO_TAIL)
+        except Exception as e:
+            print(f'VO planning skipped: {e}')
+            params['vo_plan'] = None
 
     if params.get('preview_only'):
         # Analysis is done; stop here instead of spending minutes on extraction,
@@ -10904,7 +11148,7 @@ def _run_trailer_job(jid, params):
                      'total_score': s['total_score'], 'quality_score': s.get('quality_score', 0),
                      'vision_score': s.get('vision_score'), 'speech_score': s.get('speech_score', 0),
                      'ai_desc': s.get('ai_desc', ''), 'has_face': s.get('has_face', False),
-                     'vo_beat': s.get('vo_beat'), 'vo_match': s.get('vo_match'),
+                     'vo_beat': s.get('vo_beat'), 'vo_match': s.get('vo_match'), 'cut': s.get('cut'),
                      'script_boost': s.get('script_boost'), 'script_desc': s.get('script_desc'),
                      'edge_ratio': s.get('edge_ratio', 0), 'mean_hue': s.get('mean_hue', 0)}
                     for s in rows]
@@ -10971,6 +11215,7 @@ def _run_trailer_job(jid, params):
             video_duration=round(video_duration, 1), trailer_length=trailer_length,
             scenes_duration=round(total_sel, 1),
             estimated_duration=round(total_sel + total_card_dur - max(0, len(selected) + len(card_files) - 1) * xfade_dur, 1),
+            cut_info=cut_info, card_fit=card_fit_info, vo_plan=_vo_plan_summary(params.get('vo_plan')),
             video_filename=video_filename,
             selection=selection_info,
             scenes=[{'scene': i + 1, 'start': round(s['start'], 1), 'end': round(s['end'], 1),
@@ -10981,6 +11226,7 @@ def _run_trailer_job(jid, params):
                      'has_face': bool(s.get('has_face')),
                      'vo_beat': s.get('vo_beat'),
                      'vo_match': s.get('vo_match'),
+                     'cut': s.get('cut'),
                      'script_boost': round(s.get('script_boost') or 0, 2) or None,
                      'script_desc': s.get('script_desc') or None,
                      'material': s.get('material'),
@@ -11518,9 +11764,29 @@ def _run_trailer_job(jid, params):
             # source file itself, separate from vo_start below (which places the
             # already-trimmed narration on the trailer's own timeline).
             ms = max(0, int(vo_start * 1000))
+            vo_edited_path = None
+            if vo_source == 'uploaded' and vo_smart:
+                # Cut at the script's own points. The plan was made (and shown)
+                # at the review step; a plan is made here for a direct render.
+                vo_plan = params.get('vo_plan')
+                if vo_plan is None and 'vo_plan' not in params:
+                    try:
+                        vo_plan = _build_vo_plan(vo_raw_path, vo_text, vo_trim_start, vo_trim_end,
+                                                 vo_start, trailer_length - cutcraft.VO_TAIL)
+                    except Exception as e:
+                        print(f'VO planning skipped: {e}')
+                        vo_plan = None
+                if vo_plan and vo_plan.get('edited') and vo_plan.get('pieces'):
+                    job_set(jid, step='Cutting the narration at the script points')
+                    vo_edited_path = _render_vo_from_plan(
+                        vo_plan, vo_raw_path,
+                        os.path.join(app.config['UPLOAD_FOLDER'], f'voedit_{base_ts}.wav'))
+                    if vo_edited_path:
+                        vo_raw_path = vo_edited_path
+                        ms = 0          # the plan already placed every line on the plug's timeline
             vo_ready_path = os.path.join(app.config['UPLOAD_FOLDER'], f'voready_{base_ts}.m4a')
             cmd = [FFMPEG, '-y']
-            if vo_source == 'uploaded' and (vo_trim_start > 0 or vo_trim_end is not None):
+            if vo_source == 'uploaded' and not vo_edited_path and (vo_trim_start > 0 or vo_trim_end is not None):
                 cmd.extend(['-ss', str(vo_trim_start)])
                 if vo_trim_end is not None:
                     cmd.extend(['-to', str(vo_trim_end)])
@@ -11540,6 +11806,9 @@ def _run_trailer_job(jid, params):
                 print(f'VO prep error: {r.stderr[:500]}')
                 vo_ready_path = None
         _remove_job_intermediate(vo_upload_path)
+        _edited = os.path.join(app.config['UPLOAD_FOLDER'], f'voedit_{base_ts}.wav')
+        if os.path.exists(_edited):
+            os.remove(_edited)
         tts_wav = os.path.join(app.config['UPLOAD_FOLDER'], f'tts_{base_ts}.wav')
         if os.path.exists(tts_wav):
             os.remove(tts_wav)

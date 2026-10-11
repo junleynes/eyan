@@ -1627,6 +1627,36 @@ document.addEventListener("DOMContentLoaded", function(){
     </div>
   </div><!-- /.promo-essentials -->
 
+  <details class="promo-clean card" id="promo-clean">
+    <summary>Cleaner edits <span id="clean-sum">cuts, cards and narration are cleaned up</span></summary>
+    <div class="clean-grid">
+      <div>
+        <label>Cuts</label>
+        <select name=cut_clean id="cut-clean-select" onchange="cleanSum()">
+          <option value=on selected>Never cut inside a word</option>
+          <option value=off>Leave cuts as picked</option>
+        </select>
+        <p class="clean-help">Each clip starts and ends in a pause, with room for the transition, and starts on a sentence when it begins mid-sentence. The review marks every cut.</p>
+      </div>
+      <div>
+        <label>Title &amp; end cards</label>
+        <select name=card_fit id="card-fit-select" onchange="cleanSum()">
+          <option value=fit selected>Fit to the plug length</option>
+          <option value=off>Leave as uploaded (&plusmn;1 s)</option>
+        </select>
+        <p class="clean-help">If the cards would squeeze the scenes, they are shortened after their voice and animation finish. The last gap is closed by holding or trimming a card, up to 12&nbsp;% of the plug.</p>
+      </div>
+      <div>
+        <label>Uploaded narration</label>
+        <select name=vo_smart id="vo-smart-select" onchange="cleanSum()">
+          <option value=on selected>Cut and place at the script's points</option>
+          <option value=off>Play the recording as it is</option>
+        </select>
+        <p class="clean-help">Start a script line with a time (<code>00:03 VO: &hellip;</code>) to put it there; each line is cut from the recording at word edges. Too long? Pauses tighten, then up to 8&nbsp;% faster, then optional lines go, then it ends on a word. Add <code>(optional)</code> to a line that can be dropped.</p>
+      </div>
+    </div>
+  </details>
+
   <div class="promo-steer card" style="padding:14px 16px;margin:0 0 14px">
     <div style="font:600 11px 'JetBrains Mono',monospace;letter-spacing:.06em;text-transform:uppercase;color:var(--phosphor);margin-bottom:8px">Creative steering</div>
     <label style="margin-top:0">What should this promo feature? <span style="text-transform:none;letter-spacing:0;opacity:.6;font-weight:400">(optional)</span></label>
@@ -2476,12 +2506,14 @@ document.addEventListener("DOMContentLoaded", function(){
     duck_release_hold: 'Duck hold', beat_match: 'Beat matching',
     broadcast_stereo: 'Broadcast stereo', sync_beats: 'Sync cuts to beats',
     whisper_enhance: 'Dialogue-aware cuts',
+    cut_clean: 'Clean cuts', card_fit: 'Card fit', vo_smart: 'Script-aware narration',
   }
   var TPL_SETTING_VALUES = {
     scoring_mode: {generate: 'AI generated', upload: 'uploaded file', none: 'none'},
     sfx_mode: {genre: 'from genre', upload: 'uploaded file', none: 'none'},
     vo_mode: {tts: 'text-to-speech', upload: 'uploaded file', none: 'none'},
     vo_engine: {fish_audio: 'Fish Audio S2'},
+    cut_clean: {on: 'on', off: 'off'}, card_fit: {fit: 'fit to plug', off: 'leave as uploaded'}, vo_smart: {on: 'on', off: 'off'},
   }
   var TPL_SETTING_UNITS = {
     trailer_length: 's', xfade_dur: 's', max_scene_dur: 's', min_scene_len_sec: 's',
@@ -3712,6 +3744,7 @@ document.addEventListener("DOMContentLoaded", function(){
       <strong style="font-size:14px">Proposed cut</strong>
       <span id=tr-preview-stats style="font-size:12px;opacity:.8"></span>
     </div>
+    <ul id=tr-edit-report class="edit-report" aria-label="How the cut was cleaned"></ul>
     <div id=tr-cut-timeline class="cut-timeline" aria-label="Cut timeline"></div>
     <div id=tr-preview-grid style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-top:14px"></div>
     <div id=tr-alt-wrap style="display:none;margin-top:16px;border-top:1px solid var(--line);padding-top:14px">
@@ -4701,6 +4734,14 @@ function trReady(){
   var extras = [['summary-script', 'Timecodes'], ['summary-narration', 'Narration'], ['summary-bgm', 'Music'], ['summary-title-card', 'Title card'], ['summary-end-card', 'End card'], ['summary-sfx', 'SFX']]
     .map(function(p){ var t = sum(p[0]); return t ? '<b>' + p[1] + '</b> ' + esc(t) : '' }).filter(Boolean)
   row(extras.length ? 'ok' : 'skip', 'Audio &amp; cards', extras.length ? extras.join(' &middot; ') : 'nothing extra chosen')
+  var cs = trCardSecs(), L = parseFloat(val('trailer-length-select') || '15') || 15
+  if(cs.title != null || cs.end != null){
+    var ct = cs.title || 0, ce = cs.end || 0, scenesLeft = L - ct - ce, need = Math.max(5, 0.45 * L)
+    var fitOn = (val('card-fit-select') || 'fit') !== 'off'
+    var bud = L + ' s = ' + (cs.title != null ? 'title ' + ct.toFixed(1) + ' + ' : '') + (cs.end != null ? 'end card ' + ce.toFixed(1) + ' + ' : '') + 'scenes ' + scenesLeft.toFixed(1)
+    if(scenesLeft >= need) row('ok', 'Time budget', esc(bud))
+    else row('todo', 'Time budget', esc(bud) + (fitOn ? ' &mdash; the cards will be shortened to leave about ' + need.toFixed(1) + ' s for scenes' : ' &mdash; too little for scenes; turn card fitting on or use a shorter card'))
+  }
   var down = trEl('ollama-down-banner'), downNow = down && down.style.display !== 'none'
   var cues = !!sum('summary-script')
   if(downNow) row(cues ? 'skip' : 'todo', 'AI Vision', cues ? 'is down, but timecode cues do not need it' : 'is unreachable: scenes cannot be rated until it is back')
@@ -4710,6 +4751,29 @@ function trReady(){
   var ok = !!src && !downNow || (!!src && cues)
   var pb = trEl('trailer-preview-btn'); if(pb) pb.title = ok ? '' : (src ? 'AI Vision is unreachable' : 'Pick a video first')
   var s2 = trEl('job-summary-text'); if(s2 && typeof updateJobSummary === 'function') updateJobSummary()
+}
+var TR_CARD_CACHE = {}
+function trCardSecs(){
+  var out = {title: null, end: null}
+  ;[['title', 'end_card_video'], ['end', 'schedule_video']].forEach(function(p){
+    var inp = document.querySelector('#tf [name="' + p[1] + '"]')
+    var f = inp && inp.files && inp.files[0]
+    if(!f) return
+    var key = f.name + ':' + f.size + ':' + f.lastModified
+    var dur = TR_CARD_CACHE[key]
+    if(dur === undefined){
+      TR_CARD_CACHE[key] = null
+      var v = document.createElement('video'); v.preload = 'metadata'
+      v.onloadedmetadata = function(){ TR_CARD_CACHE[key] = isFinite(v.duration) ? v.duration : 0; try{ URL.revokeObjectURL(v.src) }catch(e){}; trReady() }
+      v.onerror = function(){ TR_CARD_CACHE[key] = 0 }
+      v.src = URL.createObjectURL(f)
+    }else if(dur){
+      var num = function(suffix){ var e = document.querySelector('#tf [name="' + p[1] + suffix + '"]'); var x = e ? parseFloat(e.value) : NaN; return isFinite(x) ? x : null }
+      var s = num('_start') || 0, e2 = num('_end')
+      out[p[0]] = Math.max(0, (e2 != null && e2 > s ? e2 : dur) - s)
+    }
+  })
+  return out
 }
 var TR_LAST_FIELDS = ['template-select', 'trailer-length-select', 'genre-select', 'delivery-format-select', 'priority-prompt', 'negative-prompt']
 function trLast(){ try{ return JSON.parse(localStorage.getItem('tr_last') || 'null') }catch(e){ return null } }
@@ -4908,6 +4972,13 @@ function buildSceneCard(s, cls, num, checked, badge, overlayPlay){
   if(s.speech_score) chips.push('<span class="score-chip speech" title="Dialogue">Dlg '+s.speech_score+'</span>')
   if(s.has_face) chips.push('<span class="score-chip face" title="Face detected">Face</span>')
   if(s.script_boost) chips.push('<span class="score-chip script" title="Boosted by a matched script/manual timecode">Script +'+s.script_boost+'</span>')
+  if(s.cut){
+    var cin = s.cut['in'], cout = s.cut.out, rank = {clean: 0, silent: 0, word: 1, tight: 2, clipped: 3}
+    var worst = (rank[cin] || 0) >= (rank[cout] || 0) ? cin : cout
+    var cutLabel = {clean: 'Clean cut', silent: 'Clean cut', word: 'Cut on a word', tight: 'Cut is tight', clipped: 'Cut mid-word'}[worst] || 'Cut'
+    var cutCls = (rank[worst] || 0) >= 3 ? 'cut-bad' : ((rank[worst] || 0) >= 1 ? 'cut-warn' : 'cut-ok')
+    chips.push('<span class="score-chip ' + cutCls + '" title="In: ' + cin + ' \u00b7 Out: ' + cout + '">' + cutLabel + '</span>')
+  }
 
   card.innerHTML =
     thumbHtml +
@@ -4954,6 +5025,7 @@ function renderPreviewCut(d){
     cb.addEventListener('change', updatePreviewKept)
   })
   renderCutTimeline(d.scenes, d.estimated_duration, d.trailer_length)
+  renderEditReport(d)
 
   // Runner-ups for swapping out a clip you don't like.
   var alts = d.alternates || []
@@ -4978,6 +5050,58 @@ function renderPreviewCut(d){
   document.getElementById('tr-preview-area').style.display='block'
   document.getElementById('tr-preview-area').scrollIntoView({behavior:'smooth', block:'nearest'})
   setupPreviewSendToDestination(d)
+}
+
+function renderEditReport(d){
+  var host = document.getElementById('tr-edit-report'); if(!host) return
+  var esc = escapeHtmlLite, rows = []
+  var row = function(kind, label, text, extra){
+    rows.push('<li class="' + kind + '"><i>' + (kind === 'ok' ? '&#10003;' : (kind === 'warn' ? '!' : '&ndash;')) + '</i><span><b>' + label + '</b> ' + text + (extra || '') + '</span></li>')
+  }
+  var ci = d.cut_info
+  if(ci){
+    if(!ci.checked){
+      row('skip', 'Cuts', 'were not checked against dialogue (no speech was found, or this is a locked render).')
+    }else{
+      var parts = [ci.clean + ' clean']
+      if(ci.silent) parts.push(ci.silent + ' on silent footage')
+      if(ci.word) parts.push(ci.word + ' on a word edge mid-sentence')
+      if(ci.risky) parts.push(ci.risky + ' risky (' + [ci.tight ? ci.tight + ' tight' : '', ci.clipped ? ci.clipped + ' inside a word' : ''].filter(Boolean).join(', ') + ')')
+      row(ci.risky ? 'warn' : 'ok', 'Cuts', ci.edges + ' edges: ' + parts.join(', ') + '.',
+        '<span class="er-notes">' + (ci.cleaned ? 'Each clip was settled to leave room for the transition and to start on a sentence. Risky cuts are marked on the clips below; drop or swap them if they matter.' : 'Clean cuts are switched off, so these are the cuts as picked.') + '</span>')
+    }
+  }
+  var cf = d.card_fit
+  if(cf && cf.cards && cf.cards.length){
+    var cards = cf.cards.map(function(c){ return esc(c.label) + ' ' + c.secs.toFixed(1) + ' s' }).join(' &middot; ')
+    var notes = (cf.notes || []).map(function(n){ return esc(n) }).join('<br>')
+    var tight = (cf.notes || []).some(function(n){ return /Even at their shortest|past where it settles/.test(n) })
+    row(tight ? 'warn' : 'ok', 'Cards', cards + ' &middot; scenes get ' + cf.scene_budget.toFixed(1) + ' s of the ' + d.trailer_length + ' s' + (cf.policy === 'off' ? ' (fitting is off)' : '') + '.',
+      notes ? '<span class="er-notes">' + notes + '</span>' : '')
+  }
+  var vp = d.vo_plan
+  if(vp){
+    var head, kind = 'ok'
+    if(vp.edited) head = 'is cut at ' + (vp.timed ? 'the script&rsquo;s time points' : 'word edges to fit the plug') + (vp.coarse ? ' (phrase-level: the speech service gave line times only)' : '') + '.'
+    else head = 'plays as recorded' + (vp.scripted ? '; the script matched.' : '.')
+    if(!vp.fits){ kind = 'warn'; head += ' It still ends after the plug.' }
+    var statusCls = {ok: 'ok', tightened: 'ok', 'sped up': 'warn', trimmed: 'warn', dropped: 'warn', missing: 'bad', 'cut off': 'bad'}
+    var fmt = function(t){ return t == null ? '&ndash;' : (Math.floor(t / 60) + ':' + ('0' + (t % 60).toFixed(1)).slice(-4)) }
+    var table = (vp.edited && vp.lines && vp.lines.length) ? '<table class="vo-lines">' + vp.lines.map(function(l, i){
+      return '<tr><td class="t">' + (i + 1) + '</td><td>' + esc((l.text || '').slice(0, 70)) + '</td><td class="t">' + fmt(l.at) + ' &rarr; ' + fmt(l.end) + '</td><td><span class="st ' + (statusCls[l.status] || '') + '">' + esc(l.status) + '</span></td></tr>'
+    }).join('') + '</table>' : ''
+    var vnotes = (vp.notes || []).map(function(n){ return esc(n) }).join('<br>')
+    if((vp.notes || []).some(function(n){ return /not found/.test(n) })) kind = 'warn'
+    row(kind, 'Narration', head, (vnotes ? '<span class="er-notes">' + vnotes + '</span>' : '') + table)
+  }
+  host.innerHTML = rows.join('')
+  host.style.display = rows.length ? '' : 'none'
+}
+function cleanSum(){
+  var el = document.getElementById('clean-sum'); if(!el) return
+  var v = function(id, dflt){ var e = document.getElementById(id); return e ? e.value : dflt }
+  var off = [v('cut-clean-select', 'on') === 'off' ? 'cuts' : '', v('card-fit-select', 'fit') === 'off' ? 'cards' : '', v('vo-smart-select', 'on') === 'off' ? 'narration' : ''].filter(Boolean)
+  el.textContent = off.length ? off.join(', ') + ' left as they are' : 'cuts, cards and narration are cleaned up'
 }
 
 // A csv/csv_video destination's whole point is the ORIGINAL source video
@@ -11625,6 +11749,13 @@ job. Configured via env vars:
       <h3>The Episodic Plug page</h3>
       <p>The page works in three steps: <strong>1 Episode &amp; settings</strong>, <strong>2 Review the cut</strong> and <strong>3 Result</strong>. You move on by themselves &mdash; a proposed cut opens the review, a finished plug opens the result &mdash; and any step you have been to can be reopened from the bar at the top. <em>&#8592; Settings</em> and <em>&#8592; Back to settings</em> return to the form with everything as you left it.</p>
       <p>Beside the form, <strong>Ready?</strong> says what is about to happen in one short list: the episode, the template (and that its settings are loaded), the length, genre and format, any steering, and the audio and cards chosen &mdash; and flags what is missing, such as no video yet, or AI Vision being unreachable (timecode cues do not need it). <strong>Use my last settings</strong> brings back the template, length, genre, format and steering of the last promo you started on this computer. The buttons stay at the bottom of the screen, with a one-line summary beside them, so they are never lost below a long form. <strong>Quick promo</strong> still hides the secondary controls; <strong>Advanced</strong> shows them all.</p>
+      <h3>Cleaner edits: cuts, cards and narration</h3>
+      <p>Three settings under <strong>Cleaner edits</strong> are on by default. Each can be switched off.</p>
+      <ul>
+        <li><strong>Cuts.</strong> Every clip starts and ends in a pause, never inside a word. The room before and after speech is sized to the transition, a clip that begins mid-sentence moves to the start of that sentence, and a hairline gap between two words is skipped for a real pause. Where the sound really stops is measured, not only taken from the transcript. Script timecode cues are your own exact points and stay as written. The review marks every clip <em>Clean cut</em>, <em>Cut on a word</em> (on a word edge but mid-sentence), <em>Cut is tight</em> or <em>Cut mid-word</em>, and summarises them at the top; drop or swap the risky ones.</li>
+        <li><strong>Title &amp; end cards.</strong> A card that would squeeze the scenes is shortened before scenes are chosen, but only after its own voice and its animation have finished (measured on the card itself); a card that is still moving at its last frame is left alone. The review shows each card&rsquo;s length and what the scenes get. The last sliver of a gap is closed by holding or trimming a card up to 12&nbsp;% of the plug (1&nbsp;s minimum, 3.6&nbsp;s on a 30&nbsp;s plug); if the plug would still miss its exact length, the old 1&nbsp;s last resort applies and the review says so. The Ready? panel shows the time budget as soon as you pick the card files, for example <code>15 s = title 6.0 + end card 6.0 + scenes 3.0</code>.</li>
+        <li><strong>Uploaded narration.</strong> The recording is read with speech-to-text. Start a script line with a time to place it there &mdash; <code>00:03 VO: Abangan ngayong gabi</code>, <code>[0:07.5] ...</code> or <code>@12.5s ...</code> &mdash; and each line is found in the recording and cut at word edges, so one recording with several lines can be placed at several points. Lines without a time follow the previous one with the pause the speaker left. If it is too long for the room it has, it is fitted in this order: pauses tighten (down to 0.15&nbsp;s), the speech speeds up by at most 8&nbsp;% (pitch kept), lines marked <code>(optional)</code> are dropped from the end, and as the very last step the end is trimmed at a word edge. A line the recording does not contain is reported, not guessed. With no times in the script, a recording that fits plays exactly as before. The review lists every line with its time and status. AI-voice (text-to-speech) narration is unchanged.</li>
+      </ul>
       <p>What happens, in order, from upload to finished export:</p>
       <div style="overflow-x:auto;margin:14px 0 18px;background:var(--sunken);border:1px solid var(--line);border-radius:var(--radius);padding:16px;text-align:center">
       <svg viewBox="0 0 1008 348" style="width:100%;max-width:1180px;min-width:700px;aspect-ratio:1008/348;height:auto;display:inline-block;vertical-align:top;font-family:'JetBrains Mono',monospace">
